@@ -831,10 +831,10 @@ def _prompt_and_save_database_url(name: str, existing_url: str | None = None) ->
 
 
 def _configure_claude_desktop(name: str):
-    """db-mcp."""
+    """Configure Claude Desktop for db-mcp."""
     claude_config, claude_config_path = load_claude_desktop_config()
     mcp_servers = claude_config.get("mcpServers", {})
-    has_legacy = "db-mcp" in mcp_servers
+    has_legacy = "dbmeta" in mcp_servers
 
     # Update Claude Desktop config
     if "mcpServers" not in claude_config:
@@ -849,10 +849,10 @@ def _configure_claude_desktop(name: str):
         "args": ["start"],
     }
 
-    # Remove legacy entry if exists
+    # Remove legacy dbmeta entry if exists
     if has_legacy:
-        del claude_config["mcpServers"]["db-mcp"]
-        console.print("[dim]Removed legacy 'db-mcp' entry.[/dim]")
+        del claude_config["mcpServers"]["dbmeta"]
+        console.print("[dim]Removed legacy 'dbmeta' entry.[/dim]")
 
     # Save Claude Desktop config
     save_claude_desktop_config(claude_config, claude_config_path)
@@ -1124,18 +1124,18 @@ def status(connection: str | None):
     if claude_config:
         mcp_servers = claude_config.get("mcpServers", {})
         if "db-mcp" in mcp_servers:
-            console.print("  [green]✓ dbmcp configured[/green]")
+            console.print("  [green]✓ db-mcp configured[/green]")
             cmd = mcp_servers["db-mcp"].get("command", "N/A")
             console.print(f"  Command: {cmd}")
-        elif "db-mcp" in mcp_servers:
-            console.print("  [yellow]⚠ Legacy 'db-mcp' entry found[/yellow]")
-            console.print("  [dim]Run 'db-mcp init' to upgrade.[/dim]")
+        elif "dbmeta" in mcp_servers:
+            console.print("  [yellow]⚠ Legacy 'dbmeta' entry found[/yellow]")
+            console.print("  [dim]Run 'db-mcp migrate' to upgrade.[/dim]")
         else:
             console.print("  [yellow]db-mcp not configured[/yellow]")
             console.print("  [dim]Run 'db-mcp init' to configure.[/dim]")
 
-        # Show other servers
-        other_servers = [k for k in mcp_servers.keys() if k not in ("db-mcp", "db-mcp")]
+        # Show other servers (exclude db-mcp and legacy dbmeta)
+        other_servers = [k for k in mcp_servers.keys() if k not in ("db-mcp", "dbmeta")]
         if other_servers:
             console.print(f"  Other servers: {', '.join(other_servers)}")
     else:

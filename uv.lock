@@ -541,7 +541,7 @@ wheels = [
 
 [[package]]
 name = "db-mcp"
-version = "0.3.3"
+version = "0.3.4"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "click" },
