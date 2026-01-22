@@ -1,0 +1,19 @@
+[project]
+name = "db-mcp"
+version = "0.3.0"
+description = "Database MCP server workspace"
+requires-python = ">=3.13"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+dbmcp = { workspace = true }
+dbmcp-models = { workspace = true }
+
+[tool.ruff]
+line-length = 99
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]

@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 0.3.0)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos-arm64
+          - os: macos-13
+            platform: macos-x64
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: windows-latest
+            platform: windows-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.x"
+
+      - name: Install dependencies
+        working-directory: packages/core
+        run: uv sync --all-extras
+
+      - name: Build binary
+        working-directory: packages/core
+        run: uv run pyinstaller --clean --noconfirm dbmcp.spec
+
+      - name: Rename binary
+        working-directory: packages/core
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == windows-* ]]; then
+            mv dist/dbmcp.exe dist/dbmcp-${{ matrix.platform }}.exe
+          else
+            mv dist/dbmcp dist/dbmcp-${{ matrix.platform }}
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dbmcp-${{ matrix.platform }}
+          path: packages/core/dist/dbmcp-${{ matrix.platform }}*
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=v${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: dbmcp v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: artifacts/dbmcp-*
+          body: |
+            ## dbmcp v${{ steps.version.outputs.version }}
+
+            Database MCP server for Claude Desktop.
+
+            ### Installation
+
+            ```bash
+            curl -fsSL https://download.apelogic.ai/dbmcp/install.sh | sh
+            ```
+
+            ### Manual Download
+
+            - macOS (Apple Silicon): `dbmcp-macos-arm64`
+            - macOS (Intel): `dbmcp-macos-x64`
+            - Linux: `dbmcp-linux-x64`
+            - Windows: `dbmcp-windows-x64.exe`
+
+            ### Quick Start
+
+            ```bash
+            dbmcp init
+            dbmcp status
+            ```
