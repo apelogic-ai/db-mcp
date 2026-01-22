@@ -1136,9 +1136,25 @@ def status(connection: str | None):
         console.print(f"  [dim]No config at {claude_config_path}[/dim]")
 
     # Legacy structure warning
-    if LEGACY_VAULT_DIR.exists() or LEGACY_PROVIDERS_DIR.exists():
-        console.print("\n[yellow]⚠ Legacy data structure detected[/yellow]")
-        console.print("  [dim]Run 'db-mcp init' to migrate to new connection structure.[/dim]")
+    from db_mcp.vault.migrate import detect_legacy_namespace, is_namespace_migrated
+
+    legacy_namespace = detect_legacy_namespace()
+    needs_namespace_migration = legacy_namespace and not is_namespace_migrated()
+
+    # Check if there are connections without .version (not yet migrated to v2)
+    needs_structure_migration = False
+    if connections:
+        for conn in connections:
+            conn_path = get_connection_path(conn)
+            if conn_path.exists() and not (conn_path / ".version").exists():
+                needs_structure_migration = True
+                break
+
+    if needs_namespace_migration or needs_structure_migration:
+        console.print("\n[yellow]⚠ Legacy data detected[/yellow]")
+        if needs_namespace_migration:
+            console.print(f"  Found: {legacy_namespace}")
+        console.print("  [bold]Run 'db-mcp migrate' to migrate to new structure.[/bold]")
 
 
 def _get_git_remote_url(path: Path) -> str | None:
@@ -1525,137 +1541,6 @@ def remove(name: str, force: bool):
 
 
 @main.command()
-@click.option("--dry-run", is_flag=True, help="Show what would be migrated without making changes")
-@click.option("--server", is_flag=True, help="Run in server mode (use CONNECTION_PATH env var)")
-def migrate(dry_run: bool, server: bool):
-    """Migrate from legacy storage format to new connection structure.
-
-    This migrates data from the old structure:
-        ~/.dbmcp/vault/
-        ~/.dbmcp/providers/{id}/
-
-    To the new self-contained connection structure:
-        ~/.dbmcp/connections/{name}/
-
-    For server/container deployments, use --server flag which reads
-    CONNECTION_PATH from environment variables.
-
-    Migration is non-destructive - original files are preserved.
-    Run 'dbmcp status' to check if migration is needed.
-
-    Examples:
-        # Local CLI migration
-        db-mcp migrate
-
-        # Server/container migration (uses env vars)
-        CONNECTION_PATH=/data/connection db-mcp migrate --server
-
-        # Dry run to see what would happen
-        db-mcp migrate --dry-run
-    """
-    from db_mcp.vault import ensure_connection_structure
-    from db_mcp.vault.migrate import (
-        detect_legacy_structure,
-        get_storage_version,
-        migrate_to_connection_structure,
-        write_storage_version,
-    )
-
-    # Server mode: use CONNECTION_PATH env var directly
-    if server:
-        from db_mcp.config import get_settings
-
-        settings = get_settings()
-        connection_path = settings.get_effective_connection_path()
-        conn_name = settings.connection_name
-
-        console.print("[bold]Server mode migration[/bold]")
-        console.print(f"  Connection: {conn_name}")
-        console.print(f"  Path:       {connection_path}")
-
-        version = get_storage_version(connection_path)
-        if version >= 2:
-            console.print("\n[green]✓ Already at v2 format.[/green]")
-            return
-
-        if dry_run:
-            console.print("\n[yellow]Dry run - no changes made.[/yellow]")
-            return
-
-        # For server mode, we mainly ensure structure and write version
-        console.print("\n[bold]Initializing connection structure...[/bold]")
-        ensure_connection_structure()
-        write_storage_version(connection_path)
-        console.print("[green]✓ Connection structure initialized (v2)[/green]")
-        return
-
-    # Local CLI mode: detect and migrate legacy structure
-    legacy = detect_legacy_structure()
-
-    if not legacy:
-        console.print("[green]✓ No legacy data to migrate.[/green]")
-        console.print("[dim]Already using new connection structure.[/dim]")
-        return
-
-    console.print("[bold]Legacy data detected:[/bold]")
-    if legacy.get("vault_path"):
-        console.print(f"  Vault:    {legacy['vault_path']}")
-    if legacy.get("provider_path"):
-        console.print(f"  Provider: {legacy['provider_path']}")
-    console.print(f"  ID:       {legacy.get('provider_id', 'default')}")
-
-    # Check target
-    conn_name = legacy.get("provider_id") or "default"
-    target_path = CONNECTIONS_DIR / conn_name
-    version = get_storage_version(target_path)
-
-    if version >= 2:
-        console.print(f"\n[green]✓ Already migrated to: {target_path}[/green]")
-        return
-
-    console.print("\n[bold]Migration target:[/bold]")
-    console.print(f"  {target_path}")
-
-    if dry_run:
-        console.print("\n[yellow]Dry run - no changes made.[/yellow]")
-        console.print("[dim]Run without --dry-run to perform migration.[/dim]")
-        return
-
-    # Perform migration
-    console.print("\n[bold]Migrating...[/bold]")
-    try:
-        stats = migrate_to_connection_structure(conn_name)
-
-        if stats.get("skipped"):
-            console.print(f"[yellow]Skipped: {stats.get('reason')}[/yellow]")
-        else:
-            console.print("[green]✓ Migration complete![/green]")
-            console.print("\n[bold]Migrated:[/bold]")
-            if stats.get("schema_descriptions"):
-                console.print("  ✓ Schema descriptions")
-            if stats.get("domain_model"):
-                console.print("  ✓ Domain model")
-            if stats.get("onboarding_state"):
-                console.print("  ✓ Onboarding state")
-            if stats.get("query_examples", 0) > 0:
-                console.print(f"  ✓ {stats['query_examples']} query examples")
-            if stats.get("failures", 0) > 0:
-                console.print(f"  ✓ {stats['failures']} failure records")
-            vault_files = stats.get("vault_files", {})
-            if vault_files:
-                for key, count in vault_files.items():
-                    if count > 0:
-                        console.print(f"  ✓ {count} {key} files")
-
-            console.print("\n[dim]Original files preserved in legacy locations.[/dim]")
-            console.print("[dim]You may delete them after verifying the migration.[/dim]")
-
-    except Exception as e:
-        console.print(f"[red]Migration failed: {e}[/red]")
-        sys.exit(1)
-
-
-@main.command()
 @click.argument("command", type=click.Choice(["status", "migrate"]))
 def all(command: str):
     """Run a command for all connections.
@@ -1702,6 +1587,108 @@ def all(command: str):
                     console.print("  [green]✓ Migrated[/green]")
             except Exception as e:
                 console.print(f"  [red]Error: {e}[/red]")
+
+
+# =============================================================================
+# Migration command
+# =============================================================================
+
+
+@main.command()
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed migration info")
+def migrate(verbose: bool):
+    """Migrate from legacy dbmeta to db-mcp.
+
+    This command handles two types of migration:
+
+    1. Namespace migration: ~/.dbmeta -> ~/.db-mcp
+       Copies all data from the old config directory to the new one.
+
+    2. Structure migration: v1 -> v2 connection format
+       Converts old provider-based structure to connection-based.
+
+    The original data is preserved as a backup.
+
+    Examples:
+        db-mcp migrate           # Run full migration
+        db-mcp migrate -v        # Run with verbose output
+    """
+    from db_mcp.vault.migrate import (
+        detect_legacy_namespace,
+        is_namespace_migrated,
+        migrate_namespace,
+        migrate_to_connection_structure,
+        write_storage_version,
+    )
+
+    console.print(
+        Panel.fit(
+            "[bold]db-mcp Migration[/bold]\n\nMigrating from legacy dbmeta to db-mcp format.",
+            border_style="blue",
+        )
+    )
+
+    # Step 1: Namespace migration (~/.dbmeta -> ~/.db-mcp)
+    console.print("\n[bold]Step 1: Namespace Migration[/bold]")
+    legacy_path = detect_legacy_namespace()
+
+    if legacy_path:
+        if is_namespace_migrated():
+            console.print(f"  [dim]Already migrated from {legacy_path}[/dim]")
+        else:
+            console.print(f"  [cyan]Found legacy directory: {legacy_path}[/cyan]")
+            console.print("  [cyan]Migrating to ~/.db-mcp...[/cyan]")
+
+            stats = migrate_namespace()
+            if stats.get("skipped"):
+                console.print(f"  [yellow]Skipped: {stats.get('reason')}[/yellow]")
+            else:
+                console.print("  [green]✓ Namespace migration complete[/green]")
+                if verbose:
+                    console.print(f"    Connections: {stats.get('connections', 0)}")
+                    console.print(f"    Providers: {stats.get('providers', 0)}")
+                    console.print(f"    Config: {'yes' if stats.get('config') else 'no'}")
+                    console.print(f"    Vault: {'yes' if stats.get('vault') else 'no'}")
+                console.print(f"  [dim]Original preserved at: {legacy_path}[/dim]")
+    else:
+        console.print("  [dim]No legacy ~/.dbmeta directory found[/dim]")
+
+    # Step 2: Structure migration (v1 -> v2 for each connection)
+    console.print("\n[bold]Step 2: Connection Structure Migration[/bold]")
+    connections = list_connections()
+
+    if not connections:
+        console.print("  [dim]No connections to migrate[/dim]")
+    else:
+        for conn in connections:
+            conn_path = get_connection_path(conn)
+            has_version = (conn_path / ".version").exists()
+
+            if has_version:
+                console.print(f"  [dim]{conn}: already at v2[/dim]")
+            else:
+                console.print(f"  [cyan]{conn}: migrating...[/cyan]")
+                try:
+                    stats = migrate_to_connection_structure(conn)
+                    if stats.get("skipped"):
+                        reason = stats.get("reason")
+                        if reason == "no_legacy_data":
+                            # No legacy data but connection exists - just mark as v2
+                            write_storage_version(conn_path)
+                            console.print("    [green]✓ Marked as v2[/green]")
+                        else:
+                            console.print(f"    [dim]Skipped: {reason}[/dim]")
+                    else:
+                        console.print("    [green]✓ Migrated to v2[/green]")
+                        if verbose:
+                            console.print(f"      Schema: {stats.get('schema_descriptions')}")
+                            console.print(f"      Domain: {stats.get('domain_model')}")
+                            console.print(f"      Examples: {stats.get('query_examples', 0)}")
+                except Exception as e:
+                    console.print(f"    [red]Error: {e}[/red]")
+
+    console.print("\n[green]✓ Migration complete[/green]")
+    console.print("\n[dim]Run 'db-mcp status' to verify.[/dim]")
 
 
 # =============================================================================
