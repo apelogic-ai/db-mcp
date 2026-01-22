@@ -17,7 +17,7 @@ The server:
 The `docs/` directory contains design documents for planned features:
 - **Metrics Layer** (`metrics-layer.md`) - Semantic metrics definitions for consistent business KPIs
 - **Knowledge Extraction Agent** (`knowledge-extraction-agent.md`) - Background agent that learns from query traces
-- **Electron Desktop App** (`electron-port-feasibility.md`) - Desktop GUI with Electron shell + dbmcp sidecar
+- **Electron Desktop App** (`electron-port-feasibility.md`) - Desktop GUI with Electron shell + db-mcp sidecar
 - **Semantic Data Gateway** (`data-gateway.md`) - Unified gateway for multiple data sources (CSV, BI tools, dbt)
 
 ## Repository Structure
@@ -27,13 +27,13 @@ This is a Python monorepo managed with UV workspaces:
 ```
 db-mcp/
 ├── packages/
-│   ├── core/                    # Main application package (dbmcp)
-│   │   ├── src/dbmcp/           # Source code
+│   ├── core/                    # Main application package (db-mcp)
+│   │   ├── src/db_mcp/          # Source code
 │   │   ├── tests/               # Test suite
 │   │   ├── scripts/             # Build scripts
 │   │   └── pyproject.toml       # Package config
-│   └── models/                  # Shared data models (dbmcp-models)
-│       ├── src/dbmcp_models/
+│   └── models/                  # Shared data models (db-mcp-models)
+│       ├── src/db_mcp_models/
 │       └── pyproject.toml
 ├── docs/                        # GitHub Pages documentation
 ├── scripts/                     # Installation scripts
@@ -42,7 +42,7 @@ db-mcp/
 └── uv.lock                      # Dependency lockfile
 ```
 
-### Core Package (`packages/core/src/dbmcp/`)
+### Core Package (`packages/core/src/db_mcp/`)
 
 | Module | Purpose |
 |--------|---------|
@@ -59,7 +59,7 @@ db-mcp/
 | `console/` | Trace viewer UI |
 | `validation/` | SQL validation and cost estimation |
 
-### Models Package (`packages/models/src/dbmcp_models/`)
+### Models Package (`packages/models/src/db_mcp_models/`)
 
 Shared Pydantic models: `OnboardingState`, `QueryResult`, `Task`, `QueryExample`, `GridSpec`, etc.
 
@@ -95,16 +95,16 @@ uv sync --all-extras
 cd packages/core
 
 # Run CLI
-uv run dbmcp --help
+uv run db-mcp --help
 
 # Initialize a connection
-uv run dbmcp init [NAME]
+uv run db-mcp init [NAME]
 
 # Start MCP server (stdio mode)
-uv run dbmcp start
+uv run db-mcp start
 
 # Check configuration
-uv run dbmcp status
+uv run db-mcp status
 ```
 
 ### Testing
@@ -136,11 +136,11 @@ Output: Platform-specific binary in `dist/`
 
 | Path | Purpose |
 |------|---------|
-| `~/.dbmcp/config.yaml` | Global CLI config, active connection |
-| `~/.dbmcp/connections/{name}/.env` | Database credentials (gitignored) |
-| `~/.dbmcp/connections/{name}/schema/` | Schema descriptions |
-| `~/.dbmcp/connections/{name}/domain/` | Domain model |
-| `~/.dbmcp/connections/{name}/training/` | Query examples |
+| `~/.db-mcp/config.yaml` | Global CLI config, active connection |
+| `~/.db-mcp/connections/{name}/.env` | Database credentials (gitignored) |
+| `~/.db-mcp/connections/{name}/schema/` | Schema descriptions |
+| `~/.db-mcp/connections/{name}/domain/` | Domain model |
+| `~/.db-mcp/connections/{name}/training/` | Query examples |
 
 ### Environment Variables
 
@@ -156,19 +156,19 @@ Output: Platform-specific binary in `dist/`
 
 | Command | Description |
 |---------|-------------|
-| `dbmcp init [NAME]` | Configure new database connection |
-| `dbmcp start` | Start MCP server |
-| `dbmcp status` | Show current configuration |
-| `dbmcp list` | List all connections |
-| `dbmcp use NAME` | Switch active connection |
-| `dbmcp config` | Open config in editor |
-| `dbmcp console` | Open trace viewer UI |
-| `dbmcp edit [NAME]` | Edit connection credentials |
-| `dbmcp git-init [NAME]` | Enable git sync |
-| `dbmcp sync [NAME]` | Sync with git remote |
-| `dbmcp pull [NAME]` | Pull from git |
-| `dbmcp rename OLD NEW` | Rename connection |
-| `dbmcp remove NAME` | Remove connection |
+| `db-mcp init [NAME]` | Configure new database connection |
+| `db-mcp start` | Start MCP server |
+| `db-mcp status` | Show current configuration |
+| `db-mcp list` | List all connections |
+| `db-mcp use NAME` | Switch active connection |
+| `db-mcp config` | Open config in editor |
+| `db-mcp console` | Open trace viewer UI |
+| `db-mcp edit [NAME]` | Edit connection credentials |
+| `db-mcp git-init [NAME]` | Enable git sync |
+| `db-mcp sync [NAME]` | Sync with git remote |
+| `db-mcp pull [NAME]` | Pull from git |
+| `db-mcp rename OLD NEW` | Rename connection |
+| `db-mcp remove NAME` | Remove connection |
 
 ## Code Style
 
@@ -204,7 +204,7 @@ State tracked in `OnboardingState` (phases: discovery, review, domain-building, 
 
 ### Storage Backends
 
-- **Local**: Filesystem (`~/.dbmcp/`)
+- **Local**: Filesystem (`~/.db-mcp/`)
 - **S3**: AWS S3 with configurable bucket/prefix
 - **Git**: Optional sync for team collaboration
 
@@ -216,7 +216,7 @@ CI/CD via `.github/workflows/release.yml`:
 3. Creates GitHub Release with binaries
 
 Binary build artifacts:
-- PyInstaller spec: `packages/core/dbmcp.spec`
+- PyInstaller spec: `packages/core/db-mcp.spec`
 - Build script: `packages/core/scripts/build.py`
 - Output: `~67MB` platform-specific binary
 
@@ -230,14 +230,26 @@ Binary build artifacts:
 
 ## After Every Code Change
 
-Always run linting after making code changes:
+Always run linting and tests after making code changes:
 
 ```bash
 cd packages/core
+
+# Lint (required - fix all errors)
 uv run ruff check . --fix
+
+# Tests (required - run relevant tests)
+uv run python -m pytest tests/ -v
+
+# Type check (optional but recommended)
+uv run pyright src/
 ```
 
-Fix any errors before considering the task complete.
+**Requirements before considering a task complete:**
+1. All linting errors must be fixed
+2. All tests that were passing before must still pass
+3. New code should have tests where appropriate
+4. Type hints should be added for new functions/methods
 
 ## Documentation
 

@@ -5,17 +5,17 @@ Database MCP server for Claude Desktop. Query your databases using natural langu
 ## Installation
 
 ```bash
-curl -fsSL https://download.apelogic.ai/dbmcp/install.sh | sh
+curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh
 ```
 
 ## Quick Start
 
 ```bash
 # Configure your database and Claude Desktop
-dbmcp init
+db-mcp init
 
 # Check configuration
-dbmcp status
+db-mcp status
 ```
 
 ## Supported Databases
@@ -28,7 +28,7 @@ dbmcp status
 
 ## How It Works
 
-dbmcp is an MCP (Model Context Protocol) server that:
+db-mcp is an MCP (Model Context Protocol) server that:
 
 1. **Introspects** your database schema automatically
 2. **Onboards** you through an interactive flow to describe tables and columns
@@ -50,49 +50,49 @@ dbmcp is an MCP (Model Context Protocol) server that:
 
 | Command | Description |
 |---------|-------------|
-| `dbmcp init [NAME]` | Interactive setup wizard - configure database and Claude Desktop |
-| `dbmcp status` | Show current configuration status |
-| `dbmcp config` | Open config file in editor |
+| `db-mcp init [NAME]` | Interactive setup wizard - configure database and Claude Desktop |
+| `db-mcp status` | Show current configuration status |
+| `db-mcp config` | Open config file in editor |
 
 ### Connection Management
 
 | Command | Description |
 |---------|-------------|
-| `dbmcp list` | List all configured connections |
-| `dbmcp use NAME` | Switch to a different connection |
-| `dbmcp edit [NAME]` | Edit connection credentials (.env file) |
-| `dbmcp rename OLD NEW` | Rename a connection |
-| `dbmcp remove NAME` | Remove a connection |
-| `dbmcp all COMMAND` | Run a command for all connections |
+| `db-mcp list` | List all configured connections |
+| `db-mcp use NAME` | Switch to a different connection |
+| `db-mcp edit [NAME]` | Edit connection credentials (.env file) |
+| `db-mcp rename OLD NEW` | Rename a connection |
+| `db-mcp remove NAME` | Remove a connection |
+| `db-mcp all COMMAND` | Run a command for all connections |
 
 ### Server & Diagnostics
 
 | Command | Description |
 |---------|-------------|
-| `dbmcp start` | Start the MCP server (stdio mode for Claude Desktop) |
-| `dbmcp console` | Start local trace console (view MCP server activity) |
-| `dbmcp traces` | Manage trace capture for diagnostics and learning |
+| `db-mcp start` | Start the MCP server (stdio mode for Claude Desktop) |
+| `db-mcp console` | Start local trace console (view MCP server activity) |
+| `db-mcp traces` | Manage trace capture for diagnostics and learning |
 
 ### Git Sync (Team Collaboration)
 
 | Command | Description |
 |---------|-------------|
-| `dbmcp git-init [NAME]` | Enable git sync for an existing connection |
-| `dbmcp sync [NAME]` | Sync connection changes with git remote |
-| `dbmcp pull [NAME]` | Pull connection updates from git remote |
+| `db-mcp git-init [NAME]` | Enable git sync for an existing connection |
+| `db-mcp sync [NAME]` | Sync connection changes with git remote |
+| `db-mcp pull [NAME]` | Pull connection updates from git remote |
 
 ### Migration
 
 | Command | Description |
 |---------|-------------|
-| `dbmcp migrate` | Migrate from legacy storage format to new connection structure |
+| `db-mcp migrate` | Migrate from legacy storage format to new connection structure |
 
 ## Configuration
 
-Connection data is stored in `~/.dbmcp/`:
+Connection data is stored in `~/.db-mcp/`:
 
 ```
-~/.dbmcp/
+~/.db-mcp/
 ├── config.yaml                      # Global config, active connection
 └── connections/{name}/
     ├── .env                         # Database credentials (gitignored)
@@ -140,7 +140,7 @@ uv sync
 
 # Run locally
 cd packages/core
-uv run dbmcp --help
+uv run db-mcp --help
 
 # Run tests
 pytest tests/
@@ -157,8 +157,8 @@ uv run python scripts/build.py
 ```
 db-mcp/
 ├── packages/
-│   ├── core/                # Main application (dbmcp)
-│   └── models/              # Shared Pydantic models (dbmcp-models)
+│   ├── core/                # Main application (db-mcp)
+│   └── models/              # Shared Pydantic models (db-mcp-models)
 ├── docs/                    # Design documents
 ├── scripts/                 # Installation scripts
 └── .github/workflows/       # CI/CD

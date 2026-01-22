@@ -1,7 +1,7 @@
 [project]
-name = "dbmcp-models"
+name = "db-mcp-models"
 version = "0.3.0"
-description = "Shared models for dbmcp"
+description = "Shared models for db-mcp"
 requires-python = ">=3.13"
 dependencies = [
     "pydantic>=2.0.0",

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dbmcp.db.introspection import get_tables
+from db_mcp.db.introspection import get_tables
 
 
 class TestGetTables:
@@ -26,7 +26,7 @@ class TestGetTables:
 
     def test_trino_with_catalog_and_schema(self, mock_trino_engine):
         """Test Trino table discovery with both catalog and schema."""
-        with patch("dbmcp.db.introspection.get_engine", return_value=mock_trino_engine):
+        with patch("db_mcp.db.introspection.get_engine", return_value=mock_trino_engine):
             # Mock the connection and execute
             mock_conn = MagicMock()
             mock_result = MagicMock()
@@ -48,7 +48,7 @@ class TestGetTables:
 
     def test_trino_with_catalog_only(self, mock_trino_engine):
         """Test Trino table discovery with catalog only (iterates schemas)."""
-        with patch("dbmcp.db.introspection.get_engine", return_value=mock_trino_engine):
+        with patch("db_mcp.db.introspection.get_engine", return_value=mock_trino_engine):
             mock_conn = MagicMock()
 
             # First call: SHOW SCHEMAS FROM dwh
@@ -96,7 +96,7 @@ class TestGetTables:
 
     def test_trino_catalog_only_handles_schema_errors(self, mock_trino_engine):
         """Test that catalog-only discovery continues when a schema errors."""
-        with patch("dbmcp.db.introspection.get_engine", return_value=mock_trino_engine):
+        with patch("db_mcp.db.introspection.get_engine", return_value=mock_trino_engine):
             mock_conn = MagicMock()
 
             # First call: SHOW SCHEMAS FROM dwh
@@ -130,7 +130,7 @@ class TestGetTables:
         engine = MagicMock()
         engine.dialect.name = "TRINO"
 
-        with patch("dbmcp.db.introspection.get_engine", return_value=engine):
+        with patch("db_mcp.db.introspection.get_engine", return_value=engine):
             mock_conn = MagicMock()
             mock_result = MagicMock()
             mock_result.fetchall.return_value = [("test_table",)]
@@ -148,8 +148,8 @@ class TestGetTables:
     def test_postgresql_uses_inspector(self, mock_postgres_engine):
         """Test that PostgreSQL uses SQLAlchemy inspector."""
         with (
-            patch("dbmcp.db.introspection.get_engine", return_value=mock_postgres_engine),
-            patch("dbmcp.db.introspection.inspect") as mock_inspect,
+            patch("db_mcp.db.introspection.get_engine", return_value=mock_postgres_engine),
+            patch("db_mcp.db.introspection.inspect") as mock_inspect,
         ):
             mock_inspector = MagicMock()
             mock_inspector.get_table_names.return_value = ["users", "orders"]
@@ -171,8 +171,8 @@ class TestGetTables:
     def test_no_catalog_no_schema_uses_inspector(self, mock_postgres_engine):
         """Test that missing catalog/schema uses SQLAlchemy inspector."""
         with (
-            patch("dbmcp.db.introspection.get_engine", return_value=mock_postgres_engine),
-            patch("dbmcp.db.introspection.inspect") as mock_inspect,
+            patch("db_mcp.db.introspection.get_engine", return_value=mock_postgres_engine),
+            patch("db_mcp.db.introspection.inspect") as mock_inspect,
         ):
             mock_inspector = MagicMock()
             mock_inspector.get_table_names.return_value = ["test"]

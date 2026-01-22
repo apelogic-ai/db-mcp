@@ -5,8 +5,8 @@ requires-python = ">=3.13"
 [manifest]
 members = [
     "db-mcp",
-    "dbmcp",
-    "dbmcp-models",
+    "db-mcp-models",
+    "db-mcp-workspace",
 ]
 
 [[package]]
@@ -542,16 +542,11 @@ wheels = [
 [[package]]
 name = "db-mcp"
 version = "0.3.0"
-source = { virtual = "." }
-
-[[package]]
-name = "dbmcp"
-version = "0.3.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "click" },
     { name = "clickhouse-sqlalchemy" },
-    { name = "dbmcp-models" },
+    { name = "db-mcp-models" },
     { name = "fastmcp" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
@@ -580,7 +575,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
     { name = "clickhouse-sqlalchemy", specifier = ">=0.3.0" },
-    { name = "dbmcp-models", editable = "packages/models" },
+    { name = "db-mcp-models", editable = "packages/models" },
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
@@ -603,7 +598,7 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "dbmcp-models"
+name = "db-mcp-models"
 version = "0.3.0"
 source = { editable = "packages/models" }
 dependencies = [
@@ -612,6 +607,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pydantic", specifier = ">=2.0.0" }]
+
+[[package]]
+name = "db-mcp-workspace"
+version = "0.3.0"
+source = { virtual = "." }
 
 [[package]]
 name = "diskcache"

@@ -1,1 +1,1 @@
-"""Tests for db-meta-v2."""
+"""Tests for db-mcp."""

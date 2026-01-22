@@ -1,5 +1,5 @@
 [project]
-name = "dbmcp"
+name = "db-mcp"
 version = "0.3.0"
 description = "MCP server for database semantics and query intelligence"
 requires-python = ">=3.13"
@@ -18,16 +18,16 @@ dependencies = [
     "pyyaml>=6.0.0",
     "click>=8.0.0",
     "rich>=13.0.0",
-    "dbmcp-models",
+    "db-mcp-models",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
 ]
 
 [project.scripts]
-dbmcp = "dbmcp.cli:main"
+db-mcp = "db_mcp.cli:main"
 
 [tool.uv.sources]
-dbmcp-models = { workspace = true }
+db-mcp-models = { workspace = true }
 
 [project.optional-dependencies]
 dev = [

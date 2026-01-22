@@ -1,7 +1,7 @@
-"""Tests for .dbmetaignore pattern matching."""
+"""Tests for .db-mcpignore pattern matching."""
 
 
-from dbmcp.onboarding.ignore import IgnorePatterns, get_default_ignore_content
+from db_mcp.onboarding.ignore import IgnorePatterns, get_default_ignore_content
 
 
 class TestIgnorePatterns:

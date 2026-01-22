@@ -1,5 +1,5 @@
 [project]
-name = "db-mcp"
+name = "db-mcp-workspace"
 version = "0.3.0"
 description = "Database MCP server workspace"
 requires-python = ">=3.13"
@@ -8,8 +8,8 @@ requires-python = ">=3.13"
 members = ["packages/*"]
 
 [tool.uv.sources]
-dbmcp = { workspace = true }
-dbmcp-models = { workspace = true }
+db-mcp = { workspace = true }
+db-mcp-models = { workspace = true }
 
 [tool.ruff]
 line-length = 99

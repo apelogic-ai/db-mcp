@@ -4,11 +4,11 @@ import tempfile
 from unittest.mock import patch
 
 import pytest
-from sg_models import OnboardingPhase
+from db_mcp_models import OnboardingPhase
 
-from dbmcp.onboarding.schema_store import get_schema_file_path
-from dbmcp.onboarding.state import load_state
-from dbmcp.tools.onboarding import (
+from db_mcp.onboarding.schema_store import get_schema_file_path
+from db_mcp.onboarding.state import load_state
+from db_mcp.tools.onboarding import (
     _onboarding_discover,
     _onboarding_reset,
     _onboarding_start,
@@ -23,9 +23,9 @@ def temp_providers_dir(monkeypatch):
         monkeypatch.setenv("PROVIDERS_DIR", tmpdir)
 
         # Clear cached settings
-        import dbmcp.config
+        import db_mcp.config
 
-        dbmcp.config._settings = None
+        db_mcp.config._settings = None
 
         yield tmpdir
 
@@ -33,7 +33,7 @@ def temp_providers_dir(monkeypatch):
 @pytest.fixture
 def mock_db_connection():
     """Mock database connection for testing without real DB."""
-    with patch("dbmcp.tools.onboarding.test_connection") as mock_conn:
+    with patch("db_mcp.tools.onboarding.test_connection") as mock_conn:
         mock_conn.return_value = {
             "connected": True,
             "dialect": "trino",
@@ -48,10 +48,10 @@ def mock_db_connection():
 def mock_introspection():
     """Mock database introspection functions."""
     with (
-        patch("dbmcp.tools.onboarding.get_catalogs") as mock_catalogs,
-        patch("dbmcp.tools.onboarding.get_schemas") as mock_schemas,
-        patch("dbmcp.tools.onboarding.get_tables") as mock_tables,
-        patch("dbmcp.tools.onboarding.get_columns") as mock_columns,
+        patch("db_mcp.tools.onboarding.get_catalogs") as mock_catalogs,
+        patch("db_mcp.tools.onboarding.get_schemas") as mock_schemas,
+        patch("db_mcp.tools.onboarding.get_tables") as mock_tables,
+        patch("db_mcp.tools.onboarding.get_columns") as mock_columns,
     ):
         mock_catalogs.return_value = ["test_catalog"]
         mock_schemas.return_value = ["test_schema"]
@@ -151,7 +151,7 @@ class TestOnboardingStart:
     @pytest.mark.asyncio
     async def test_start_connection_failed(self, temp_providers_dir):
         """Test start when DB connection fails."""
-        with patch("dbmcp.tools.onboarding.test_connection") as mock_conn:
+        with patch("db_mcp.tools.onboarding.test_connection") as mock_conn:
             mock_conn.return_value = {
                 "connected": False,
                 "error": "Connection refused",

@@ -2,19 +2,19 @@
 
 import pytest
 
-from dbmcp.dialect import get_dialect_file_path, load_dialect_rules
-from dbmcp.tools.dialect import _get_dialect_rules
+from db_mcp.dialect import get_dialect_file_path, load_dialect_rules
+from db_mcp.tools.dialect import _get_dialect_rules
 
 
 def test_get_dialect_file_path_trino(monkeypatch):
     """Test finding Trino dialect file."""
     # Use the actual resources path
-    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/dbmeta_app")
+    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/db_mcp_app")
 
     # Clear cached settings
-    import dbmcp.config
+    import db_mcp.config
 
-    dbmcp.config._settings = None
+    db_mcp.config._settings = None
 
     path = get_dialect_file_path("trino")
     assert path is not None
@@ -24,11 +24,11 @@ def test_get_dialect_file_path_trino(monkeypatch):
 
 def test_load_dialect_rules_trino(monkeypatch):
     """Test loading Trino dialect rules."""
-    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/dbmeta_app")
+    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/db_mcp_app")
 
-    import dbmcp.config
+    import db_mcp.config
 
-    dbmcp.config._settings = None
+    db_mcp.config._settings = None
 
     result = load_dialect_rules("trino")
     assert result["found"] is True
@@ -39,11 +39,11 @@ def test_load_dialect_rules_trino(monkeypatch):
 
 def test_load_dialect_rules_postgresql(monkeypatch):
     """Test loading PostgreSQL dialect rules."""
-    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/dbmeta_app")
+    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/db_mcp_app")
 
-    import dbmcp.config
+    import db_mcp.config
 
-    dbmcp.config._settings = None
+    db_mcp.config._settings = None
 
     result = load_dialect_rules("postgresql")
     assert result["found"] is True
@@ -53,11 +53,11 @@ def test_load_dialect_rules_postgresql(monkeypatch):
 
 def test_load_dialect_rules_unknown(monkeypatch):
     """Test loading unknown dialect."""
-    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/dbmeta_app")
+    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/db_mcp_app")
 
-    import dbmcp.config
+    import db_mcp.config
 
-    dbmcp.config._settings = None
+    db_mcp.config._settings = None
 
     result = load_dialect_rules("unknowndb")
     assert result["found"] is False
@@ -68,11 +68,11 @@ def test_load_dialect_rules_unknown(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_dialect_rules_tool(monkeypatch):
     """Test get_dialect_rules MCP tool."""
-    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/dbmeta_app")
+    monkeypatch.setenv("RESOURCES_DIR", "../../packages/resources/db_mcp_app")
 
-    import dbmcp.config
+    import db_mcp.config
 
-    dbmcp.config._settings = None
+    db_mcp.config._settings = None
 
     result = await _get_dialect_rules("trino")
     assert result["found"] is True

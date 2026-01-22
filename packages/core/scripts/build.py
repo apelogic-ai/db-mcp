@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build script for dbmcp CLI binary.
+"""Build script for db-mcp CLI binary.
 
 Usage:
-    cd apps/db-meta-v2
+    cd packages/core
     uv run python scripts/build.py
 
 Output:
-    dist/dbmcp (or dist/dbmcp.exe on Windows)
+    dist/db-mcp (or dist/db-mcp.exe on Windows)
 """
 
 import platform
@@ -41,12 +41,12 @@ def get_platform_suffix() -> str:
 
 
 def main():
-    """Build the dbmcp binary."""
+    """Build the db-mcp binary."""
     app_dir = Path(__file__).parent.parent
-    spec_file = app_dir / "dbmcp.spec"
+    spec_file = app_dir / "db-mcp.spec"
     dist_dir = app_dir / "dist"
 
-    print(f"Building dbmcp for {get_platform_suffix()}...")
+    print(f"Building db-mcp for {get_platform_suffix()}...")
     print(f"  App dir: {app_dir}")
     print(f"  Spec file: {spec_file}")
     print()
@@ -81,7 +81,7 @@ def main():
         sys.exit(1)
 
     # Check output
-    binary_name = "dbmcp.exe" if platform.system() == "Windows" else "dbmcp"
+    binary_name = "db-mcp.exe" if platform.system() == "Windows" else "db-mcp"
     binary_path = dist_dir / binary_name
 
     if not binary_path.exists():
@@ -103,9 +103,9 @@ def main():
     # Optionally rename with platform suffix
     platform_suffix = get_platform_suffix()
     if platform.system() == "Windows":
-        platform_binary = dist_dir / f"dbmcp-{platform_suffix}.exe"
+        platform_binary = dist_dir / f"db-mcp-{platform_suffix}.exe"
     else:
-        platform_binary = dist_dir / f"dbmcp-{platform_suffix}"
+        platform_binary = dist_dir / f"db-mcp-{platform_suffix}"
 
     shutil.copy(binary_path, platform_binary)
     print()

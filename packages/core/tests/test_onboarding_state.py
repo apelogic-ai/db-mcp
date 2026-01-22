@@ -4,9 +4,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from sg_models import OnboardingPhase
+from db_mcp_models import OnboardingPhase
 
-from dbmcp.onboarding.state import (
+from db_mcp.onboarding.state import (
     create_initial_state,
     delete_state,
     load_state,
@@ -21,9 +21,9 @@ def temp_providers_dir(monkeypatch):
         monkeypatch.setenv("PROVIDERS_DIR", tmpdir)
 
         # Clear cached settings
-        import dbmcp.config
+        import db_mcp.config
 
-        dbmcp.config._settings = None
+        db_mcp.config._settings = None
 
         yield tmpdir
 

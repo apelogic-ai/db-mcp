@@ -2,8 +2,8 @@
 
 import pytest
 
-from dbmcp.db.connection import detect_dialect_from_url, normalize_database_url
-from dbmcp.tools.database import _detect_dialect
+from db_mcp.db.connection import detect_dialect_from_url, normalize_database_url
+from db_mcp.tools.database import _detect_dialect
 
 
 def test_detect_dialect_trino():

@@ -45,22 +45,22 @@ jobs:
 
       - name: Build binary
         working-directory: packages/core
-        run: uv run pyinstaller --clean --noconfirm dbmcp.spec
+        run: uv run pyinstaller --clean --noconfirm db-mcp.spec
 
       - name: Rename binary
         working-directory: packages/core
         shell: bash
         run: |
           if [[ "${{ matrix.platform }}" == windows-* ]]; then
-            mv dist/dbmcp.exe dist/dbmcp-${{ matrix.platform }}.exe
+            mv dist/db-mcp.exe dist/db-mcp-${{ matrix.platform }}.exe
           else
-            mv dist/dbmcp dist/dbmcp-${{ matrix.platform }}
+            mv dist/db-mcp dist/db-mcp-${{ matrix.platform }}
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dbmcp-${{ matrix.platform }}
-          path: packages/core/dist/dbmcp-${{ matrix.platform }}*
+          name: db-mcp-${{ matrix.platform }}
+          path: packages/core/dist/db-mcp-${{ matrix.platform }}*
 
   release:
     name: Create Release
@@ -93,31 +93,31 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: dbmcp v${{ steps.version.outputs.version }}
+          name: db-mcp v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
-          files: artifacts/dbmcp-*
+          files: artifacts/db-mcp-*
           body: |
-            ## dbmcp v${{ steps.version.outputs.version }}
+            ## db-mcp v${{ steps.version.outputs.version }}
 
             Database MCP server for Claude Desktop.
 
             ### Installation
 
             ```bash
-            curl -fsSL https://download.apelogic.ai/dbmcp/install.sh | sh
+            curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh
             ```
 
             ### Manual Download
 
-            - macOS (Apple Silicon): `dbmcp-macos-arm64`
-            - macOS (Intel): `dbmcp-macos-x64`
-            - Linux: `dbmcp-linux-x64`
-            - Windows: `dbmcp-windows-x64.exe`
+            - macOS (Apple Silicon): `db-mcp-macos-arm64`
+            - macOS (Intel): `db-mcp-macos-x64`
+            - Linux: `db-mcp-linux-x64`
+            - Windows: `db-mcp-windows-x64.exe`
 
             ### Quick Start
 
             ```bash
-            dbmcp init
-            dbmcp status
+            db-mcp init
+            db-mcp status
             ```
