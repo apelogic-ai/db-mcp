@@ -1,5 +1,5 @@
 #!/bin/bash
-# Release script for dbmcp CLI
+# Release script for db-mcp CLI
 # Usage: ./scripts/release.sh [version]
 #
 # Examples:
@@ -15,14 +15,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Get script directory
+# Get script directory and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+CORE_DIR="$REPO_ROOT/packages/core"
 
-cd "$APP_DIR"
+cd "$REPO_ROOT"
 
 # Get current version from pyproject.toml
-current_version=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+current_version=$(grep '^version = ' "$CORE_DIR/pyproject.toml" | sed 's/version = "\(.*\)"/\1/')
 echo -e "${BLUE}Current version: ${current_version}${NC}"
 
 # Get new version
@@ -60,23 +61,23 @@ if [[ -n $(git status --porcelain) ]]; then
     fi
 fi
 
-# Update version in pyproject.toml
-echo -e "${BLUE}Updating pyproject.toml...${NC}"
-sed -i '' "s/^version = \".*\"/version = \"${new_version}\"/" pyproject.toml
+# Update version in packages/core/pyproject.toml
+echo -e "${BLUE}Updating packages/core/pyproject.toml...${NC}"
+sed -i '' "s/^version = \".*\"/version = \"${new_version}\"/" "$CORE_DIR/pyproject.toml"
 
 # Update version in cli.py
 echo -e "${BLUE}Updating cli.py...${NC}"
-sed -i '' "s/@click.version_option(version=\".*\"/@click.version_option(version=\"${new_version}\"/" src/db_meta_v2/cli.py
+sed -i '' "s/@click.version_option(version=\".*\"/@click.version_option(version=\"${new_version}\"/" "$CORE_DIR/src/db_mcp/cli.py"
 
 # Commit changes
 echo -e "${BLUE}Committing version bump...${NC}"
-git add pyproject.toml src/db_meta_v2/cli.py
-git commit -m "chore: bump dbmcp version to ${new_version}"
+git add "$CORE_DIR/pyproject.toml" "$CORE_DIR/src/db_mcp/cli.py"
+git commit -m "chore: bump db-mcp version to ${new_version}"
 
 # Create tag
-tag_name="dbmcp-v${new_version}"
+tag_name="v${new_version}"
 echo -e "${BLUE}Creating tag: ${tag_name}${NC}"
-git tag -a "$tag_name" -m "dbmcp v${new_version}"
+git tag -a "$tag_name" -m "db-mcp v${new_version}"
 
 # Push
 echo ""
@@ -93,8 +94,6 @@ echo -e "${BLUE}Pushing to origin...${NC}"
 git push origin HEAD
 git push origin "$tag_name"
 
-current_branch=$(git rev-parse --abbrev-ref HEAD)
-
 echo ""
 echo -e "${GREEN}✓ Release ${new_version} triggered!${NC}"
 echo ""
@@ -102,4 +101,7 @@ echo "GitHub Actions will now build binaries for all platforms."
 echo "Check progress at: https://github.com/apelogic-ai/db-mcp/actions"
 echo ""
 echo "Once complete, users can install with:"
-echo -e "  ${BLUE}curl -fsSL https://raw.githubusercontent.com/apelogic-ai/db-mcp/${current_branch}/scripts/install.sh | sh${NC}"
+echo -e "  ${BLUE}curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh${NC}"
+echo ""
+echo "Or directly from GitHub:"
+echo -e "  ${BLUE}curl -fsSL https://raw.githubusercontent.com/apelogic-ai/db-mcp/main/scripts/install.sh | sh${NC}"
