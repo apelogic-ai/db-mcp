@@ -1,6 +1,6 @@
 #!/bin/sh
 # dbmcp installer
-# Usage: curl -fsSL https://download.apelogic.ai/dbmcp/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/apelogic-ai/db-mcp/main/scripts/install.sh | sh
 #
 # Environment variables:
 #   DBMCP_VERSION  - Version to install (default: latest)

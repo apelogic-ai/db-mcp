@@ -5,7 +5,7 @@ Database MCP server for Claude Desktop. Query your databases using natural langu
 ## Installation
 
 ```bash
-curl -fsSL https://download.apelogic.ai/dbmcp/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/apelogic-ai/db-mcp/main/scripts/install.sh | sh
 ```
 
 ## Quick Start
