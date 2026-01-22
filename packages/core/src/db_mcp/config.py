@@ -88,7 +88,7 @@ class Settings(BaseSettings):
         description="Database connection URL (e.g., trino://user:pass@host:port/catalog/schema)",
     )
 
-    # Component-based DB config (reuses existing db-meta secrets)
+    # Component-based DB config (for legacy compatibility)
     database_wh_driver: str = Field(default="", description="DB driver (trino, clickhouse+native)")
     database_wh_server_v2: str = Field(default="", description="DB server host")
     database_wh_port_v2: str = Field(default="", description="DB server port")

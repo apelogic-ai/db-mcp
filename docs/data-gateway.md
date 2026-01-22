@@ -35,7 +35,7 @@ A local MCP gateway that provides unified, semantic-aware access to data across 
 │     ┌────────────┬──────────┴───────────┬────────────┐     │
 │     ▼            ▼                      ▼            ▼     │
 │  ┌──────┐    ┌──────┐    ┌──────────┐    ┌──────┐         │
-│  │dbmeta│    │csv   │    │superset  │    │dbt   │   ...   │
+│  │db-mcp│    │csv   │    │superset  │    │dbt   │   ...   │
 │  │ MCP  │    │ MCP  │    │  MCP     │    │ MCP  │         │
 │  └──────┘    └──────┘    └──────────┘    └──────┘         │
 │     │            │              │            │              │
@@ -53,7 +53,7 @@ A local MCP gateway that provides unified, semantic-aware access to data across 
 **Purpose**: Unified semantic understanding across all sources.
 
 **Sources that contribute:**
-- DB introspection (dbmeta)
+- DB introspection (db-mcp)
 - BI tool APIs (Superset, Metabase, Tableau)
 - User input (onboarding, corrections)
 - Learning loop (traces, feedback)
@@ -66,7 +66,7 @@ A local MCP gateway that provides unified, semantic-aware access to data across 
 - `instructions/rules.md` — query patterns, guardrails
 - `examples/*.yaml` — known-good queries
 
-**MCPs**: dbmeta, superset-mcp, tableau-mcp, metabase-mcp
+**MCPs**: db-mcp, superset-mcp, tableau-mcp, metabase-mcp
 
 ### 2. Query Layer
 
@@ -78,7 +78,7 @@ A local MCP gateway that provides unified, semantic-aware access to data across 
 - Query caching (dedup identical queries)
 - Result caching (share across requests)
 
-**MCPs**: dbmeta (query tools), csv-mcp
+**MCPs**: db-mcp (query tools), csv-mcp
 
 ### 3. Aggregation Layer
 
@@ -130,7 +130,7 @@ GROUP BY 1
 
 | MCP | Layer | Function | Status |
 |-----|-------|----------|--------|
-| **dbmeta** | Knowledge + Query | DB introspection, semantic layer, SQL gen, execute | ✅ Exists |
+| **db-mcp** | Knowledge + Query | DB introspection, semantic layer, SQL gen, execute | ✅ Exists |
 | **csv-mcp** | Query | Load CSVs, infer types, register with DuckDB | New |
 | **superset-mcp** | Knowledge | Pull metrics, dashboards, charts from Superset API | New |
 | **metabase-mcp** | Knowledge | Pull questions, models from Metabase API | New |
@@ -151,7 +151,7 @@ User: "What's our revenue by region?"
 Gateway:
 ├── Checks knowledge layer: "revenue" defined in metrics/catalog.yaml
 ├── Source: main_db only
-├── Routes to: dbmeta (query layer)
+├── Routes to: db-mcp (query layer)
 └── Returns: result table
 ```
 
@@ -162,10 +162,10 @@ User: "Join my sales.csv with customer database and show top 10"
 
 Gateway:
 ├── Checks knowledge layer: relationship exists (sales.customer_id → db.customers.id)
-├── Sources: csv-mcp + dbmeta
+├── Sources: csv-mcp + db-mcp
 ├── Routes to: aggregation layer (DuckDB)
 │   ├── csv-mcp.register("sales.csv") → DuckDB
-│   ├── dbmeta.register("customers") → DuckDB
+│   ├── db-mcp.register("customers") → DuckDB
 │   └── DuckDB executes federated query
 └── Returns: result table
 ```
@@ -191,7 +191,7 @@ User: "Run the customer_segments dbt model and show results"
 Gateway:
 ├── Routes to: dbt-mcp (transformation layer)
 │   └── dbt run --select customer_segments
-├── Then routes to: dbmeta (query layer)
+├── Then routes to: db-mcp (query layer)
 │   └── SELECT * FROM customer_segments LIMIT 100
 └── Returns: result table
 ```
@@ -203,7 +203,7 @@ User: "Take my sales.csv, join with customers, calculate revenue by segment, sav
 
 Gateway:
 ├── csv-mcp: load sales.csv
-├── dbmeta: introspect customers table
+├── db-mcp: introspect customers table
 ├── aggregation (DuckDB): 
 │   └── SELECT segment, SUM(amount) FROM sales JOIN customers... GROUP BY 1
 ├── export-mcp: write to parquet
@@ -256,7 +256,7 @@ Gateway:
 ## File Structure
 
 ```
-~/.semantic-grid/                     # or ~/.sg/ for short
+~/.db-mcp/                            # config directory
 ├── config.yaml                       # global settings, source registry
 │
 ├── knowledge/                        # UNIFIED KNOWLEDGE LAYER
@@ -274,7 +274,7 @@ Gateway:
 │       └── *.yaml                    # known-good queries
 │
 ├── sources/                          # SOURCE-SPECIFIC CONFIG
-│   ├── main_db/                      # dbmeta connection
+│   ├── main_db/                      # db-mcp connection
 │   │   ├── .env                      # credentials (gitignored)
 │   │   ├── config.yaml               # connection settings
 │   │   └── state.yaml                # onboarding state
@@ -303,14 +303,14 @@ Gateway:
 
 ### Phase 0: Foundation (2 weeks)
 
-**Goal**: Gateway that wraps existing dbmeta.
+**Goal**: Gateway that wraps existing db-mcp.
 
 - [ ] `sg-gateway` CLI (or `sg` for short)
-- [ ] Gateway MCP server that proxies to dbmeta
-- [ ] Unified config structure (`~/.semantic-grid/`)
-- [ ] `sg init` wizard (wraps `dbmeta init`)
+- [ ] Gateway MCP server that proxies to db-mcp
+- [ ] Unified config structure (`~/.db-mcp/`)
+- [ ] `sg init` wizard (wraps `db-mcp init`)
 
-**Result**: Drop-in replacement for dbmeta with new structure.
+**Result**: Drop-in replacement for db-mcp with new structure.
 
 ### Phase 1: CSV Support (1 week)
 
@@ -373,9 +373,8 @@ Gateway:
 ### 1. Naming & Branding
 
 Options:
-- `semantic-grid` / `sg` — matches repo name
+- `db-mcp` — current project name
 - `dataconn` — generic, memorable
-- `dbmeta` — keep existing brand, expand scope
 - Something else?
 
 ### 2. Local-Only vs Hybrid
@@ -393,11 +392,11 @@ Should gateway:
 ### 3. Gateway Runtime
 
 Options:
-- **Python** (like dbmeta): Leverage existing code, PyInstaller binary
+- **Python** (like db-mcp): Leverage existing code, PyInstaller binary
 - **TypeScript**: Better Electron integration if we build desktop app
 - **Rust**: Fast, small binary, but harder to write MCP servers
 
-**Recommendation**: Python initially (reuse dbmeta), consider Rust for v2.
+**Recommendation**: Python initially (reuse db-mcp), consider Rust for v2.
 
 ### 4. Plugin Architecture
 
@@ -421,12 +420,12 @@ Should gateway support:
 
 | Component | Becomes |
 |-----------|---------|
-| dbmeta v2 | Core MCP for database sources |
-| dbmeta CLI | Subsumed by `sg` CLI |
-| dbmeta desktop (Electron) | Becomes `sg-desktop` |
+| db-mcp | Core MCP for database sources |
+| db-mcp CLI | Subsumed by `sg` CLI |
+| db-mcp desktop (Electron) | Becomes `sg-desktop` |
 | Flow Manager | Separate concern (agentic workflows) |
 
-The gateway **doesn't replace** dbmeta — it wraps and extends it.
+The gateway **doesn't replace** db-mcp — it wraps and extends it.
 
 ---
 

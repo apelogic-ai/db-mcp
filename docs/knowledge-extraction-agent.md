@@ -2,11 +2,11 @@
 
 ## Overview
 
-A background agentic process that analyzes OTel traces from dbmeta MCP server usage to extract knowledge artifacts and improve the system's semantic understanding over time.
+A background agentic process that analyzes OTel traces from db-mcp MCP server usage to extract knowledge artifacts and improve the system's semantic understanding over time.
 
 ## Problem Statement
 
-The dbmeta MCP server provides tools and rules for Claude to invoke, but we lack control over:
+The db-mcp MCP server provides tools and rules for Claude to invoke, but we lack control over:
 - Tool choices made by Claude
 - Whether Claude follows the protocol (looking for prior knowledge, domain model, cached schema, query examples, prior errors and gotchas)
 
@@ -31,7 +31,7 @@ Notable examples in industry:
 ```
 +-------------------------------------------------------------+
 |                    PRODUCTION PATH                          |
-|  User -> Claude -> dbmeta MCP -> Database                   |
+|  User -> Claude -> db-mcp MCP -> Database                   |
 |              |                                              |
 |         OTel Traces                                         |
 +-------------------------------------------------------------+
@@ -200,7 +200,7 @@ For this to be a valid pattern (not anti-pattern):
 - Needed: Persistent trace storage (SQLite, PostgreSQL, or dedicated like Jaeger)
 
 ### Knowledge Vault
-- Location: `packages/resources/dbmeta_app/providers/{provider}/`
+- Location: `~/.db-mcp/connections/{connection}/`
 - Artifacts: `examples/`, `learnings/`, `instructions/`
 
 ### Review Queue
@@ -211,7 +211,7 @@ For this to be a valid pattern (not anti-pattern):
 
 1. **Trace retention**: How long to keep traces? Storage vs learning value tradeoff.
 2. **Extraction frequency**: Real-time vs batch (hourly/daily)?
-3. **Multi-tenant isolation**: Per-provider knowledge vaults or shared learnings?
+3. **Multi-tenant isolation**: Per-connection knowledge vaults or shared learnings?
 4. **Confidence calibration**: How to tune auto-approve thresholds?
 5. **Cost budget**: LLM calls per trace, sampling strategy?
 

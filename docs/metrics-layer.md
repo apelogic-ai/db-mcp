@@ -2,19 +2,19 @@
 
 ## Overview
 
-A semantic metrics layer for DB-Meta v2 MCP server that enables natural language queries over business metrics with composability, portability, and versioning. Standard agents (Claude Desktop, etc.) can query metrics like "DAU" or "retention rate" and get consistent, auditable SQL.
+A semantic metrics layer for DB-MCP MCP server that enables natural language queries over business metrics with composability, portability, and versioning. Standard agents (Claude Desktop, etc.) can query metrics like "DAU" or "retention rate" and get consistent, auditable SQL.
 
-## Context: DB-Meta v2 Architecture
+## Context: DB-MCP Architecture
 
-DB-Meta v2 is an MCP server designed for standard agents (Claude Desktop, Cursor, etc.):
+DB-MCP is an MCP server designed for standard agents (Claude Desktop, Cursor, etc.):
 
 **Claude Desktop / MCP Client**
 ↓ *MCP Protocol (stdio/http)*
 
-**DB-Meta v2 MCP Server**
+**DB-MCP MCP Server**
 - **Tools:** shell, run_sql, validate_sql, get_result, list_tables, describe_table, mcp_setup_*, mcp_metrics_* (NEW)
-- **Resources:** dbmeta://ground-rules, dbmeta://sql-rules, dbmeta://metrics (NEW)
-- **Connection Vault:** `~/.dbmeta/connections/{name}/`
+- **Resources:** db-mcp://ground-rules, db-mcp://sql-rules, db-mcp://metrics (NEW)
+- **Connection Vault:** `~/.db-mcp/connections/{name}/`
   - PROTOCOL.md
   - schema/descriptions.yaml
   - examples/*.yaml
@@ -26,7 +26,7 @@ DB-Meta v2 is an MCP server designed for standard agents (Claude Desktop, Cursor
 
 **Database** (Trino, ClickHouse, PostgreSQL)
 
-Key insight: The agent (Claude) does the reasoning. DB-Meta provides tools and knowledge. Metrics fit naturally as another knowledge layer in the connection vault.
+Key insight: The agent (Claude) does the reasoning. DB-MCP provides tools and knowledge. Metrics fit naturally as another knowledge layer in the connection vault.
 
 ## Why a Metrics Layer?
 
@@ -76,9 +76,9 @@ With metrics:
 | **Cube.dev** | Prescriptive | Pre-aggregation, fast | Infrastructure overhead |
 | **RAG/Text-to-SQL** | Descriptive | Flexible, natural | Inconsistent, harder to audit |
 
-### Recommendation: Hybrid for DB-Meta v2
+### Recommendation: Hybrid for DB-MCP
 
-Since DB-Meta works with LLM agents, we leverage both prescriptive and descriptive:
+Since DB-MCP works with LLM agents, we leverage both prescriptive and descriptive:
 
 ```yaml
 # Example metric definition
@@ -289,13 +289,13 @@ bindings:
 
 ```bash
 # Export portable metrics from one connection
-cp ~/.dbmeta/connections/prod/metrics/portable/* /tmp/metrics/
+cp ~/.db-mcp/connections/prod/metrics/portable/* /tmp/metrics/
 
 # Import to another connection  
-cp /tmp/metrics/* ~/.dbmeta/connections/dev/metrics/portable/
+cp /tmp/metrics/* ~/.db-mcp/connections/dev/metrics/portable/
 
 # Or use git for the whole vault
-cd ~/.dbmeta/connections/prod
+cd ~/.db-mcp/connections/prod
 git init && git add metrics/ && git commit -m "metrics"
 git remote add origin git@github.com:org/metrics.git && git push
 ```
@@ -348,7 +348,7 @@ Metric definition: COUNT(DISTINCT user_id) from transactions, grouped by day.
 Canonical directory structure for metrics in the connection vault:
 
 ```
-~/.dbmeta/connections/{name}/
+~/.db-mcp/connections/{name}/
 ├── PROTOCOL.md                    # Ground rules (updated with metrics section)
 ├── schema/
 │   └── descriptions.yaml
@@ -464,7 +464,7 @@ How do we make sure Claude actually uses the metrics?
 |-------|-----------|---------|
 | 1. Server instructions | MCP server `instructions` field | First thing agent sees on connect |
 | 2. PROTOCOL.md | Ground rules in vault | Detailed workflow instructions |
-| 3. MCP Resource | `dbmeta://metrics` | Quick catalog lookup |
+| 3. MCP Resource | `db-mcp://metrics` | Quick catalog lookup |
 | 4. Validation hook | `run_sql` response | Catch misses, suggest metrics |
 | 5. Distillation | Post-query prompt | Grow catalog from usage |
 
@@ -538,7 +538,7 @@ Always tell the user which metric you used and its version:
 ### Layer 3: MCP Resource
 
 ```python
-@server.resource("dbmeta://metrics")
+@server.resource("db-mcp://metrics")
 def get_metrics() -> str:
     """Business metrics catalog - CHECK THIS for any business question.
     
@@ -588,7 +588,7 @@ async def _run_sql(sql: str, ...) -> dict:
    - Keywords detected: DAU, users → Yes
 
 2. **CHECK METRICS** — Search catalog
-   - `cat metrics/catalog.yaml` or read `dbmeta://metrics`
+   - `cat metrics/catalog.yaml` or read `db-mcp://metrics`
    - Found: `daily_active_users`
 
 3. **LOAD & USE** — Extract and adapt
@@ -697,7 +697,7 @@ async def _metrics_import(
 2. Create `metrics/` directory structure in vault
 3. Add 5-10 core metrics manually (DAU, MAU, revenue)
 4. Update PROTOCOL.md with metrics section
-5. Add `dbmeta://metrics` resource
+5. Add `db-mcp://metrics` resource
 6. Test Claude using metrics via shell commands
 
 **Validation**: Claude consistently uses metric definitions when asked about DAU.
@@ -749,7 +749,7 @@ async def _metrics_import(
 1. **Metric Discovery UX**: How should Claude present available metrics?
    - List in initial context? (uses tokens)
    - Agent searches on demand? (current approach)
-   - Always read `dbmeta://metrics` resource first?
+   - Always read `db-mcp://metrics` resource first?
 
 2. **Metric Conflicts**: What if schema changes break metrics?
    - Validation on schema update
@@ -778,12 +778,12 @@ async def _metrics_import(
 
 ---
 
-## Comparative Analysis: DB-Meta vs MetricFlow vs Cube.dev
+## Comparative Analysis: DB-MCP vs MetricFlow vs Cube.dev
 
 ### Architecture Comparison
 
-| Aspect | DB-Meta v2 | dbt MetricFlow | Cube.dev |
-|--------|------------|----------------|----------|
+| Aspect | DB-MCP | dbt MetricFlow | Cube.dev |
+|--------|--------|----------------|----------|
 | **Deployment** | Files in vault, no server | Python package + dbt Cloud/Core | Dedicated API server |
 | **Infrastructure** | Zero (just YAML files) | dbt project required | Cube server + optional Redis |
 | **Query interface** | LLM agent (Claude, etc.) | SQL via dbt proxy, Semantic Layer API | REST API, GraphQL, SQL API |
@@ -794,7 +794,7 @@ async def _metrics_import(
 
 **DAU (Daily Active Users) in each format:**
 
-**DB-Meta v2:**
+**DB-MCP:**
 ```yaml
 metrics:
   - name: daily_active_users
@@ -876,12 +876,12 @@ cube(`Transactions`, {
 
 **User asks: "What's our DAU for the last 7 days?"**
 
-**DB-Meta v2:**
+**DB-MCP:**
 1. User → Claude Desktop → "What's our DAU for the last 7 days?"
 2. Claude reads `metrics/catalog.yaml` via shell
 3. Claude finds `daily_active_users`, extracts canonical SQL
 4. Claude substitutes date parameters, calls `run_sql`
-5. DB-Meta validates and executes against warehouse
+5. DB-MCP validates and executes against warehouse
 6. Results returned with metric attribution
 
 **dbt MetricFlow:**
@@ -900,8 +900,8 @@ cube(`Transactions`, {
 
 ### Feature Comparison
 
-| Feature | DB-Meta v2 | MetricFlow | Cube.dev |
-|---------|------------|------------|----------|
+| Feature | DB-MCP | MetricFlow | Cube.dev |
+|---------|--------|------------|----------|
 | **Natural language queries** | Native (LLM-powered) | No (API/SQL only) | No (API only) |
 | **Metric composition** | Yes (ratios, derived) | Yes (derived metrics) | Yes (calculated measures) |
 | **Time-shifted metrics** | Yes | Yes (offset windows) | Yes (rolling windows) |
@@ -915,7 +915,7 @@ cube(`Transactions`, {
 
 ### Trade-offs Analysis
 
-**When to use DB-Meta v2:**
+**When to use DB-MCP:**
 - Natural language is the primary interface
 - Zero infrastructure appetite
 - Metrics evolve through usage (distillation)
@@ -938,7 +938,7 @@ cube(`Transactions`, {
 
 ### What We Gain vs Existing Solutions
 
-**Advantages of DB-Meta approach:**
+**Advantages of DB-MCP approach:**
 
 1. **LLM-native** — Designed for agent-driven queries, not API calls
 2. **Zero infrastructure** — Just YAML files, no servers to run
@@ -975,7 +975,7 @@ cube(`Transactions`, {
 
 ### Recommendation
 
-**Start with DB-Meta approach when:**
+**Start with DB-MCP approach when:**
 - Primary interface is conversational (Claude Desktop, etc.)
 - Small-medium query volume (< 1000/day)
 - Team is exploring what metrics matter

@@ -1,12 +1,12 @@
-# DB-Meta v2 Electron/TypeScript Port Feasibility
+# DB-MCP Electron/TypeScript Port Feasibility
 
 **Status**: Planning  
 **Created**: 2026-01-21  
-**Decision**: Electron shell + dbmeta sidecar binary
+**Decision**: Electron shell + db-mcp sidecar binary
 
 ## Executive Summary
 
-This document analyzes packaging DB-Meta v2 as a desktop application. After evaluating full TypeScript rewrite vs hybrid approaches, **we've decided on Electron shell + bundled dbmeta binary (sidecar pattern)**.
+This document analyzes packaging DB-MCP as a desktop application. After evaluating full TypeScript rewrite vs hybrid approaches, **we've decided on Electron shell + bundled db-mcp binary (sidecar pattern)**.
 
 This is a proven architecture (VS Code + language servers, Cursor + various backends) that:
 - Preserves existing Python codebase investment
@@ -318,8 +318,8 @@ Instead of one monolith, split into layers:
 
 **1. CLI via npx (zero install)**
 ```bash
-npx @semantic-grid/dbmeta serve --connection postgres://...
-npx @semantic-grid/dbmeta onboard
+npx @db-mcp/cli serve --connection postgres://...
+npx @db-mcp/cli onboard
 ```
 - Ships as npm package
 - Works anywhere Node.js exists
@@ -329,8 +329,8 @@ npx @semantic-grid/dbmeta onboard
 **2. Standalone Binary (no runtime)**
 ```bash
 # Download single binary
-curl -fsSL https://get.dbmeta.dev | sh
-dbmeta serve
+curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh
+db-mcp serve
 ```
 - Bundle with `pkg` or `bun build --compile`
 - ~50MB binary (vs 150MB Electron)
@@ -346,9 +346,9 @@ dbmeta serve
 ```json
 {
   "mcpServers": {
-    "dbmeta": {
+    "db-mcp": {
       "command": "npx",
-      "args": ["@semantic-grid/dbmeta", "serve"]
+      "args": ["@db-mcp/cli", "serve"]
     }
   }
 }
@@ -372,7 +372,7 @@ dbmeta serve
 
 ```
 packages/
-├── @semantic-grid/dbmeta-core/     # MCP server, tools, adapters
+├── @db-mcp/core/                   # MCP server, tools, adapters
 │   ├── src/
 │   │   ├── mcp/                    # MCP server implementation
 │   │   ├── adapters/               # Database adapters
@@ -380,11 +380,11 @@ packages/
 │   │   └── tools/                  # MCP tools
 │   └── package.json
 │
-├── @semantic-grid/dbmeta-cli/      # CLI wrapper
+├── @db-mcp/cli/                    # CLI wrapper
 │   ├── src/cli.ts                  # Commander/yargs CLI
 │   └── package.json                # depends on core
 │
-└── @semantic-grid/dbmeta-desktop/  # Electron app
+└── @db-mcp/desktop/                # Electron app
     ├── src/
     │   ├── main/                   # Electron main process
     │   └── renderer/               # React UI
@@ -447,7 +447,7 @@ Tauri App (Rust core)
 ```
 Packaged Python App
 ├── PyInstaller bundle
-│   └── Full DB-Meta v2
+│   └── Full DB-MCP
 └── Electron Shell (optional, for UI only)
 ```
 
@@ -456,9 +456,9 @@ Packaged Python App
 
 ---
 
-## Decision: Electron Shell + dbmeta Sidecar
+## Decision: Electron Shell + db-mcp Sidecar
 
-**Chosen approach**: Electron desktop app with bundled Python dbmeta binary.
+**Chosen approach**: Electron desktop app with bundled Python db-mcp binary.
 
 ### Why This Approach
 
@@ -484,9 +484,9 @@ The sidecar pattern is battle-tested:
 ├────────────────────────────────────────────────────────┤
 │  Main Process (Node.js)                                │
 │  ├── Window management                                 │
-│  ├── Sidecar lifecycle (spawn/kill dbmeta)            │
+│  ├── Sidecar lifecycle (spawn/kill db-mcp)            │
 │  ├── IPC bridge to renderer                           │
-│  ├── Deep link handler (dbmeta://)                    │
+│  ├── Deep link handler (db-mcp://)                    │
 │  └── Auto-updater                                      │
 ├────────────────────────────────────────────────────────┤
 │  Renderer Process (React)                              │
@@ -497,33 +497,33 @@ The sidecar pattern is battle-tested:
 ├────────────────────────────────────────────────────────┤
 │  Bundled Resources                                     │
 │  └── bin/                                              │
-│      ├── dbmeta-darwin-arm64                          │
-│      ├── dbmeta-darwin-x64                            │
-│      ├── dbmeta-linux-x64                             │
-│      └── dbmeta-win-x64.exe                           │
+│      ├── db-mcp-darwin-arm64                          │
+│      ├── db-mcp-darwin-x64                            │
+│      ├── db-mcp-linux-x64                             │
+│      └── db-mcp-win-x64.exe                           │
 └────────────────────────────────────────────────────────┘
                           │
                           │ HTTP (localhost:8384)
                           │ or stdio (MCP)
                           ▼
 ┌────────────────────────────────────────────────────────┐
-│                 dbmeta binary (Python)                 │
+│                 db-mcp binary (Python)                 │
 │  ├── MCP server (fastmcp)                             │
 │  ├── Database introspection (SQLAlchemy)              │
 │  ├── Query validation (EXPLAIN)                       │
 │  ├── Console server (HTTP API)                        │
-│  └── Connection vault (~/.dbmeta/connections/)        │
+│  └── Connection vault (~/.db-mcp/connections/)        │
 └────────────────────────────────────────────────────────┘
 ```
 
 ### What Already Exists
 
-**dbmeta binary is already shipping:**
-- PyInstaller spec file (`dbmeta.spec`) with all hidden imports configured
+**db-mcp binary is already shipping:**
+- PyInstaller spec file (`db-mcp.spec`) with all hidden imports configured
 - Build script (`scripts/build.py`) producing ~67MB binary
 - Install script (`scripts/install.sh`) with `curl | sh` support
 - Release script (`scripts/release.sh`) for version bumping
-- CI/CD workflow (`.github/workflows/release-dbmeta.yml`) building for:
+- CI/CD workflow (`.github/workflows/release.yml`) building for:
   - macOS ARM64, macOS x64, Linux x64, Windows x64
 - GitHub Releases with auto-generated release notes
 
@@ -534,17 +534,17 @@ The sidecar pattern is battle-tested:
 - Can be extended for query results
 
 **CLI already has:**
-- `dbmeta init` — interactive setup wizard
-- `dbmeta start` — MCP server (stdio mode)
-- `dbmeta console` — trace viewer UI
-- `dbmeta status`, `list`, `use`, `sync`, `pull` — connection management
+- `db-mcp init` — interactive setup wizard
+- `db-mcp start` — MCP server (stdio mode)
+- `db-mcp console` — trace viewer UI
+- `db-mcp status`, `list`, `use`, `sync`, `pull` — connection management
 - Claude Desktop auto-configuration
 
 ### What's Missing for Electron
 
 | Component | Status | Effort |
 |-----------|--------|--------|
-| dbmeta binary | ✅ Done | — |
+| db-mcp binary | ✅ Done | — |
 | CI/CD for binaries | ✅ Done | — |
 | HTTP mode for MCP | ❌ Missing | 2 days |
 | Query store (SQLite) | ❌ Missing | 3 days |
@@ -557,7 +557,7 @@ The sidecar pattern is battle-tested:
 
 ### Implementation Phases (Revised)
 
-**Phase 1: Extend dbmeta for Desktop** (1 week)
+**Phase 1: Extend db-mcp for Desktop** (1 week)
 
 Already done:
 - ✅ PyInstaller binary (67MB)
@@ -565,17 +565,17 @@ Already done:
 - ✅ Console server on port 8384
 
 To add:
-- [ ] `dbmeta serve --http` — HTTP transport for MCP (vs stdio)
-- [ ] Query store module (SQLite in `~/.dbmeta/queries.db`)
+- [ ] `db-mcp serve --http` — HTTP transport for MCP (vs stdio)
+- [ ] Query store module (SQLite in `~/.db-mcp/queries.db`)
 - [ ] `/api/queries` — list recent queries
 - [ ] `/api/queries/{id}` — get query metadata
 - [ ] `/q/{id}` — HTML page with results grid
 
 **Phase 2: Electron Shell** (1 week)
 
-New `apps/dbmeta-desktop/` package:
+New `apps/db-mcp-desktop/` package:
 - [ ] Basic Electron + React setup (Vite)
-- [ ] Sidecar manager (spawn/kill dbmeta binary)
+- [ ] Sidecar manager (spawn/kill db-mcp binary)
 - [ ] Main window with connection status
 - [ ] IPC bridge for renderer ↔ main communication
 - [ ] Tray icon with quick actions
@@ -585,12 +585,12 @@ New `apps/dbmeta-desktop/` package:
 - [ ] Connection manager (list, add, edit, remove)
 - [ ] Query results grid (MUI X Data Grid)
 - [ ] Schema browser (tree view)
-- [ ] Onboarding wizard (reuse `dbmeta init` flow)
+- [ ] Onboarding wizard (reuse `db-mcp init` flow)
 
 **Phase 4: Deep Links + Polish** (1 week)
 
-- [ ] Register `dbmeta://` protocol handler
-- [ ] Handle `dbmeta://q/{id}` → open query results
+- [ ] Register `db-mcp://` protocol handler
+- [ ] Handle `db-mcp://q/{id}` → open query results
 - [ ] Auto-updater (electron-updater + GitHub Releases)
 - [ ] Code signing (Apple Developer + Windows EV cert)
 - [ ] Installer configs (DMG, NSIS)
@@ -599,8 +599,8 @@ New `apps/dbmeta-desktop/` package:
 
 | Milestone | Deliverable | Users Served |
 |-----------|-------------|--------------|
-| Today | `dbmeta` CLI + binary | CLI users, Claude Desktop |
-| Phase 1 | `dbmeta serve --http` + query store | Advanced users, scripting |
+| Today | `db-mcp` CLI + binary | CLI users, Claude Desktop |
+| Phase 1 | `db-mcp serve --http` + query store | Advanced users, scripting |
 | Phase 2 | Basic Electron app | Early adopters |
 | Phase 3 | Full desktop UI | General users |
 | Phase 4 | Signed, auto-updating | Production users |
@@ -619,7 +619,7 @@ The sidecar approach still supports multiple delivery modes:
 
 | Delivery | Description | Bundle |
 |----------|-------------|--------|
-| `pip install dbmeta` | Python package (existing) | ~5MB |
+| `pip install db-mcp` | Python package (existing) | ~5MB |
 | Standalone binary | PyInstaller bundle | ~50MB |
 | Electron Desktop | Full GUI app | ~200MB |
 | Claude Desktop MCP | Config points to binary | ~50MB |
@@ -632,7 +632,7 @@ Users choose based on their needs. Electron is optional, not forced.
 
 1. **PyInstaller binary size** — Need to test actual size with all dependencies. Target: <80MB per platform.
 2. **Python startup time** — Cold start latency for sidecar. May need preloading strategy.
-3. **Claude Desktop deep link testing** — Verify `dbmeta://` protocol works or fallback to HTTP.
+3. **Claude Desktop deep link testing** — Verify `db-mcp://` protocol works or fallback to HTTP.
 4. **Metrics layer scope** — Include in desktop or keep cloud-only?
 5. **Offline LLM** — Should desktop support local models (Ollama) for air-gapped environments?
 
@@ -642,12 +642,12 @@ Users choose based on their needs. Electron is optional, not forced.
 
 ### The Goal
 
-When Claude executes a query via DB-Meta MCP tools, return a clickable URL that opens the full results in a dedicated viewer:
+When Claude executes a query via DB-MCP MCP tools, return a clickable URL that opens the full results in a dedicated viewer:
 
 ```
 Query executed successfully. 847 rows returned.
 
-[View full results](dbmeta://q/8f3a2b1c)
+[View full results](db-mcp://q/8f3a2b1c)
 
 | col_a | col_b | ... |
 |-------|-------|-----|
@@ -661,7 +661,7 @@ Per the [MCP specification](https://modelcontextprotocol.io/specification/2025-0
 ```json
 {
   "type": "resource_link",
-  "uri": "dbmeta://q/8f3a2b1c",
+  "uri": "db-mcp://q/8f3a2b1c",
   "name": "Query Results",
   "description": "847 rows from analytics.events",
   "mimeType": "application/json"
@@ -677,7 +677,7 @@ Claude Desktop is an Electron app. Standard Electron apps use `shell.openExterna
 ```ts
 // Typical Electron link handling
 shell.openExternal('https://example.com')  // Opens in browser
-shell.openExternal('dbmeta://q/abc123')    // Opens registered protocol handler
+shell.openExternal('db-mcp://q/abc123')    // Opens registered protocol handler
 ```
 
 **What we don't know**:
@@ -689,7 +689,7 @@ shell.openExternal('dbmeta://q/abc123')    // Opens registered protocol handler
 
 ### Custom Protocol Registration in Electron
 
-If DB-Meta ships as an Electron app, registering `dbmeta://` protocol:
+If DB-MCP ships as an Electron app, registering `db-mcp://` protocol:
 
 **Main process setup:**
 ```ts
@@ -698,16 +698,16 @@ import { app, shell } from 'electron'
 // Register on startup
 if (process.defaultApp) {
   // Dev mode
-  app.setAsDefaultProtocolClient('dbmeta', process.execPath, [path.resolve(process.argv[1])])
+  app.setAsDefaultProtocolClient('db-mcp', process.execPath, [path.resolve(process.argv[1])])
 } else {
   // Production
-  app.setAsDefaultProtocolClient('dbmeta')
+  app.setAsDefaultProtocolClient('db-mcp')
 }
 
 // macOS: handle URL when app is running
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  handleDeepLink(url)  // url = "dbmeta://q/abc123"
+  handleDeepLink(url)  // url = "db-mcp://q/abc123"
 })
 
 // Windows/Linux: URL comes via second-instance event
@@ -716,7 +716,7 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', (event, argv) => {
-    const url = argv.find(arg => arg.startsWith('dbmeta://'))
+    const url = argv.find(arg => arg.startsWith('db-mcp://'))
     if (url) handleDeepLink(url)
     mainWindow?.focus()
   })
@@ -724,7 +724,7 @@ if (!gotLock) {
 
 function handleDeepLink(url: string) {
   const parsed = new URL(url)
-  // dbmeta://q/abc123 → pathname = "/abc123", hostname = "q"
+  // db-mcp://q/abc123 → pathname = "/abc123", hostname = "q"
   if (parsed.hostname === 'q') {
     const queryId = parsed.pathname.slice(1)
     mainWindow.webContents.send('navigate', `/query/${queryId}`)
@@ -736,8 +736,8 @@ function handleDeepLink(url: string) {
 ```json
 {
   "protocols": [{
-    "name": "DB-Meta Query Results",
-    "schemes": ["dbmeta"]
+    "name": "DB-MCP Query Results",
+    "schemes": ["db-mcp"]
   }]
 }
 ```
@@ -766,7 +766,7 @@ http://localhost:8384/q/abc123
 - Already have console server on port 8384
 
 **Cons:**
-- Requires DB-Meta server to be running when link clicked
+- Requires DB-MCP server to be running when link clicked
 - Less "native" feel
 - Port conflicts possible
 
@@ -796,13 +796,13 @@ app.get('/q/:queryId', async (req, res) => {
 
 | Schema | Example | Pros | Cons |
 |--------|---------|------|------|
-| `dbmeta://q/{id}` | `dbmeta://q/abc123` | Native feel, launches app | May be blocked by Claude |
+| `db-mcp://q/{id}` | `db-mcp://q/abc123` | Native feel, launches app | May be blocked by Claude |
 | `http://localhost:8384/q/{id}` | `http://localhost:8384/q/abc123` | Always works | Requires server running |
-| `file://` | `file://~/.dbmeta/results/abc123.html` | Offline | Security warnings, ugly |
+| `file://` | `file://~/.db-mcp/results/abc123.html` | Offline | Security warnings, ugly |
 
 ### Recommended Approach
 
-**Primary**: Try `dbmeta://` custom protocol
+**Primary**: Try `db-mcp://` custom protocol
 **Fallback**: `http://localhost:8384/q/{id}`
 **Detection**: At runtime, check if custom protocol works; if not, use HTTP
 
@@ -810,7 +810,7 @@ app.get('/q/:queryId', async (req, res) => {
 // In MCP tool response
 function getQueryResultUrl(queryId: string): string {
   if (customProtocolSupported()) {
-    return `dbmeta://q/${queryId}`
+    return `db-mcp://q/${queryId}`
   }
   return `http://localhost:${CONSOLE_PORT}/q/${queryId}`
 }
@@ -852,7 +852,7 @@ CREATE TABLE queries (
 | Standalone binary | HTTP only | Same |
 | Electron Desktop | Custom protocol + HTTP | Full support |
 
-The custom `dbmeta://` protocol is **Electron-only**. CLI/binary users get HTTP URLs.
+The custom `db-mcp://` protocol is **Electron-only**. CLI/binary users get HTTP URLs.
 
 ---
 
@@ -868,7 +868,7 @@ The custom `dbmeta://` protocol is **Electron-only**. CLI/binary users get HTTP 
 |------|-------------|------|------|
 | **electron-builder** | ~150MB | Most mature, all platforms, auto-update built-in | Large bundles |
 | **electron-forge** | ~150MB | Official tooling, better TS/Webpack integration | Newer, less battle-tested |
-| **Tauri** | ~10MB | Tiny bundles, Rust backend | Must rewrite dbmeta or bundle as sidecar |
+| **Tauri** | ~10MB | Tiny bundles, Rust backend | Must rewrite db-mcp or bundle as sidecar |
 | **Wails** | ~15MB | Go backend, small bundles | Go rewrite needed |
 
 **Recommendation**: Start with **electron-builder** — fastest to ship, widest reach, most documentation.
@@ -881,7 +881,7 @@ The custom `dbmeta://` protocol is **Electron-only**. CLI/binary users get HTTP 
 | Windows | NSIS, MSI, portable | Code signing critical (SmartScreen) |
 | Linux | AppImage, deb, rpm, snap | AppImage most portable |
 
-### Bundling the dbmeta Binary (Sidecar Pattern)
+### Bundling the db-mcp Binary (Sidecar Pattern)
 
 Similar to how VS Code bundles language servers:
 
@@ -889,10 +889,10 @@ Similar to how VS Code bundles language servers:
 app/
 ├── resources/
 │   └── bin/
-│       ├── dbmeta-darwin-arm64
-│       ├── dbmeta-darwin-x64
-│       ├── dbmeta-linux-x64
-│       └── dbmeta-win-x64.exe
+│       ├── db-mcp-darwin-arm64
+│       ├── db-mcp-darwin-x64
+│       ├── db-mcp-linux-x64
+│       └── db-mcp-win-x64.exe
 ├── main/
 │   └── index.ts
 └── renderer/
@@ -904,11 +904,11 @@ app/
 import { spawn } from 'child_process'
 import path from 'path'
 
-function getDbmetaPath(): string {
+function getDbMcpPath(): string {
   const platform = process.platform
   const arch = process.arch
   const ext = platform === 'win32' ? '.exe' : ''
-  const binary = `dbmeta-${platform}-${arch}${ext}`
+  const binary = `db-mcp-${platform}-${arch}${ext}`
   
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'bin', binary)
@@ -916,14 +916,14 @@ function getDbmetaPath(): string {
   return path.join(__dirname, '../../resources/bin', binary)
 }
 
-function startDbmeta() {
-  const dbmetaPath = getDbmetaPath()
-  const proc = spawn(dbmetaPath, ['serve', '--port', '8384'], {
+function startDbMcp() {
+  const dbMcpPath = getDbMcpPath()
+  const proc = spawn(dbMcpPath, ['serve', '--port', '8384'], {
     stdio: ['pipe', 'pipe', 'pipe']
   })
   
-  proc.stdout.on('data', (data) => console.log(`dbmeta: ${data}`))
-  proc.stderr.on('data', (data) => console.error(`dbmeta error: ${data}`))
+  proc.stdout.on('data', (data) => console.log(`db-mcp: ${data}`))
+  proc.stderr.on('data', (data) => console.error(`db-mcp error: ${data}`))
   
   return proc
 }
@@ -966,18 +966,18 @@ function startDbmeta() {
 The desktop app should support both:
 
 ```ts
-interface DbmetaConnection {
+interface DbMcpConnection {
   mode: 'local' | 'remote'
   localBinaryPath?: string
-  remoteUrl?: string  // e.g., "https://dbmeta.mycompany.com"
+  remoteUrl?: string  // e.g., "https://db-mcp.mycompany.com"
 }
 
 // Settings UI lets user choose:
-// - "Use bundled dbmeta" (default)
+// - "Use bundled db-mcp" (default)
 // - "Connect to remote service" (enterprise)
 ```
 
-**Enterprise use case**: Centralized dbmeta service with shared connections, audit logs, etc.
+**Enterprise use case**: Centralized db-mcp service with shared connections, audit logs, etc.
 
 ### Distribution Channels
 
@@ -1047,8 +1047,8 @@ import { autoUpdater } from 'electron-updater'
 
 autoUpdater.setFeedURL({
   provider: 'github',
-  owner: 'semantic-grid',
-  repo: 'dbmeta-desktop'
+  owner: 'apelogic-ai',
+  repo: 'db-mcp-desktop'
 })
 
 autoUpdater.checkForUpdatesAndNotify()
