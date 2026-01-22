@@ -1,13 +1,13 @@
 """dbmcp CLI - Standalone CLI for db-mcp MCP server.
 
 Commands:
-    dbmcp init [NAME] [GIT_URL]  - Interactive setup wizard (or clone from git)
+    db-mcp init [NAME] [GIT_URL]  - Interactive setup wizard (or clone from git)
     dbmcp start                  - Start MCP server (stdio mode)
     dbmcp config                 - Open config in editor
     dbmcp status                 - Show current configuration
     dbmcp list                   - List all connections
     dbmcp use NAME               - Switch active connection
-    dbmcp git-init [NAME] [URL]  - Enable git sync for existing connection
+    db-mcp git-init [NAME] [URL]  - Enable git sync for existing connection
     dbmcp sync [NAME]            - Sync changes to git remote
     dbmcp pull [NAME]            - Pull updates from git remote
     dbmcp edit [NAME]            - Edit connection credentials (.env file)
@@ -125,7 +125,7 @@ def get_db_mcp_binary_path() -> str:
     """db-mcp binary (or script in dev mode)."""
     # If running as PyInstaller bundle
     if getattr(sys, "frozen", False):
-        # Check if there's a symlink at ~/.local/bin/dbmeta pointing to us
+        # Check if there is a symlink at ~/.local/bin/db-mcp pointing to us
         # If so, use the symlink path so upgrades work automatically
         symlink_path = Path.home() / ".local" / "bin" / "db-mcp"
         if symlink_path.is_symlink():
@@ -169,7 +169,7 @@ def extract_database_url_from_claude_config(claude_config: dict) -> str | None:
     """Extract DATABASE_URL from existing Claude Desktop MCP server configs."""
     mcp_servers = claude_config.get("mcpServers", {})
 
-    # Check dbmeta entry first
+    # Check db-mcp entry first
     if "db-mcp" in mcp_servers:
         env = mcp_servers["db-mcp"].get("env", {})
         if "DATABASE_URL" in env:
@@ -544,9 +544,9 @@ def init(name: str, source: str | None):
     semantic layer instead of starting from scratch.
 
     Examples:
-        dbmcp init                           # New connection "default"
-        dbmcp init mydb                      # New connection "mydb"
-        dbmcp init mydb git@github.com:org/dbmeta-mydb.git  # Clone from git
+        db-mcp init                           # New connection "default"
+        db-mcp init mydb                      # New connection "mydb"
+        db-mcp init mydb git@github.com:org/db-mcp-mydb.git  # Clone from git
     """
     # Check if Claude Desktop is installed
     if not is_claude_desktop_installed():
@@ -659,7 +659,7 @@ def _init_greenfield(name: str):
     claude_config, claude_config_path = load_claude_desktop_config()
     mcp_servers = claude_config.get("mcpServers", {})
 
-    # Check for existing dbmeta or db-mcp entry
+    # Check for existing db-mcp entry
     existing_url = extract_database_url_from_claude_config(claude_config)
     has_db_mcp = "db-mcp" in mcp_servers
     has_legacy = "db-mcp" in mcp_servers
@@ -679,7 +679,7 @@ def _init_greenfield(name: str):
     elif has_db_mcp or has_legacy:
         console.print("\n[yellow]Existing configuration found:[/yellow]")
         if has_db_mcp:
-            console.print("  Entry: [cyan]dbmeta[/cyan]")
+            console.print("  Entry: [cyan]db-mcp[/cyan]")
         if has_legacy:
             console.print("  Entry: [cyan]db-mcp[/cyan] (legacy)")
         if existing_url:
@@ -837,7 +837,7 @@ def _configure_claude_desktop(name: str):
     # Get binary path
     binary_path = get_db_mcp_binary_path()
 
-    # Add/update dbmeta entry
+    # Add/update db-mcp entry
     claude_config["mcpServers"]["db-mcp"] = {
         "command": binary_path,
         "args": ["start"],
@@ -915,7 +915,7 @@ def _offer_git_setup(name: str, connection_path: Path):
     console.print(
         "\n[dim]Enter a git remote URL to sync with (or leave empty to add later).[/dim]"
     )
-    console.print("[dim]Example: git@github.com:yourorg/dbmeta-mydb.git[/dim]")
+    console.print("[dim]Example: git@github.com:yourorg/db-mcp-mydb.git[/dim]")
     remote_url = Prompt.ask("Git remote URL", default="")
 
     # Initialize git
@@ -934,7 +934,7 @@ def _offer_git_setup(name: str, connection_path: Path):
 def start(connection: str | None):
     """Start the MCP server (stdio mode for Claude Desktop)."""
     if not CONFIG_FILE.exists():
-        console.print("[red]No config found. Run 'dbmcp init' first.[/red]")
+        console.print("[red]No config found. Run 'db-mcp init' first.[/red]")
         sys.exit(1)
 
     config = load_config()
@@ -992,7 +992,7 @@ def start(connection: str | None):
 def config():
     """Open config file in editor."""
     if not CONFIG_FILE.exists():
-        console.print("[yellow]No config found. Run 'dbmcp init' first.[/yellow]")
+        console.print("[yellow]No config found. Run 'db-mcp init' first.[/yellow]")
         if Confirm.ask("Run setup now?", default=True):
             ctx = click.get_current_context()
             ctx.invoke(init)
@@ -1061,7 +1061,7 @@ def status(connection: str | None):
         console.print(f"  Tool mode:   {config.get('tool_mode', 'N/A')}")
     else:
         console.print(f"  [yellow]No config found at {CONFIG_FILE}[/yellow]")
-        console.print("  [dim]Run 'dbmcp init' to configure.[/dim]")
+        console.print("  [dim]Run 'db-mcp init' to configure.[/dim]")
 
     # Connections status
     console.print("\n[bold]Connections[/bold]")
@@ -1106,11 +1106,11 @@ def status(connection: str | None):
                     console.print(f"      [dim]Database: {truncated}[/dim]")
                 elif not has_env:
                     console.print(
-                        "      [yellow]No .env file - run 'dbmcp init' to configure[/yellow]"
+                        "      [yellow]No .env file - run 'db-mcp init' to configure[/yellow]"
                     )
     else:
         console.print("  [dim]No connections configured.[/dim]")
-        console.print("  [dim]Run 'dbmcp init' to create one.[/dim]")
+        console.print("  [dim]Run 'db-mcp init' to create one.[/dim]")
 
     # Claude Desktop status
     console.print("\n[bold]Claude Desktop[/bold]")
@@ -1123,10 +1123,10 @@ def status(connection: str | None):
             console.print(f"  Command: {cmd}")
         elif "db-mcp" in mcp_servers:
             console.print("  [yellow]⚠ Legacy 'db-mcp' entry found[/yellow]")
-            console.print("  [dim]Run 'dbmcp init' to upgrade.[/dim]")
+            console.print("  [dim]Run 'db-mcp init' to upgrade.[/dim]")
         else:
-            console.print("  [yellow]dbmeta not configured[/yellow]")
-            console.print("  [dim]Run 'dbmcp init' to configure.[/dim]")
+            console.print("  [yellow]db-mcp not configured[/yellow]")
+            console.print("  [dim]Run 'db-mcp init' to configure.[/dim]")
 
         # Show other servers
         other_servers = [k for k in mcp_servers.keys() if k not in ("db-mcp", "db-mcp")]
@@ -1138,7 +1138,7 @@ def status(connection: str | None):
     # Legacy structure warning
     if LEGACY_VAULT_DIR.exists() or LEGACY_PROVIDERS_DIR.exists():
         console.print("\n[yellow]⚠ Legacy data structure detected[/yellow]")
-        console.print("  [dim]Run 'dbmcp init' to migrate to new connection structure.[/dim]")
+        console.print("  [dim]Run 'db-mcp init' to migrate to new connection structure.[/dim]")
 
 
 def _get_git_remote_url(path: Path) -> str | None:
@@ -1192,7 +1192,7 @@ def list_cmd():
 
     if not connections:
         console.print("[dim]No connections configured.[/dim]")
-        console.print("[dim]Run 'dbmcp init <name>' to create one.[/dim]")
+        console.print("[dim]Run 'db-mcp init <name>' to create one.[/dim]")
         return
 
     table = Table(title="Connections", show_header=True)
@@ -1285,7 +1285,7 @@ def sync(name: str | None):
     # Check if it's a git repo
     if not is_git_repo(conn_path):
         console.print(f"[yellow]Connection '{name}' is not a git repository.[/yellow]")
-        console.print("[dim]Run 'dbmcp init' and enable git sync, or initialize manually:[/dim]")
+        console.print("[dim]Run 'db-mcp init' and enable git sync, or initialize manually:[/dim]")
         console.print(f"  cd {conn_path}")
         console.print("  git init")
         console.print("  git remote add origin <your-repo-url>")
@@ -1338,9 +1338,9 @@ def git_init_cmd(name: str | None, remote_url: str | None):
     and optionally sets up a remote for syncing.
 
     Examples:
-        dbmcp git-init
-        dbmcp git-init mydb
-        dbmcp git-init mydb git@github.com:org/dbmeta-mydb.git
+        db-mcp git-init
+        db-mcp git-init mydb
+        db-mcp git-init mydb git@github.com:org/db-mcp-mydb.git
     """
     # Check git is installed
     if not is_git_installed():
@@ -1387,7 +1387,7 @@ def git_init_cmd(name: str | None, remote_url: str | None):
         console.print(
             "[dim]Enter a git remote URL to sync with (or leave empty to add later).[/dim]"
         )
-        console.print("[dim]Example: git@github.com:yourorg/dbmeta-mydb.git[/dim]")
+        console.print("[dim]Example: git@github.com:yourorg/db-mcp-mydb.git[/dim]")
         remote_url = Prompt.ask("Git remote URL", default="")
 
     # Initialize git
