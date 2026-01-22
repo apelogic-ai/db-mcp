@@ -1,8 +1,11 @@
 """Migration from legacy storage formats to connection-based structure.
 
 Storage format versions:
-- v1: ~/.dbmcp/vault/ + ~/.dbmcp/providers/{id}/ (separate directories)
-- v2: ~/.dbmcp/connections/{name}/ (self-contained connection directory)
+- v1: ~/.db-mcp/vault/ + ~/.db-mcp/providers/{id}/ (separate directories)
+- v2: ~/.db-mcp/connections/{name}/ (self-contained connection directory)
+
+Namespace migration:
+- ~/.dbmeta -> ~/.db-mcp (old namespace to new)
 
 Handles migration of:
 - schema_descriptions.yaml -> schema/descriptions.yaml
@@ -24,6 +27,9 @@ from db_mcp.config import STORAGE_VERSION, get_settings
 logger = logging.getLogger(__name__)
 
 VERSION_FILE = ".version"
+NAMESPACE_MIGRATED_FILE = ".migrated_from_dbmeta"
+LEGACY_NAMESPACE_DIR = ".dbmeta"
+NEW_NAMESPACE_DIR = ".db-mcp"
 
 
 def get_storage_version(path: Path) -> int:
@@ -55,6 +61,174 @@ def write_storage_version(path: Path, version: int = STORAGE_VERSION) -> None:
     version_file = path / VERSION_FILE
     version_file.write_text(str(version))
     logger.debug(f"Wrote version {version} to {version_file}")
+
+
+def detect_legacy_namespace() -> Path | None:
+    """Detect if legacy ~/.dbmeta directory exists.
+
+    Returns:
+        Path to legacy directory if found, None otherwise
+    """
+    legacy_path = Path.home() / LEGACY_NAMESPACE_DIR
+    if legacy_path.exists() and legacy_path.is_dir():
+        return legacy_path
+    return None
+
+
+def is_namespace_migrated() -> bool:
+    """Check if namespace migration has already been completed.
+
+    Returns:
+        True if migration marker file exists in new namespace
+    """
+    new_path = Path.home() / NEW_NAMESPACE_DIR
+    marker_file = new_path / NAMESPACE_MIGRATED_FILE
+    return marker_file.exists()
+
+
+def migrate_namespace() -> dict:
+    """Migrate from legacy ~/.dbmeta to ~/.db-mcp namespace.
+
+    This copies all data from the old namespace to the new one, preserving
+    the directory structure. The old directory is left intact as a backup.
+
+    Returns:
+        dict with migration statistics
+    """
+    legacy_path = detect_legacy_namespace()
+    new_path = Path.home() / NEW_NAMESPACE_DIR
+
+    # Check if already migrated
+    if is_namespace_migrated():
+        logger.debug("Namespace migration already completed")
+        return {"skipped": True, "reason": "already_migrated"}
+
+    # Check if legacy directory exists
+    if not legacy_path:
+        logger.debug("No legacy ~/.dbmeta directory found")
+        return {"skipped": True, "reason": "no_legacy_namespace"}
+
+    # Check if new directory already has substantial content
+    # (user may have set up fresh without migration)
+    new_connections = new_path / "connections"
+    if new_connections.exists():
+        existing_connections = [d for d in new_connections.iterdir() if d.is_dir()]
+        if existing_connections:
+            # Check if any connection has a version file (properly initialized)
+            for conn in existing_connections:
+                if (conn / VERSION_FILE).exists():
+                    logger.info(
+                        f"New namespace already has initialized connections, "
+                        f"skipping namespace migration. "
+                        f"Legacy data remains at {legacy_path}"
+                    )
+                    # Mark as migrated to avoid future checks
+                    new_path.mkdir(parents=True, exist_ok=True)
+                    (new_path / NAMESPACE_MIGRATED_FILE).write_text(
+                        f"Skipped: new namespace already initialized\n"
+                        f"Legacy data at: {legacy_path}\n"
+                    )
+                    return {"skipped": True, "reason": "new_namespace_exists"}
+
+    logger.info(f"Migrating namespace: {legacy_path} -> {new_path}")
+
+    stats = {
+        "legacy_path": str(legacy_path),
+        "new_path": str(new_path),
+        "connections": 0,
+        "config": False,
+        "providers": 0,
+        "vault": False,
+    }
+
+    # Ensure new directory exists
+    new_path.mkdir(parents=True, exist_ok=True)
+
+    # Migrate config.yaml
+    legacy_config = legacy_path / "config.yaml"
+    new_config = new_path / "config.yaml"
+    if legacy_config.exists() and not new_config.exists():
+        # Read and update config to fix any hardcoded paths
+        try:
+            import yaml
+
+            config_data = yaml.safe_load(legacy_config.read_text())
+
+            # Update any paths that reference the old namespace
+            if config_data:
+                for key in ["vault_path", "providers_dir", "connections_dir"]:
+                    if key in config_data and config_data[key]:
+                        old_value = config_data[key]
+                        if LEGACY_NAMESPACE_DIR in old_value:
+                            config_data[key] = old_value.replace(
+                                LEGACY_NAMESPACE_DIR, NEW_NAMESPACE_DIR
+                            )
+                            logger.debug(f"Updated {key}: {old_value} -> {config_data[key]}")
+
+                new_config.write_text(yaml.dump(config_data, default_flow_style=False))
+                stats["config"] = True
+                logger.info("Migrated config.yaml (with path updates)")
+        except Exception as e:
+            logger.warning(f"Failed to migrate config.yaml: {e}, copying as-is")
+            shutil.copy2(legacy_config, new_config)
+            stats["config"] = True
+
+    # Migrate connections directory
+    legacy_connections = legacy_path / "connections"
+    if legacy_connections.exists():
+        new_connections = new_path / "connections"
+        for conn_dir in legacy_connections.iterdir():
+            if conn_dir.is_dir():
+                dest_conn = new_connections / conn_dir.name
+                if not dest_conn.exists():
+                    shutil.copytree(conn_dir, dest_conn, dirs_exist_ok=True)
+                    stats["connections"] += 1
+                    logger.info(f"Migrated connection: {conn_dir.name}")
+                else:
+                    logger.debug(f"Connection {conn_dir.name} already exists, skipping")
+
+    # Migrate providers directory (legacy v1 structure)
+    legacy_providers = legacy_path / "providers"
+    if legacy_providers.exists():
+        new_providers = new_path / "providers"
+        for provider_dir in legacy_providers.iterdir():
+            if provider_dir.is_dir():
+                dest_provider = new_providers / provider_dir.name
+                if not dest_provider.exists():
+                    shutil.copytree(provider_dir, dest_provider, dirs_exist_ok=True)
+                    stats["providers"] += 1
+                    logger.info(f"Migrated provider: {provider_dir.name}")
+
+    # Migrate vault directory (legacy v1 structure)
+    legacy_vault = legacy_path / "vault"
+    if legacy_vault.exists():
+        new_vault = new_path / "vault"
+        if not new_vault.exists():
+            shutil.copytree(legacy_vault, new_vault, dirs_exist_ok=True)
+            stats["vault"] = True
+            logger.info("Migrated vault directory")
+
+    # Write migration marker
+    marker_file = new_path / NAMESPACE_MIGRATED_FILE
+    marker_file.write_text(
+        f"Migrated from: {legacy_path}\n"
+        f"Migrated on: {__import__('datetime').datetime.now().isoformat()}\n"
+        f"Stats: {stats}\n"
+        f"\nThe original ~/.dbmeta directory has been preserved as a backup.\n"
+        f"You can safely delete it after verifying the migration.\n"
+    )
+
+    logger.info(
+        f"Namespace migration complete: "
+        f"{stats['connections']} connections, "
+        f"{stats['providers']} providers, "
+        f"vault={'yes' if stats['vault'] else 'no'}"
+    )
+    logger.info(
+        f"Original data preserved at {legacy_path} - delete manually after verifying migration"
+    )
+
+    return stats
 
 
 def detect_legacy_structure() -> dict | None:

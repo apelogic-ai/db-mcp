@@ -69,6 +69,7 @@ from db_mcp.tools.training import (
     _query_status,
 )
 from db_mcp.vault import ensure_connection_structure, migrate_to_connection_structure
+from db_mcp.vault.migrate import migrate_namespace
 
 
 class HealthCheckFilter(logging.Filter):
@@ -95,7 +96,6 @@ def _get_auth_provider():
     """
     settings = get_settings()
     if settings.auth0_enabled and settings.auth0_domain:
-
         from fastmcp.server.auth.providers.auth0 import Auth0Provider
         from key_value.aio.stores.disk import DiskStore
 
@@ -477,15 +477,17 @@ def main():
     settings = get_settings()
     logger = logging.getLogger(__name__)
 
+    # Migrate from legacy ~/.dbmeta namespace if present
+    migrate_namespace()
+
     # Ensure connection directory structure exists
     ensure_connection_structure()
 
-    # Migrate legacy provider data if present
+    # Migrate legacy provider data if present (v1 -> v2 structure)
     migrate_to_connection_structure()
 
     logger.info(
-        f"Starting db-mcp in {settings.tool_mode} mode "
-        f"(connection: {settings.connection_name})"
+        f"Starting db-mcp in {settings.tool_mode} mode (connection: {settings.connection_name})"
     )
 
     # Always instrument tools for tracing (sends to console if running)

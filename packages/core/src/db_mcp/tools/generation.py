@@ -24,12 +24,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from db_mcp_models import QueryPlan
 from mcp.server.fastmcp import Context
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
-from db_mcp_models import QueryPlan
 from sqlalchemy import text
 
 from db_mcp.config import get_settings

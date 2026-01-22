@@ -3,8 +3,8 @@
 import logging
 import sys
 
-from mcp.server.fastmcp import Context
 from db_mcp_models import OnboardingPhase, TableDescriptionStatus
+from mcp.server.fastmcp import Context
 
 from db_mcp.config import get_settings
 from db_mcp.db.connection import test_connection
