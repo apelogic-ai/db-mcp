@@ -46,3 +46,6 @@ htmlcov/
 # Local config
 .env
 .env.local
+
+
+.claude/
