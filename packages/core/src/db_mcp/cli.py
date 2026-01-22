@@ -19,6 +19,12 @@ Global options:
     all                    - Apply command to all connections (where supported)
 """
 
+# ruff: noqa: E402
+# Suppress pydantic logfire plugin warning (must be before any pydantic imports)
+import warnings
+
+warnings.filterwarnings("ignore", message=".*logfire.*", category=UserWarning)
+
 import json
 import os
 import platform
@@ -1687,8 +1693,28 @@ def migrate(verbose: bool):
                 except Exception as e:
                     console.print(f"    [red]Error: {e}[/red]")
 
+    # Step 3: Configure Claude Desktop
+    console.print("\n[bold]Step 3: Claude Desktop Configuration[/bold]")
+    try:
+        claude_config, claude_config_path = load_claude_desktop_config()
+        mcp_servers = claude_config.get("mcpServers", {})
+
+        if "db-mcp" in mcp_servers:
+            console.print("  [dim]Already configured[/dim]")
+        else:
+            # Get active connection for configuration
+            active = get_active_connection()
+            if active:
+                _configure_claude_desktop(active)
+            else:
+                console.print(
+                    "  [yellow]No active connection - run 'db-mcp init' to configure[/yellow]"
+                )
+    except Exception as e:
+        console.print(f"  [yellow]Could not configure: {e}[/yellow]")
+
     console.print("\n[green]✓ Migration complete[/green]")
-    console.print("\n[dim]Run 'db-mcp status' to verify.[/dim]")
+    console.print("\n[dim]Restart Claude Desktop to apply changes.[/dim]")
 
 
 # =============================================================================
