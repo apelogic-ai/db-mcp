@@ -1,6 +1,6 @@
 [project]
 name = "db-mcp"
-version = "0.3.4"
+version = "0.3.5"
 description = "MCP server for database semantics and query intelligence"
 requires-python = ">=3.13"
 dependencies = [
