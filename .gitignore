@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python virtualenv lib dirs (not src/lib)
+/lib/
 lib64/
 parts/
 sdist/
