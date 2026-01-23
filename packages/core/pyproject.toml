@@ -1,6 +1,6 @@
 [project]
 name = "db-mcp"
-version = "0.3.5"
+version = "0.4.0"
 description = "MCP server for database semantics and query intelligence"
 requires-python = ">=3.13"
 dependencies = [
@@ -21,6 +21,9 @@ dependencies = [
     "db-mcp-models",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
+    "bicp-agent",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
 ]
 
 [project.scripts]
@@ -28,6 +31,7 @@ db-mcp = "db_mcp.cli:main"
 
 [tool.uv.sources]
 db-mcp-models = { workspace = true }
+bicp-agent = { path = "../../../bicp/packages/agent-python" }
 
 [project.optional-dependencies]
 dev = [
@@ -40,6 +44,11 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.18.0",
+]
 
 [tool.ruff]
 line-length = 99

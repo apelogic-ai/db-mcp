@@ -531,7 +531,7 @@ def is_git_url(s: str) -> bool:
 
 
 @click.group()
-@click.version_option(version="0.3.5")
+@click.version_option(version="0.4.0")
 def main():
     """db-mcp - Database metadata MCP server for Claude Desktop."""
     pass
@@ -1836,6 +1836,84 @@ def traces_status():
 
     if not enabled:
         console.print("\n[dim]Run 'db-mcp traces on' to enable capture.[/dim]")
+
+
+# =============================================================================
+# UI server command
+# =============================================================================
+
+
+@main.command("ui")
+@click.option("--host", "-h", default="0.0.0.0", help="Host to bind to")
+@click.option("--port", "-p", default=8080, help="Port to listen on")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def ui_cmd(host: str, port: int, connection: str | None):
+    """Start the UI server with BICP support.
+
+    This starts a FastAPI server that provides:
+    - /bicp POST endpoint for JSON-RPC requests
+    - /bicp/stream WebSocket for streaming notifications
+    - /health GET endpoint for health checks
+    - Static file serving for the UI build
+
+    The UI server enables browser-based interaction with db-mcp
+    using the BICP (Business Intelligence Client Protocol).
+
+    Example:
+        db-mcp ui                    # Start on default port 8080
+        db-mcp ui -p 3001            # Start on port 3001
+        db-mcp ui -c mydb -p 8080    # Use specific connection
+    """
+    if not CONFIG_FILE.exists():
+        console.print("[red]No config found. Run 'db-mcp init' first.[/red]")
+        sys.exit(1)
+
+    config = load_config()
+
+    # Determine connection name
+    conn_name = connection or config.get("active_connection", "default")
+    connection_path = get_connection_path(conn_name)
+
+    # Load DATABASE_URL from connection's .env file
+    conn_env = _load_connection_env(conn_name)
+    database_url = conn_env.get("DATABASE_URL", "")
+
+    # Fallback to global config for backward compatibility
+    if not database_url:
+        database_url = config.get("database_url", "")
+
+    # Set environment variables
+    os.environ["DATABASE_URL"] = database_url
+    os.environ["CONNECTION_NAME"] = conn_name
+    os.environ["CONNECTION_PATH"] = str(connection_path)
+    os.environ["TOOL_MODE"] = config.get("tool_mode", "shell")
+    os.environ["LOG_LEVEL"] = config.get("log_level", "INFO")
+
+    # Legacy env vars for backward compatibility
+    os.environ["PROVIDER_ID"] = conn_name
+    os.environ["CONNECTIONS_DIR"] = str(CONNECTIONS_DIR)
+
+    # Ensure connection directory exists
+    connection_path.mkdir(parents=True, exist_ok=True)
+
+    console.print(
+        Panel.fit(
+            f"[bold blue]db-mcp UI Server[/bold blue]\n\n"
+            f"Connection: [cyan]{conn_name}[/cyan]\n"
+            f"Server: [cyan]http://{host}:{port}[/cyan]\n\n"
+            f"[dim]Endpoints:[/dim]\n"
+            f"  POST /bicp       - JSON-RPC handler\n"
+            f"  WS   /bicp/stream - Streaming notifications\n"
+            f"  GET  /health     - Health check\n"
+            f"  GET  /           - UI (if built)\n\n"
+            f"Press Ctrl+C to stop.",
+            border_style="blue",
+        )
+    )
+
+    from db_mcp.ui_server import start_ui_server
+
+    start_ui_server(host=host, port=port)
 
 
 if __name__ == "__main__":

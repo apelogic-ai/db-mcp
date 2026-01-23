@@ -100,6 +100,17 @@ a = Analysis(
         "opentelemetry.sdk.trace",
         "opentelemetry.sdk.trace.export",
         "opentelemetry.trace",
+        # BICP agent (for UI server)
+        "bicp_agent",
+        "bicp_agent.handler",
+        "bicp_agent.session",
+        "bicp_agent.types",
+        # UI server (FastAPI)
+        "db_mcp.bicp",
+        "db_mcp.bicp.agent",
+        "db_mcp.ui_server",
+        "fastapi",
+        "fastapi.middleware.cors",
         # Console module
         "db_mcp.console",
         "db_mcp.console.collector",
