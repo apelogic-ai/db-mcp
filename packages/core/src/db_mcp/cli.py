@@ -1896,11 +1896,15 @@ def ui_cmd(host: str, port: int, connection: str | None):
     # Ensure connection directory exists
     connection_path.mkdir(parents=True, exist_ok=True)
 
+    # Determine the URL to open in browser
+    browser_host = "localhost" if host == "0.0.0.0" else host
+    url = f"http://{browser_host}:{port}"
+
     console.print(
         Panel.fit(
             f"[bold blue]db-mcp UI Server[/bold blue]\n\n"
             f"Connection: [cyan]{conn_name}[/cyan]\n"
-            f"Server: [cyan]http://{host}:{port}[/cyan]\n\n"
+            f"Server: [cyan]{url}[/cyan]\n\n"
             f"[dim]Endpoints:[/dim]\n"
             f"  POST /bicp       - JSON-RPC handler\n"
             f"  WS   /bicp/stream - Streaming notifications\n"
@@ -1910,6 +1914,18 @@ def ui_cmd(host: str, port: int, connection: str | None):
             border_style="blue",
         )
     )
+
+    # Open browser after a short delay to let server start
+    import threading
+    import webbrowser
+
+    def open_browser():
+        import time
+
+        time.sleep(1)
+        webbrowser.open(url)
+
+    threading.Thread(target=open_browser, daemon=True).start()
 
     from db_mcp.ui_server import start_ui_server
 
