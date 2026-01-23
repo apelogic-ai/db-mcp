@@ -130,7 +130,7 @@ main() {
 
         printf '\n'
         printf 'Would you like to open the configuration dashboard? [Y/n] '
-        read -r response
+        read -r response </dev/tty
         case "$response" in
             [nN]|[nN][oO])
                 info "Commands:"
