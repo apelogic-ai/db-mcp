@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Card,
   CardHeader,
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useBICP } from "@/lib/bicp-context";
 
 interface Connection {
@@ -27,6 +28,25 @@ interface ConnectionsListResult {
   activeConnection: string | null;
 }
 
+interface CreateResult {
+  success: boolean;
+  name?: string;
+  dialect?: string;
+  error?: string;
+}
+
+interface TestResult {
+  success: boolean;
+  message?: string;
+  dialect?: string;
+  error?: string;
+}
+
+interface DeleteResult {
+  success: boolean;
+  error?: string;
+}
+
 export default function ConnectorsPage() {
   const { isInitialized, isLoading, error, serverInfo, initialize, call } =
     useBICP();
@@ -34,6 +54,24 @@ export default function ConnectorsPage() {
   const [connectionsLoading, setConnectionsLoading] = useState(false);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
   const [hasFetched, setHasFetched] = useState(false);
+
+  // Create form state
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDatabaseUrl, setNewDatabaseUrl] = useState("");
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [testStatus, setTestStatus] = useState<{
+    tested: boolean;
+    success: boolean;
+    message: string;
+  } | null>(null);
+
+  // Delete state
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // Auto-test debounce
+  const testTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchConnections = useCallback(async () => {
     setConnectionsLoading(true);
@@ -65,6 +103,107 @@ export default function ConnectorsPage() {
     } catch (err) {
       setConnectionsError(
         err instanceof Error ? err.message : "Failed to switch connection",
+      );
+    }
+  };
+
+  const handleTestConnection = useCallback(
+    async (url?: string) => {
+      const urlToTest = url ?? newDatabaseUrl;
+      if (!urlToTest.trim()) {
+        return;
+      }
+
+      setTestStatus({ tested: false, success: false, message: "Testing..." });
+      setCreateLoading(true);
+      try {
+        const result = await call<TestResult>("connections/test", {
+          databaseUrl: urlToTest,
+        });
+        setTestStatus({
+          tested: true,
+          success: result.success,
+          message: result.success
+            ? `Connected successfully (${result.dialect || "unknown dialect"})`
+            : result.error || "Connection failed",
+        });
+      } catch (err) {
+        setTestStatus({
+          tested: true,
+          success: false,
+          message: err instanceof Error ? err.message : "Test failed",
+        });
+      } finally {
+        setCreateLoading(false);
+      }
+    },
+    [call, newDatabaseUrl],
+  );
+
+  // Auto-test when URL changes (debounced)
+  const handleDatabaseUrlChange = (value: string) => {
+    setNewDatabaseUrl(value);
+    setTestStatus(null);
+
+    // Clear previous timeout
+    if (testTimeoutRef.current) {
+      clearTimeout(testTimeoutRef.current);
+    }
+
+    // Auto-test after 800ms of no typing (only if URL looks complete)
+    if (value.includes("://") && value.length > 15) {
+      testTimeoutRef.current = setTimeout(() => {
+        handleTestConnection(value);
+      }, 800);
+    }
+  };
+
+  const handleCreateConnection = async () => {
+    if (!newName.trim() || !newDatabaseUrl.trim()) {
+      setCreateError("Name and Database URL are required");
+      return;
+    }
+
+    setCreateLoading(true);
+    setCreateError(null);
+    try {
+      const result = await call<CreateResult>("connections/create", {
+        name: newName.trim(),
+        databaseUrl: newDatabaseUrl.trim(),
+        setActive: true,
+      });
+
+      if (result.success) {
+        // Reset form and refresh list
+        setShowCreateForm(false);
+        setNewName("");
+        setNewDatabaseUrl("");
+        setTestStatus(null);
+        await fetchConnections();
+      } else {
+        setCreateError(result.error || "Failed to create connection");
+      }
+    } catch (err) {
+      setCreateError(
+        err instanceof Error ? err.message : "Failed to create connection",
+      );
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const handleDeleteConnection = async (name: string) => {
+    try {
+      const result = await call<DeleteResult>("connections/delete", { name });
+      if (result.success) {
+        setDeleteConfirm(null);
+        await fetchConnections();
+      } else {
+        setConnectionsError(result.error || "Failed to delete connection");
+      }
+    } catch (err) {
+      setConnectionsError(
+        err instanceof Error ? err.message : "Failed to delete connection",
       );
     }
   };
@@ -167,18 +306,32 @@ export default function ConnectorsPage() {
       {/* Connections List */}
       <Card className="bg-gray-900 border-gray-800">
         <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            Database Connections
-            {connectionsLoading && (
-              <Badge variant="secondary" className="bg-gray-800 text-gray-300">
-                Loading...
-              </Badge>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-white flex items-center gap-2">
+                Database Connections
+                {connectionsLoading && (
+                  <Badge
+                    variant="secondary"
+                    className="bg-gray-800 text-gray-300"
+                  >
+                    Loading...
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription className="text-gray-400">
+                Configure and manage your database connections.
+              </CardDescription>
+            </div>
+            {isInitialized && !showCreateForm && (
+              <Button
+                onClick={() => setShowCreateForm(true)}
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                + Add Connection
+              </Button>
             )}
-          </CardTitle>
-          <CardDescription className="text-gray-400">
-            Configure and manage your database connections. Connect to
-            PostgreSQL, ClickHouse, Trino, MySQL, SQL Server, and more.
-          </CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           {connectionsError && (
@@ -187,18 +340,104 @@ export default function ConnectorsPage() {
             </div>
           )}
 
+          {/* Create Connection Form */}
+          {showCreateForm && (
+            <div className="p-4 bg-gray-950 border border-gray-800 rounded-lg mb-4 space-y-4">
+              <h3 className="text-white font-medium">New Connection</h3>
+
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">Connection Name</label>
+                <Input
+                  placeholder="my-database"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="bg-gray-900 border-gray-700 text-white"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">Database URL</label>
+                <Input
+                  placeholder="postgresql://user:pass@host:5432/database"
+                  value={newDatabaseUrl}
+                  onChange={(e) => handleDatabaseUrlChange(e.target.value)}
+                  className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
+                />
+                <p className="text-xs text-gray-500">
+                  Supports: PostgreSQL, ClickHouse, Trino, MySQL, SQL Server
+                </p>
+              </div>
+
+              {testStatus && (
+                <div
+                  className={`p-3 rounded text-sm ${
+                    testStatus.success
+                      ? "bg-green-950 border border-green-800 text-green-300"
+                      : "bg-red-950 border border-red-800 text-red-300"
+                  }`}
+                >
+                  {testStatus.message}
+                </div>
+              )}
+
+              {createError && (
+                <div className="p-3 bg-red-950 border border-red-800 rounded text-red-300 text-sm">
+                  {createError}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleTestConnection()}
+                  disabled={createLoading || !newDatabaseUrl.trim()}
+                  className="border-gray-700 hover:bg-gray-800"
+                >
+                  {createLoading ? "Testing..." : "Test Connection"}
+                </Button>
+                <Button
+                  onClick={handleCreateConnection}
+                  disabled={
+                    createLoading || !newName.trim() || !newDatabaseUrl.trim()
+                  }
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {createLoading ? "Creating..." : "Create"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowCreateForm(false);
+                    setNewName("");
+                    setNewDatabaseUrl("");
+                    setTestStatus(null);
+                    setCreateError(null);
+                  }}
+                  className="border-gray-700 hover:bg-gray-800"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
           {!isInitialized ? (
             <p className="text-gray-500 text-sm">
               Connecting to BICP server...
             </p>
-          ) : connections.length === 0 && !connectionsLoading ? (
-            <div>
-              <p className="text-gray-500 text-sm">
-                No connections configured yet. Use the CLI to add a connection:
+          ) : connections.length === 0 &&
+            !connectionsLoading &&
+            !showCreateForm ? (
+            <div className="text-center py-8">
+              <p className="text-gray-500 text-sm mb-4">
+                No connections configured yet.
               </p>
-              <code className="block mt-2 p-3 bg-gray-950 rounded text-gray-300 text-sm font-mono">
-                db-mcp init my-database
-              </code>
+              <Button
+                onClick={() => setShowCreateForm(true)}
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                + Add Your First Connection
+              </Button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -238,6 +477,35 @@ export default function ConnectorsPage() {
                           Switch
                         </Button>
                       )}
+                      {deleteConfirm === conn.name ? (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDeleteConnection(conn.name)}
+                            className="text-xs border-red-700 text-red-400 hover:bg-red-950"
+                          >
+                            Confirm
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setDeleteConfirm(null)}
+                            className="text-xs border-gray-700 hover:bg-gray-800"
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDeleteConfirm(conn.name)}
+                          className="text-xs border-gray-700 hover:bg-gray-800 text-gray-400"
+                        >
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </div>
                   <div className="mt-2 flex gap-4 text-xs text-gray-500">
@@ -265,17 +533,19 @@ export default function ConnectorsPage() {
                   </div>
                 </div>
               ))}
-              <div className="pt-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={fetchConnections}
-                  disabled={connectionsLoading}
-                  className="text-xs border-gray-700 hover:bg-gray-800"
-                >
-                  Refresh
-                </Button>
-              </div>
+              {connections.length > 0 && !showCreateForm && (
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchConnections}
+                    disabled={connectionsLoading}
+                    className="text-xs border-gray-700 hover:bg-gray-800"
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

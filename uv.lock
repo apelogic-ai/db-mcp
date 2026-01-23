@@ -227,24 +227,10 @@ wheels = [
 [[package]]
 name = "bicp-agent"
 version = "0.1.0"
-source = { directory = "../bicp/packages/agent-python" }
+source = { git = "https://github.com/apelogic-ai/bicp.git?subdirectory=packages%2Fagent-python#743ecc5af9e94487e2b38e0b296382dc98852270" }
 dependencies = [
     { name = "aiohttp" },
     { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9" },
-    { name = "pydantic", specifier = ">=2.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.8" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "ruff", specifier = ">=0.8" },
 ]
 
 [[package]]
@@ -573,7 +559,7 @@ wheels = [
 
 [[package]]
 name = "db-mcp"
-version = "0.4.1"
+version = "0.4.3"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "bicp-agent" },
@@ -613,7 +599,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bicp-agent", directory = "../bicp/packages/agent-python" },
+    { name = "bicp-agent", git = "https://github.com/apelogic-ai/bicp.git?subdirectory=packages%2Fagent-python" },
     { name = "click", specifier = ">=8.0.0" },
     { name = "clickhouse-sqlalchemy", specifier = ">=0.3.0" },
     { name = "db-mcp-models", editable = "packages/models" },
