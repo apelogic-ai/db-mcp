@@ -50,6 +50,7 @@ jobs:
           bun run build
 
       - name: Copy UI to static directory
+        shell: bash
         run: |
           rm -rf packages/core/src/db_mcp/static
           cp -r packages/ui/dist packages/core/src/db_mcp/static
