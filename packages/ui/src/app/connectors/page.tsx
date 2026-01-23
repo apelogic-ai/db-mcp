@@ -67,9 +67,6 @@ export default function ConnectorsPage() {
     message: string;
   } | null>(null);
 
-  // Delete state
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-
   // Auto-test debounce
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -193,10 +190,13 @@ export default function ConnectorsPage() {
   };
 
   const handleDeleteConnection = async (name: string) => {
+    if (!confirm(`Delete connection "${name}"? This cannot be undone.`)) {
+      return;
+    }
+
     try {
       const result = await call<DeleteResult>("connections/delete", { name });
       if (result.success) {
-        setDeleteConfirm(null);
         await fetchConnections();
       } else {
         setConnectionsError(result.error || "Failed to delete connection");
@@ -477,35 +477,14 @@ export default function ConnectorsPage() {
                           Switch
                         </Button>
                       )}
-                      {deleteConfirm === conn.name ? (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDeleteConnection(conn.name)}
-                            className="text-xs border-red-700 text-red-400 hover:bg-red-950"
-                          >
-                            Confirm
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setDeleteConfirm(null)}
-                            className="text-xs border-gray-700 hover:bg-gray-800"
-                          >
-                            Cancel
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setDeleteConfirm(conn.name)}
-                          className="text-xs border-gray-700 hover:bg-gray-800 text-gray-400"
-                        >
-                          Delete
-                        </Button>
-                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDeleteConnection(conn.name)}
+                        className="text-xs border-gray-700 hover:bg-gray-800 text-gray-400"
+                      >
+                        Delete
+                      </Button>
                     </div>
                   </div>
                   <div className="mt-2 flex gap-4 text-xs text-gray-500">

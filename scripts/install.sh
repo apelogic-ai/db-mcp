@@ -128,15 +128,24 @@ main() {
                 ;;
         esac
 
-        success "Next steps:"
-        printf '  1. Run '\''db-mcp init'\'' to configure your database connection\n'
-        printf '  2. Restart Claude Desktop and start querying!\n\n'
-
-        info "Commands:"
-        printf '  db-mcp init [NAME]       Configure new connection\n'
-        printf '  db-mcp status            Show current configuration\n'
-        printf '  db-mcp list              List all connections\n'
-        printf '  db-mcp --help            Show all commands\n\n'
+        printf '\n'
+        printf 'Would you like to open the configuration dashboard? [Y/n] '
+        read -r response
+        case "$response" in
+            [nN]|[nN][oO])
+                info "Commands:"
+                printf '  db-mcp ui                Open configuration dashboard\n'
+                printf '  db-mcp init [NAME]       Configure connection via CLI\n'
+                printf '  db-mcp status            Show current configuration\n'
+                printf '  db-mcp list              List all connections\n'
+                printf '  db-mcp --help            Show all commands\n\n'
+                ;;
+            *)
+                printf '\n'
+                info "Starting configuration dashboard..."
+                exec "$binary_path" ui
+                ;;
+        esac
     else
         error "Installation failed."
         exit 1
