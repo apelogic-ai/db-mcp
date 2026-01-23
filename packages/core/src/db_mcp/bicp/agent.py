@@ -82,6 +82,9 @@ class DBMCPAgent(BICPAgent):
         # Register custom method handlers
         self._method_handlers["connections/list"] = self._handle_connections_list
         self._method_handlers["connections/switch"] = self._handle_connections_switch
+        self._method_handlers["connections/create"] = self._handle_connections_create
+        self._method_handlers["connections/test"] = self._handle_connections_test
+        self._method_handlers["connections/delete"] = self._handle_connections_delete
 
     def _detect_dialect(self) -> str:
         """Detect the database dialect from configuration."""
@@ -678,3 +681,238 @@ class DBMCPAgent(BICPAgent):
         elif url_lower.startswith("sqlite://"):
             return "sqlite"
         return None
+
+    async def _handle_connections_create(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Create a new database connection.
+
+        Args:
+            params: {
+                "name": str - Connection name (alphanumeric, dash, underscore)
+                "databaseUrl": str - Database connection URL
+                "setActive": bool - Whether to set as active connection (default: True)
+            }
+
+        Returns:
+            {"success": bool, "name": str, "dialect": str | None, "error": str | None}
+        """
+        import re
+
+        import yaml
+
+        name = params.get("name", "").strip()
+        database_url = params.get("databaseUrl", "").strip()
+        set_active = params.get("setActive", True)
+
+        # Validate name
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+
+        if not re.match(r"^[a-zA-Z0-9_-]+$", name):
+            return {
+                "success": False,
+                "error": "Invalid name. Use only letters, numbers, dashes, underscores.",
+            }
+
+        # Validate database URL
+        if not database_url:
+            return {"success": False, "error": "Database URL is required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        config_file = Path.home() / ".db-mcp" / "config.yaml"
+        conn_path = connections_dir / name
+
+        # Check if connection already exists
+        if conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' already exists"}
+
+        # Detect dialect
+        dialect = self._detect_dialect_from_url(database_url)
+
+        # Test the connection before saving
+        test_result = await self._test_database_url(database_url)
+        if not test_result["success"]:
+            return {
+                "success": False,
+                "error": f"Connection test failed: {test_result.get('error', 'Unknown error')}",
+            }
+
+        # Create connection directory
+        conn_path.mkdir(parents=True, exist_ok=True)
+
+        # Write .env file
+        env_file = conn_path / ".env"
+        with open(env_file, "w") as f:
+            f.write("# db-mcp connection credentials\n")
+            f.write("# This file is gitignored - do not commit\n\n")
+            f.write(f'DATABASE_URL="{database_url}"\n')
+
+        # Create .gitignore for the connection
+        gitignore_file = conn_path / ".gitignore"
+        with open(gitignore_file, "w") as f:
+            f.write("# Ignore credentials\n")
+            f.write(".env\n")
+            f.write("# Ignore local state\n")
+            f.write("state.yaml\n")
+
+        # Set as active if requested
+        if set_active:
+            config = {}
+            if config_file.exists():
+                with open(config_file) as f:
+                    config = yaml.safe_load(f) or {}
+
+            config["active_connection"] = name
+
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+
+        logger.info(f"Created connection: {name} ({dialect})")
+
+        return {
+            "success": True,
+            "name": name,
+            "dialect": dialect,
+            "isActive": set_active,
+        }
+
+    async def _handle_connections_test(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Test a database connection.
+
+        Args:
+            params: {
+                "name": str - Test existing connection by name, OR
+                "databaseUrl": str - Test a database URL directly
+            }
+
+        Returns:
+            {"success": bool, "message": str, "error": str | None, "dialect": str | None}
+        """
+        name = params.get("name")
+        database_url = params.get("databaseUrl")
+
+        if name:
+            # Load URL from existing connection
+            connections_dir = Path.home() / ".db-mcp" / "connections"
+            conn_path = connections_dir / name
+            env_file = conn_path / ".env"
+
+            if not env_file.exists():
+                return {"success": False, "error": f"Connection '{name}' not found"}
+
+            # Parse .env file
+            database_url = None
+            with open(env_file) as f:
+                for line in f:
+                    if line.startswith("DATABASE_URL="):
+                        database_url = line.split("=", 1)[1].strip().strip("\"'")
+                        break
+
+            if not database_url:
+                return {"success": False, "error": "No DATABASE_URL in connection config"}
+
+        elif database_url:
+            pass  # Use provided URL
+        else:
+            return {"success": False, "error": "Either 'name' or 'databaseUrl' is required"}
+
+        return await self._test_database_url(database_url)
+
+    async def _test_database_url(self, database_url: str) -> dict[str, Any]:
+        """Test a database URL by attempting to connect.
+
+        Returns:
+            {"success": bool, "message": str, "dialect": str | None, "error": str | None}
+        """
+        from sqlalchemy import create_engine, text
+
+        dialect = self._detect_dialect_from_url(database_url)
+
+        try:
+            # Create engine with short timeout
+            engine = create_engine(
+                database_url,
+                connect_args={"connect_timeout": 10} if dialect == "postgresql" else {},
+            )
+
+            # Try to connect and run simple query
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+
+            engine.dispose()
+
+            return {
+                "success": True,
+                "message": "Connection successful",
+                "dialect": dialect,
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            # Clean up sensitive info from error message
+            if database_url in error_msg:
+                error_msg = error_msg.replace(database_url, "[DATABASE_URL]")
+
+            logger.warning(f"Connection test failed: {error_msg}")
+
+            return {
+                "success": False,
+                "error": error_msg,
+                "dialect": dialect,
+            }
+
+    async def _handle_connections_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Delete a database connection.
+
+        Args:
+            params: {"name": str} - Connection name to delete
+
+        Returns:
+            {"success": bool, "error": str | None}
+        """
+        import shutil
+
+        import yaml
+
+        name = params.get("name")
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        config_file = Path.home() / ".db-mcp" / "config.yaml"
+        conn_path = connections_dir / name
+
+        # Check if connection exists
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' not found"}
+
+        # Don't allow deleting the active connection without switching first
+        active_connection = None
+        if config_file.exists():
+            with open(config_file) as f:
+                config = yaml.safe_load(f) or {}
+                active_connection = config.get("active_connection")
+
+        if name == active_connection:
+            # Find another connection to switch to
+            other_connections = [
+                d.name for d in connections_dir.iterdir() if d.is_dir() and d.name != name
+            ]
+            if other_connections:
+                # Auto-switch to first available
+                config["active_connection"] = other_connections[0]
+                with open(config_file, "w") as f:
+                    yaml.dump(config, f, default_flow_style=False)
+                logger.info(f"Auto-switched to connection: {other_connections[0]}")
+            else:
+                # No other connections, clear active
+                config.pop("active_connection", None)
+                with open(config_file, "w") as f:
+                    yaml.dump(config, f, default_flow_style=False)
+
+        # Delete the connection directory
+        shutil.rmtree(conn_path)
+
+        logger.info(f"Deleted connection: {name}")
+
+        return {"success": True, "name": name}

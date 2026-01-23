@@ -31,7 +31,7 @@ db-mcp = "db_mcp.cli:main"
 
 [tool.uv.sources]
 db-mcp-models = { workspace = true }
-bicp-agent = { path = "../../../bicp/packages/agent-python" }
+bicp-agent = { git = "https://github.com/apelogic-ai/bicp.git", subdirectory = "packages/agent-python" }
 
 [project.optional-dependencies]
 dev = [
