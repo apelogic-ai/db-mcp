@@ -1847,7 +1847,8 @@ def traces_status():
 @click.option("--host", "-h", default="0.0.0.0", help="Host to bind to")
 @click.option("--port", "-p", default=8080, help="Port to listen on")
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
-def ui_cmd(host: str, port: int, connection: str | None):
+@click.option("-v", "--verbose", is_flag=True, help="Show server logs in terminal")
+def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
     """Start the UI server with BICP support.
 
     This starts a FastAPI server that provides:
@@ -1861,31 +1862,44 @@ def ui_cmd(host: str, port: int, connection: str | None):
 
     Example:
         db-mcp ui                    # Start on default port 8080
+        db-mcp ui -v                 # Start with verbose logging
         db-mcp ui -p 3001            # Start on port 3001
         db-mcp ui -c mydb -p 8080    # Use specific connection
     """
-    if not CONFIG_FILE.exists():
-        console.print("[red]No config found. Run 'db-mcp init' first.[/red]")
-        sys.exit(1)
+    # Create config directory if it doesn't exist (for fresh installs)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONNECTIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-    config = load_config()
+    # Load or create default config
+    if CONFIG_FILE.exists():
+        config = load_config()
+    else:
+        config = {}
 
     # Determine connection name
-    conn_name = connection or config.get("active_connection", "default")
-    connection_path = get_connection_path(conn_name)
-
-    # Load DATABASE_URL from connection's .env file
-    conn_env = _load_connection_env(conn_name)
-    database_url = conn_env.get("DATABASE_URL", "")
-
-    # Fallback to global config for backward compatibility
-    if not database_url:
-        database_url = config.get("database_url", "")
+    conn_name = connection or config.get("active_connection", "")
 
     # Set environment variables
-    os.environ["DATABASE_URL"] = database_url
-    os.environ["CONNECTION_NAME"] = conn_name
-    os.environ["CONNECTION_PATH"] = str(connection_path)
+    if conn_name:
+        connection_path = get_connection_path(conn_name)
+        conn_env = _load_connection_env(conn_name)
+        database_url = conn_env.get("DATABASE_URL", "")
+
+        # Fallback to global config for backward compatibility
+        if not database_url:
+            database_url = config.get("database_url", "")
+
+        os.environ["DATABASE_URL"] = database_url
+        os.environ["CONNECTION_NAME"] = conn_name
+        os.environ["CONNECTION_PATH"] = str(connection_path)
+
+        # Ensure connection directory exists
+        connection_path.mkdir(parents=True, exist_ok=True)
+    else:
+        os.environ["DATABASE_URL"] = ""
+        os.environ["CONNECTION_NAME"] = ""
+        os.environ["CONNECTION_PATH"] = ""
+
     os.environ["TOOL_MODE"] = config.get("tool_mode", "shell")
     os.environ["LOG_LEVEL"] = config.get("log_level", "INFO")
 
@@ -1893,23 +1907,16 @@ def ui_cmd(host: str, port: int, connection: str | None):
     os.environ["PROVIDER_ID"] = conn_name
     os.environ["CONNECTIONS_DIR"] = str(CONNECTIONS_DIR)
 
-    # Ensure connection directory exists
-    connection_path.mkdir(parents=True, exist_ok=True)
-
     # Determine the URL to open in browser
     browser_host = "localhost" if host == "0.0.0.0" else host
     url = f"http://{browser_host}:{port}"
 
+    conn_display = f"[cyan]{conn_name}[/cyan]" if conn_name else "[dim]none[/dim]"
     console.print(
         Panel.fit(
             f"[bold blue]db-mcp UI Server[/bold blue]\n\n"
-            f"Connection: [cyan]{conn_name}[/cyan]\n"
+            f"Connection: {conn_display}\n"
             f"Server: [cyan]{url}[/cyan]\n\n"
-            f"[dim]Endpoints:[/dim]\n"
-            f"  POST /bicp       - JSON-RPC handler\n"
-            f"  WS   /bicp/stream - Streaming notifications\n"
-            f"  GET  /health     - Health check\n"
-            f"  GET  /           - UI (if built)\n\n"
             f"Press Ctrl+C to stop.",
             border_style="blue",
         )
@@ -1939,8 +1946,11 @@ def ui_cmd(host: str, port: int, connection: str | None):
 
     from db_mcp.ui_server import start_ui_server
 
+    # Set up log file path
+    log_file = CONFIG_DIR / "ui-server.log" if not verbose else None
+
     try:
-        start_ui_server(host=host, port=port)
+        start_ui_server(host=host, port=port, log_file=log_file)
     except KeyboardInterrupt:
         console.print("\n[dim]Server stopped.[/dim]")
 

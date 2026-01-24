@@ -16,4 +16,8 @@ cp -r dist ../core/src/db_mcp/static
 
 echo "Starting backend server..."
 cd ../core
+
+# Open browser after short delay
+(sleep 2 && open http://localhost:8080) &
+
 uv run python -m db_mcp.ui_server

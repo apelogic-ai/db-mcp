@@ -85,6 +85,8 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["connections/create"] = self._handle_connections_create
         self._method_handlers["connections/test"] = self._handle_connections_test
         self._method_handlers["connections/delete"] = self._handle_connections_delete
+        self._method_handlers["connections/get"] = self._handle_connections_get
+        self._method_handlers["connections/update"] = self._handle_connections_update
 
     def _detect_dialect(self) -> str:
         """Detect the database dialect from configuration."""
@@ -914,5 +916,71 @@ class DBMCPAgent(BICPAgent):
         shutil.rmtree(conn_path)
 
         logger.info(f"Deleted connection: {name}")
+
+        return {"success": True, "name": name}
+
+    async def _handle_connections_get(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get connection details including database URL.
+
+        Args:
+            params: {"name": str} - Connection name
+
+        Returns:
+            {"success": bool, "name": str, "databaseUrl": str, "error": str | None}
+        """
+        from dotenv import dotenv_values
+
+        name = params.get("name")
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        conn_path = connections_dir / name
+        env_file = conn_path / ".env"
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' not found"}
+
+        # Load database URL from .env file
+        database_url = ""
+        if env_file.exists():
+            env_vars = dotenv_values(env_file)
+            database_url = env_vars.get("DATABASE_URL", "")
+
+        return {
+            "success": True,
+            "name": name,
+            "databaseUrl": database_url,
+        }
+
+    async def _handle_connections_update(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Update a connection's database URL.
+
+        Args:
+            params: {"name": str, "databaseUrl": str} - Connection name and new URL
+
+        Returns:
+            {"success": bool, "error": str | None}
+        """
+        name = params.get("name")
+        database_url = params.get("databaseUrl")
+
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+        if not database_url:
+            return {"success": False, "error": "Database URL is required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        conn_path = connections_dir / name
+        env_file = conn_path / ".env"
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' not found"}
+
+        # Update the .env file
+        with open(env_file, "w") as f:
+            f.write(f"DATABASE_URL={database_url}\n")
+
+        logger.info(f"Updated connection: {name}")
 
         return {"success": True, "name": name}

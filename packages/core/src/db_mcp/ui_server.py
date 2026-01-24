@@ -270,20 +270,53 @@ async def broadcast_notification(notification_type: str, data: dict[str, Any]) -
     _ws_clients.difference_update(disconnected)
 
 
-def start_ui_server(host: str = "0.0.0.0", port: int = 8080) -> None:
+def start_ui_server(host: str = "0.0.0.0", port: int = 8080, log_file: Path | None = None) -> None:
     """Start the UI server.
 
     Args:
         host: Host to bind to (default: 0.0.0.0)
         port: Port to listen on (default: 8080)
+        log_file: Path to log file (None for stdout)
     """
     import uvicorn
 
     # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    log_config: dict | None = None
+    if log_file:
+        # Redirect all logs to file
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            filename=str(log_file),
+            filemode="a",
+        )
+        # Suppress uvicorn's default logging to console
+        log_config = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+                },
+            },
+            "handlers": {
+                "file": {
+                    "class": "logging.FileHandler",
+                    "filename": str(log_file),
+                    "formatter": "default",
+                },
+            },
+            "root": {
+                "level": "INFO",
+                "handlers": ["file"],
+            },
+        }
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
 
     logger.info(f"Starting db-mcp UI server on {host}:{port}")
     uvicorn.run(
@@ -293,6 +326,7 @@ def start_ui_server(host: str = "0.0.0.0", port: int = 8080) -> None:
         factory=True,
         reload=False,
         workers=1,
+        log_config=log_config,
     )
 
 
