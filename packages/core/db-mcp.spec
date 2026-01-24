@@ -54,6 +54,11 @@ except Exception:
 if resources_dir.exists():
     datas.append((str(resources_dir / "db_mcp_app"), "resources/db_mcp_app"))
 
+# Include UI static files if they exist
+static_dir = src_dir / "db_mcp" / "static"
+if static_dir.exists():
+    datas.append((str(static_dir), "db_mcp/static"))
+
 a = Analysis(
     [str(src_dir / "db_mcp" / "cli.py")],
     pathex=[str(src_dir)],

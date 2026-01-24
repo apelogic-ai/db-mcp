@@ -24,8 +24,22 @@ from db_mcp.bicp import DBMCPAgent
 
 logger = logging.getLogger(__name__)
 
+
+def get_static_dir() -> Path:
+    """Get the static files directory, handling PyInstaller bundles."""
+    import sys
+
+    if getattr(sys, "frozen", False):
+        # Running from PyInstaller bundle
+        base_path = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        return base_path / "db_mcp" / "static"
+    else:
+        # Running from source
+        return Path(__file__).parent / "static"
+
+
 # Static files directory (UI build output)
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = get_static_dir()
 
 
 class JSONRPCRequest(BaseModel):
@@ -271,10 +285,15 @@ def start_ui_server(host: str = "0.0.0.0", port: int = 8080) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    app = create_app()
-
     logger.info(f"Starting db-mcp UI server on {host}:{port}")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(
+        "db_mcp.ui_server:create_app",
+        host=host,
+        port=port,
+        factory=True,
+        reload=False,
+        workers=1,
+    )
 
 
 if __name__ == "__main__":
