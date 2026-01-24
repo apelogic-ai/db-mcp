@@ -1915,21 +1915,34 @@ def ui_cmd(host: str, port: int, connection: str | None):
         )
     )
 
-    # Open browser after a short delay to let server start
+    # Open browser once server is ready
     import threading
+    import urllib.request
     import webbrowser
 
     def open_browser():
         import time
 
-        time.sleep(1)
-        webbrowser.open(url)
+        # Poll until server is ready (max 10 seconds)
+        for _ in range(20):
+            try:
+                urllib.request.urlopen(f"{url}/health", timeout=0.5)
+                webbrowser.open(url)
+                return
+            except Exception:
+                time.sleep(0.5)
 
     threading.Thread(target=open_browser, daemon=True).start()
 
+    # Restore default SIGINT handler so uvicorn can shutdown gracefully
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+
     from db_mcp.ui_server import start_ui_server
 
-    start_ui_server(host=host, port=port)
+    try:
+        start_ui_server(host=host, port=port)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Server stopped.[/dim]")
 
 
 if __name__ == "__main__":
