@@ -32,10 +32,15 @@ db-mcp/
 │   │   ├── tests/               # Test suite
 │   │   ├── scripts/             # Build scripts
 │   │   └── pyproject.toml       # Package config
-│   └── models/                  # Shared data models (db-mcp-models)
-│       ├── src/db_mcp_models/
-│       └── pyproject.toml
-├── docs/                        # GitHub Pages documentation
+│   ├── models/                  # Shared data models (db-mcp-models)
+│   │   ├── src/db_mcp_models/
+│   │   └── pyproject.toml
+│   └── ui/                      # Next.js UI application
+│       ├── app/                 # App Router pages
+│       ├── components/          # React components
+│       ├── lib/                 # BICP client, contexts
+│       └── package.json
+├── docs/                        # Design documents
 ├── scripts/                     # Installation scripts
 ├── .github/workflows/           # CI/CD (release.yml)
 ├── pyproject.toml               # Workspace root config
@@ -58,6 +63,23 @@ db-mcp/
 | `vault/` | Storage backends (local filesystem, S3) |
 | `console/` | Trace viewer UI |
 | `validation/` | SQL validation and cost estimation |
+| `bicp/` | BICP agent for UI communication (JSON-RPC handler) |
+| `ui_server.py` | FastAPI server for UI + BICP endpoint |
+| `migrations/` | Database-style migrations for connection data |
+| `metrics/` | Business metrics storage and retrieval |
+
+### UI Package (`packages/ui/`)
+
+Next.js application providing a local control plane for db-mcp.
+
+| Directory | Purpose |
+|-----------|---------|
+| `app/` | Next.js App Router pages |
+| `app/connectors/` | Connection management UI |
+| `app/context/` | Context viewer (file browser + editor) |
+| `components/ui/` | shadcn/ui components |
+| `components/context/` | TreeView and CodeEditor components |
+| `lib/` | BICP client, React contexts, hooks |
 
 ### Models Package (`packages/models/src/db_mcp_models/`)
 
@@ -137,10 +159,36 @@ Output: Platform-specific binary in `dist/`
 | Path | Purpose |
 |------|---------|
 | `~/.db-mcp/config.yaml` | Global CLI config, active connection |
+| `~/.db-mcp/migrations.yaml` | Migration tracking (which migrations have run) |
 | `~/.db-mcp/connections/{name}/.env` | Database credentials (gitignored) |
 | `~/.db-mcp/connections/{name}/schema/` | Schema descriptions |
 | `~/.db-mcp/connections/{name}/domain/` | Domain model |
-| `~/.db-mcp/connections/{name}/training/` | Query examples |
+| `~/.db-mcp/connections/{name}/training/` | Query examples and feedback |
+| `~/.db-mcp/connections/{name}/training/examples/` | Individual example files |
+| `~/.db-mcp/connections/{name}/instructions/` | Business rules for SQL generation |
+| `~/.db-mcp/connections/{name}/metrics/` | Business metric definitions |
+
+### Knowledge Vault Structure
+
+Each connection directory forms a "knowledge vault" with semantic layer components:
+
+```
+~/.db-mcp/connections/{name}/
+├── .env                          # Database credentials (gitignored)
+├── schema/
+│   └── descriptions.yaml         # Table/column descriptions
+├── domain/
+│   └── model.yaml               # Domain model (entities, relationships)
+├── training/
+│   ├── examples/                # Query examples (one file per example)
+│   │   └── *.yaml
+│   └── feedback.yaml            # Query feedback log
+├── instructions/
+│   └── business_rules.yaml      # Business rules for SQL generation
+├── metrics/
+│   └── catalog.yaml             # Business metric definitions (DAU, revenue, etc.)
+└── README.md
+```
 
 ### Environment Variables
 
@@ -158,6 +206,7 @@ Output: Platform-specific binary in `dist/`
 |---------|-------------|
 | `db-mcp init [NAME]` | Configure new database connection |
 | `db-mcp start` | Start MCP server |
+| `db-mcp ui` | Start UI server and open browser |
 | `db-mcp status` | Show current configuration |
 | `db-mcp list` | List all connections |
 | `db-mcp use NAME` | Switch active connection |
@@ -253,13 +302,13 @@ uv run pyright src/
 
 ## Documentation
 
-The `docs/` directory contains design documents (not user-facing docs):
+The `docs/` directory contains design and implementation documents:
 
 | Document | Purpose |
 |----------|---------|
+| `ui-spec.md` | UI specification and implementation status |
+| `migrations.md` | Database-style migrations system documentation |
 | `metrics-layer.md` | Design for semantic metrics layer (DAU, revenue, retention definitions) |
 | `knowledge-extraction-agent.md` | Background agent that extracts learnings from OTel traces |
 | `electron-port-feasibility.md` | Analysis and decision for Electron desktop app (sidecar pattern chosen) |
 | `data-gateway.md` | Vision for unified data gateway across multiple sources |
-
-These are planning documents for future features, not implementation guides.

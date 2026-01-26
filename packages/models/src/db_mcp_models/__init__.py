@@ -1,5 +1,6 @@
 """Shared Pydantic models for db-mcp."""
 
+from db_mcp_models.metrics import Metric, MetricParameter, MetricsCatalog
 from db_mcp_models.onboarding import (
     ColumnDescription,
     OnboardingPhase,
@@ -54,4 +55,8 @@ __all__ = [
     "FeedbackType",
     "CandidateRule",
     "PromptInstructions",
+    # Metrics
+    "Metric",
+    "MetricParameter",
+    "MetricsCatalog",
 ]

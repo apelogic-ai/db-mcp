@@ -1,8 +1,21 @@
 # db-mcp UI Spec
 
-**Status**: Draft  
+**Status**: In Progress  
 **Created**: 2025-01-23  
-**Updated**: 2025-01-23 (BICP integration)
+**Updated**: 2025-01-26 (Implementation progress)
+
+## Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **BICP Agent** | Implemented | Core JSON-RPC handler in `bicp/agent.py` |
+| **UI Server** | Implemented | FastAPI server in `ui_server.py` |
+| **Connectors Tab** | Implemented | List, test, edit connections |
+| **Context Viewer** | Implemented | Treeview + file editor with syntax highlighting |
+| **Query Console** | Not Started | - |
+| **MCP Tools Tab** | Not Started | - |
+| **Query Explorer** | Not Started | - |
+| **Migrations System** | Implemented | Database-style migrations in `migrations/` |
 
 ## Overview
 
@@ -178,37 +191,49 @@ When a connector is enabled, the BICP `initialize` response includes it in `data
 
 ## Tab 2: Context Viewer
 
-Human-readable view of the semantic layer, powered by BICP schema discovery.
+Human-readable view and editor for the semantic layer, showing all connection files.
 
-### BICP Integration
+### Current Implementation
 
 The Context Viewer uses these BICP messages:
 
 | Action | BICP Message |
 |--------|--------------|
-| Load tree structure | `schema/list` with `schemaPattern` |
-| Get table details | `schema/describe` with `includeSemantics: true` |
-| Search metrics/dimensions | `semantic/search` |
-| Browse metrics catalog | `semantic/search` with `types: ["metric"]` |
+| Load tree structure | `context/tree` |
+| Read file contents | `context/read` |
+| Save file changes | `context/write` |
+| Create new file | `context/create` |
+| Delete file | `context/delete` |
 
-### Tree Hierarchy
+**Features implemented:**
+- Split pane layout with resizable divider
+- Collapsible tree view showing connections → folders → files
+- Dynamic directory discovery (shows all directories, not just hardcoded ones)
+- Syntax highlighting for YAML and Markdown using Prism.js
+- Save/Discard/Delete buttons with Cmd+S shortcut
+- Persistent state across tab switches (React context)
+- Git-aware operations (auto-commit if git enabled on connection)
+
+**File types shown:**
+- `.yaml`, `.yml` files
+- `.md` files
+- Excludes hidden files and `state.yaml`
+
+### Tree Hierarchy (Current)
 
 ```
-📁 Nova (user-created folder)
-├── 📊 main_db (database)
-│   ├── 📁 public (schema)
-│   │   ├── 📋 users
-│   │   │   ├── 📏 daily_active_users (metric)
-│   │   │   └── 📏 user_retention (metric)
-│   │   ├── 📋 orders
-│   │   └── 📋 products
-│   └── 📁 analytics (schema)
-│       └── 📋 daily_metrics
-├── 📄 sales_data.csv (file)
-└── 🔌 superset_prod (BI tool)
-
-📁 Uncategorized
-└── 📊 staging_db
+📁 my-connection
+├── 📁 schema/
+│   ├── public.users.yaml
+│   └── public.orders.yaml
+├── 📁 domain/
+│   └── domain.yaml
+├── 📁 training/
+│   ├── examples/
+│   │   ├── abc123.yaml
+│   │   └── def456.yaml
+│   └── feedback.yaml
+└── README.md
 ```
 
 ### Node Selection → BICP Response
@@ -554,49 +579,37 @@ db-mcp/
 ├── packages/
 │   ├── core/                    # Python sidecar
 │   │   ├── src/db_mcp/
-│   │   │   ├── bicp/            # NEW: BICP agent implementation
+│   │   │   ├── bicp/            # BICP agent implementation
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── handler.py   # JSON-RPC message routing
-│   │   │   │   ├── session.py   # Session management
-│   │   │   │   ├── query.py     # Query lifecycle
-│   │   │   │   └── schema.py    # Schema discovery
+│   │   │   │   └── agent.py     # JSON-RPC handler (all methods)
+│   │   │   ├── migrations/      # Database-style migrations
+│   │   │   │   ├── __init__.py  # Migration infrastructure
+│   │   │   │   └── m_*.py       # Individual migrations
 │   │   │   ├── server.py        # MCP server (existing)
 │   │   │   └── ui_server.py     # FastAPI: serves UI + BICP endpoint
 │   │   └── static/              # Next.js build output
 │   │
 │   ├── models/                  # Shared Pydantic models
 │   │   └── src/db_mcp_models/
-│   │       ├── bicp.py          # NEW: BICP message types
 │   │       └── ...
 │   │
 │   └── ui/                      # Next.js project
 │       ├── app/
-│       │   ├── layout.tsx
+│       │   ├── layout.tsx       # Includes ContextViewerProvider
 │       │   ├── page.tsx
 │       │   ├── connectors/
-│       │   │   └── page.tsx
-│       │   ├── context/
-│       │   │   └── page.tsx
-│       │   ├── query/           # NEW: Query Console
-│       │   │   └── page.tsx
-│       │   ├── tools/
-│       │   │   └── page.tsx
-│       │   └── explorer/
-│       │       └── page.tsx
+│       │   │   └── page.tsx     # Implemented
+│       │   └── context/
+│       │       └── page.tsx     # Implemented (split pane)
 │       ├── components/
 │       │   ├── ui/              # shadcn components
-│       │   ├── bicp/            # NEW: BICP-specific components
-│       │   │   ├── query-input.tsx
-│       │   │   ├── candidate-card.tsx
-│       │   │   ├── result-table.tsx
-│       │   │   ├── result-chart.tsx
-│       │   │   └── progress-bar.tsx
-│       │   ├── tree-view.tsx
-│       │   ├── connector-card.tsx
-│       │   └── trace-timeline.tsx
+│       │   ├── context/         # Context viewer components
+│       │   │   ├── TreeView.tsx      # Collapsible tree
+│       │   │   └── CodeEditor.tsx    # Syntax-highlighted editor
+│       │   └── connector-card.tsx
 │       ├── lib/
-│       │   ├── bicp-client.ts   # NEW: BICP JSON-RPC client
-│       │   ├── api.ts
+│       │   ├── bicp-client.ts   # BICP JSON-RPC client
+│       │   ├── context-viewer-context.tsx  # Persistent state
 │       │   └── hooks.ts
 │       ├── next.config.js
 │       ├── package.json

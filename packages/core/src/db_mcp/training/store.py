@@ -1,4 +1,8 @@
-"""Training data persistence - examples and feedback."""
+"""Training data persistence - examples and feedback.
+
+Examples are stored as individual YAML files in the examples/ folder.
+This makes git diffs cleaner and allows per-example management.
+"""
 
 import uuid
 from datetime import UTC, datetime
@@ -17,9 +21,9 @@ from db_mcp_models import (
 from db_mcp.onboarding.state import get_provider_dir
 
 
-def get_examples_file_path(provider_id: str) -> Path:
-    """Get path to query examples file."""
-    return get_provider_dir(provider_id) / "query_examples.yaml"
+def get_examples_dir(provider_id: str) -> Path:
+    """Get path to examples directory."""
+    return get_provider_dir(provider_id) / "examples"
 
 
 def get_feedback_file_path(provider_id: str) -> Path:
@@ -27,66 +31,157 @@ def get_feedback_file_path(provider_id: str) -> Path:
     return get_provider_dir(provider_id) / "feedback_log.yaml"
 
 
+def get_instructions_dir(provider_id: str) -> Path:
+    """Get path to instructions directory."""
+    return get_provider_dir(provider_id) / "instructions"
+
+
 def get_instructions_file_path(provider_id: str) -> Path:
-    """Get path to prompt instructions file."""
-    return get_provider_dir(provider_id) / "prompt_instructions.yaml"
+    """Get path to business rules file."""
+    return get_instructions_dir(provider_id) / "business_rules.yaml"
 
 
 # =============================================================================
-# Query Examples
+# Query Examples (Folder-based storage)
 # =============================================================================
+
+
+def _example_to_file_format(example: QueryExample) -> dict:
+    """Convert QueryExample to file format for saving."""
+    return {
+        "id": example.id,
+        "intent": example.natural_language,
+        "sql": example.sql,
+        "tables": example.tables_used,
+        "keywords": example.tags,
+        "notes": example.notes,
+        "validated": True,
+        "created_at": example.created_at.isoformat() if example.created_at else None,
+        "created_by": example.created_by,
+    }
+
+
+def _file_format_to_example(data: dict, file_id: str) -> QueryExample:
+    """Convert file format to QueryExample."""
+    # Handle created_at parsing
+    created_at = None
+    if data.get("created_at"):
+        try:
+            created_at = datetime.fromisoformat(data["created_at"].replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            created_at = datetime.now(UTC)
+    elif data.get("created"):
+        # Legacy field name
+        try:
+            created_at = datetime.fromisoformat(data["created"].replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            created_at = datetime.now(UTC)
+    else:
+        created_at = datetime.now(UTC)
+
+    return QueryExample(
+        id=data.get("id", file_id),
+        natural_language=data.get("intent", data.get("natural_language", "")),
+        sql=data.get("sql", ""),
+        tables_used=data.get("tables", data.get("tables_used", [])),
+        tags=data.get("keywords", data.get("tags", [])),
+        notes=data.get("notes"),
+        created_at=created_at,
+        created_by=data.get("created_by"),
+    )
 
 
 def load_examples(provider_id: str) -> QueryExamples:
-    """Load query examples from YAML file.
+    """Load query examples from examples/ folder.
+
+    Note: Legacy query_examples.yaml migration is handled by the migrations
+    system (see db_mcp.migrations). This function only reads from examples/.
 
     Args:
         provider_id: Provider identifier
 
     Returns:
-        QueryExamples (empty if file doesn't exist)
+        QueryExamples collection
     """
-    examples_file = get_examples_file_path(provider_id)
+    examples_dir = get_examples_dir(provider_id)
+    examples_list: list[QueryExample] = []
 
-    if not examples_file.exists():
-        return QueryExamples(provider_id=provider_id)
+    # Load from examples/ folder
+    if examples_dir.exists():
+        for file_path in sorted(examples_dir.iterdir()):
+            if not file_path.is_file():
+                continue
+            if file_path.suffix.lower() not in (".yaml", ".yml"):
+                continue
+            if file_path.name.startswith("."):
+                continue
 
-    try:
-        with open(examples_file) as f:
-            data = yaml.safe_load(f)
-        return QueryExamples.model_validate(data)
-    except Exception:
-        return QueryExamples(provider_id=provider_id)
+            try:
+                with open(file_path) as f:
+                    data = yaml.safe_load(f)
+                if data:
+                    file_id = file_path.stem
+                    example = _file_format_to_example(data, file_id)
+                    examples_list.append(example)
+            except Exception:
+                # Skip invalid files
+                continue
+
+    return QueryExamples(provider_id=provider_id, examples=examples_list)
 
 
-def save_examples(examples: QueryExamples) -> dict:
-    """Save query examples to YAML file.
+def save_example(provider_id: str, example: QueryExample) -> dict:
+    """Save a single example to its own file.
 
     Args:
-        examples: QueryExamples to save
+        provider_id: Provider identifier
+        example: QueryExample to save
 
     Returns:
         Dict with save status
     """
     try:
-        provider_dir = get_provider_dir(examples.provider_id)
-        provider_dir.mkdir(parents=True, exist_ok=True)
+        examples_dir = get_examples_dir(provider_id)
+        examples_dir.mkdir(parents=True, exist_ok=True)
 
-        examples_dict = examples.model_dump(mode="json")
+        file_data = _example_to_file_format(example)
+        file_path = examples_dir / f"{example.id}.yaml"
 
-        examples_file = get_examples_file_path(examples.provider_id)
-        with open(examples_file, "w") as f:
+        with open(file_path, "w") as f:
             yaml.dump(
-                examples_dict,
+                file_data,
                 f,
                 default_flow_style=False,
                 sort_keys=False,
                 allow_unicode=True,
             )
 
-        return {"saved": True, "file_path": str(examples_file), "error": None}
+        return {"saved": True, "file_path": str(file_path), "error": None}
     except Exception as e:
         return {"saved": False, "file_path": None, "error": str(e)}
+
+
+def delete_example(provider_id: str, example_id: str) -> dict:
+    """Delete an example file.
+
+    Args:
+        provider_id: Provider identifier
+        example_id: Example ID to delete
+
+    Returns:
+        Dict with delete status
+    """
+    try:
+        examples_dir = get_examples_dir(provider_id)
+        file_path = examples_dir / f"{example_id}.yaml"
+
+        if file_path.exists():
+            file_path.unlink()
+            return {"deleted": True, "file_path": str(file_path), "error": None}
+        else:
+            return {"deleted": False, "error": f"Example {example_id} not found"}
+    except Exception as e:
+        return {"deleted": False, "error": str(e)}
 
 
 def add_example(
@@ -110,8 +205,6 @@ def add_example(
     Returns:
         Dict with example ID and status
     """
-    examples = load_examples(provider_id)
-
     example = QueryExample(
         id=str(uuid.uuid4())[:8],
         natural_language=natural_language,
@@ -122,10 +215,11 @@ def add_example(
         created_at=datetime.now(UTC),
     )
 
-    examples.add_example(example)
-    result = save_examples(examples)
+    result = save_example(provider_id, example)
 
     if result["saved"]:
+        # Count total examples
+        examples = load_examples(provider_id)
         return {
             "added": True,
             "example_id": example.id,
@@ -134,6 +228,24 @@ def add_example(
         }
     else:
         return {"added": False, "error": result["error"]}
+
+
+# Legacy function for backward compatibility
+def save_examples(examples: QueryExamples) -> dict:
+    """Save all examples (backward compatibility).
+
+    Note: This now saves each example as individual files.
+    """
+    try:
+        for example in examples.examples:
+            result = save_example(examples.provider_id, example)
+            if not result["saved"]:
+                return result
+
+        examples_dir = get_examples_dir(examples.provider_id)
+        return {"saved": True, "file_path": str(examples_dir), "error": None}
+    except Exception as e:
+        return {"saved": False, "file_path": None, "error": str(e)}
 
 
 # =============================================================================
@@ -280,8 +392,8 @@ def save_instructions(instructions: PromptInstructions) -> dict:
         Dict with save status
     """
     try:
-        provider_dir = get_provider_dir(instructions.provider_id)
-        provider_dir.mkdir(parents=True, exist_ok=True)
+        instructions_dir = get_instructions_dir(instructions.provider_id)
+        instructions_dir.mkdir(parents=True, exist_ok=True)
 
         instructions_dict = instructions.model_dump(mode="json")
 
@@ -451,10 +563,8 @@ def import_examples_from_legacy(provider_id: str, yaml_content: str) -> dict:
         if not all_examples:
             return {"imported": False, "error": "No examples found in profiles"}
 
-        # Load existing or create new
+        # Load existing examples to check for duplicates
         examples_store = load_examples(provider_id)
-
-        # Check for duplicates by natural language
         existing_nl = {e.natural_language for e in examples_store.examples}
 
         added_count = 0
@@ -469,23 +579,21 @@ def import_examples_from_legacy(provider_id: str, yaml_content: str) -> dict:
                     notes=f"Imported from legacy format (profile: {ex.get('profile', 'unknown')})",
                     created_at=datetime.now(UTC),
                 )
-                examples_store.add_example(example)
+                save_example(provider_id, example)
                 existing_nl.add(ex["natural_language"])
                 added_count += 1
 
-        result = save_examples(examples_store)
+        # Reload to get accurate count
+        examples_store = load_examples(provider_id)
 
-        if result["saved"]:
-            return {
-                "imported": True,
-                "examples_found": len(all_examples),
-                "examples_added": added_count,
-                "examples_skipped": len(all_examples) - added_count,
-                "total_examples": examples_store.count(),
-                "file_path": result["file_path"],
-            }
-        else:
-            return {"imported": False, "error": result["error"]}
+        return {
+            "imported": True,
+            "examples_found": len(all_examples),
+            "examples_added": added_count,
+            "examples_skipped": len(all_examples) - added_count,
+            "total_examples": examples_store.count(),
+            "file_path": str(get_examples_dir(provider_id)),
+        }
 
     except yaml.YAMLError as e:
         return {"imported": False, "error": f"YAML parse error: {e}"}

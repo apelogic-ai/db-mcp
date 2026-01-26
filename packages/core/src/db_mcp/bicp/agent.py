@@ -88,6 +88,13 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["connections/get"] = self._handle_connections_get
         self._method_handlers["connections/update"] = self._handle_connections_update
 
+        # Context viewer handlers
+        self._method_handlers["context/tree"] = self._handle_context_tree
+        self._method_handlers["context/read"] = self._handle_context_read
+        self._method_handlers["context/write"] = self._handle_context_write
+        self._method_handlers["context/create"] = self._handle_context_create
+        self._method_handlers["context/delete"] = self._handle_context_delete
+
     def _detect_dialect(self) -> str:
         """Detect the database dialect from configuration."""
         try:
@@ -984,3 +991,684 @@ class DBMCPAgent(BICPAgent):
         logger.info(f"Updated connection: {name}")
 
         return {"success": True, "name": name}
+
+    # ========== Context Viewer Methods ==========
+
+    # Folder importance levels for the UI
+    # critical: Must be populated for basic functionality
+    # recommended: Improves quality significantly
+    # optional: Nice to have, not required
+    _FOLDER_IMPORTANCE: dict[str, str] = {
+        "schema": "critical",
+        "domain": "critical",
+        "examples": "recommended",
+        "instructions": "recommended",
+        "metrics": "recommended",
+        "learnings": "optional",
+        "traces": "optional",
+    }
+
+    # Folders to always show (even if they don't exist on disk)
+    # These are the core semantic layer folders
+    _EXPECTED_FOLDERS: list[str] = [
+        "schema",
+        "domain",
+        "examples",
+        "instructions",
+        "metrics",
+    ]
+
+    # Stock README content for empty directories
+    _STOCK_READMES: dict[str, str] = {
+        "schema": """# Schema Descriptions
+
+This directory contains schema descriptions for your database tables and columns.
+
+**Why is this important?**
+
+Schema descriptions are essential for SQL generation. Without them, the AI cannot
+understand your database structure and will be unable to generate accurate queries.
+
+## Files
+
+- `descriptions.yaml` - Table and column descriptions used for SQL generation
+
+## How to populate
+
+1. **Recommended**: Run the onboarding process via Claude Desktop or the MCP tools
+2. Or manually create `descriptions.yaml` with table/column descriptions
+
+## Format
+
+```yaml
+tables:
+  - name: users
+    full_name: public.users
+    description: "User accounts and profiles"
+    columns:
+      - name: id
+        description: "Primary key"
+      - name: email
+        description: "User email address (unique)"
+```
+
+## Getting Started
+
+Ask Claude to help you onboard your database:
+> "Let's set up the schema descriptions for my database"
+""",
+        "domain": """# Domain Model
+
+This directory contains the semantic domain model for your database.
+
+**Why is this important?**
+
+The domain model provides business context that helps the AI understand how your
+data relates to real-world concepts, resulting in more accurate and relevant queries.
+
+## Files
+
+- `model.md` - Natural language description of your data domain
+
+## Purpose
+
+The domain model helps the AI understand:
+- Business concepts and terminology
+- Relationships between entities
+- Common query patterns and use cases
+- Industry-specific language and metrics
+
+## How to populate
+
+1. **Recommended**: Complete the schema onboarding first, then ask Claude to
+   generate the domain model
+2. Or manually write a description of your data domain
+
+## Getting Started
+
+After completing schema descriptions, ask Claude:
+> "Generate a domain model for my database based on the schema descriptions"
+""",
+        "examples": """# Query Examples
+
+This directory contains query examples that improve SQL generation accuracy.
+
+**Why is this important?**
+
+Query examples teach the AI your specific query patterns and preferences. The more
+examples you provide, the better the AI becomes at generating queries that match your
+needs.
+
+## Files
+
+Each example is stored as a separate YAML file with natural language and SQL mapping.
+
+## Format
+
+```yaml
+natural_language: "Show me all active users"
+sql: "SELECT * FROM users WHERE status = 'active'"
+tags: ["users", "status"]
+notes: "Filter by status column"
+```
+
+## How to add examples
+
+1. **Easiest**: After a successful query, provide feedback to save it as an example
+2. Or manually create YAML files in this directory
+
+## Getting Started
+
+Start using the database with natural language queries. After each successful query,
+you can save it as an example to improve future results.
+""",
+        "instructions": """# Business Rules & Instructions
+
+This directory contains business rules and special instructions for SQL generation.
+
+**Why is this important?**
+
+Business rules ensure that generated queries follow your organization's conventions,
+data access policies, and best practices. They provide guardrails and context that
+improve query quality.
+
+## Files
+
+- `business_rules.yaml` - List of rules and instructions
+
+## Format
+
+```yaml
+rules:
+  - "Always use UTC timestamps"
+  - "Filter deleted records with is_deleted = false"
+  - "Use INNER JOIN for customer tables"
+  - "Limit results to 1000 rows by default"
+```
+
+## Examples of Business Rules
+
+- Data access restrictions (e.g., "Only query data from the last 90 days")
+- Naming conventions (e.g., "Date columns end with _at or _date")
+- Performance guidelines (e.g., "Always include partition key in WHERE clause")
+- Business logic (e.g., "Active users are those with last_login in past 30 days")
+
+## Getting Started
+
+Think about the rules and conventions your team follows when writing queries,
+and document them here.
+""",
+        "metrics": """# Business Metrics
+
+This directory contains standardized metric definitions for your organization.
+
+**Why is this important?**
+
+Metric definitions ensure consistent calculation of KPIs across all queries. Instead
+of re-defining "Monthly Active Users" each time, you define it once and reference it
+consistently.
+
+## Files
+
+- `catalog.yaml` - Metric definitions catalog
+
+## Format
+
+```yaml
+metrics:
+  - name: monthly_active_users
+    display_name: "Monthly Active Users"
+    description: "Users who logged in at least once in the past 30 days"
+    sql: "COUNT(DISTINCT user_id) FILTER (WHERE last_login >= CURRENT_DATE - 30)"
+    tables: ["users"]
+    tags: ["engagement", "core-kpi"]
+```
+
+## Common Metric Types
+
+- **Engagement**: DAU, WAU, MAU, session duration
+- **Revenue**: MRR, ARR, ARPU, LTV
+- **Growth**: Signups, activations, churn rate
+- **Operations**: Response time, error rate, uptime
+
+## Getting Started
+
+Start by defining your organization's most important KPIs - the metrics that appear
+in executive dashboards and reports.
+""",
+        "learnings": """# Learnings
+
+This directory contains patterns and insights learned from your query history.
+
+**Why is this important?**
+
+Learnings capture institutional knowledge about your data - schema quirks, common
+pitfalls, and best practices discovered through usage. This helps the AI avoid
+known issues and follow proven patterns.
+
+## Files
+
+- `patterns.md` - Common query patterns and techniques
+- `schema_gotchas.md` - Schema-specific quirks and workarounds
+
+## What to document
+
+- **Schema quirks**: "The `status` column uses 0/1 instead of boolean"
+- **Naming conventions**: "Date columns use `_at` suffix, not `_date`"
+- **Performance tips**: "Always filter by `tenant_id` first for faster queries"
+- **Data quality issues**: "Some `email` values are null for legacy accounts"
+- **Business logic**: "Revenue calculations should exclude refunded orders"
+
+## Getting Started
+
+As you work with your database, document any insights or gotchas you discover.
+This knowledge helps the AI generate better queries over time.
+""",
+    }
+
+    def _get_connections_dir(self) -> Path:
+        """Get the connections directory path."""
+        return Path.home() / ".db-mcp" / "connections"
+
+    def _is_git_enabled(self, conn_path: Path) -> bool:
+        """Check if git is enabled for a connection directory."""
+        return (conn_path / ".git").exists()
+
+    def _git_commit(self, conn_path: Path, message: str, files: list[str]) -> bool:
+        """Commit changes to git if enabled.
+
+        Returns True if commit was made, False otherwise.
+        """
+        if not self._is_git_enabled(conn_path):
+            return False
+
+        import subprocess
+
+        try:
+            # Add files
+            for file in files:
+                subprocess.run(
+                    ["git", "add", file],
+                    cwd=conn_path,
+                    capture_output=True,
+                    check=True,
+                )
+
+            # Commit
+            subprocess.run(
+                ["git", "commit", "-m", message],
+                cwd=conn_path,
+                capture_output=True,
+                check=True,
+            )
+
+            logger.info(f"Git commit: {message}")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Git commit failed: {e}")
+            return False
+
+    async def _handle_context_tree(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get the file tree for all connections.
+
+        Args:
+            params: {} - No parameters required
+
+        Returns:
+            {
+                "connections": [
+                    {
+                        "name": str,
+                        "isActive": bool,
+                        "gitEnabled": bool,
+                        "folders": [
+                            {
+                                "name": str,  # "schema", "domain", "training"
+                                "path": str,  # Relative path
+                                "files": [
+                                    {"name": str, "path": str, "size": int}
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        """
+        import yaml as yaml_lib
+
+        connections_dir = self._get_connections_dir()
+        config_file = Path.home() / ".db-mcp" / "config.yaml"
+
+        # Get active connection
+        active_connection = None
+        if config_file.exists():
+            with open(config_file) as f:
+                config = yaml_lib.safe_load(f) or {}
+                active_connection = config.get("active_connection")
+
+        # Allowed file extensions
+        allowed_extensions = {".yaml", ".yml", ".md"}
+
+        # Hidden/system items to skip
+        hidden_prefixes = (".", "_")
+        skip_files = {"state.yaml"}  # Internal state files
+
+        connections = []
+        if connections_dir.exists():
+            for conn_path in sorted(connections_dir.iterdir()):
+                if not conn_path.is_dir():
+                    continue
+
+                name = conn_path.name
+                git_enabled = self._is_git_enabled(conn_path)
+
+                folders = []
+                root_files = []
+
+                # Scan all items in the connection directory
+                for item_path in sorted(conn_path.iterdir()):
+                    item_name = item_path.name
+
+                    # Skip hidden files/folders and system files
+                    if item_name.startswith(hidden_prefixes):
+                        continue
+                    if item_name in skip_files:
+                        continue
+
+                    if item_path.is_dir():
+                        # It's a folder - scan for files
+                        files = []
+                        for file_path in sorted(item_path.iterdir()):
+                            if not file_path.is_file():
+                                continue
+                            if file_path.name.startswith(hidden_prefixes):
+                                continue
+                            if file_path.suffix.lower() not in allowed_extensions:
+                                continue
+
+                            files.append(
+                                {
+                                    "name": file_path.name,
+                                    "path": f"{item_name}/{file_path.name}",
+                                    "size": file_path.stat().st_size,
+                                }
+                            )
+
+                        # Get importance level for this folder
+                        importance = self._FOLDER_IMPORTANCE.get(item_name)
+                        has_readme = item_name in self._STOCK_READMES
+
+                        folders.append(
+                            {
+                                "name": item_name,
+                                "path": item_name,
+                                "files": files,
+                                "isEmpty": len(files) == 0,
+                                "importance": importance,
+                                "hasReadme": has_readme,
+                            }
+                        )
+
+                    elif item_path.is_file():
+                        # It's a root-level file
+                        if item_path.suffix.lower() not in allowed_extensions:
+                            continue
+
+                        root_files.append(
+                            {
+                                "name": item_name,
+                                "path": item_name,
+                                "size": item_path.stat().st_size,
+                            }
+                        )
+
+                # Create expected folders that don't exist on disk
+                existing_folder_names = {f["name"] for f in folders}
+                for expected_folder in self._EXPECTED_FOLDERS:
+                    if expected_folder not in existing_folder_names:
+                        # Create the folder
+                        folder_path = conn_path / expected_folder
+                        folder_path.mkdir(exist_ok=True)
+
+                        importance = self._FOLDER_IMPORTANCE.get(expected_folder)
+                        has_readme = expected_folder in self._STOCK_READMES
+                        folders.append(
+                            {
+                                "name": expected_folder,
+                                "path": expected_folder,
+                                "files": [],
+                                "isEmpty": True,
+                                "importance": importance,
+                                "hasReadme": has_readme,
+                            }
+                        )
+
+                # Sort folders by name for consistent ordering
+                folders.sort(key=lambda f: f["name"])
+
+                connections.append(
+                    {
+                        "name": name,
+                        "isActive": name == active_connection,
+                        "gitEnabled": git_enabled,
+                        "folders": folders,
+                        "rootFiles": root_files,
+                    }
+                )
+
+        return {"connections": connections}
+
+    async def _handle_context_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Read a file's content.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "path": str - Relative path within connection (e.g., "schema/descriptions.yaml")
+            }
+
+        Returns:
+            {"success": bool, "content": str, "error": str | None}
+        """
+        connection = params.get("connection")
+        path = params.get("path")
+
+        if not connection or not path:
+            return {"success": False, "error": "connection and path are required"}
+
+        # Validate path (prevent directory traversal)
+        if ".." in path or path.startswith("/"):
+            return {"success": False, "error": "Invalid path"}
+
+        connections_dir = self._get_connections_dir()
+        file_path = connections_dir / connection / path
+
+        # Check if this is a folder path (requesting stock README)
+        if file_path.is_dir():
+            folder_name = path.split("/")[0] if "/" in path else path
+            if folder_name in self._STOCK_READMES:
+                return {
+                    "success": True,
+                    "content": self._STOCK_READMES[folder_name],
+                    "isStockReadme": True,
+                }
+            return {"success": False, "error": "Folder has no setup guide"}
+
+        # Check file exists
+        if not file_path.exists():
+            # Check if this is a request for a stock README (folder doesn't exist)
+            parts = path.split("/")
+            if len(parts) == 1 and parts[0] in self._STOCK_READMES:
+                # Return stock README for empty folder
+                return {
+                    "success": True,
+                    "content": self._STOCK_READMES[parts[0]],
+                    "isStockReadme": True,
+                }
+            return {"success": False, "error": f"File not found: {path}"}
+
+        # Validate extension
+        allowed_extensions = {".yaml", ".yml", ".md"}
+        if file_path.suffix.lower() not in allowed_extensions:
+            return {"success": False, "error": "File type not allowed"}
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            return {"success": True, "content": content}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_context_write(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Write content to a file.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "path": str - Relative path within connection
+                "content": str - File content to write
+            }
+
+        Returns:
+            {"success": bool, "gitCommit": bool, "error": str | None}
+        """
+        connection = params.get("connection")
+        path = params.get("path")
+        content = params.get("content")
+
+        if not connection or not path:
+            return {"success": False, "error": "connection and path are required"}
+        if content is None:
+            return {"success": False, "error": "content is required"}
+
+        # Validate path
+        if ".." in path or path.startswith("/"):
+            return {"success": False, "error": "Invalid path"}
+
+        # Validate extension
+        allowed_extensions = {".yaml", ".yml", ".md"}
+        if not any(path.endswith(ext) for ext in allowed_extensions):
+            return {"success": False, "error": "File type not allowed"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        file_path = conn_path / path
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        try:
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write file
+            file_path.write_text(content, encoding="utf-8")
+
+            # Git commit if enabled
+            git_commit = self._git_commit(conn_path, f"Update {path}", [path])
+
+            logger.info(f"Wrote file: {connection}/{path}")
+
+            return {"success": True, "gitCommit": git_commit}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_context_create(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Create a new file.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "path": str - Relative path for new file
+                "content": str - Initial content (optional, defaults to empty)
+            }
+
+        Returns:
+            {"success": bool, "gitCommit": bool, "error": str | None}
+        """
+        connection = params.get("connection")
+        path = params.get("path")
+        content = params.get("content", "")
+
+        if not connection or not path:
+            return {"success": False, "error": "connection and path are required"}
+
+        # Validate path
+        if ".." in path or path.startswith("/"):
+            return {"success": False, "error": "Invalid path"}
+
+        # Validate extension
+        allowed_extensions = {".yaml", ".yml", ".md"}
+        if not any(path.endswith(ext) for ext in allowed_extensions):
+            return {"success": False, "error": "File type not allowed. Use .yaml, .yml, or .md"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        file_path = conn_path / path
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        if file_path.exists():
+            return {"success": False, "error": f"File already exists: {path}"}
+
+        try:
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write file
+            file_path.write_text(content, encoding="utf-8")
+
+            # Git commit if enabled
+            git_commit = self._git_commit(conn_path, f"Create {path}", [path])
+
+            logger.info(f"Created file: {connection}/{path}")
+
+            return {"success": True, "gitCommit": git_commit}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_context_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Delete a file (moves to .trash or git rm).
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "path": str - Relative path to delete
+            }
+
+        Returns:
+            {"success": bool, "gitCommit": bool, "trashedTo": str | None, "error": str | None}
+        """
+        import shutil
+
+        connection = params.get("connection")
+        path = params.get("path")
+
+        if not connection or not path:
+            return {"success": False, "error": "connection and path are required"}
+
+        # Validate path
+        if ".." in path or path.startswith("/"):
+            return {"success": False, "error": "Invalid path"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        file_path = conn_path / path
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        if not file_path.exists():
+            return {"success": False, "error": f"File not found: {path}"}
+
+        try:
+            git_enabled = self._is_git_enabled(conn_path)
+
+            if git_enabled:
+                # Use git rm (file is recoverable via git history)
+                import subprocess
+
+                subprocess.run(
+                    ["git", "rm", "-f", path],
+                    cwd=conn_path,
+                    capture_output=True,
+                    check=True,
+                )
+                subprocess.run(
+                    ["git", "commit", "-m", f"Delete {path}"],
+                    cwd=conn_path,
+                    capture_output=True,
+                    check=True,
+                )
+
+                logger.info(f"Git rm: {connection}/{path}")
+                return {"success": True, "gitCommit": True}
+
+            else:
+                # Move to .trash directory
+                trash_dir = conn_path / ".trash"
+                trash_dir.mkdir(exist_ok=True)
+
+                # Generate unique trash name if needed
+                trash_path = trash_dir / file_path.name
+                counter = 1
+                while trash_path.exists():
+                    stem = file_path.stem
+                    suffix = file_path.suffix
+                    trash_path = trash_dir / f"{stem}_{counter}{suffix}"
+                    counter += 1
+
+                shutil.move(str(file_path), str(trash_path))
+
+                logger.info(f"Trashed: {connection}/{path} -> .trash/{trash_path.name}")
+                return {
+                    "success": True,
+                    "gitCommit": False,
+                    "trashedTo": f".trash/{trash_path.name}",
+                }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}

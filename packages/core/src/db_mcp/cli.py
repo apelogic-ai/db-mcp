@@ -972,6 +972,17 @@ def start(connection: str | None):
     # Ensure connection directory exists
     connection_path.mkdir(parents=True, exist_ok=True)
 
+    # Run pending migrations for this connection
+    from db_mcp.migrations import run_migrations
+
+    migration_result = run_migrations(conn_name)
+    if migration_result.get("applied"):
+        # Log to stderr so it doesn't interfere with stdio transport
+        print(
+            f"Applied {len(migration_result['applied'])} migrations for {conn_name}",
+            file=sys.stderr,
+        )
+
     # Patch fakeredis path for PyInstaller bundles
     if getattr(sys, "frozen", False):
         import fakeredis.model._command_info as cmd_info
@@ -1895,10 +1906,27 @@ def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
 
         # Ensure connection directory exists
         connection_path.mkdir(parents=True, exist_ok=True)
+
+        # Run pending migrations for this connection
+        from db_mcp.migrations import run_migrations
+
+        migration_result = run_migrations(conn_name)
+        if migration_result.get("applied"):
+            console.print(
+                f"[dim]Applied {len(migration_result['applied'])} migrations for {conn_name}[/dim]"
+            )
     else:
         os.environ["DATABASE_URL"] = ""
         os.environ["CONNECTION_NAME"] = ""
         os.environ["CONNECTION_PATH"] = ""
+
+    # Run migrations for all connections (UI may switch between them)
+    from db_mcp.migrations import run_migrations_all
+
+    all_results = run_migrations_all()
+    total_applied = sum(len(r.get("applied", [])) for r in all_results)
+    if total_applied > 0:
+        console.print(f"[dim]Applied {total_applied} migrations across all connections[/dim]")
 
     os.environ["TOOL_MODE"] = config.get("tool_mode", "shell")
     os.environ["LOG_LEVEL"] = config.get("log_level", "INFO")
