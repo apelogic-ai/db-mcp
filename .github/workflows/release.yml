@@ -52,8 +52,9 @@ jobs:
       - name: Copy UI to static directory
         shell: bash
         run: |
-          rm -rf packages/core/src/db_mcp/static
-          cp -r packages/ui/dist packages/core/src/db_mcp/static
+          rm -rf packages/core/src/db_mcp/static || true
+          mkdir -p packages/core/src/db_mcp/static
+          cp -r packages/ui/dist/* packages/core/src/db_mcp/static/
 
       - name: Install dependencies
         working-directory: packages/core
