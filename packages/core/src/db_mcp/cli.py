@@ -531,7 +531,7 @@ def is_git_url(s: str) -> bool:
 
 
 @click.group()
-@click.version_option(version="0.4.10")
+@click.version_option(version="0.4.11")
 def main():
     """db-mcp - Database metadata MCP server for Claude Desktop."""
     pass
