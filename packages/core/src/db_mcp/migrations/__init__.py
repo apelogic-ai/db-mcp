@@ -273,4 +273,5 @@ def get_all_migrations() -> list[dict]:
 from db_mcp.migrations import (  # noqa: E402
     m_20260126_001_examples_to_folder,  # noqa: F401
     m_20260126_002_instructions_to_folder,  # noqa: F401
+    m_20260126_003_enable_git,  # noqa: F401
 )

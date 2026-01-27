@@ -131,6 +131,71 @@ export async function initialize(
   );
 }
 
+// Git History types
+export interface GitCommit {
+  hash: string;
+  fullHash: string;
+  message: string;
+  date: string;
+  author: string;
+}
+
+export interface GitHistoryResult {
+  success: boolean;
+  commits?: GitCommit[];
+  error?: string;
+}
+
+export interface GitShowResult {
+  success: boolean;
+  content?: string;
+  commit?: string;
+  error?: string;
+}
+
+export interface GitRevertResult {
+  success: boolean;
+  newCommit?: string;
+  error?: string;
+}
+
+// Git history API functions
+export async function getGitHistory(
+  connection: string,
+  path: string,
+  limit: number = 50,
+): Promise<GitHistoryResult> {
+  return bicpCall<GitHistoryResult>("context/git/history", {
+    connection,
+    path,
+    limit,
+  });
+}
+
+export async function getGitShow(
+  connection: string,
+  path: string,
+  commit: string,
+): Promise<GitShowResult> {
+  return bicpCall<GitShowResult>("context/git/show", {
+    connection,
+    path,
+    commit,
+  });
+}
+
+export async function revertToCommit(
+  connection: string,
+  path: string,
+  commit: string,
+): Promise<GitRevertResult> {
+  return bicpCall<GitRevertResult>("context/git/revert", {
+    connection,
+    path,
+    commit,
+  });
+}
+
 // React hook for BICP operations
 export interface UseBICPResult {
   isInitialized: boolean;

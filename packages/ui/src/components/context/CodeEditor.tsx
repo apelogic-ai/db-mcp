@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import Editor from "react-simple-code-editor";
 import Prism from "prismjs";
 import "prismjs/components/prism-yaml";
@@ -9,6 +9,7 @@ import "prismjs/themes/prism-tomorrow.css";
 import Markdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { HistoryDrawer } from "./HistoryDrawer";
 
 // Icons
 const SaveIcon = ({ className }: { className?: string }) => (
@@ -85,6 +86,90 @@ const PlusIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const CopyIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+  </svg>
+);
+
+const LinkIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </svg>
+);
+
+const HistoryIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+    <path d="M12 7v5l4 2" />
+  </svg>
+);
+
+// Separator component for toolbar
+function ToolbarSeparator() {
+  return <div className="w-px h-5 bg-gray-700 mx-1" />;
+}
+
+// Toast notification component
+function Toast({
+  message,
+  onClose,
+}: {
+  message: string | null;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(onClose, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [message, onClose]);
+
+  if (!message) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 bg-gray-800 border border-gray-700 rounded-md shadow-lg px-4 py-2 text-sm text-gray-200">
+      {message}
+    </div>
+  );
+}
+
 interface CodeEditorProps {
   connection: string | null;
   path: string | null;
@@ -98,6 +183,7 @@ interface CodeEditorProps {
   onDiscard: () => void;
   onDelete: () => Promise<void>;
   onCreateFile: () => void;
+  onRefresh?: () => void; // Called after git revert to refresh content
 }
 
 export function CodeEditor({
@@ -113,9 +199,20 @@ export function CodeEditor({
   onDiscard,
   onDelete,
   onCreateFile,
+  onRefresh,
 }: CodeEditorProps) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selection, setSelection] = useState<{
+    text: string;
+    startLine: number;
+    endLine: number;
+  } | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const selectionRef = useRef(selection); // Keep ref in sync for event handlers
+  selectionRef.current = selection;
 
   // Determine language from file extension (or markdown for folder READMEs)
   const getLanguage = useCallback(
@@ -183,6 +280,89 @@ export function CodeEditor({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isDirty, saving]);
+
+  // Track selection changes in the textarea
+  const updateSelection = useCallback(() => {
+    if (!editorContainerRef.current) {
+      setSelection(null);
+      return;
+    }
+
+    const textarea = editorContainerRef.current.querySelector("textarea");
+    if (!textarea) {
+      setSelection(null);
+      return;
+    }
+
+    const { selectionStart, selectionEnd, value } = textarea;
+    if (selectionStart === selectionEnd) {
+      setSelection(null);
+      return;
+    }
+
+    const selectedText = value.substring(selectionStart, selectionEnd);
+    if (!selectedText.trim()) {
+      setSelection(null);
+      return;
+    }
+
+    // Calculate line numbers
+    const textBeforeSelection = value.substring(0, selectionStart);
+    const startLine = (textBeforeSelection.match(/\n/g) || []).length + 1;
+    const selectedLines = (selectedText.match(/\n/g) || []).length;
+    const endLine = startLine + selectedLines;
+
+    setSelection({ text: selectedText, startLine, endLine });
+  }, []);
+
+  // Listen for selection changes on the textarea
+  useEffect(() => {
+    const container = editorContainerRef.current;
+    if (!container) return;
+
+    const textarea = container.querySelector("textarea");
+    if (!textarea) return;
+
+    // Update selection on mouseup and keyup within the textarea
+    const handleMouseUp = () => setTimeout(updateSelection, 0);
+    const handleKeyUp = () => setTimeout(updateSelection, 0);
+
+    textarea.addEventListener("mouseup", handleMouseUp);
+    textarea.addEventListener("keyup", handleKeyUp);
+    textarea.addEventListener("select", updateSelection);
+
+    return () => {
+      textarea.removeEventListener("mouseup", handleMouseUp);
+      textarea.removeEventListener("keyup", handleKeyUp);
+      textarea.removeEventListener("select", updateSelection);
+    };
+  }, [updateSelection, content]); // Re-attach when content changes (textarea may be recreated)
+
+  // Copy handlers - use stored selection
+  const handleCopyText = useCallback(() => {
+    const sel = selectionRef.current;
+    if (sel) {
+      navigator.clipboard.writeText(sel.text);
+      setToast("Copied to clipboard");
+    } else {
+      setToast("No text selected");
+    }
+  }, []);
+
+  const handleCopyReference = useCallback(() => {
+    const sel = selectionRef.current;
+    if (sel && connection && path) {
+      const lineRef =
+        sel.startLine === sel.endLine
+          ? `${sel.startLine}`
+          : `${sel.startLine}-${sel.endLine}`;
+      const reference = `${connection}/${path}:${lineRef}`;
+      navigator.clipboard.writeText(reference);
+      setToast(`Copied: ${reference}`);
+    } else if (!sel) {
+      setToast("No text selected");
+    }
+  }, [connection, path]);
 
   // Check if path looks like a valid file (has allowed extension) or is a stock README
   const isValidFilePath = path && /\.(yaml|yml|md)$/i.test(path);
@@ -278,6 +458,59 @@ export function CodeEditor({
                 <TrashIcon className="mr-1" />
                 {deleting ? "Deleting..." : "Delete"}
               </Button>
+              <ToolbarSeparator />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopyText}
+                disabled={isLoading}
+                className={cn(
+                  "text-xs border-gray-700 bg-gray-900 hover:bg-gray-800",
+                  selection ? "text-blue-400 border-blue-800" : "text-gray-500",
+                )}
+                title={
+                  selection
+                    ? `Copy selected text (${selection.text.length} chars)`
+                    : "Select text to copy"
+                }
+              >
+                <CopyIcon className="mr-1" />
+                Copy
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopyReference}
+                disabled={isLoading}
+                className={cn(
+                  "text-xs border-gray-700 bg-gray-900 hover:bg-gray-800",
+                  selection ? "text-blue-400 border-blue-800" : "text-gray-500",
+                )}
+                title={
+                  selection
+                    ? `Copy reference: ${connection}/${path}:${selection.startLine}${selection.startLine !== selection.endLine ? `-${selection.endLine}` : ""}`
+                    : "Select text to copy reference"
+                }
+              >
+                <LinkIcon className="mr-1" />
+                Copy Ref
+              </Button>
+              {gitEnabled && (
+                <>
+                  <ToolbarSeparator />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setHistoryOpen(true)}
+                    disabled={isLoading}
+                    className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-orange-400"
+                    title="View version history"
+                  >
+                    <HistoryIcon className="mr-1" />
+                    History
+                  </Button>
+                </>
+              )}
             </>
           )}
           {isStockReadme && (
@@ -294,91 +527,112 @@ export function CodeEditor({
         </div>
       </div>
 
-      {/* Editor or Markdown Viewer */}
-      <div className="flex-1 overflow-auto">
-        {isLoading ? (
-          <div className="h-full flex items-center justify-center text-gray-500">
-            Loading...
-          </div>
-        ) : isStockReadme ? (
-          <div className="p-6 prose prose-invert prose-sm max-w-none">
-            <Markdown
-              components={{
-                h1: ({ children }) => (
-                  <h1 className="text-2xl font-bold text-white mb-4 border-b border-gray-700 pb-2">
-                    {children}
-                  </h1>
-                ),
-                h2: ({ children }) => (
-                  <h2 className="text-lg font-semibold text-gray-200 mt-6 mb-3">
-                    {children}
-                  </h2>
-                ),
-                p: ({ children }) => (
-                  <p className="text-gray-300 mb-3 leading-relaxed">
-                    {children}
-                  </p>
-                ),
-                ul: ({ children }) => (
-                  <ul className="list-disc list-inside text-gray-300 mb-3 space-y-1">
-                    {children}
-                  </ul>
-                ),
-                li: ({ children }) => (
-                  <li className="text-gray-300">{children}</li>
-                ),
-                strong: ({ children }) => (
-                  <strong className="text-white font-semibold">
-                    {children}
-                  </strong>
-                ),
-                code: ({ children, className }) => {
-                  const isBlock = className?.includes("language-");
-                  if (isBlock) {
+      {/* Editor area with optional history drawer */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Editor or Markdown Viewer */}
+        <div className="flex-1 overflow-auto">
+          {isLoading ? (
+            <div className="h-full flex items-center justify-center text-gray-500">
+              Loading...
+            </div>
+          ) : isStockReadme ? (
+            <div className="p-6 prose prose-invert prose-sm max-w-none">
+              <Markdown
+                components={{
+                  h1: ({ children }) => (
+                    <h1 className="text-2xl font-bold text-white mb-4 border-b border-gray-700 pb-2">
+                      {children}
+                    </h1>
+                  ),
+                  h2: ({ children }) => (
+                    <h2 className="text-lg font-semibold text-gray-200 mt-6 mb-3">
+                      {children}
+                    </h2>
+                  ),
+                  p: ({ children }) => (
+                    <p className="text-gray-300 mb-3 leading-relaxed">
+                      {children}
+                    </p>
+                  ),
+                  ul: ({ children }) => (
+                    <ul className="list-disc list-inside text-gray-300 mb-3 space-y-1">
+                      {children}
+                    </ul>
+                  ),
+                  li: ({ children }) => (
+                    <li className="text-gray-300">{children}</li>
+                  ),
+                  strong: ({ children }) => (
+                    <strong className="text-white font-semibold">
+                      {children}
+                    </strong>
+                  ),
+                  code: ({ children, className }) => {
+                    const isBlock = className?.includes("language-");
+                    if (isBlock) {
+                      return (
+                        <code className="block bg-gray-950 p-4 rounded text-sm text-gray-300 overflow-x-auto my-3">
+                          {children}
+                        </code>
+                      );
+                    }
                     return (
-                      <code className="block bg-gray-950 p-4 rounded text-sm text-gray-300 overflow-x-auto my-3">
+                      <code className="bg-gray-800 px-1.5 py-0.5 rounded text-sm text-yellow-300">
                         {children}
                       </code>
                     );
-                  }
-                  return (
-                    <code className="bg-gray-800 px-1.5 py-0.5 rounded text-sm text-yellow-300">
+                  },
+                  pre: ({ children }) => (
+                    <pre className="bg-gray-950 rounded overflow-x-auto my-3">
                       {children}
-                    </code>
-                  );
-                },
-                pre: ({ children }) => (
-                  <pre className="bg-gray-950 rounded overflow-x-auto my-3">
-                    {children}
-                  </pre>
-                ),
-                blockquote: ({ children }) => (
-                  <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-400 my-3">
-                    {children}
-                  </blockquote>
-                ),
-              }}
-            >
-              {content}
-            </Markdown>
-          </div>
-        ) : (
-          <Editor
-            value={content}
-            onValueChange={onContentChange}
-            highlight={highlight}
-            padding={16}
-            disabled={isStockReadme}
-            className="min-h-full font-mono text-sm"
-            style={{
-              backgroundColor: "#1a1a1a",
-              color: "#e0e0e0",
-              minHeight: "100%",
-            }}
-            textareaClassName="outline-none"
-          />
-        )}
+                    </pre>
+                  ),
+                  blockquote: ({ children }) => (
+                    <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-400 my-3">
+                      {children}
+                    </blockquote>
+                  ),
+                }}
+              >
+                {content}
+              </Markdown>
+            </div>
+          ) : (
+            <div ref={editorContainerRef}>
+              <Editor
+                value={content}
+                onValueChange={onContentChange}
+                highlight={highlight}
+                padding={16}
+                disabled={isStockReadme}
+                className="min-h-full font-mono text-sm"
+                style={{
+                  backgroundColor: "#1a1a1a",
+                  color: "#e0e0e0",
+                  minHeight: "100%",
+                }}
+                textareaClassName="outline-none"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* History Drawer - inline on the right */}
+        <HistoryDrawer
+          isOpen={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          connection={connection}
+          path={path}
+          currentContent={content}
+          onRevert={() => {
+            setToast("Reverted to previous version");
+            onRefresh?.();
+          }}
+        />
       </div>
+
+      {/* Toast notification */}
+      <Toast message={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

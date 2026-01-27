@@ -263,21 +263,16 @@ state.yaml
 
 
 def is_git_installed() -> bool:
-    """Check if git is installed and available."""
-    try:
-        subprocess.run(
-            ["git", "--version"],
-            capture_output=True,
-            check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    """Check if git is installed and available (native or dulwich fallback)."""
+    # Always returns True now since we have dulwich fallback
+    return True
 
 
 def is_git_repo(path: Path) -> bool:
     """Check if a directory is a git repository."""
-    return (path / ".git").is_dir()
+    from db_mcp.git_utils import git
+
+    return git.is_repo(path)
 
 
 def git_init(path: Path, remote_url: str | None = None) -> bool:
@@ -290,9 +285,11 @@ def git_init(path: Path, remote_url: str | None = None) -> bool:
     Returns:
         True if successful
     """
+    from db_mcp.git_utils import git
+
     try:
         # Initialize repo
-        subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
+        git.init(path)
 
         # Create .gitignore
         gitignore_path = path / ".gitignore"
@@ -300,26 +297,16 @@ def git_init(path: Path, remote_url: str | None = None) -> bool:
             gitignore_path.write_text(GITIGNORE_CONTENT)
 
         # Initial commit
-        subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial db-mcp connection setup"],
-            cwd=path,
-            capture_output=True,
-            check=True,
-        )
+        git.add(path, ["."])
+        git.commit(path, "Initial db-mcp connection setup")
 
         # Add remote if provided
         if remote_url:
-            subprocess.run(
-                ["git", "remote", "add", "origin", remote_url],
-                cwd=path,
-                capture_output=True,
-                check=True,
-            )
+            git.remote_add(path, "origin", remote_url)
 
         return True
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Git error: {e.stderr.decode() if e.stderr else str(e)}[/red]")
+    except Exception as e:
+        console.print(f"[red]Git error: {e}[/red]")
         return False
 
 
@@ -333,16 +320,16 @@ def git_clone(url: str, dest: Path) -> bool:
     Returns:
         True if successful
     """
+    from db_mcp.git_utils import git
+
     try:
-        subprocess.run(
-            ["git", "clone", url, str(dest)],
-            capture_output=True,
-            check=True,
-        )
+        git.clone(url, dest)
         return True
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode() if e.stderr else str(e)
-        console.print(f"[red]Git clone failed: {error_msg}[/red]")
+    except NotImplementedError:
+        console.print("[red]Clone requires native git to be installed.[/red]")
+        return False
+    except Exception as e:
+        console.print(f"[red]Git clone failed: {e}[/red]")
         return False
 
 
@@ -357,42 +344,26 @@ def git_sync(path: Path) -> bool:
     """
     from datetime import datetime
 
+    from db_mcp.git_utils import git
+
     try:
         # Check for changes
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=path,
-            capture_output=True,
-            check=True,
-        )
-
-        has_changes = bool(result.stdout.strip())
+        changes = git.status(path)
+        has_changes = bool(changes)
 
         if has_changes:
             # Add all changes
-            subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
+            git.add(path, ["."])
 
             # Commit with timestamp
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            subprocess.run(
-                ["git", "commit", "-m", f"dbmcp sync {timestamp}"],
-                cwd=path,
-                capture_output=True,
-                check=True,
-            )
+            git.commit(path, f"dbmcp sync {timestamp}")
             console.print("[green]✓ Changes committed[/green]")
         else:
             console.print("[dim]No local changes to commit.[/dim]")
 
         # Check if remote exists
-        result = subprocess.run(
-            ["git", "remote"],
-            cwd=path,
-            capture_output=True,
-            check=True,
-        )
-
-        if not result.stdout.strip():
+        if not git.has_remote(path):
             console.print(
                 "[yellow]No remote configured. Use 'git remote add origin <url>'[/yellow]"
             )
@@ -400,15 +371,11 @@ def git_sync(path: Path) -> bool:
 
         # Pull with rebase to get remote changes
         console.print("[dim]Pulling remote changes...[/dim]")
-        result = subprocess.run(
-            ["git", "pull", "--rebase", "origin", "HEAD"],
-            cwd=path,
-            capture_output=True,
-        )
-
-        if result.returncode != 0:
-            error_msg = result.stderr.decode() if result.stderr else ""
-            if "conflict" in error_msg.lower():
+        try:
+            git.pull(path, rebase=True)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "conflict" in error_msg:
                 console.print("[yellow]Merge conflict detected.[/yellow]")
                 console.print("[dim]Resolve conflicts manually, then run:[/dim]")
                 console.print(f"  cd {path}")
@@ -416,35 +383,30 @@ def git_sync(path: Path) -> bool:
                 console.print("  git rebase --continue")
                 console.print("  dbmcp sync")
                 return False
-            elif "couldn't find remote ref" in error_msg.lower():
+            elif "couldn't find remote ref" in error_msg:
                 # Remote branch doesn't exist yet, that's ok
                 pass
             else:
-                console.print(f"[yellow]Pull warning: {error_msg}[/yellow]")
+                console.print(f"[yellow]Pull warning: {e}[/yellow]")
 
         # Push changes
         console.print("[dim]Pushing to remote...[/dim]")
-        result = subprocess.run(
-            ["git", "push", "-u", "origin", "HEAD"],
-            cwd=path,
-            capture_output=True,
-        )
-
-        if result.returncode != 0:
-            error_msg = result.stderr.decode() if result.stderr else ""
-            if "rejected" in error_msg.lower():
+        try:
+            git.push(path)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "rejected" in error_msg:
                 console.print("[yellow]Push rejected. Try 'dbmcp pull' first.[/yellow]")
                 return False
             else:
-                console.print(f"[red]Push failed: {error_msg}[/red]")
+                console.print(f"[red]Push failed: {e}[/red]")
                 return False
 
         console.print("[green]✓ Synced with remote[/green]")
         return True
 
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode() if e.stderr else str(e)
-        console.print(f"[red]Git error: {error_msg}[/red]")
+    except Exception as e:
+        console.print(f"[red]Git error: {e}[/red]")
         return False
 
 
@@ -457,60 +419,54 @@ def git_pull(path: Path) -> bool:
     Returns:
         True if successful
     """
+    from db_mcp.git_utils import git
+
     try:
         # Check for uncommitted changes
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=path,
-            capture_output=True,
-            check=True,
-        )
+        changes = git.status(path)
+        stashed = False
 
-        if result.stdout.strip():
+        if changes:
             console.print("[yellow]You have uncommitted changes.[/yellow]")
             console.print("[dim]Stashing changes before pull...[/dim]")
-            subprocess.run(["git", "stash"], cwd=path, capture_output=True, check=True)
-            stashed = True
-        else:
-            stashed = False
+            try:
+                git.stash(path)
+                stashed = True
+            except NotImplementedError:
+                console.print(
+                    "[yellow]Stash requires native git. Commit your changes first.[/yellow]"
+                )
+                return False
 
         # Pull
-        result = subprocess.run(
-            ["git", "pull", "--rebase", "origin", "HEAD"],
-            cwd=path,
-            capture_output=True,
-        )
-
-        if result.returncode != 0:
-            error_msg = result.stderr.decode() if result.stderr else ""
-            if "conflict" in error_msg.lower():
+        try:
+            git.pull(path, rebase=True)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "conflict" in error_msg:
                 console.print("[yellow]Merge conflict detected.[/yellow]")
                 console.print(f"[dim]Resolve conflicts in {path}[/dim]")
                 return False
-            elif "couldn't find remote ref" in error_msg.lower():
+            elif "couldn't find remote ref" in error_msg:
                 console.print("[dim]Remote branch not found (may not exist yet).[/dim]")
             else:
-                console.print(f"[yellow]Pull warning: {error_msg}[/yellow]")
+                console.print(f"[yellow]Pull warning: {e}[/yellow]")
 
         # Pop stash if we stashed
         if stashed:
-            result = subprocess.run(
-                ["git", "stash", "pop"],
-                cwd=path,
-                capture_output=True,
-            )
-            if result.returncode != 0:
+            try:
+                git.stash_pop(path)
+                console.print("[dim]Restored local changes.[/dim]")
+            except Exception:
                 console.print("[yellow]Conflict applying stashed changes.[/yellow]")
                 console.print("[dim]Resolve conflicts manually.[/dim]")
                 return False
-            console.print("[dim]Restored local changes.[/dim]")
 
         console.print("[green]✓ Pulled from remote[/green]")
         return True
 
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode() if e.stderr else str(e)
-        console.print(f"[red]Git error: {error_msg}[/red]")
+    except Exception as e:
+        console.print(f"[red]Git error: {e}[/red]")
         return False
 
 
@@ -1176,35 +1132,28 @@ def status(connection: str | None):
 
 def _get_git_remote_url(path: Path) -> str | None:
     """Get the git remote origin URL for a repository."""
+    from db_mcp.git_utils import git
+
     try:
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            cwd=path,
-            capture_output=True,
-            check=True,
-        )
-        return result.stdout.decode().strip()
-    except subprocess.CalledProcessError:
+        return git.remote_get_url(path, "origin")
+    except (NotImplementedError, Exception):
         return None
 
 
 def _get_git_status_indicator(path: Path) -> str:
     """Get a short git status indicator for a connection."""
-    if not is_git_repo(path):
+    from db_mcp.git_utils import git
+
+    if not git.is_repo(path):
         return "[dim]-[/dim]"
 
     remote_url = _get_git_remote_url(path)
 
     # Check for uncommitted changes
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=path,
-            capture_output=True,
-            check=True,
-        )
-        has_changes = bool(result.stdout.strip())
-    except subprocess.CalledProcessError:
+        changes = git.status(path)
+        has_changes = bool(changes)
+    except Exception:
         has_changes = False
 
     if remote_url:
@@ -1400,18 +1349,9 @@ def git_init_cmd(name: str | None, remote_url: str | None):
     if is_git_repo(conn_path):
         console.print(f"[yellow]Connection '{name}' is already a git repository.[/yellow]")
         # Show remote info if any
-        try:
-            result = subprocess.run(
-                ["git", "remote", "-v"],
-                cwd=conn_path,
-                capture_output=True,
-                check=True,
-            )
-            if result.stdout.strip():
-                console.print("[dim]Remotes:[/dim]")
-                console.print(result.stdout.decode())
-        except subprocess.CalledProcessError:
-            pass
+        remote_url = _get_git_remote_url(conn_path)
+        if remote_url:
+            console.print(f"[dim]Remote 'origin': {remote_url}[/dim]")
         return
 
     # Prompt for remote if not provided

@@ -95,6 +95,11 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["context/create"] = self._handle_context_create
         self._method_handlers["context/delete"] = self._handle_context_delete
 
+        # Git history handlers
+        self._method_handlers["context/git/history"] = self._handle_git_history
+        self._method_handlers["context/git/show"] = self._handle_git_show
+        self._method_handlers["context/git/revert"] = self._handle_git_revert
+
     def _detect_dialect(self) -> str:
         """Detect the database dialect from configuration."""
         try:
@@ -1242,30 +1247,20 @@ This knowledge helps the AI generate better queries over time.
         if not self._is_git_enabled(conn_path):
             return False
 
-        import subprocess
+        from db_mcp.git_utils import git
 
         try:
-            # Add files
-            for file in files:
-                subprocess.run(
-                    ["git", "add", file],
-                    cwd=conn_path,
-                    capture_output=True,
-                    check=True,
-                )
+            git.add(conn_path, files)
+            result = git.commit(conn_path, message)
 
-            # Commit
-            subprocess.run(
-                ["git", "commit", "-m", message],
-                cwd=conn_path,
-                capture_output=True,
-                check=True,
-            )
+            if result:
+                logger.info(f"Git commit: {message}")
+                return True
+            else:
+                logger.debug("Nothing to commit")
+                return False
 
-            logger.info(f"Git commit: {message}")
-            return True
-
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             logger.warning(f"Git commit failed: {e}")
             return False
 
@@ -1629,20 +1624,10 @@ This knowledge helps the AI generate better queries over time.
 
             if git_enabled:
                 # Use git rm (file is recoverable via git history)
-                import subprocess
+                from db_mcp.git_utils import git
 
-                subprocess.run(
-                    ["git", "rm", "-f", path],
-                    cwd=conn_path,
-                    capture_output=True,
-                    check=True,
-                )
-                subprocess.run(
-                    ["git", "commit", "-m", f"Delete {path}"],
-                    cwd=conn_path,
-                    capture_output=True,
-                    check=True,
-                )
+                git.rm(conn_path, path)
+                git.commit(conn_path, f"Delete {path}")
 
                 logger.info(f"Git rm: {connection}/{path}")
                 return {"success": True, "gitCommit": True}
@@ -1672,3 +1657,210 @@ This knowledge helps the AI generate better queries over time.
 
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    # ========== Git History Methods ==========
+
+    async def _handle_git_history(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get commit history for a file.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "path": str - Relative path within connection
+                "limit": int - Maximum number of commits to return (default: 50)
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "commits": [
+                    {
+                        "hash": str,      # Short commit hash
+                        "fullHash": str,  # Full commit hash
+                        "message": str,   # Commit message
+                        "date": str,      # ISO 8601 date
+                        "author": str,    # Author name
+                    }
+                ],
+                "error": str | None
+            }
+        """
+        from db_mcp.git_utils import git
+
+        connection = params.get("connection")
+        path = params.get("path")
+        limit = params.get("limit", 50)
+
+        if not connection or not path:
+            return {"success": False, "error": "connection and path are required"}
+
+        # Validate path
+        if ".." in path or path.startswith("/"):
+            return {"success": False, "error": "Invalid path"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        if not self._is_git_enabled(conn_path):
+            return {"success": False, "error": "Git is not enabled for this connection"}
+
+        file_path = conn_path / path
+        if not file_path.exists():
+            return {"success": False, "error": f"File not found: {path}"}
+
+        try:
+            commits_list = git.log(conn_path, path, limit=limit)
+
+            commits = [
+                {
+                    "hash": c.hash,
+                    "fullHash": c.full_hash,
+                    "message": c.message,
+                    "date": c.date.isoformat(),
+                    "author": c.author,
+                }
+                for c in commits_list
+            ]
+
+            return {"success": True, "commits": commits}
+
+        except Exception as e:
+            return {"success": False, "error": f"Git error: {e}"}
+
+    async def _handle_git_show(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get file content at a specific commit.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "path": str - Relative path within connection
+                "commit": str - Commit hash (short or full)
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "content": str,    # File content at that commit
+                "commit": str,     # The commit hash used
+                "error": str | None
+            }
+        """
+        from db_mcp.git_utils import git
+
+        connection = params.get("connection")
+        path = params.get("path")
+        commit = params.get("commit")
+
+        if not connection or not path or not commit:
+            return {"success": False, "error": "connection, path, and commit are required"}
+
+        # Validate path
+        if ".." in path or path.startswith("/"):
+            return {"success": False, "error": "Invalid path"}
+
+        # Validate commit hash (alphanumeric only)
+        if not commit.replace("-", "").isalnum():
+            return {"success": False, "error": "Invalid commit hash"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        if not self._is_git_enabled(conn_path):
+            return {"success": False, "error": "Git is not enabled for this connection"}
+
+        try:
+            content = git.show(conn_path, path, commit)
+
+            return {
+                "success": True,
+                "content": content,
+                "commit": commit,
+            }
+
+        except FileNotFoundError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": f"Git error: {e}"}
+
+    async def _handle_git_revert(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Revert a file to a specific commit.
+
+        This restores the file content from the specified commit and
+        creates a new commit with the reverted content.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "path": str - Relative path within connection
+                "commit": str - Commit hash to revert to
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "newCommit": str,  # Hash of the new revert commit
+                "error": str | None
+            }
+        """
+        from db_mcp.git_utils import git
+
+        connection = params.get("connection")
+        path = params.get("path")
+        commit = params.get("commit")
+
+        if not connection or not path or not commit:
+            return {"success": False, "error": "connection, path, and commit are required"}
+
+        # Validate path
+        if ".." in path or path.startswith("/"):
+            return {"success": False, "error": "Invalid path"}
+
+        # Validate commit hash (alphanumeric only)
+        if not commit.replace("-", "").isalnum():
+            return {"success": False, "error": "Invalid commit hash"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        if not self._is_git_enabled(conn_path):
+            return {"success": False, "error": "Git is not enabled for this connection"}
+
+        file_path = conn_path / path
+        if not file_path.exists():
+            return {"success": False, "error": f"File not found: {path}"}
+
+        try:
+            # Get file content at the specified commit
+            old_content = git.show(conn_path, path, commit)
+
+            # Write the content to the file
+            file_path.write_text(old_content, encoding="utf-8")
+
+            # Stage and commit the file
+            short_hash = commit[:7] if len(commit) > 7 else commit
+            git.add(conn_path, [path])
+            git.commit(conn_path, f"Revert {path} to {short_hash}")
+
+            # Get the new commit hash
+            new_commit = git.head_hash(conn_path, short=True)
+
+            logger.info(f"Reverted {connection}/{path} to {short_hash}, new commit: {new_commit}")
+
+            return {
+                "success": True,
+                "newCommit": new_commit,
+            }
+
+        except FileNotFoundError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": f"Git error: {e}"}

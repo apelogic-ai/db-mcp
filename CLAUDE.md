@@ -273,6 +273,7 @@ Binary build artifacts:
 
 - **NEVER switch git branches unless explicitly told to do so by the user**
 - **NEVER commit changes unless explicitly told to do so by the user**
+- **NEVER start dev servers or run dev.sh unless explicitly asked by the user**
 - Stay on the current branch for the entire session
 - If a task seems to require a different branch, ask the user first
 - If you think changes should be committed, ask the user first
