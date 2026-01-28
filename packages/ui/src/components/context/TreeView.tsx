@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import type { SelectedTreeNode } from "@/lib/context-viewer-context";
 
 // Icons
 const ChevronRight = ({ className }: { className?: string }) => (
@@ -157,6 +158,7 @@ export interface ConnectionNode {
 interface TreeViewProps {
   connections: ConnectionNode[];
   selectedFile: { connection: string; path: string } | null;
+  selectedTreeNode: SelectedTreeNode | null;
   expandedConnections: Set<string>;
   expandedFolders: Set<string>;
   onSelectFile: (connection: string, path: string) => void;
@@ -168,6 +170,7 @@ interface TreeViewProps {
 export function TreeView({
   connections,
   selectedFile,
+  selectedTreeNode,
   expandedConnections,
   expandedFolders,
   onSelectFile,
@@ -177,14 +180,16 @@ export function TreeView({
 }: TreeViewProps) {
   const isFileSelected = (connection: string, path: string) => {
     return (
-      selectedFile?.connection === connection && selectedFile?.path === path
+      selectedTreeNode?.connection === connection &&
+      selectedTreeNode?.file === path
     );
   };
 
   const isFolderSelected = (connection: string, folderName: string) => {
     return (
-      selectedFile?.connection === connection &&
-      selectedFile?.path === folderName
+      selectedTreeNode?.connection === connection &&
+      selectedTreeNode?.folder === folderName &&
+      !selectedTreeNode?.file
     );
   };
 
@@ -224,13 +229,19 @@ export function TreeView({
         connections.map((conn) => {
           const isExpanded = expandedConnections.has(conn.name);
 
+          const isConnectionSelected =
+            selectedTreeNode?.connection === conn.name &&
+            !selectedTreeNode?.folder &&
+            !selectedTreeNode?.file;
+
           return (
             <div key={conn.name}>
               {/* Connection node */}
               <div
                 className={cn(
                   "flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-gray-800 rounded",
-                  conn.isActive && "bg-green-950/30",
+                  conn.isActive && !isConnectionSelected && "bg-green-950/30",
+                  isConnectionSelected && "bg-blue-900/50",
                 )}
                 onClick={() => onToggleConnection(conn.name)}
               >

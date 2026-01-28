@@ -10,6 +10,7 @@ import Markdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HistoryDrawer } from "./HistoryDrawer";
+import { SchemaExplorer, parseDbLink } from "./SchemaExplorer";
 
 // Icons
 const SaveIcon = ({ className }: { className?: string }) => (
@@ -141,6 +142,25 @@ const HistoryIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const DatabaseIcon = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <ellipse cx="12" cy="5" rx="9" ry="3" />
+    <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+    <path d="M3 12A9 3 0 0 0 21 12" />
+  </svg>
+);
+
 // Separator component for toolbar
 function ToolbarSeparator() {
   return <div className="w-px h-5 bg-gray-700 mx-1" />;
@@ -183,6 +203,8 @@ interface CodeEditorProps {
   onDiscard: () => void;
   onDelete: () => Promise<void>;
   onCreateFile: () => void;
+  onCreateFileForFolder?: () => void; // Create file when a folder is selected but no file open
+  hasFolderContext?: boolean; // Whether a folder is selected in the tree
   onRefresh?: () => void; // Called after git revert to refresh content
 }
 
@@ -199,12 +221,17 @@ export function CodeEditor({
   onDiscard,
   onDelete,
   onCreateFile,
+  onCreateFileForFolder,
+  hasFolderContext,
   onRefresh,
 }: CodeEditorProps) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [schemaOpen, setSchemaOpen] = useState(false);
+  const [schemaTarget, setSchemaTarget] =
+    useState<ReturnType<typeof parseDbLink>>(null);
   const [selection, setSelection] = useState<{
     text: string;
     startLine: number;
@@ -229,15 +256,40 @@ export function CodeEditor({
 
   const language = getLanguage(path, isStockReadme);
 
-  // Syntax highlighting function
+  // Syntax highlighting function with db:// link detection
   const highlight = useCallback(
     (code: string) => {
       const grammar =
         language === "yaml" ? Prism.languages.yaml : Prism.languages.markdown;
-      return Prism.highlight(code, grammar, language);
+      let highlighted = Prism.highlight(code, grammar, language);
+
+      // Highlight db:// links - make them clickable-looking
+      // Pattern: db://catalog/schema/table[/column]
+      highlighted = highlighted.replace(
+        /(db:\/\/[\w.-]+(?:\/[\w.-]+){1,3})/g,
+        '<span class="db-link" style="color: #60a5fa; text-decoration: underline; cursor: pointer;">$1</span>',
+      );
+
+      return highlighted;
     },
     [language],
   );
+
+  // Handle clicks on db:// links in the editor
+  const handleEditorClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.classList.contains("db-link")) {
+      const link = target.textContent;
+      if (link) {
+        const parsed = parseDbLink(link);
+        if (parsed) {
+          setSchemaTarget(parsed);
+          setSchemaOpen(true);
+          setHistoryOpen(false); // Close history if open
+        }
+      }
+    }
+  }, []);
 
   // Handle save
   const handleSave = async () => {
@@ -372,8 +424,19 @@ export function CodeEditor({
   if (!connection || !path) {
     return (
       <div className="h-full flex items-center justify-center text-gray-500">
-        <div className="text-center">
+        <div className="text-center space-y-4">
           <p>Select a file from the tree to view or edit.</p>
+          {hasFolderContext && onCreateFileForFolder && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onCreateFileForFolder}
+              className="text-xs border-green-800 bg-gray-900 text-green-400 hover:bg-green-950"
+            >
+              <PlusIcon className="mr-1" />
+              Create File
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -495,13 +558,31 @@ export function CodeEditor({
                 <LinkIcon className="mr-1" />
                 Copy Ref
               </Button>
+              <ToolbarSeparator />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSchemaOpen(true);
+                  setSchemaTarget(null);
+                  setHistoryOpen(false);
+                }}
+                disabled={isLoading}
+                className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-blue-400"
+                title="Browse database schema"
+              >
+                <DatabaseIcon className="mr-1" />
+                Schema
+              </Button>
               {gitEnabled && (
                 <>
-                  <ToolbarSeparator />
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setHistoryOpen(true)}
+                    onClick={() => {
+                      setHistoryOpen(true);
+                      setSchemaOpen(false);
+                    }}
                     disabled={isLoading}
                     className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-orange-400"
                     title="View version history"
@@ -511,6 +592,17 @@ export function CodeEditor({
                   </Button>
                 </>
               )}
+              <ToolbarSeparator />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onCreateFile}
+                className="text-xs border-green-800 bg-gray-900 text-green-400 hover:bg-green-950"
+                title="Create a new file in this folder"
+              >
+                <PlusIcon className="mr-1" />
+                New
+              </Button>
             </>
           )}
           {isStockReadme && (
@@ -598,7 +690,7 @@ export function CodeEditor({
               </Markdown>
             </div>
           ) : (
-            <div ref={editorContainerRef}>
+            <div ref={editorContainerRef} onClick={handleEditorClick}>
               <Editor
                 value={content}
                 onValueChange={onContentChange}
@@ -627,6 +719,17 @@ export function CodeEditor({
           onRevert={() => {
             setToast("Reverted to previous version");
             onRefresh?.();
+          }}
+        />
+
+        {/* Schema Explorer Drawer - inline on the right */}
+        <SchemaExplorer
+          isOpen={schemaOpen}
+          onClose={() => setSchemaOpen(false)}
+          targetLink={schemaTarget}
+          onInsertLink={(link) => {
+            navigator.clipboard.writeText(link);
+            setToast(`Copied: ${link}`);
           }}
         />
       </div>

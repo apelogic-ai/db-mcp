@@ -131,6 +131,90 @@ export async function initialize(
   );
 }
 
+// Schema Explorer types
+export interface SchemaInfo {
+  name: string;
+  catalog: string | null;
+  tableCount: number | null;
+}
+
+export interface TableInfo {
+  name: string;
+  description: string | null;
+}
+
+export interface ColumnInfo {
+  name: string;
+  type: string;
+  nullable: boolean;
+  description: string | null;
+  isPrimaryKey: boolean;
+}
+
+export interface CatalogsResult {
+  success: boolean;
+  catalogs: string[];
+  error?: string;
+}
+
+export interface SchemasResult {
+  success: boolean;
+  schemas: SchemaInfo[];
+  error?: string;
+}
+
+export interface TablesResult {
+  success: boolean;
+  tables: TableInfo[];
+  error?: string;
+}
+
+export interface ColumnsResult {
+  success: boolean;
+  columns: ColumnInfo[];
+  error?: string;
+}
+
+export interface ValidateLinkResult {
+  success: boolean;
+  valid: boolean;
+  parsed: {
+    catalog: string | null;
+    schema: string | null;
+    table: string | null;
+    column: string | null;
+  };
+  error?: string;
+}
+
+// Schema API functions
+export async function getCatalogs(): Promise<CatalogsResult> {
+  return bicpCall<CatalogsResult>("schema/catalogs", {});
+}
+
+export async function getSchemas(catalog?: string): Promise<SchemasResult> {
+  return bicpCall<SchemasResult>("schema/schemas", { catalog });
+}
+
+export async function getTables(
+  schema: string,
+  catalog?: string,
+): Promise<TablesResult> {
+  return bicpCall<TablesResult>("schema/tables", { schema, catalog });
+}
+
+export async function getColumns(
+  table: string,
+  schema?: string,
+  catalog?: string,
+): Promise<ColumnsResult> {
+  return bicpCall<ColumnsResult>("schema/columns", { table, schema, catalog });
+}
+
+export async function validateLink(link: string): Promise<ValidateLinkResult> {
+  return bicpCall<ValidateLinkResult>("schema/validate-link", { link });
+}
+
 // Git History types
 export interface GitCommit {
   hash: string;

@@ -100,6 +100,13 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["context/git/show"] = self._handle_git_show
         self._method_handlers["context/git/revert"] = self._handle_git_revert
 
+        # Schema explorer handlers
+        self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
+        self._method_handlers["schema/schemas"] = self._handle_schema_schemas
+        self._method_handlers["schema/tables"] = self._handle_schema_tables
+        self._method_handlers["schema/columns"] = self._handle_schema_columns
+        self._method_handlers["schema/validate-link"] = self._handle_schema_validate_link
+
     def _detect_dialect(self) -> str:
         """Detect the database dialect from configuration."""
         try:
@@ -1789,10 +1796,7 @@ This knowledge helps the AI generate better queries over time.
             return {"success": False, "error": f"Git error: {e}"}
 
     async def _handle_git_revert(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Revert a file to a specific commit.
-
-        This restores the file content from the specified commit and
-        creates a new commit with the reverted content.
+        """Revert a file to its content at a specific commit.
 
         Args:
             params: {
@@ -1804,7 +1808,7 @@ This knowledge helps the AI generate better queries over time.
         Returns:
             {
                 "success": bool,
-                "newCommit": str,  # Hash of the new revert commit
+                "message": str | None,
                 "error": str | None
             }
         """
@@ -1834,33 +1838,295 @@ This knowledge helps the AI generate better queries over time.
         if not self._is_git_enabled(conn_path):
             return {"success": False, "error": "Git is not enabled for this connection"}
 
-        file_path = conn_path / path
-        if not file_path.exists():
-            return {"success": False, "error": f"File not found: {path}"}
-
         try:
             # Get file content at the specified commit
-            old_content = git.show(conn_path, path, commit)
+            content = git.show(conn_path, path, commit)
 
-            # Write the content to the file
-            file_path.write_text(old_content, encoding="utf-8")
+            # Write the content back to the file
+            file_path = conn_path / path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content)
 
-            # Stage and commit the file
-            short_hash = commit[:7] if len(commit) > 7 else commit
-            git.add(conn_path, [path])
-            git.commit(conn_path, f"Revert {path} to {short_hash}")
-
-            # Get the new commit hash
-            new_commit = git.head_hash(conn_path, short=True)
-
-            logger.info(f"Reverted {connection}/{path} to {short_hash}, new commit: {new_commit}")
+            # Commit the revert
+            self._git_commit(
+                conn_path,
+                f"Revert {path} to {commit[:7]}",
+                [path],
+            )
 
             return {
                 "success": True,
-                "newCommit": new_commit,
+                "message": f"Reverted {path} to commit {commit[:7]}",
             }
 
         except FileNotFoundError as e:
             return {"success": False, "error": str(e)}
         except Exception as e:
-            return {"success": False, "error": f"Git error: {e}"}
+            return {"success": False, "error": f"Git revert error: {e}"}
+
+    # ========== Schema Explorer Methods ==========
+
+    async def _handle_schema_catalogs(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List available catalogs in the database.
+
+        Args:
+            params: {} - No parameters required
+
+        Returns:
+            {
+                "success": bool,
+                "catalogs": [str],  # List of catalog names
+                "error": str | None
+            }
+        """
+        try:
+            catalogs = get_catalogs()
+            return {"success": True, "catalogs": catalogs}
+        except Exception as e:
+            logger.exception(f"Failed to list catalogs: {e}")
+            return {"success": False, "catalogs": [], "error": str(e)}
+
+    async def _handle_schema_schemas(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List schemas in a catalog.
+
+        Args:
+            params: {
+                "catalog": str | None - Catalog to list schemas for (optional)
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "schemas": [{"name": str, "catalog": str, "tableCount": int | None}],
+                "error": str | None
+            }
+        """
+        catalog = params.get("catalog")
+
+        try:
+            schemas_list = []
+            schema_names = get_schemas(catalog=catalog)
+
+            for name in schema_names:
+                if name:
+                    # Try to get table count
+                    table_count = None
+                    try:
+                        tables = get_tables(schema=name, catalog=catalog)
+                        table_count = len(tables)
+                    except Exception:
+                        pass
+
+                    schemas_list.append(
+                        {
+                            "name": name,
+                            "catalog": catalog,
+                            "tableCount": table_count,
+                        }
+                    )
+
+            return {"success": True, "schemas": schemas_list}
+        except Exception as e:
+            logger.exception(f"Failed to list schemas: {e}")
+            return {"success": False, "schemas": [], "error": str(e)}
+
+    async def _handle_schema_tables(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List tables in a schema.
+
+        Args:
+            params: {
+                "schema": str - Schema name (required)
+                "catalog": str | None - Catalog name (optional)
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "tables": [{"name": str, "description": str | None}],
+                "error": str | None
+            }
+        """
+        schema = params.get("schema")
+        catalog = params.get("catalog")
+
+        if not schema:
+            return {"success": False, "tables": [], "error": "schema is required"}
+
+        try:
+            tables = get_tables(schema=schema, catalog=catalog)
+
+            # Load schema descriptions if available
+            provider_id = self._settings.provider_id
+            schema_desc = load_schema_descriptions(provider_id)
+            desc_by_name: dict[str, str | None] = {}
+            if schema_desc:
+                for t in schema_desc.tables:
+                    desc_by_name[t.full_name or t.name] = t.description
+                    desc_by_name[t.name] = t.description
+
+            tables_list = []
+            for table in tables:
+                name = table.get("name", table) if isinstance(table, dict) else table
+                full_name = table.get("full_name", name) if isinstance(table, dict) else name
+                description = desc_by_name.get(full_name) or desc_by_name.get(name)
+
+                tables_list.append(
+                    {
+                        "name": name,
+                        "description": description,
+                    }
+                )
+
+            return {"success": True, "tables": tables_list}
+        except Exception as e:
+            logger.exception(f"Failed to list tables: {e}")
+            return {"success": False, "tables": [], "error": str(e)}
+
+    async def _handle_schema_columns(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List columns in a table.
+
+        Args:
+            params: {
+                "table": str - Table name (required)
+                "schema": str | None - Schema name (optional)
+                "catalog": str | None - Catalog name (optional)
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "columns": [{
+                    "name": str,
+                    "type": str,
+                    "nullable": bool,
+                    "description": str | None,
+                    "isPrimaryKey": bool
+                }],
+                "error": str | None
+            }
+        """
+        table = params.get("table")
+        schema = params.get("schema")
+        catalog = params.get("catalog")
+
+        if not table:
+            return {"success": False, "columns": [], "error": "table is required"}
+
+        try:
+            columns = get_columns(table, schema=schema, catalog=catalog)
+
+            # Load schema descriptions if available
+            provider_id = self._settings.provider_id
+            schema_desc = load_schema_descriptions(provider_id)
+            col_descs: dict[str, str | None] = {}
+            if schema_desc:
+                for t in schema_desc.tables:
+                    if t.name == table or t.full_name == table:
+                        for col in t.columns or []:
+                            col_descs[col.name] = col.description
+                        break
+
+            columns_list = []
+            for col in columns:
+                columns_list.append(
+                    {
+                        "name": col["name"],
+                        "type": col.get("type", "VARCHAR"),
+                        "nullable": col.get("nullable", True),
+                        "description": col_descs.get(col["name"]),
+                        "isPrimaryKey": col.get("primary_key", False),
+                    }
+                )
+
+            return {"success": True, "columns": columns_list}
+        except Exception as e:
+            logger.exception(f"Failed to list columns: {e}")
+            return {"success": False, "columns": [], "error": str(e)}
+
+    async def _handle_schema_validate_link(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate a semantic link (db://catalog/schema/table[/column]).
+
+        Args:
+            params: {
+                "link": str - The db:// link to validate
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "valid": bool,
+                "parsed": {
+                    "catalog": str | None,
+                    "schema": str | None,
+                    "table": str | None,
+                    "column": str | None
+                },
+                "error": str | None
+            }
+        """
+        link = params.get("link", "")
+
+        # Parse db://catalog/schema/table[/column]
+        if not link.startswith("db://"):
+            return {
+                "success": True,
+                "valid": False,
+                "parsed": {},
+                "error": "Link must start with db://",
+            }
+
+        parts = link[5:].split("/")  # Remove 'db://' prefix
+        if len(parts) < 3:
+            return {
+                "success": True,
+                "valid": False,
+                "parsed": {},
+                "error": "Link must have at least catalog/schema/table",
+            }
+
+        catalog = parts[0] if parts[0] else None
+        schema = parts[1] if len(parts) > 1 else None
+        table = parts[2] if len(parts) > 2 else None
+        column = parts[3] if len(parts) > 3 else None
+
+        parsed = {
+            "catalog": catalog,
+            "schema": schema,
+            "table": table,
+            "column": column,
+        }
+
+        try:
+            # Validate table exists
+            if table and schema:
+                tables = get_tables(schema=schema, catalog=catalog)
+                table_names = [t.get("name", t) if isinstance(t, dict) else t for t in tables]
+                if table not in table_names:
+                    return {
+                        "success": True,
+                        "valid": False,
+                        "parsed": parsed,
+                        "error": f"Table '{table}' not found in {catalog}/{schema}",
+                    }
+
+                # Validate column if specified
+                if column:
+                    columns = get_columns(table, schema=schema, catalog=catalog)
+                    column_names = [c["name"] for c in columns]
+                    if column not in column_names:
+                        return {
+                            "success": True,
+                            "valid": False,
+                            "parsed": parsed,
+                            "error": f"Column '{column}' not found in {table}",
+                        }
+
+            return {"success": True, "valid": True, "parsed": parsed}
+
+        except Exception as e:
+            return {
+                "success": True,
+                "valid": False,
+                "parsed": parsed,
+                "error": str(e),
+            }

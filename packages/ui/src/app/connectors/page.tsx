@@ -142,6 +142,16 @@ export default function ConnectorsPage() {
         return;
       }
 
+      // Don't test masked URLs
+      if (urlToTest.includes("****")) {
+        setTestStatus({
+          testing: false,
+          success: false,
+          message: "Enter the full URL including password to test",
+        });
+        return;
+      }
+
       setTestStatus({ testing: true, success: null, message: "" });
       try {
         const result = await call<TestResult>("connections/test", {
@@ -246,12 +256,12 @@ export default function ConnectorsPage() {
       if (result.success) {
         const url = result.databaseUrl || "";
         const maskedUrl = maskDatabaseUrl(url);
+        setShowCreateForm(false); // Close create form if open
         setEditingConnection(name);
         setNewName(name);
         setFullDatabaseUrl(url); // Store full URL for testing
         setDisplayDatabaseUrl(maskedUrl); // Show masked URL
         setUrlModified(false);
-        setShowCreateForm(true);
         setTestStatus(null);
         setCreateError(null);
       } else {
@@ -267,6 +277,14 @@ export default function ConnectorsPage() {
   const handleUpdateConnection = async () => {
     if (!editingConnection || !fullDatabaseUrl.trim()) {
       setCreateError("Database URL is required");
+      return;
+    }
+
+    // Prevent saving a masked URL back to disk
+    if (fullDatabaseUrl.includes("****")) {
+      setCreateError(
+        "Please enter the full database URL including the password",
+      );
       return;
     }
 
@@ -371,7 +389,7 @@ export default function ConnectorsPage() {
                 Configure and manage your database connections.
               </CardDescription>
             </div>
-            {isInitialized && !showCreateForm && (
+            {isInitialized && !(showCreateForm && !editingConnection) && (
               <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
@@ -398,7 +416,15 @@ export default function ConnectorsPage() {
                   </svg>
                 </Button>
                 <Button
-                  onClick={() => setShowCreateForm(true)}
+                  onClick={() => {
+                    setEditingConnection(null);
+                    setFullDatabaseUrl("");
+                    setDisplayDatabaseUrl("");
+                    setUrlModified(false);
+                    setTestStatus(null);
+                    setCreateError(null);
+                    setShowCreateForm(true);
+                  }}
                   className="bg-green-600 hover:bg-green-700 text-white"
                 >
                   + Add Connection
@@ -414,15 +440,11 @@ export default function ConnectorsPage() {
             </div>
           )}
 
-          {/* Create/Edit Connection Form */}
-          {showCreateForm && (
+          {/* Create New Connection Form (shown at top) */}
+          {showCreateForm && !editingConnection && (
             <div className="p-4 bg-gray-950 border border-gray-800 rounded-lg mb-4 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-white font-medium">
-                  {editingConnection
-                    ? `Edit Connection: ${editingConnection}`
-                    : "New Connection"}
-                </h3>
+                <h3 className="text-white font-medium">New Connection</h3>
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
@@ -433,35 +455,23 @@ export default function ConnectorsPage() {
                   >
                     {testStatus?.testing ? "Testing..." : "Test"}
                   </Button>
-                  {editingConnection ? (
-                    <Button
-                      onClick={handleUpdateConnection}
-                      size="sm"
-                      disabled={createLoading || !urlModified}
-                      className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-xs"
-                    >
-                      {createLoading ? "Updating..." : "Update"}
-                    </Button>
-                  ) : (
-                    <Button
-                      onClick={handleCreateConnection}
-                      size="sm"
-                      disabled={
-                        createLoading ||
-                        !newName.trim() ||
-                        !fullDatabaseUrl.trim()
-                      }
-                      className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 text-xs"
-                    >
-                      {createLoading ? "Creating..." : "Create"}
-                    </Button>
-                  )}
+                  <Button
+                    onClick={handleCreateConnection}
+                    size="sm"
+                    disabled={
+                      createLoading ||
+                      !newName.trim() ||
+                      !fullDatabaseUrl.trim()
+                    }
+                    className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 text-xs"
+                  >
+                    {createLoading ? "Creating..." : "Create"}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => {
                       setShowCreateForm(false);
-                      setEditingConnection(null);
                       setFullDatabaseUrl("");
                       setDisplayDatabaseUrl("");
                       setUrlModified(false);
@@ -476,19 +486,15 @@ export default function ConnectorsPage() {
                 </div>
               </div>
 
-              {!editingConnection && (
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-400">
-                    Connection Name
-                  </label>
-                  <Input
-                    placeholder="my-database"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    className="bg-gray-900 border-gray-700 text-white"
-                  />
-                </div>
-              )}
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">Connection Name</label>
+                <Input
+                  placeholder="my-database"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="bg-gray-900 border-gray-700 text-white"
+                />
+              </div>
 
               <div className="space-y-2">
                 <label className="text-sm text-gray-400">Database URL</label>
@@ -602,82 +608,218 @@ export default function ConnectorsPage() {
           ) : (
             <div className="space-y-3">
               {connections.map((conn) => (
-                <div
-                  key={conn.name}
-                  className={`p-4 rounded-lg border ${
-                    conn.isActive
-                      ? "bg-green-950/30 border-green-800"
-                      : "bg-gray-950 border-gray-800 hover:border-gray-700"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-2 h-2 rounded-full ${conn.isActive ? "bg-green-500" : "bg-gray-600"}`}
-                      />
-                      <span className="text-white font-medium">
-                        {conn.name}
-                      </span>
-                      {conn.isActive && (
-                        <Badge className="bg-green-900 text-green-300 text-xs">
-                          Active
-                        </Badge>
-                      )}
-                      {getDialectBadge(conn.dialect)}
-                      {getOnboardingBadge(conn.onboardingPhase)}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {!conn.isActive && (
+                <div key={conn.name}>
+                  <div
+                    className={`p-4 rounded-lg border ${
+                      conn.isActive
+                        ? "bg-green-950/30 border-green-800"
+                        : "bg-gray-950 border-gray-800 hover:border-gray-700"
+                    } ${editingConnection === conn.name ? "rounded-b-none border-b-0" : ""}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-2 h-2 rounded-full ${conn.isActive ? "bg-green-500" : "bg-gray-600"}`}
+                        />
+                        <span className="text-white font-medium">
+                          {conn.name}
+                        </span>
+                        {conn.isActive && (
+                          <Badge className="bg-green-900 text-green-300 text-xs">
+                            Active
+                          </Badge>
+                        )}
+                        {getDialectBadge(conn.dialect)}
+                        {getOnboardingBadge(conn.onboardingPhase)}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!conn.isActive && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSwitchConnection(conn.name)}
+                            className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300"
+                          >
+                            Switch
+                          </Button>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleSwitchConnection(conn.name)}
-                          className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300"
+                          onClick={() =>
+                            editingConnection === conn.name
+                              ? (() => {
+                                  setEditingConnection(null);
+                                  setShowCreateForm(false);
+                                  setFullDatabaseUrl("");
+                                  setDisplayDatabaseUrl("");
+                                  setUrlModified(false);
+                                  setTestStatus(null);
+                                  setCreateError(null);
+                                })()
+                              : handleEditConnection(conn.name)
+                          }
+                          className={`text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 ${editingConnection === conn.name ? "bg-gray-800" : ""}`}
                         >
-                          Switch
+                          {editingConnection === conn.name ? "Cancel" : "Edit"}
                         </Button>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleEditConnection(conn.name)}
-                        className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300"
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDeleteConnection(conn.name)}
+                          className="text-xs border-red-800 bg-gray-900 text-red-400 hover:bg-red-950 hover:text-red-300"
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex gap-4 text-xs text-gray-500">
+                      <span
+                        className={
+                          conn.hasCredentials
+                            ? "text-green-500"
+                            : "text-gray-600"
+                        }
                       >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDeleteConnection(conn.name)}
-                        className="text-xs border-red-800 bg-gray-900 text-red-400 hover:bg-red-950 hover:text-red-300"
+                        {conn.hasCredentials ? "Credentials" : "No credentials"}
+                      </span>
+                      <span
+                        className={
+                          conn.hasSchema ? "text-green-500" : "text-gray-600"
+                        }
                       >
-                        Delete
-                      </Button>
+                        {conn.hasSchema ? "Schema" : "No schema"}
+                      </span>
+                      <span
+                        className={
+                          conn.hasDomain ? "text-green-500" : "text-gray-600"
+                        }
+                      >
+                        {conn.hasDomain ? "Domain" : "No domain"}
+                      </span>
                     </div>
                   </div>
-                  <div className="mt-2 flex gap-4 text-xs text-gray-500">
-                    <span
-                      className={
-                        conn.hasCredentials ? "text-green-500" : "text-gray-600"
-                      }
-                    >
-                      {conn.hasCredentials ? "Credentials" : "No credentials"}
-                    </span>
-                    <span
-                      className={
-                        conn.hasSchema ? "text-green-500" : "text-gray-600"
-                      }
-                    >
-                      {conn.hasSchema ? "Schema" : "No schema"}
-                    </span>
-                    <span
-                      className={
-                        conn.hasDomain ? "text-green-500" : "text-gray-600"
-                      }
-                    >
-                      {conn.hasDomain ? "Domain" : "No domain"}
-                    </span>
-                  </div>
+
+                  {/* Inline Edit Form */}
+                  {editingConnection === conn.name && (
+                    <div className="p-4 bg-gray-950 border border-gray-800 border-t-0 rounded-b-lg space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm text-gray-400">
+                          Database URL
+                        </label>
+                        <div className="relative">
+                          <Input
+                            placeholder="postgresql://user:pass@host:5432/database"
+                            value={displayDatabaseUrl}
+                            onChange={(e) =>
+                              handleDatabaseUrlChange(e.target.value)
+                            }
+                            className="bg-gray-900 border-gray-700 text-white font-mono text-sm pr-10"
+                          />
+                          {/* Inline status indicator */}
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                            {testStatus?.testing && (
+                              <svg
+                                className="animate-spin h-4 w-4 text-gray-400"
+                                xmlns="http://www.w3.org/2000/svg"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                              >
+                                <circle
+                                  className="opacity-25"
+                                  cx="12"
+                                  cy="12"
+                                  r="10"
+                                  stroke="currentColor"
+                                  strokeWidth="4"
+                                />
+                                <path
+                                  className="opacity-75"
+                                  fill="currentColor"
+                                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                />
+                              </svg>
+                            )}
+                            {testStatus &&
+                              !testStatus.testing &&
+                              testStatus.success === true && (
+                                <span title={testStatus.message}>
+                                  <svg
+                                    className="h-4 w-4 text-green-500"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                  >
+                                    <path
+                                      fillRule="evenodd"
+                                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                                      clipRule="evenodd"
+                                    />
+                                  </svg>
+                                </span>
+                              )}
+                            {testStatus &&
+                              !testStatus.testing &&
+                              testStatus.success === false && (
+                                <span title={testStatus.message}>
+                                  <svg
+                                    className="h-4 w-4 text-red-500"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                  >
+                                    <path
+                                      fillRule="evenodd"
+                                      d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                                      clipRule="evenodd"
+                                    />
+                                  </svg>
+                                </span>
+                              )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          Supports: PostgreSQL, ClickHouse, Trino, MySQL, SQL
+                          Server
+                          {testStatus &&
+                            !testStatus.testing &&
+                            testStatus.success === false && (
+                              <span className="text-red-400 ml-2">
+                                {testStatus.message}
+                              </span>
+                            )}
+                        </p>
+                      </div>
+
+                      {createError && (
+                        <div className="p-3 bg-red-950 border border-red-800 rounded text-red-300 text-sm">
+                          {createError}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleTestConnection()}
+                          disabled={
+                            testStatus?.testing || !fullDatabaseUrl.trim()
+                          }
+                          className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                        >
+                          {testStatus?.testing ? "Testing..." : "Test"}
+                        </Button>
+                        <Button
+                          onClick={handleUpdateConnection}
+                          size="sm"
+                          disabled={createLoading || !urlModified}
+                          className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-xs"
+                        >
+                          {createLoading ? "Updating..." : "Update"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

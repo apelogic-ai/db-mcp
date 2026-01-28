@@ -14,6 +14,13 @@ interface SelectedFile {
   path: string;
 }
 
+// Tracks which tree node is visually selected (connection, folder, or file)
+export interface SelectedTreeNode {
+  connection: string;
+  folder?: string; // set when a folder or file is selected
+  file?: string; // set when a file is selected (full path like "domain/model.md")
+}
+
 interface ContextViewerState {
   // Tree data
   connections: ConnectionNode[];
@@ -22,6 +29,10 @@ interface ContextViewerState {
   // Selection state
   selectedFile: SelectedFile | null;
   setSelectedFile: (file: SelectedFile | null) => void;
+
+  // Tree node selection (for highlighting)
+  selectedTreeNode: SelectedTreeNode | null;
+  setSelectedTreeNode: (node: SelectedTreeNode | null) => void;
 
   // Editor content
   content: string;
@@ -53,6 +64,8 @@ export function ContextViewerProvider({ children }: { children: ReactNode }) {
 
   // Selection state
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
+  const [selectedTreeNode, setSelectedTreeNode] =
+    useState<SelectedTreeNode | null>(null);
 
   // Editor content
   const [content, setContent] = useState("");
@@ -61,10 +74,10 @@ export function ContextViewerProvider({ children }: { children: ReactNode }) {
 
   // Expansion state
   const [expandedConnections, setExpandedConnections] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
 
   // Tree panel width
@@ -103,6 +116,8 @@ export function ContextViewerProvider({ children }: { children: ReactNode }) {
         setConnections,
         selectedFile,
         setSelectedFile,
+        selectedTreeNode,
+        setSelectedTreeNode,
         content,
         setContent,
         originalContent,
@@ -127,7 +142,7 @@ export function useContextViewer() {
   const context = useContext(ContextViewerContext);
   if (!context) {
     throw new Error(
-      "useContextViewer must be used within a ContextViewerProvider"
+      "useContextViewer must be used within a ContextViewerProvider",
     );
   }
   return context;

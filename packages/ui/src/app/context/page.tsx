@@ -45,6 +45,8 @@ export default function ContextPage() {
     setConnections,
     selectedFile,
     setSelectedFile,
+    selectedTreeNode,
+    setSelectedTreeNode,
     content,
     setContent,
     originalContent,
@@ -156,7 +158,9 @@ export default function ContextPage() {
         return;
       }
     }
+    const folder = path.includes("/") ? path.split("/")[0] : undefined;
     setSelectedFile({ connection, path });
+    setSelectedTreeNode({ connection, folder, file: path });
     setIsStockReadme(false);
     fetchFile(connection, path);
   };
@@ -171,6 +175,7 @@ export default function ContextPage() {
     }
     // Set path to folder name - backend will return stock README
     setSelectedFile({ connection, path: folderName });
+    setSelectedTreeNode({ connection, folder: folderName });
     setIsStockReadme(false); // Will be set by fetchFile response
     fetchFile(connection, folderName);
   };
@@ -229,14 +234,31 @@ export default function ContextPage() {
     }
   };
 
-  // Handle create file button (from stock README)
+  // Handle create file button (from file/folder view)
   const handleCreateFileButton = () => {
     if (!selectedFile) return;
 
-    // selectedFile.path is the folder name for stock READMEs
-    const folder = selectedFile.path;
+    // Extract folder from path: for stock READMEs the path IS the folder,
+    // for real files like "domain/model.md" we need the directory part
+    const folder = selectedFile.path.includes("/")
+      ? selectedFile.path.split("/")[0]
+      : selectedFile.path;
     setCreateContext({ connection: selectedFile.connection, folder });
-    setNewFileName(folder === "training" ? "examples.yaml" : "notes.md");
+    setNewFileName(
+      folder === "training" || folder === "examples" ? "example.yaml" : "",
+    );
+    setShowCreateModal(true);
+  };
+
+  // Handle create file from folder context (no file open, but folder selected in tree)
+  const handleCreateFileForFolder = () => {
+    if (!selectedTreeNode?.folder) return;
+
+    const folder = selectedTreeNode.folder;
+    setCreateContext({ connection: selectedTreeNode.connection, folder });
+    setNewFileName(
+      folder === "training" || folder === "examples" ? "example.yaml" : "",
+    );
     setShowCreateModal(true);
   };
 
@@ -369,12 +391,46 @@ export default function ContextPage() {
           <TreeView
             connections={connections}
             selectedFile={selectedFile}
+            selectedTreeNode={selectedTreeNode}
             expandedConnections={expandedConnections}
             expandedFolders={expandedFolders}
             onSelectFile={handleSelectFile}
             onSelectFolder={handleSelectFolder}
-            onToggleConnection={toggleConnection}
-            onToggleFolder={toggleFolder}
+            onToggleConnection={(name) => {
+              const isExpanding = !expandedConnections.has(name);
+              toggleConnection(name);
+              if (isExpanding) {
+                // Check for unsaved changes before clearing editor
+                if (isDirty) {
+                  if (!confirm("You have unsaved changes. Discard them?")) {
+                    return;
+                  }
+                }
+                setSelectedTreeNode({ connection: name });
+                setSelectedFile(null);
+                setContent("");
+                setOriginalContent("");
+                setIsStockReadme(false);
+              }
+            }}
+            onToggleFolder={(key) => {
+              const isExpanding = !expandedFolders.has(key);
+              toggleFolder(key);
+              const [conn, folder] = key.split("/", 2);
+              if (isExpanding) {
+                // Check for unsaved changes before clearing editor
+                if (isDirty) {
+                  if (!confirm("You have unsaved changes. Discard them?")) {
+                    return;
+                  }
+                }
+                setSelectedTreeNode({ connection: conn, folder });
+                setSelectedFile(null);
+                setContent("");
+                setOriginalContent("");
+                setIsStockReadme(false);
+              }
+            }}
           />
         </div>
 
@@ -399,6 +455,8 @@ export default function ContextPage() {
             onDiscard={handleDiscard}
             onDelete={handleDelete}
             onCreateFile={handleCreateFileButton}
+            onCreateFileForFolder={handleCreateFileForFolder}
+            hasFolderContext={!!selectedTreeNode?.folder}
           />
         </div>
       </div>
