@@ -72,6 +72,8 @@ db-mcp/
 
 Next.js application providing a local control plane for db-mcp.
 
+**IMPORTANT: The UI package uses `bun` as its package manager. Always use `bun add`, `bun install`, `bunx` etc. — never `yarn` or `npm`.**
+
 | Directory | Purpose |
 |-----------|---------|
 | `app/` | Next.js App Router pages |

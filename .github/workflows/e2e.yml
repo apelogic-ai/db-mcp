@@ -1,0 +1,43 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/ui/**"
+  pull_request:
+    paths:
+      - "packages/ui/**"
+
+jobs:
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/ui
+        run: bun install
+
+      - name: Install Playwright Chromium
+        working-directory: packages/ui
+        run: bunx playwright install chromium --with-deps
+
+      - name: Run E2E tests
+        working-directory: packages/ui
+        run: bunx playwright test
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: packages/ui/playwright-report/
+          retention-days: 14
