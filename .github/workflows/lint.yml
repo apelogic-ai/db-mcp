@@ -1,0 +1,55 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ui-lint:
+    name: UI (ESLint + TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/ui
+        run: bun install
+
+      - name: Lint
+        working-directory: packages/ui
+        run: bun run lint
+
+      - name: Type check
+        working-directory: packages/ui
+        run: bunx tsc --noEmit
+
+  python-lint:
+    name: Python (Ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.x"
+
+      - name: Install dependencies
+        working-directory: packages/core
+        run: uv sync --all-extras
+
+      - name: Ruff check
+        working-directory: packages/core
+        run: uv run ruff check .
