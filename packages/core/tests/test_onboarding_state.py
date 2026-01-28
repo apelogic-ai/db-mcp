@@ -15,10 +15,10 @@ from db_mcp.onboarding.state import (
 
 
 @pytest.fixture
-def temp_providers_dir(monkeypatch):
-    """Create a temporary providers directory."""
+def temp_connection_dir(monkeypatch):
+    """Create a temporary connection directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        monkeypatch.setenv("PROVIDERS_DIR", tmpdir)
+        monkeypatch.setenv("CONNECTION_PATH", tmpdir)
 
         # Clear cached settings
         import db_mcp.config
@@ -39,7 +39,7 @@ def test_create_initial_state():
     assert state.tables_total == 0
 
 
-def test_save_and_load_state(temp_providers_dir):
+def test_save_and_load_state(temp_connection_dir):
     """Test saving and loading state."""
     # Create and save state
     state = create_initial_state("test-provider")
@@ -51,8 +51,8 @@ def test_save_and_load_state(temp_providers_dir):
     assert result["saved"] is True
     assert result["error"] is None
 
-    # Verify file exists
-    state_file = Path(temp_providers_dir) / "test-provider" / "onboarding_state.yaml"
+    # Verify file exists (v2 uses state.yaml in connection path directly)
+    state_file = Path(temp_connection_dir) / "state.yaml"
     assert state_file.exists()
 
     # Load and verify
@@ -64,13 +64,13 @@ def test_save_and_load_state(temp_providers_dir):
     assert loaded.dialect_detected == "postgresql"
 
 
-def test_load_nonexistent_state(temp_providers_dir):
+def test_load_nonexistent_state(temp_connection_dir):
     """Test loading state that doesn't exist."""
     loaded = load_state("nonexistent-provider")
     assert loaded is None
 
 
-def test_delete_state(temp_providers_dir):
+def test_delete_state(temp_connection_dir):
     """Test deleting state."""
     # Create and save state
     state = create_initial_state("test-provider")
@@ -87,7 +87,7 @@ def test_delete_state(temp_providers_dir):
     assert load_state("test-provider") is None
 
 
-def test_delete_nonexistent_state(temp_providers_dir):
+def test_delete_nonexistent_state(temp_connection_dir):
     """Test deleting state that doesn't exist."""
     result = delete_state("nonexistent-provider")
     assert result["deleted"] is False

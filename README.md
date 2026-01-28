@@ -142,15 +142,34 @@ uv sync
 cd packages/core
 uv run db-mcp --help
 
-# Run tests
-pytest tests/
-
 # Lint
-uv run ruff check . --fix
+cd packages/core && uv run ruff check . --fix
+cd packages/ui && bun run lint
 
 # Build binary
+cd packages/core
 uv run python scripts/build.py
 ```
+
+### Testing
+
+93 tests across three layers:
+
+```bash
+# Python unit tests (49 tests)
+cd packages/core
+uv run pytest tests/ -v
+
+# UI unit tests (20 tests)
+cd packages/ui
+bun run test
+
+# UI E2E tests (24 tests)
+cd packages/ui
+bunx playwright test
+```
+
+All tests run in CI via GitHub Actions on every push and PR. See [docs/testing.md](docs/testing.md) for the full testing guide.
 
 ### Project Structure
 
@@ -158,7 +177,8 @@ uv run python scripts/build.py
 db-mcp/
 ├── packages/
 │   ├── core/                # Main application (db-mcp)
-│   └── models/              # Shared Pydantic models (db-mcp-models)
+│   ├── models/              # Shared Pydantic models (db-mcp-models)
+│   └── ui/                  # Next.js control plane UI
 ├── docs/                    # Design documents
 ├── scripts/                 # Installation scripts
 └── .github/workflows/       # CI/CD

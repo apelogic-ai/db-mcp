@@ -17,10 +17,10 @@ from db_mcp.tools.onboarding import (
 
 
 @pytest.fixture
-def temp_providers_dir(monkeypatch):
-    """Create a temporary providers directory."""
+def temp_connection_dir(monkeypatch):
+    """Create a temporary connection directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        monkeypatch.setenv("PROVIDERS_DIR", tmpdir)
+        monkeypatch.setenv("CONNECTION_PATH", tmpdir)
 
         # Clear cached settings
         import db_mcp.config
@@ -88,7 +88,7 @@ class TestOnboardingStart:
     """Tests for onboarding_start."""
 
     @pytest.mark.asyncio
-    async def test_start_success(self, temp_providers_dir, mock_db_connection):
+    async def test_start_success(self, temp_connection_dir, mock_db_connection):
         """Test successful onboarding start."""
         result = await _onboarding_start(provider_id="test-provider")
 
@@ -105,7 +105,7 @@ class TestOnboardingStart:
         assert state.dialect_detected == "trino"
 
     @pytest.mark.asyncio
-    async def test_start_already_started(self, temp_providers_dir, mock_db_connection):
+    async def test_start_already_started(self, temp_connection_dir, mock_db_connection):
         """Test starting when already started (without force) - idempotent behavior."""
         # First start
         await _onboarding_start(provider_id="test-provider")
@@ -120,12 +120,13 @@ class TestOnboardingStart:
 
     @pytest.mark.asyncio
     async def test_start_force_cleans_up(
-        self, temp_providers_dir, mock_db_connection, mock_introspection
+        self, temp_connection_dir, mock_db_connection, mock_introspection
     ):
         """Test that force=True cleans up existing state and schema files."""
-        # First start and discover
+        # First start and discover (two-phase: structure then tables)
         await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider")
+        await _onboarding_discover(provider_id="test-provider", phase="structure")
+        await _onboarding_discover(provider_id="test-provider", phase="tables")
 
         # Verify we're in schema phase
         state = load_state("test-provider")
@@ -149,7 +150,7 @@ class TestOnboardingStart:
         assert not schema_file.exists()
 
     @pytest.mark.asyncio
-    async def test_start_connection_failed(self, temp_providers_dir):
+    async def test_start_connection_failed(self, temp_connection_dir):
         """Test start when DB connection fails."""
         with patch("db_mcp.tools.onboarding.test_connection") as mock_conn:
             mock_conn.return_value = {
@@ -168,18 +169,26 @@ class TestOnboardingDiscover:
 
     @pytest.mark.asyncio
     async def test_discover_success(
-        self, temp_providers_dir, mock_db_connection, mock_introspection
+        self, temp_connection_dir, mock_db_connection, mock_introspection
     ):
-        """Test successful schema discovery."""
+        """Test successful schema discovery (two-phase: structure then tables)."""
         # Start first
         await _onboarding_start(provider_id="test-provider")
 
-        # Then discover
-        result = await _onboarding_discover(provider_id="test-provider")
+        # Phase 1: structure discovery
+        structure_result = await _onboarding_discover(
+            provider_id="test-provider", phase="structure"
+        )
+        assert structure_result["discovered"] is True
+        assert structure_result["discovery_phase"] == "structure"
+        assert structure_result["schemas_found"] == 1
 
-        assert result["discovered"] is True
-        assert result["tables_found"] == 2
-        assert result["phase"] == "schema"
+        # Phase 2: tables discovery
+        tables_result = await _onboarding_discover(provider_id="test-provider", phase="tables")
+        assert tables_result["discovered"] is True
+        assert tables_result["discovery_phase"] == "tables"
+        assert tables_result["tables_found"] == 2
+        assert tables_result["phase"] == "schema"
 
         # Verify state updated
         state = load_state("test-provider")
@@ -191,7 +200,7 @@ class TestOnboardingDiscover:
         assert schema_file.exists()
 
     @pytest.mark.asyncio
-    async def test_discover_not_started(self, temp_providers_dir):
+    async def test_discover_not_started(self, temp_connection_dir):
         """Test discover when onboarding not started."""
         result = await _onboarding_discover(provider_id="test-provider")
 
@@ -200,15 +209,16 @@ class TestOnboardingDiscover:
 
     @pytest.mark.asyncio
     async def test_discover_already_discovered(
-        self, temp_providers_dir, mock_db_connection, mock_introspection
+        self, temp_connection_dir, mock_db_connection, mock_introspection
     ):
         """Test discover when already in schema phase."""
-        # Start and discover
+        # Start and do full discovery
         await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider")
+        await _onboarding_discover(provider_id="test-provider", phase="structure")
+        await _onboarding_discover(provider_id="test-provider", phase="tables")
 
-        # Try to discover again
-        result = await _onboarding_discover(provider_id="test-provider")
+        # Try to discover structure again — should fail (already past INIT)
+        result = await _onboarding_discover(provider_id="test-provider", phase="structure")
 
         assert result["discovered"] is False
         assert "already discovered" in result["error"].lower()
@@ -218,29 +228,36 @@ class TestOnboardingReset:
     """Tests for onboarding_reset."""
 
     @pytest.mark.asyncio
-    async def test_reset_success(self, temp_providers_dir, mock_db_connection, mock_introspection):
+    async def test_reset_success(
+        self, temp_connection_dir, mock_db_connection, mock_introspection
+    ):
         """Test successful reset."""
-        # Start and discover
+        # Start and discover (two-phase)
         await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider")
+        await _onboarding_discover(provider_id="test-provider", phase="structure")
+        await _onboarding_discover(provider_id="test-provider", phase="tables")
 
-        # Reset
+        # Soft reset — deletes state file but keeps schema files
         result = await _onboarding_reset(provider_id="test-provider")
 
         assert result["reset"] is True
 
-        # Verify state deleted
+        # After soft reset, load_state recovers from existing schema files
+        # (schema/descriptions.yaml still exists), so state is not None
         state = load_state("test-provider")
-        assert state is None
+        assert state is not None
+        # Recovered state reflects existing schema files
+        assert state.tables_total == 2
 
     @pytest.mark.asyncio
     async def test_reset_hard_deletes_schema(
-        self, temp_providers_dir, mock_db_connection, mock_introspection
+        self, temp_connection_dir, mock_db_connection, mock_introspection
     ):
         """Test hard reset deletes schema file too."""
-        # Start and discover
+        # Start and discover (two-phase)
         await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider")
+        await _onboarding_discover(provider_id="test-provider", phase="structure")
+        await _onboarding_discover(provider_id="test-provider", phase="tables")
 
         # Verify schema file exists
         schema_file = get_schema_file_path("test-provider")
@@ -257,7 +274,7 @@ class TestOnboardingReset:
         assert not schema_file.exists()
 
     @pytest.mark.asyncio
-    async def test_reset_not_started(self, temp_providers_dir):
+    async def test_reset_not_started(self, temp_connection_dir):
         """Test reset when nothing to reset."""
         result = await _onboarding_reset(provider_id="test-provider")
 
@@ -266,7 +283,7 @@ class TestOnboardingReset:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_hard_reset_succeeds_even_if_no_state(self, temp_providers_dir):
+    async def test_hard_reset_succeeds_even_if_no_state(self, temp_connection_dir):
         """Test hard reset returns success even if state file doesn't exist."""
         result = await _onboarding_reset(provider_id="test-provider", hard=True)
 
@@ -279,7 +296,7 @@ class TestOnboardingFlowIntegration:
 
     @pytest.mark.asyncio
     async def test_full_flow_start_discover_reset(
-        self, temp_providers_dir, mock_db_connection, mock_introspection
+        self, temp_connection_dir, mock_db_connection, mock_introspection
     ):
         """Test complete flow: start -> discover -> reset -> start again."""
         provider = "integration-test"
@@ -297,38 +314,43 @@ class TestOnboardingFlowIntegration:
         status = await _onboarding_status(provider_id=provider)
         assert status["phase"] == "init"
 
-        # 4. Discover
-        discover_result = await _onboarding_discover(provider_id=provider)
-        assert discover_result["discovered"] is True
-        assert discover_result["tables_found"] == 2
+        # 4. Discover structure
+        structure_result = await _onboarding_discover(provider_id=provider, phase="structure")
+        assert structure_result["discovered"] is True
 
-        # 5. Check status - schema
+        # 5. Discover tables
+        tables_result = await _onboarding_discover(provider_id=provider, phase="tables")
+        assert tables_result["discovered"] is True
+        assert tables_result["tables_found"] == 2
+
+        # 6. Check status - schema
         status = await _onboarding_status(provider_id=provider)
         assert status["phase"] == "schema"
         assert status["tables_total"] == 2
 
-        # 6. Hard reset
+        # 7. Hard reset
         reset_result = await _onboarding_reset(provider_id=provider, hard=True)
         assert reset_result["reset"] is True
 
-        # 7. Check status - not started
+        # 8. Check status - not started
         status = await _onboarding_status(provider_id=provider)
         assert status["status"] == "not_started"
 
-        # 8. Start again
+        # 9. Start again
         start_result = await _onboarding_start(provider_id=provider)
         assert start_result["started"] is True
 
     @pytest.mark.asyncio
     async def test_force_restart_from_schema_phase(
-        self, temp_providers_dir, mock_db_connection, mock_introspection
+        self, temp_connection_dir, mock_db_connection, mock_introspection
     ):
         """Test force restart when already in schema phase."""
         provider = "force-test"
 
-        # Start and discover
+        # Start and discover (two-phase)
         await _onboarding_start(provider_id=provider)
-        await _onboarding_discover(provider_id=provider)
+        await _onboarding_discover(provider_id=provider, phase="structure")
+        await _onboarding_discover(provider_id=provider, phase="tables")
 
         # Verify in schema phase
         state = load_state(provider)
@@ -343,6 +365,6 @@ class TestOnboardingFlowIntegration:
         state = load_state(provider)
         assert state.phase == OnboardingPhase.INIT
 
-        # Should be able to discover again
-        discover_result = await _onboarding_discover(provider_id=provider)
+        # Should be able to discover again (structure phase)
+        discover_result = await _onboarding_discover(provider_id=provider, phase="structure")
         assert discover_result["discovered"] is True

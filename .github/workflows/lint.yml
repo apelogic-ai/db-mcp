@@ -1,4 +1,4 @@
-name: Lint
+name: Lint & Unit Tests
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   ui-lint:
-    name: UI (ESLint + TypeScript)
+    name: UI (ESLint + TypeScript + Unit Tests)
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -30,8 +30,12 @@ jobs:
         working-directory: packages/ui
         run: bunx tsc --noEmit
 
+      - name: Unit tests
+        working-directory: packages/ui
+        run: bun run test
+
   python-lint:
-    name: Python (Ruff)
+    name: Python (Ruff + Unit Tests)
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -53,3 +57,7 @@ jobs:
       - name: Ruff check
         working-directory: packages/core
         run: uv run ruff check .
+
+      - name: Unit tests
+        working-directory: packages/core
+        run: uv run pytest tests/ -v

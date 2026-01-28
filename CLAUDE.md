@@ -134,15 +134,38 @@ uv run db-mcp status
 ### Testing
 
 ```bash
+# Python unit tests (49 tests)
 cd packages/core
-pytest tests/
+uv run pytest tests/ -v
+
+# Python coverage
+uv run pytest tests/ --cov=db_mcp --cov-report=term-missing
+
+# UI unit tests (20 tests, Vitest)
+cd packages/ui
+bun run test
+
+# UI coverage
+bunx vitest run --coverage
+
+# UI E2E tests (24 tests, Playwright — requires dev server)
+cd packages/ui
+bunx playwright test
+bunx playwright test --ui       # interactive mode
+bunx playwright test --headed   # watch in browser
 ```
 
 ### Linting
 
 ```bash
-# From root or packages/core
+# Python
+cd packages/core
 uv run ruff check . --fix
+
+# UI
+cd packages/ui
+bun run lint
+bunx tsc --noEmit
 ```
 
 ### Building Binary
@@ -282,26 +305,35 @@ Binary build artifacts:
 
 ## After Every Code Change
 
-Always run linting and tests after making code changes:
+Always run linting and tests after making code changes.
+
+### Python changes (`packages/core/`)
 
 ```bash
 cd packages/core
-
-# Lint (required - fix all errors)
-uv run ruff check . --fix
-
-# Tests (required - run relevant tests)
-uv run python -m pytest tests/ -v
-
-# Type check (optional but recommended)
-uv run pyright src/
+uv run ruff check . --fix       # Lint (required)
+uv run pytest tests/ -v          # Unit tests (required)
 ```
 
-**Requirements before considering a task complete:**
+### UI changes (`packages/ui/`)
+
+```bash
+cd packages/ui
+bun run lint                     # ESLint (required)
+bunx tsc --noEmit                # Type check (required)
+bun run test                     # Unit tests (required)
+bunx playwright test             # E2E tests (required for UI changes)
+```
+
+### Requirements before considering a task complete
+
 1. All linting errors must be fixed
-2. All tests that were passing before must still pass
-3. New code should have tests where appropriate
-4. Type hints should be added for new functions/methods
+2. All existing tests must still pass
+3. **New code must have tests** — this is mandatory, not optional:
+   - Python: add tests in `packages/core/tests/`
+   - UI pure functions/utilities: add Vitest tests in `packages/ui/src/__tests__/`
+   - UI pages/flows: add Playwright E2E tests in `packages/ui/e2e/`
+4. Type hints should be added for new Python functions/methods
 
 ## Documentation
 
@@ -315,3 +347,4 @@ The `docs/` directory contains design and implementation documents:
 | `knowledge-extraction-agent.md` | Background agent that extracts learnings from OTel traces |
 | `electron-port-feasibility.md` | Analysis and decision for Electron desktop app (sidecar pattern chosen) |
 | `data-gateway.md` | Vision for unified data gateway across multiple sources |
+| `testing.md` | Testing strategy, infrastructure, and coverage report |
