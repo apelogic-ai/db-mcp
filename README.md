@@ -1,6 +1,6 @@
 # db-mcp
 
-Database MCP server for Claude Desktop. Query your databases using natural language.
+Desktop MCP server that connects Claude to databases and continuously improves data analytics by learning from each query through an LLM-native semantic layer.
 
 ## Installation
 
