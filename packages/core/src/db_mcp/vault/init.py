@@ -9,28 +9,34 @@ logger = logging.getLogger(__name__)
 # Default PROTOCOL.md content
 PROTOCOL_MD = """# Knowledge Vault Protocol
 
-This connection directory stores query examples, learnings, and instructions for SQL generation.
-Use the `shell` tool to interact with it via bash commands.
+This connection directory stores query examples, learnings, business rules,
+and instructions for SQL generation. Use `shell` for bash access and the
+dedicated MCP tools for structured operations.
 
 ## Directory Structure
 
 ```
 connection/
-├── PROTOCOL.md          # This file
-├── state.yaml           # Onboarding state
+├── PROTOCOL.md              # This file (system-managed, overwritten on updates)
+├── state.yaml               # Onboarding state
+├── knowledge_gaps.yaml      # Tracked vocabulary gaps (auto-detected + manually added)
 ├── schema/
-│   └── descriptions.yaml  # Cached schema with descriptions
+│   └── descriptions.yaml    # Cached schema with table/column descriptions
 ├── domain/
-│   └── model.md         # Domain model (business entities, relationships)
+│   └── model.md             # Domain model (entities, relationships, terminology)
 ├── instructions/
-│   └── sql_rules.md     # SQL dialect rules and gotchas
+│   ├── sql_rules.md         # SQL dialect rules and gotchas
+│   └── business_rules.yaml  # Business rules for SQL generation (synonyms, filters, etc.)
 ├── examples/
-│   └── {uuid}.yaml      # Saved query examples
-└── learnings/
-    ├── patterns.md      # Successful patterns
-    ├── schema_gotchas.md # Schema quirks
-    └── failures/        # Failed query logs
-        └── {uuid}.yaml
+│   └── {uuid}.yaml          # Saved query examples
+├── learnings/
+│   ├── patterns.md          # Successful query patterns
+│   ├── schema_gotchas.md    # Schema quirks and pitfalls
+│   ├── trace-analysis-patterns.md  # Patterns from trace analysis
+│   └── failures/            # Failed query logs
+│       └── {uuid}.yaml
+└── metrics/
+    └── catalog.yaml         # Business metric definitions
 ```
 
 ## CRITICAL: Use Cached Schema First
@@ -69,6 +75,23 @@ cat domain/model.md
 
 This is NOT optional - it contains critical context for correct SQL generation.
 
+## CRITICAL: Check Business Rules
+
+**ALWAYS read business rules before generating SQL.**
+
+Business rules (`instructions/business_rules.yaml`) contain:
+- Term synonyms (e.g., "CUI" = "chargeable_user_identity")
+- Required filters and conditions
+- Column usage rules and gotchas
+- Domain-specific SQL patterns
+
+```bash
+cat instructions/business_rules.yaml 2>/dev/null
+```
+
+These rules are accumulated from analyst feedback and trace analysis.
+Ignoring them leads to incorrect queries.
+
 ## Database Hierarchy
 
 **ALWAYS start discovery at the CATALOG level, not schema level.**
@@ -80,8 +103,9 @@ Many databases use 3-level hierarchy: `catalog.schema.table`
 Before ANY query work:
 1. Check cached schema first (`schema/descriptions.yaml`)
 2. Check `instructions/sql_rules.md` for hierarchy rules
-3. Check domain model (`domain/model.md`)
-4. Only if cache missing: use `list_catalogs()` to discover
+3. Check business rules (`instructions/business_rules.yaml`)
+4. Check domain model (`domain/model.md`)
+5. Only if cache missing: use `list_catalogs()` to discover
 
 Failing to do this will cause "table not found" errors.
 
@@ -121,6 +145,19 @@ cat domain/model.md
 cat instructions/sql_rules.md
 ```
 
+5. Check business rules (REQUIRED):
+```bash
+cat instructions/business_rules.yaml
+```
+
+6. Check knowledge gaps (recommended):
+```
+get_knowledge_gaps()
+```
+This shows unmapped business terms that previous sessions couldn't resolve.
+If you can clarify any gaps during your work, use `query_add_rule` to add
+the mapping and the gap will auto-resolve.
+
 ## Before Generating SQL
 
 ### 1. Use cached schema (PRIMARY SOURCE)
@@ -129,22 +166,28 @@ cat instructions/sql_rules.md
 grep -i "keyword" schema/descriptions.yaml
 ```
 
-### 2. Search for existing examples
+### 2. Check business rules for the term
+```bash
+grep -i "keyword" instructions/business_rules.yaml
+```
+
+### 3. Search for existing examples
 ```bash
 grep -ri "keyword1\\|keyword2" examples/
 ```
 
-### 3. If match found, read it
+### 4. If match found, read it
 ```bash
 cat examples/{matched_file}.yaml
 ```
 
-### 4. Check for relevant learnings
+### 5. Check for relevant learnings
 ```bash
 grep -i "table_name" learnings/patterns.md
+cat learnings/schema_gotchas.md
 ```
 
-### 5. Reference domain model for context
+### 6. Reference domain model for context
 The domain model should already be loaded from session start.
 If not, read it now:
 ```bash
@@ -211,6 +254,32 @@ EOF
 
 **Then tell the user**: "Added pattern '{name}' to learnings for future queries."
 
+## When Discovering a Schema Gotcha
+
+Append to schema gotchas file:
+```bash
+cat >> learnings/schema_gotchas.md << 'EOF'
+
+## Gotcha Name
+- Description of the quirk
+- How to work around it
+EOF
+```
+
+## Adding Business Rules
+
+When you discover term mappings, synonyms, or query constraints, add them:
+```
+query_add_rule(rule="CUI and chargeable_user_identity are synonyms.")
+```
+
+Or via the rules listing/management tools:
+```
+query_list_rules()
+```
+
+Business rules persist across sessions and are used by all future queries.
+
 ## Correcting a Mistake
 
 Create new entry that supersedes the old. First generate a UUID:
@@ -231,6 +300,23 @@ EOF
 
 **Then tell the user**: "Corrected example `{old_uuid}` with new version `{new_uuid}`."
 
+## MCP Tools Reference
+
+Beyond `shell`, these tools are available for structured operations:
+
+| Tool | Purpose |
+|------|---------|
+| `get_knowledge_gaps` | View open/resolved knowledge gaps |
+| `query_add_rule` | Add a business rule |
+| `query_list_rules` | List all business rules |
+| `query_list_examples` | List saved query examples |
+| `query_approve` | Save a validated query as example |
+| `query_feedback` | Record feedback on a query |
+| `validate_sql` | Validate SQL before execution |
+| `run_sql` / `get_data` | Execute queries |
+| `get_result` | Poll for async query results |
+| `export_results` | Export data to CSV/JSON |
+
 ## Useful Commands
 
 ```bash
@@ -245,6 +331,9 @@ grep -ri "search term" .
 
 # Recent failures
 ls -lt learnings/failures/*.yaml | head -10
+
+# Check knowledge gaps file directly
+cat knowledge_gaps.yaml 2>/dev/null
 ```
 """
 

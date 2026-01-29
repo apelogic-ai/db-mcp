@@ -309,3 +309,332 @@ export const METHOD_NOT_FOUND = {
   code: -32601,
   message: "Method not found",
 };
+
+// ── Traces ──────────────────────────────────────────────────
+
+const NOW = Math.floor(Date.now() / 1000);
+
+function makeTrace(
+  id: string,
+  toolName: string,
+  offsetSec: number,
+  durationMs: number,
+  spanCount: number = 2,
+  attrs: Record<string, unknown> = {},
+): {
+  trace_id: string;
+  start_time: number;
+  end_time: number;
+  duration_ms: number;
+  span_count: number;
+  root_span: string;
+  spans: Array<{
+    trace_id: string;
+    span_id: string;
+    parent_span_id: string | null;
+    name: string;
+    start_time: number;
+    end_time: number;
+    duration_ms: number;
+    status: string;
+    attributes: Record<string, unknown>;
+  }>;
+} {
+  const start = NOW - offsetSec;
+  return {
+    trace_id: id,
+    start_time: start,
+    end_time: start + durationMs / 1000,
+    duration_ms: durationMs,
+    span_count: spanCount,
+    root_span: toolName,
+    spans: [
+      {
+        trace_id: id,
+        span_id: `s-${id}-1`,
+        parent_span_id: null,
+        name: toolName,
+        start_time: start,
+        end_time: start + durationMs / 1000,
+        duration_ms: durationMs,
+        status: "ok",
+        attributes: { "tool.name": toolName, ...attrs },
+      },
+      {
+        trace_id: id,
+        span_id: `s-${id}-2`,
+        parent_span_id: `s-${id}-1`,
+        name: toolName,
+        start_time: start,
+        end_time: start + durationMs / 1000 - 0.001,
+        duration_ms: durationMs - 1,
+        status: "ok",
+        attributes: { "tool.name": toolName },
+      },
+    ],
+  };
+}
+
+/** Traces list with a run of consecutive get_result calls for grouping. */
+export const TRACES_WITH_POLLING = {
+  success: true,
+  source: "live" as const,
+  traces: [
+    // 5 consecutive get_result polls (should be grouped)
+    makeTrace("gr-1", "get_result", 10, 0.3),
+    makeTrace("gr-2", "get_result", 13, 0.2),
+    makeTrace("gr-3", "get_result", 16, 0.3),
+    makeTrace("gr-4", "get_result", 19, 0.2),
+    makeTrace("gr-5", "get_result", 22, 0.3),
+    // execute_query before the polling run
+    makeTrace("eq-1", "execute_query", 25, 25700, 4, {
+      "sql.preview":
+        "SELECT nas_identifier, calling_station_id, count(*) AS re...",
+    }),
+    // run_sql
+    makeTrace("rs-1", "run_sql", 26, 0.3),
+    // validate_sql
+    makeTrace("vs-1", "validate_sql", 30, 1800, 6, {
+      "sql.preview":
+        "SELECT nas_identifier, calling_station_id, count(*) AS re...",
+    }),
+    // 2 more get_result (should NOT be grouped — only 2)
+    makeTrace("gr-6", "get_result", 35, 0.3),
+    makeTrace("gr-7", "get_result", 38, 0.2),
+  ],
+};
+
+/** A simple traces result with a few varied tool calls. */
+export const TRACES_SIMPLE = {
+  success: true,
+  source: "live" as const,
+  traces: [
+    makeTrace("t-1", "get_data", 10, 1200, 3),
+    makeTrace("t-2", "validate_sql", 20, 450, 2, {
+      "sql.preview": "SELECT * FROM users LIMIT 10",
+    }),
+    makeTrace("t-3", "shell", 30, 100, 2, {
+      command: "cat schema/descriptions.yaml",
+    }),
+  ],
+};
+
+export const TRACES_EMPTY = {
+  success: true,
+  source: "live" as const,
+  traces: [],
+};
+
+export const TRACES_DATES_HAPPY = {
+  success: true,
+  enabled: true,
+  dates: [
+    new Date().toISOString().slice(0, 10), // today
+  ],
+};
+
+export const TRACES_DATES_EMPTY = {
+  success: true,
+  enabled: true,
+  dates: [],
+};
+
+export const TRACES_CLEAR_SUCCESS = {
+  success: true,
+};
+
+// Protocol noise traces that should be hidden
+export const TRACES_WITH_NOISE = {
+  success: true,
+  source: "live" as const,
+  traces: [
+    makeTrace("t-real", "get_data", 10, 500, 2),
+    {
+      ...makeTrace("t-noise-1", "tools/list", 20, 1, 1),
+      span_count: 1,
+      spans: [makeTrace("t-noise-1", "tools/list", 20, 1, 1).spans[0]],
+    },
+    {
+      ...makeTrace("t-noise-2", "initialize", 30, 2, 1),
+      span_count: 1,
+      spans: [makeTrace("t-noise-2", "initialize", 30, 2, 1).spans[0]],
+    },
+  ],
+};
+
+// ── Insights ────────────────────────────────────────────────
+
+export const INSIGHTS_HAPPY = {
+  success: true,
+  analysis: {
+    traceCount: 31,
+    protocolTracesFiltered: 12,
+    totalDurationMs: 45200,
+    toolUsage: {
+      shell: 90,
+      get_result: 54,
+      validate_sql: 26,
+      get_data: 8,
+      run_sql: 5,
+    },
+    errors: [],
+    errorCount: 0,
+    validationFailures: [],
+    validationFailureCount: 0,
+    costTiers: {},
+    repeatedQueries: [
+      {
+        sql_preview: "SELECT count(*) FROM users",
+        count: 3,
+        first_seen: NOW - 3600,
+        last_seen: NOW - 600,
+      },
+    ],
+    tablesReferenced: {
+      "dwh.public.cdrs": 15,
+      "dwh.public.subs": 8,
+      "dwh.public.cdr_agg_day": 5,
+    },
+    knowledgeEvents: [
+      {
+        tool: "query_approve",
+        feedback_type: "approval",
+        examples_added: 1,
+        rules_added: null,
+        timestamp: NOW - 1800,
+      },
+    ],
+    knowledgeCaptureCount: 28,
+    shellCommands: [],
+    knowledgeStatus: {
+      hasSchema: true,
+      hasDomain: true,
+      exampleCount: 30,
+      ruleCount: 80,
+    },
+    insights: {
+      generationCalls: 8,
+      callsWithExamples: 6,
+      callsWithRules: 8,
+      callsWithoutExamples: 2,
+      exampleHitRate: 0.75,
+      validateCalls: 26,
+      validateFailRate: 0,
+      knowledgeCapturesByType: { approval: 20, feedback: 8 },
+      sessionCount: 5,
+    },
+    vocabularyGaps: [
+      {
+        id: "gap-1",
+        terms: [
+          {
+            term: "nas_id",
+            searchCount: 4,
+            session: "s1",
+            timestamp: NOW - 3600,
+          },
+          {
+            term: "nasid",
+            searchCount: 2,
+            session: "s2",
+            timestamp: NOW - 3000,
+          },
+        ],
+        totalSearches: 6,
+        timestamp: NOW - 3600,
+        schemaMatches: [
+          {
+            name: "nas_id",
+            table: "dwh.public.cdrs.nas_id",
+            type: "column" as const,
+          },
+        ],
+        suggestedRule: "nas_ids, nas_id, nas_identifier, nasid are synonyms.",
+        status: "open" as const,
+        source: "traces" as const,
+      },
+      {
+        id: "gap-2",
+        terms: [
+          { term: "cui", searchCount: 3, session: "s1", timestamp: NOW - 2400 },
+        ],
+        totalSearches: 3,
+        timestamp: NOW - 2400,
+        schemaMatches: [],
+        suggestedRule: null,
+        status: "open" as const,
+        source: "traces" as const,
+      },
+      {
+        id: "gap-3",
+        terms: [
+          {
+            term: "greenfield",
+            searchCount: 1,
+            session: "s3",
+            timestamp: NOW - 1200,
+          },
+        ],
+        totalSearches: 1,
+        timestamp: NOW - 1200,
+        schemaMatches: [],
+        suggestedRule: "greenfield hotspot and HMH are synonyms.",
+        status: "resolved" as const,
+        source: "traces" as const,
+      },
+    ],
+  },
+};
+
+export const INSIGHTS_EMPTY = {
+  success: true,
+  analysis: {
+    traceCount: 0,
+    protocolTracesFiltered: 0,
+    totalDurationMs: 0,
+    toolUsage: {},
+    errors: [],
+    errorCount: 0,
+    validationFailures: [],
+    validationFailureCount: 0,
+    costTiers: {},
+    repeatedQueries: [],
+    tablesReferenced: {},
+    knowledgeEvents: [],
+    knowledgeCaptureCount: 0,
+    shellCommands: [],
+    knowledgeStatus: {
+      hasSchema: false,
+      hasDomain: false,
+      exampleCount: 0,
+      ruleCount: 0,
+    },
+    insights: {
+      generationCalls: 0,
+      callsWithExamples: 0,
+      callsWithRules: 0,
+      callsWithoutExamples: 0,
+      exampleHitRate: null,
+      validateCalls: 0,
+      validateFailRate: null,
+      knowledgeCapturesByType: {},
+      sessionCount: 0,
+    },
+    vocabularyGaps: [],
+  },
+};
+
+export const INSIGHTS_ERROR = {
+  success: false,
+  error: "Failed to analyze traces: no traces found",
+  analysis: null,
+};
+
+export const ADD_RULE_SUCCESS = {
+  success: true,
+};
+
+export const ADD_RULE_DUPLICATE = {
+  success: true,
+  duplicate: true,
+};

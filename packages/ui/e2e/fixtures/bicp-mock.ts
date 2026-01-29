@@ -65,6 +65,17 @@ export class BICPMock {
     this.on("context/git/history", () => mockData.GIT_HISTORY_HAPPY);
     this.on("context/git/show", () => mockData.GIT_SHOW_RESULT);
     this.on("context/git/revert", () => mockData.GIT_REVERT_SUCCESS);
+
+    // Traces
+    this.on("traces/list", () => mockData.TRACES_SIMPLE);
+    this.on("traces/dates", () => mockData.TRACES_DATES_HAPPY);
+    this.on("traces/clear", () => mockData.TRACES_CLEAR_SUCCESS);
+
+    // Insights
+    this.on("insights/analyze", () => mockData.INSIGHTS_HAPPY);
+
+    // Rules
+    this.on("context/add-rule", () => mockData.ADD_RULE_SUCCESS);
   }
 
   /** Register a handler for a BICP method. */

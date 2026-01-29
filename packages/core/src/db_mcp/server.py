@@ -175,9 +175,18 @@ Save examples and tell the user what you saved. See PROTOCOL.md for details.
 ## Tools Available
 
 - Schema discovery: list_catalogs, list_schemas, list_tables, describe_table
-- Query: get_data, run_sql
+- Query: get_data, run_sql, validate_sql, get_result, export_results
 - Knowledge vault: shell (bash access to examples, learnings, instructions)
+- Business rules: query_add_rule, query_list_rules
+- Knowledge gaps: get_knowledge_gaps (shows unmapped terms from previous sessions)
+- Training: query_approve, query_feedback, query_list_examples
 - Setup: mcp_setup_*, mcp_domain_*
+
+## Knowledge Gaps
+
+Call `get_knowledge_gaps()` to see terms that previous sessions couldn't map to
+schema columns. If you resolve any during your work, use `query_add_rule` to add
+the mapping — the gap will auto-resolve.
 """
 
 INSTRUCTIONS_SHELL_MODE = """
@@ -214,7 +223,20 @@ This tells you exactly how to:
 
 - validate_sql / run_sql / get_result - Query execution (required for running SQL)
 - export_results - Export data to CSV/JSON
+- get_knowledge_gaps - View unmapped business terms from previous sessions
+- query_add_rule / query_list_rules - Manage business rules (synonyms, filters)
+- query_approve / query_feedback - Save examples and feedback
 - mcp_setup_* / mcp_domain_* - Admin setup (not for regular queries)
+
+## IMPORTANT: Business Rules and Knowledge Gaps
+
+Before generating SQL, always check business rules:
+```
+shell(command="cat instructions/business_rules.yaml")
+```
+
+Call `get_knowledge_gaps()` to see terms previous sessions couldn't resolve.
+If you can clarify any, use `query_add_rule` to add the mapping.
 
 DO NOT look for other schema discovery tools. Use `shell` to explore the vault.
 """
