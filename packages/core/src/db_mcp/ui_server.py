@@ -7,6 +7,7 @@ This module provides a FastAPI server that:
 - Provides health checks
 """
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 
 # Import the JSON-RPC request type from bicp_agent
 from bicp_agent.types import JsonRpcRequest
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -130,6 +131,42 @@ def create_app() -> FastAPI:
             "status": "healthy",
             "service": "db-mcp-ui",
         }
+
+    @app.post("/api/spans")
+    async def receive_spans(request: Request) -> JSONResponse:
+        """Receive spans from the MCP server's HttpSpanExporter.
+
+        Mirrors the console server's _receive_spans() so the UI server
+        can be a drop-in replacement when DB_MCP_CONSOLE_PORT=8080.
+        """
+        from db_mcp.console.collector import Span, get_collector
+
+        try:
+            body = await request.body()
+            data = json.loads(body.decode("utf-8"))
+
+            collector = get_collector()
+            spans_data = data.get("spans", [])
+            for span_data in spans_data:
+                span = Span(
+                    trace_id=span_data["trace_id"],
+                    span_id=span_data["span_id"],
+                    parent_span_id=span_data.get("parent_span_id"),
+                    name=span_data["name"],
+                    start_time=span_data["start_time"],
+                    end_time=span_data.get("end_time"),
+                    status=span_data.get("status", "ok"),
+                    attributes=span_data.get("attributes", {}),
+                )
+                collector.add_span(span)
+
+            return JSONResponse(content={"status": "ok", "count": len(spans_data)})
+        except Exception as e:
+            logger.warning(f"Failed to receive spans: {e}")
+            return JSONResponse(
+                content={"status": "error", "error": str(e)},
+                status_code=400,
+            )
 
     @app.post("/bicp")
     async def bicp_handler(request: JSONRPCRequest) -> JSONResponse:

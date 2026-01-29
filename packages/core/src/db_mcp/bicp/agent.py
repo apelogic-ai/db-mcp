@@ -100,6 +100,14 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["context/git/show"] = self._handle_git_show
         self._method_handlers["context/git/revert"] = self._handle_git_revert
 
+        # Trace viewer handlers
+        self._method_handlers["traces/list"] = self._handle_traces_list
+        self._method_handlers["traces/clear"] = self._handle_traces_clear
+        self._method_handlers["traces/dates"] = self._handle_traces_dates
+
+        # Insights handlers
+        self._method_handlers["insights/analyze"] = self._handle_insights_analyze
+
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
         self._method_handlers["schema/schemas"] = self._handle_schema_schemas
@@ -1863,6 +1871,203 @@ This knowledge helps the AI generate better queries over time.
             return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": f"Git revert error: {e}"}
+
+    # ========== Trace Viewer Methods ==========
+
+    def _get_active_connection_path(self) -> Path | None:
+        """Get the active connection path from config.yaml.
+
+        The UI server doesn't set CONNECTION_NAME, so we read
+        active_connection directly from the config file.
+        """
+        import yaml
+
+        config_file = Path.home() / ".db-mcp" / "config.yaml"
+        if not config_file.exists():
+            return None
+
+        with open(config_file) as f:
+            config = yaml.safe_load(f) or {}
+
+        active = config.get("active_connection")
+        if not active:
+            return None
+
+        return Path.home() / ".db-mcp" / "connections" / active
+
+    async def _handle_traces_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List traces from live collector or historical JSONL files.
+
+        Args:
+            params: {
+                "source": "live" | "historical" - Where to read traces from
+                "date": str | None - YYYY-MM-DD date for historical (default: today)
+                "limit": int - Max traces to return (default: 50)
+            }
+
+        Returns:
+            {"success": bool, "traces": [...], "source": str}
+        """
+        source = params.get("source", "live")
+        limit = params.get("limit", 50)
+
+        if source == "live":
+            from db_mcp.console.collector import get_collector
+
+            traces = get_collector().get_traces(limit=limit)
+            return {"success": True, "traces": traces, "source": "live"}
+
+        elif source == "historical":
+            from datetime import datetime
+
+            from db_mcp.bicp.traces import read_traces_from_jsonl
+            from db_mcp.traces import get_traces_dir, get_user_id_from_config, is_traces_enabled
+
+            if not is_traces_enabled():
+                return {
+                    "success": False,
+                    "traces": [],
+                    "source": "historical",
+                    "error": "Traces are not enabled",
+                }
+
+            user_id = get_user_id_from_config()
+            if not user_id:
+                return {
+                    "success": False,
+                    "traces": [],
+                    "source": "historical",
+                    "error": "No user_id configured",
+                }
+
+            connection_path = self._get_active_connection_path()
+            if not connection_path:
+                return {
+                    "success": False,
+                    "traces": [],
+                    "source": "historical",
+                    "error": "No active connection",
+                }
+
+            date_str = params.get("date") or datetime.now().strftime("%Y-%m-%d")
+            traces_dir = get_traces_dir(connection_path, user_id)
+            file_path = traces_dir / f"{date_str}.jsonl"
+
+            traces = read_traces_from_jsonl(file_path, limit=limit)
+            return {"success": True, "traces": traces, "source": "historical"}
+
+        return {"success": False, "traces": [], "error": f"Unknown source: {source}"}
+
+    async def _handle_traces_clear(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Clear the live span collector.
+
+        Returns:
+            {"success": bool}
+        """
+        from db_mcp.console.collector import get_collector
+
+        get_collector().clear()
+        return {"success": True}
+
+    async def _handle_traces_dates(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List available historical trace dates.
+
+        Returns:
+            {"success": bool, "enabled": bool, "dates": [str]}
+        """
+        from db_mcp.bicp.traces import list_trace_dates
+        from db_mcp.traces import get_user_id_from_config, is_traces_enabled
+
+        enabled = is_traces_enabled()
+        if not enabled:
+            return {"success": True, "enabled": False, "dates": []}
+
+        user_id = get_user_id_from_config()
+        if not user_id:
+            return {"success": True, "enabled": True, "dates": []}
+
+        connection_path = self._get_active_connection_path()
+        if not connection_path:
+            return {"success": True, "enabled": True, "dates": []}
+
+        dates = list_trace_dates(connection_path, user_id)
+
+        return {"success": True, "enabled": True, "dates": dates}
+
+    # ========== Insights Methods ==========
+
+    async def _handle_insights_analyze(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Analyze traces for semantic layer gaps and inefficiencies.
+
+        Aggregates live + historical traces and runs analysis to surface:
+        - Tool usage distribution
+        - Errors and validation failures
+        - Repeated queries (AI struggling)
+        - Knowledge capture activity
+        - Semantic layer completeness
+
+        Args:
+            params: {
+                "days": int - Number of historical days to include (default: 7)
+            }
+
+        Returns:
+            {"success": bool, "analysis": {...}, "error": str | None}
+        """
+        from datetime import datetime, timedelta
+
+        from db_mcp.bicp.traces import analyze_traces, read_traces_from_jsonl
+        from db_mcp.console.collector import get_collector
+
+        days = params.get("days", 7)
+
+        # Collect all traces: live + historical
+        all_traces: list[dict] = []
+
+        # Live traces
+        try:
+            live = get_collector().get_traces(limit=500)
+            all_traces.extend(live)
+        except Exception as e:
+            logger.warning(f"Failed to get live traces: {e}")
+
+        # Historical traces
+        connection_path = self._get_active_connection_path()
+        if connection_path:
+            try:
+                from db_mcp.traces import (
+                    get_traces_dir,
+                    get_user_id_from_config,
+                    is_traces_enabled,
+                )
+
+                if is_traces_enabled():
+                    user_id = get_user_id_from_config()
+                    if user_id:
+                        traces_dir = get_traces_dir(connection_path, user_id)
+                        today = datetime.now()
+                        for i in range(days):
+                            date = today - timedelta(days=i)
+                            date_str = date.strftime("%Y-%m-%d")
+                            file_path = traces_dir / f"{date_str}.jsonl"
+                            if file_path.exists():
+                                day_traces = read_traces_from_jsonl(file_path, limit=500)
+                                all_traces.extend(day_traces)
+            except Exception as e:
+                logger.warning(f"Failed to read historical traces: {e}")
+
+        # Deduplicate by trace_id (live may overlap with today's JSONL)
+        seen_ids: set[str] = set()
+        unique_traces: list[dict] = []
+        for t in all_traces:
+            tid = t.get("trace_id", "")
+            if tid not in seen_ids:
+                seen_ids.add(tid)
+                unique_traces.append(t)
+
+        analysis = analyze_traces(unique_traces, connection_path)
+
+        return {"success": True, "analysis": analysis}
 
     # ========== Schema Explorer Methods ==========
 

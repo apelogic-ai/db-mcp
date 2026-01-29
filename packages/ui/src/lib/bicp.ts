@@ -280,6 +280,132 @@ export async function revertToCommit(
   });
 }
 
+// Traces types
+export interface TraceSpan {
+  trace_id: string;
+  span_id: string;
+  parent_span_id: string | null;
+  name: string;
+  start_time: number;
+  end_time: number | null;
+  duration_ms: number | null;
+  status: string;
+  attributes: Record<string, unknown>;
+  events?: Array<{
+    name: string;
+    timestamp?: number;
+    attributes?: Record<string, unknown>;
+  }>;
+}
+
+export interface Trace {
+  trace_id: string;
+  start_time: number;
+  end_time: number;
+  duration_ms: number;
+  span_count: number;
+  root_span: string | null;
+  spans: TraceSpan[];
+}
+
+export interface TracesListResult {
+  success: boolean;
+  traces: Trace[];
+  source: "live" | "historical";
+  error?: string;
+}
+
+export interface TracesClearResult {
+  success: boolean;
+}
+
+export interface TracesDatesResult {
+  success: boolean;
+  enabled: boolean;
+  dates: string[];
+}
+
+// Traces API functions
+export async function listTraces(
+  source: "live" | "historical" = "live",
+  date?: string,
+  limit: number = 50,
+): Promise<TracesListResult> {
+  return bicpCall<TracesListResult>("traces/list", { source, date, limit });
+}
+
+export async function clearTraces(): Promise<TracesClearResult> {
+  return bicpCall<TracesClearResult>("traces/clear", {});
+}
+
+export async function getTraceDates(): Promise<TracesDatesResult> {
+  return bicpCall<TracesDatesResult>("traces/dates", {});
+}
+
+// Insights types
+export interface InsightsAnalysis {
+  traceCount: number;
+  protocolTracesFiltered: number;
+  totalDurationMs: number;
+  toolUsage: Record<string, number>;
+  errors: Array<{
+    trace_id: string;
+    span_name: string;
+    tool: string;
+    error: string;
+    timestamp: number;
+  }>;
+  errorCount: number;
+  validationFailures: Array<{
+    sql_preview: string;
+    rejected_keyword: string | null;
+    error_type: string | null;
+    error_message: string;
+    timestamp: number;
+  }>;
+  validationFailureCount: number;
+  costTiers: Record<string, number>;
+  repeatedQueries: Array<{
+    sql_preview: string;
+    count: number;
+    first_seen: number;
+    last_seen: number;
+  }>;
+  tablesReferenced: Record<string, number>;
+  knowledgeEvents: Array<{
+    tool: string;
+    feedback_type: string;
+    examples_added: number | null;
+    rules_added: number | null;
+    timestamp: number;
+  }>;
+  knowledgeCaptureCount: number;
+  shellCommands: Array<{
+    command: string;
+    timestamp: number;
+    success: boolean;
+  }>;
+  knowledgeStatus: {
+    hasSchema: boolean;
+    hasDomain: boolean;
+    exampleCount: number;
+    ruleCount: number;
+  };
+}
+
+export interface InsightsAnalyzeResult {
+  success: boolean;
+  analysis: InsightsAnalysis;
+  error?: string;
+}
+
+// Insights API functions
+export async function analyzeInsights(
+  days: number = 7,
+): Promise<InsightsAnalyzeResult> {
+  return bicpCall<InsightsAnalyzeResult>("insights/analyze", { days });
+}
+
 // React hook for BICP operations
 export interface UseBICPResult {
   isInitialized: boolean;

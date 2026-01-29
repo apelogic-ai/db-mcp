@@ -6,13 +6,13 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { BICPProvider } from "@/lib/bicp-context";
 import { ContextViewerProvider } from "@/lib/context-viewer-context";
+import { ConnectionSelector } from "@/components/ConnectionSelector";
 
 const navItems = [
   { href: "/connectors", label: "Connectors" },
   { href: "/context", label: "Context" },
-  { href: "/query", label: "Query" },
-  { href: "/tools", label: "Tools" },
-  { href: "/explorer", label: "Explorer" },
+  { href: "/traces", label: "Traces" },
+  { href: "/insights", label: "Insights" },
 ];
 
 export default function RootLayout({
@@ -29,43 +29,42 @@ export default function RootLayout({
         <meta name="description" content="Database Intelligence Platform" />
       </head>
       <body className="bg-gray-950 text-gray-100 min-h-screen">
-        <header className="border-b border-gray-800">
-          <div className="max-w-7xl mx-auto px-4 py-4">
-            <div className="flex items-center justify-between">
+        <BICPProvider baseUrl="/bicp" autoConnect>
+          <header className="border-b border-gray-800">
+            <div className="max-w-7xl mx-auto px-4 py-4">
               <Link href="/" className="text-xl font-bold text-white">
                 db-mcp
               </Link>
+              <nav className="mt-4 flex items-center justify-between">
+                <div className="inline-flex h-9 items-center justify-center rounded-lg bg-gray-900 p-1 text-gray-400">
+                  {navItems.map((item) => {
+                    const isActive =
+                      pathname === item.href ||
+                      pathname.startsWith(item.href + "/");
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={cn(
+                          "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all",
+                          isActive
+                            ? "bg-gray-800 text-white shadow"
+                            : "text-gray-400 hover:text-gray-200",
+                        )}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+                <ConnectionSelector />
+              </nav>
             </div>
-            <nav className="mt-4">
-              <div className="inline-flex h-9 items-center justify-center rounded-lg bg-gray-900 p-1 text-gray-400">
-                {navItems.map((item) => {
-                  const isActive =
-                    pathname === item.href ||
-                    pathname.startsWith(item.href + "/");
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={cn(
-                        "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all",
-                        isActive
-                          ? "bg-gray-800 text-white shadow"
-                          : "text-gray-400 hover:text-gray-200",
-                      )}
-                    >
-                      {item.label}
-                    </Link>
-                  );
-                })}
-              </div>
-            </nav>
-          </div>
-        </header>
-        <main className="max-w-7xl mx-auto px-4 py-8">
-          <BICPProvider baseUrl="/bicp" autoConnect>
+          </header>
+          <main className="max-w-7xl mx-auto px-4 py-8">
             <ContextViewerProvider>{children}</ContextViewerProvider>
-          </BICPProvider>
-        </main>
+          </main>
+        </BICPProvider>
       </body>
     </html>
   );

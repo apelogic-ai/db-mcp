@@ -421,7 +421,7 @@ def _configure_observability():
     try:
         from db_mcp.console.http_exporter import setup_http_tracing
 
-        console_port = int(os.environ.get("DB_MCP_CONSOLE_PORT", "8384"))
+        console_port = int(os.environ.get("DB_MCP_CONSOLE_PORT", "8080"))
         setup_http_tracing(console_port=console_port)
         logger.debug(f"HTTP tracing configured (port {console_port})")
     except Exception as e:
