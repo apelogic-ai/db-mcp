@@ -13,6 +13,7 @@ import {
   analyzeInsights,
   bicpCall,
   contextAddRule,
+  dismissGap,
   type InsightsAnalysis,
 } from "@/lib/bicp";
 
@@ -252,16 +253,21 @@ function VocabularyGapsCard({
 }) {
   const [addingIdx, setAddingIdx] = useState<number | null>(null);
   const [addedIdxs, setAddedIdxs] = useState<Set<number>>(new Set());
+  const [dismissedIdxs, setDismissedIdxs] = useState<Set<number>>(new Set());
   const [addError, setAddError] = useState<string | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [customRule, setCustomRule] = useState("");
 
   if (!gaps || gaps.length === 0) return null;
 
-  const openGaps = gaps.filter((g) => g.status !== "resolved");
+  const openGaps = gaps.filter(
+    (g) => g.status !== "resolved" && g.status !== "dismissed",
+  );
   const resolvedGaps = gaps.filter((g) => g.status === "resolved");
+  const dismissedGaps = gaps.filter((g) => g.status === "dismissed");
   const openCount = openGaps.length;
   const resolvedCount = resolvedGaps.length;
+  const dismissedCount = dismissedGaps.length;
 
   const handleAddRule = async (
     groupIdx: number,
@@ -296,6 +302,30 @@ function VocabularyGapsCard({
     }
   };
 
+  const handleDismiss = async (groupIdx: number, gapId: string) => {
+    setAddError(null);
+    try {
+      const connResult = await bicpCall<{
+        connections: Array<{ name: string; isActive: boolean }>;
+        activeConnection: string | null;
+      }>("connections/list", {});
+      const conn = connResult.activeConnection;
+      if (!conn) {
+        setAddError("No active connection");
+        return;
+      }
+
+      const result = await dismissGap(conn, gapId, "false positive");
+      if (result.success) {
+        setDismissedIdxs((prev) => new Set(prev).add(groupIdx));
+      } else {
+        setAddError(result.error || "Failed to dismiss gap");
+      }
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : "Failed to dismiss gap");
+    }
+  };
+
   return (
     <Card className="bg-gray-900 border-gray-800 col-span-2">
       <CardHeader className="pb-3">
@@ -314,6 +344,11 @@ function VocabularyGapsCard({
               className="bg-green-900/50 text-green-400"
             >
               {resolvedCount} resolved
+            </Badge>
+          )}
+          {dismissedCount > 0 && (
+            <Badge variant="secondary" className="bg-gray-800 text-gray-500">
+              {dismissedCount} dismissed
             </Badge>
           )}
         </CardTitle>
@@ -385,6 +420,12 @@ function VocabularyGapsCard({
                   &#x2713; Added
                 </span>
               </div>
+            ) : dismissedIdxs.has(gi) ? (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 text-xs whitespace-nowrap">
+                  &#x2717; Dismissed
+                </span>
+              </div>
             ) : editingIdx === gi ? (
               <div className="flex items-center gap-2">
                 <input
@@ -431,15 +472,26 @@ function VocabularyGapsCard({
                     {group.suggestedRule}
                   </code>
                 )}
-                <button
-                  onClick={() => {
-                    setEditingIdx(gi);
-                    setCustomRule(group.suggestedRule || "");
-                  }}
-                  className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap transition-colors ml-auto"
-                >
-                  + Add Rule
-                </button>
+                <div className="flex items-center gap-2 ml-auto">
+                  {group.id && (
+                    <button
+                      onClick={() => handleDismiss(gi, group.id!)}
+                      className="text-xs text-gray-600 hover:text-gray-400 whitespace-nowrap transition-colors"
+                      title="Dismiss as false positive"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setEditingIdx(gi);
+                      setCustomRule(group.suggestedRule || "");
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap transition-colors"
+                  >
+                    + Add Rule
+                  </button>
+                </div>
               </div>
             )}
           </div>

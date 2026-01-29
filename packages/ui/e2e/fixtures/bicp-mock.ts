@@ -76,6 +76,7 @@ export class BICPMock {
 
     // Rules
     this.on("context/add-rule", () => mockData.ADD_RULE_SUCCESS);
+    this.on("gaps/dismiss", () => mockData.DISMISS_GAP_SUCCESS);
   }
 
   /** Register a handler for a BICP method. */

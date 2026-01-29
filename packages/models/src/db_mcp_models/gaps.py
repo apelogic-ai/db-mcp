@@ -11,6 +11,7 @@ class GapStatus(str, Enum):
 
     OPEN = "open"
     RESOLVED = "resolved"
+    DISMISSED = "dismissed"
 
 
 class GapSource(str, Enum):
@@ -74,6 +75,10 @@ class KnowledgeGaps(BaseModel):
         if not self.has_term(gap.term):
             self.gaps.append(gap)
 
+    def get_dismissed(self) -> list[KnowledgeGap]:
+        """Get all dismissed gaps."""
+        return [g for g in self.gaps if g.status == GapStatus.DISMISSED]
+
     def resolve(self, gap_id: str, resolved_by: str) -> bool:
         """Mark a gap as resolved. Returns True if found and updated."""
         gap = self.get_gap(gap_id)
@@ -84,12 +89,24 @@ class KnowledgeGaps(BaseModel):
             return True
         return False
 
+    def dismiss(self, gap_id: str, reason: str | None = None) -> bool:
+        """Mark a gap as dismissed (false positive). Returns True if found and updated."""
+        gap = self.get_gap(gap_id)
+        if gap and gap.status == GapStatus.OPEN:
+            gap.status = GapStatus.DISMISSED
+            gap.resolved_at = datetime.now(UTC)
+            gap.resolved_by = f"dismissed: {reason}" if reason else "dismissed"
+            return True
+        return False
+
     def stats(self) -> dict[str, int]:
         """Return summary stats."""
         open_count = len(self.get_open())
         resolved_count = len(self.get_resolved())
+        dismissed_count = len(self.get_dismissed())
         return {
             "total": len(self.gaps),
             "open": open_count,
             "resolved": resolved_count,
+            "dismissed": dismissed_count,
         }

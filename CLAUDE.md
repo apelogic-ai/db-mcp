@@ -319,10 +319,9 @@ uv run pytest tests/ -v          # Unit tests (required)
 
 ```bash
 cd packages/ui
-bun run lint                     # ESLint (required)
-bunx tsc --noEmit                # Type check (required)
-bun run test                     # Unit tests (required)
-bunx playwright test             # E2E tests (required for UI changes)
+npx next lint                    # ESLint (required)
+npx next build                   # Type check + build (required — catches errors that dev mode misses)
+npx playwright test              # E2E tests (required)
 ```
 
 ### Requirements before considering a task complete

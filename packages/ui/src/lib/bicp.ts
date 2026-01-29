@@ -324,6 +324,17 @@ export async function contextAddRule(
   );
 }
 
+export async function dismissGap(
+  connection: string,
+  gapId: string,
+  reason?: string,
+): Promise<{ success: boolean; count?: number; error?: string }> {
+  return bicpCall<{ success: boolean; count?: number; error?: string }>(
+    "gaps/dismiss",
+    { connection, gapId, reason },
+  );
+}
+
 // Traces types
 export interface TraceSpan {
   trace_id: string;
@@ -463,7 +474,7 @@ export interface InsightsAnalysis {
       type: "table" | "column";
     }>;
     suggestedRule: string | null;
-    status?: "open" | "resolved";
+    status?: "open" | "resolved" | "dismissed";
     source?: "schema_scan" | "traces";
   }>;
 }

@@ -638,3 +638,8 @@ export const ADD_RULE_DUPLICATE = {
   success: true,
   duplicate: true,
 };
+
+export const DISMISS_GAP_SUCCESS = {
+  success: true,
+  count: 1,
+};

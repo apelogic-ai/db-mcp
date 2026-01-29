@@ -108,6 +108,7 @@ class DBMCPAgent(BICPAgent):
 
         # Insights handlers
         self._method_handlers["insights/analyze"] = self._handle_insights_analyze
+        self._method_handlers["gaps/dismiss"] = self._handle_gaps_dismiss
 
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
@@ -1757,6 +1758,49 @@ This knowledge helps the AI generate better queries over time.
             logger.info(f"Added business rule to {connection}: {rule[:60]}")
             return {"success": True}
 
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ========== Knowledge Gaps Methods ==========
+
+    async def _handle_gaps_dismiss(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Dismiss a knowledge gap as a false positive.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "gapId": str - Gap ID to dismiss
+                "reason": str | None - Optional reason for dismissal
+            }
+        """
+        connection = params.get("connection")
+        gap_id = params.get("gapId")
+        reason = params.get("reason")
+
+        if not connection or not gap_id:
+            return {
+                "success": False,
+                "error": "connection and gapId are required",
+            }
+
+        try:
+            from db_mcp.gaps.store import dismiss_gap
+
+            result = dismiss_gap(connection, gap_id, reason)
+
+            if result.get("dismissed"):
+                logger.info(
+                    f"Dismissed gap {gap_id} in {connection}" + (f": {reason}" if reason else "")
+                )
+                return {
+                    "success": True,
+                    "count": result["count"],
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "Failed to dismiss gap"),
+                }
         except Exception as e:
             return {"success": False, "error": str(e)}
 

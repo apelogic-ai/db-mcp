@@ -307,6 +307,7 @@ Beyond `shell`, these tools are available for structured operations:
 | Tool | Purpose |
 |------|---------|
 | `get_knowledge_gaps` | View open/resolved knowledge gaps |
+| `dismiss_knowledge_gap` | Dismiss a gap as false positive |
 | `query_add_rule` | Add a business rule |
 | `query_list_rules` | List all business rules |
 | `query_list_examples` | List saved query examples |

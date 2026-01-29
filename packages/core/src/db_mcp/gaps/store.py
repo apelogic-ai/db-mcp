@@ -137,6 +137,43 @@ def resolve_gap(provider_id: str, gap_id: str, resolved_by: str) -> dict:
     return {"resolved": True, "gap_id": gap_id, "count": resolved_count}
 
 
+def dismiss_gap(provider_id: str, gap_id: str, reason: str | None = None) -> dict:
+    """Dismiss a gap as a false positive.
+
+    Dismissed gaps are preserved in the file (so they don't get re-detected)
+    but hidden from the agent and UI by default.
+
+    Args:
+        provider_id: Provider identifier
+        gap_id: Gap ID to dismiss
+        reason: Optional reason for dismissal
+
+    Returns:
+        Dict with status and count of dismissed gaps
+    """
+    gaps = load_gaps(provider_id)
+    target = gaps.get_gap(gap_id)
+    if not target or target.status != GapStatus.OPEN:
+        return {
+            "dismissed": False,
+            "error": f"Gap {gap_id} not found or not open",
+        }
+
+    # Dismiss the target and all siblings in the same group
+    dismissed_count = 0
+    if target.group_id:
+        for g in gaps.gaps:
+            if g.group_id == target.group_id and g.status == GapStatus.OPEN:
+                gaps.dismiss(g.id, reason)
+                dismissed_count += 1
+    else:
+        gaps.dismiss(gap_id, reason)
+        dismissed_count = 1
+
+    save_gaps(gaps)
+    return {"dismissed": True, "gap_id": gap_id, "count": dismissed_count}
+
+
 def merge_trace_gaps(provider_id: str, trace_gaps: list[dict]) -> int:
     """Merge vocabulary gaps detected from traces into the persistent file.
 

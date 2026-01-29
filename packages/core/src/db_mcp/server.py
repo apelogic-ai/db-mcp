@@ -29,7 +29,7 @@ from db_mcp.tools.domain import (
     _domain_skip,
     _domain_status,
 )
-from db_mcp.tools.gaps import _get_knowledge_gaps
+from db_mcp.tools.gaps import _dismiss_knowledge_gap, _get_knowledge_gaps
 from db_mcp.tools.generation import (
     _export_results,
     _get_data,
@@ -178,7 +178,7 @@ Save examples and tell the user what you saved. See PROTOCOL.md for details.
 - Query: get_data, run_sql, validate_sql, get_result, export_results
 - Knowledge vault: shell (bash access to examples, learnings, instructions)
 - Business rules: query_add_rule, query_list_rules
-- Knowledge gaps: get_knowledge_gaps (shows unmapped terms from previous sessions)
+- Knowledge gaps: get_knowledge_gaps, dismiss_knowledge_gap
 - Training: query_approve, query_feedback, query_list_examples
 - Setup: mcp_setup_*, mcp_domain_*
 
@@ -224,6 +224,7 @@ This tells you exactly how to:
 - validate_sql / run_sql / get_result - Query execution (required for running SQL)
 - export_results - Export data to CSV/JSON
 - get_knowledge_gaps - View unmapped business terms from previous sessions
+- dismiss_knowledge_gap - Dismiss a gap as false positive
 - query_add_rule / query_list_rules - Manage business rules (synonyms, filters)
 - query_approve / query_feedback - Save examples and feedback
 - mcp_setup_* / mcp_domain_* - Admin setup (not for regular queries)
@@ -415,8 +416,9 @@ def _create_server() -> FastMCP:
         server.tool(name="query_list_examples")(_query_list_examples)
         server.tool(name="query_list_rules")(_query_list_rules)
 
-        # Knowledge gaps tool
+        # Knowledge gaps tools
         server.tool(name="get_knowledge_gaps")(_get_knowledge_gaps)
+        server.tool(name="dismiss_knowledge_gap")(_dismiss_knowledge_gap)
 
         # Advanced generation tools
         server.tool(name="get_data")(_get_data)

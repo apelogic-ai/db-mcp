@@ -162,6 +162,34 @@ test.describe("Insights Page", () => {
     });
   });
 
+  test("dismiss button calls gaps/dismiss and shows feedback", async ({
+    page,
+    bicpMock,
+  }) => {
+    await page.goto("/insights");
+
+    const main = page.locator("main");
+
+    // Wait for the Dismiss button to appear on an open gap
+    await expect(
+      main.getByRole("button", { name: "Dismiss" }).first(),
+    ).toBeVisible();
+
+    // Click Dismiss on the first open gap
+    await main.getByRole("button", { name: "Dismiss" }).first().click();
+
+    // Wait for dismiss feedback
+    await expect(main.getByText("\u2717 Dismissed").first()).toBeVisible();
+
+    // Verify the BICP call was made
+    const calls = bicpMock.getCalls("gaps/dismiss");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params).toMatchObject({
+      gapId: "gap-1",
+      reason: "false positive",
+    });
+  });
+
   test("displays Semantic Layer card", async ({ page }) => {
     await page.goto("/insights");
 
