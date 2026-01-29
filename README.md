@@ -1,12 +1,49 @@
 # db-mcp
 
-Desktop MCP server that connects Claude to databases and continuously improves data analytics by learning from each query through an LLM-native semantic layer.
+**Your teams are copy-pasting company data into Claude. Give them a safe way to do it.**
+
+db-mcp is an open-source MCP server that connects Claude Desktop to your databases—with a self-improving semantic layer that gets smarter with every query.
+
+> No infrastructure needed. Runs locally. Data never leaves your network.
+
+<p align="center">
+  <img src="docs/assets/insights-1.webp" alt="Insights Dashboard" width="800"/>
+</p>
+
+<p align="center">
+  <img src="docs/assets/context-viewer.webp" alt="Context Viewer" width="800"/>
+</p>
 
 ## Installation
 
 ```bash
 curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh
 ```
+
+## Why db-mcp?
+
+- **Ask Claude, get answers** — Stop waiting for reports. Query your data in natural language without SQL, copy-pasting schemas, or context-setting
+- **Self-improving semantic layer** — Auto-generates descriptions of your schema, then learns from every query to improve accuracy over time
+- **Runs on your desktop** — No cloud infrastructure, no data leaving your network. Uses your existing database credentials and access controls
+- **Git-style collaboration** — Data teams review and approve semantic layer improvements. You stay in control, users get accurate answers
+- **Open source & auditable** — MIT licensed, fully transparent, no vendor lock-in
+
+## Who is db-mcp for?
+
+| Role | Benefit |
+|------|---------|
+| **Business Teams** | Ask Claude questions about your data and get accurate answers instantly—no SQL required |
+| **Data Teams** | Turn your warehouse into an agent-ready platform with a semantic layer that builds itself |
+| **IT & Security** | Govern AI data access with full interaction history, read-only enforcement, and cost guards |
+
+## How It Works
+
+**From install to insight in four steps:**
+
+1. **Install** — Download db-mcp to your laptop. No infrastructure needed—runs locally in minutes
+2. **Connect** — Add data sources using your existing credentials. Your security posture stays intact
+3. **Query** — Ask Claude questions across your connected data. Every query is validated before execution
+4. **Improve** — The semantic layer learns from usage. Review and approve improvements with a git-style workflow
 
 ## Quick Start
 
@@ -26,23 +63,13 @@ db-mcp status
 - MySQL
 - SQL Server
 
-## How It Works
+## Security & Governance
 
-db-mcp is an MCP (Model Context Protocol) server that:
-
-1. **Introspects** your database schema automatically
-2. **Onboards** you through an interactive flow to describe tables and columns
-3. **Generates** SQL from natural language using the semantic layer
-4. **Validates** queries (EXPLAIN, cost estimation) before execution
-5. **Returns** results to Claude Desktop with full lineage
-
-### Key Features
-
-- **Semantic Layer**: Build understanding of your data through interactive onboarding
-- **Query Validation**: Cost guards and read-only enforcement
-- **Team Collaboration**: Git-based sync for sharing semantic layers
-- **Multi-Connection**: Manage multiple database connections
-- **Training Examples**: Capture good queries to improve future generation
+- **Runs locally** — Data stays on your machine, never routed through external servers
+- **Read-only by default** — Query validation and cost guards prevent accidental data modification
+- **Uses existing RBAC** — Connects with your database credentials and respects your access controls
+- **Full audit trail** — Complete interaction history for compliance and debugging
+- **Open source** — Fully auditable, MIT licensed
 
 ## Commands
 
@@ -191,6 +218,12 @@ See `docs/` for design documents on planned features:
 - **Desktop App** - Electron GUI with visual query builder
 - **Knowledge Extraction** - Learn from query traces automatically
 - **Data Gateway** - Unified access to multiple data sources
+
+## Resources
+
+- [GitHub](https://github.com/apelogic-ai/db-mcp)
+- [Discord Community](https://discord.com/invite/9bsR6sU7JQ)
+- [Report Issues](https://github.com/apelogic-ai/db-mcp/issues)
 
 ## License
 
