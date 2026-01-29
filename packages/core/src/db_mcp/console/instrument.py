@@ -116,6 +116,27 @@ def _extract_tool_info(context) -> tuple[str | None, dict | None]:
     return tool_name, tool_args
 
 
+def _extract_session_attrs(context) -> dict[str, str]:
+    """Extract session.id and client.id from middleware context.
+
+    The MiddlewareContext has a fastmcp_context property which provides
+    access to session_id (UUID) and client_id (e.g. "claude-desktop").
+    """
+    attrs: dict[str, str] = {}
+    try:
+        fctx = getattr(context, "fastmcp_context", None)
+        if fctx is not None:
+            sid = getattr(fctx, "session_id", None)
+            if sid:
+                attrs["session.id"] = str(sid)
+            cid = getattr(fctx, "client_id", None)
+            if cid:
+                attrs["client.id"] = str(cid)
+    except Exception:
+        pass
+    return attrs
+
+
 def create_tracing_middleware():
     """Create a FastMCP middleware that traces all MCP requests.
 
@@ -134,19 +155,24 @@ def create_tracing_middleware():
 
             # Extract key arguments for this tool type
             key_attrs = _extract_key_args(tool_name or "", tool_args)
+            session_attrs = _extract_session_attrs(context)
 
             # Build span attributes
             span_attrs = {"tool.name": tool_name or "unknown"}
             span_attrs.update(key_attrs)
+            span_attrs.update(session_attrs)
 
             # Create the MCP request span
+            mcp_attrs = {
+                "mcp.method": "tools/call",
+                "mcp.type": "request",
+                "tool.name": tool_name or "unknown",
+            }
+            mcp_attrs.update(session_attrs)
+
             with tracer.start_as_current_span(
                 f"tools/call: {span_name}",
-                attributes={
-                    "mcp.method": "tools/call",
-                    "mcp.type": "request",
-                    "tool.name": tool_name or "unknown",
-                },
+                attributes=mcp_attrs,
             ) as mcp_span:
                 # Create nested span for the actual tool with detailed args
                 with tracer.start_as_current_span(
@@ -178,24 +204,19 @@ def create_tracing_middleware():
                         return result
 
                     except Exception as e:
-                        tool_span.set_status(
-                            trace.Status(trace.StatusCode.ERROR, str(e))
-                        )
+                        tool_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                         tool_span.set_attribute("tool.success", False)
                         tool_span.set_attribute("tool.error", str(e))
-                        mcp_span.set_status(
-                            trace.Status(trace.StatusCode.ERROR, str(e))
-                        )
+                        mcp_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                         raise
 
         async def on_list_tools(self, context, call_next):
             """Trace tools/list requests."""
+            attrs = {"mcp.method": "tools/list", "mcp.type": "request"}
+            attrs.update(_extract_session_attrs(context))
             with tracer.start_as_current_span(
                 "MCP server handle request: tools/list",
-                attributes={
-                    "mcp.method": "tools/list",
-                    "mcp.type": "request",
-                },
+                attributes=attrs,
             ) as span:
                 result = await call_next(context)
                 if result and hasattr(result, "tools"):
@@ -204,23 +225,21 @@ def create_tracing_middleware():
 
         async def on_list_resources(self, context, call_next):
             """Trace resources/list requests."""
+            attrs = {"mcp.method": "resources/list", "mcp.type": "request"}
+            attrs.update(_extract_session_attrs(context))
             with tracer.start_as_current_span(
                 "MCP server handle request: resources/list",
-                attributes={
-                    "mcp.method": "resources/list",
-                    "mcp.type": "request",
-                },
+                attributes=attrs,
             ):
                 return await call_next(context)
 
         async def on_list_prompts(self, context, call_next):
             """Trace prompts/list requests."""
+            attrs = {"mcp.method": "prompts/list", "mcp.type": "request"}
+            attrs.update(_extract_session_attrs(context))
             with tracer.start_as_current_span(
                 "MCP server handle request: prompts/list",
-                attributes={
-                    "mcp.method": "prompts/list",
-                    "mcp.type": "request",
-                },
+                attributes=attrs,
             ):
                 return await call_next(context)
 
@@ -236,24 +255,25 @@ def create_tracing_middleware():
             except Exception:
                 pass
 
+            attrs = {
+                "mcp.method": "resources/read",
+                "mcp.type": "request",
+                "resource.uri": uri or "unknown",
+            }
+            attrs.update(_extract_session_attrs(context))
             with tracer.start_as_current_span(
                 "MCP server handle request: resources/read",
-                attributes={
-                    "mcp.method": "resources/read",
-                    "mcp.type": "request",
-                    "resource.uri": uri or "unknown",
-                },
+                attributes=attrs,
             ):
                 return await call_next(context)
 
         async def on_initialize(self, context, call_next):
             """Trace initialize requests."""
+            attrs = {"mcp.method": "initialize", "mcp.type": "request"}
+            attrs.update(_extract_session_attrs(context))
             with tracer.start_as_current_span(
                 "MCP server handle request: initialize",
-                attributes={
-                    "mcp.method": "initialize",
-                    "mcp.type": "request",
-                },
+                attributes=attrs,
             ):
                 return await call_next(context)
 

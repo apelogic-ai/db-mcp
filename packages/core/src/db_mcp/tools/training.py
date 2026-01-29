@@ -1,6 +1,7 @@
 """Query training MCP tools - examples, feedback, and rule distillation."""
 
 from db_mcp_models import FeedbackType
+from opentelemetry import trace
 
 from db_mcp.config import get_settings
 from db_mcp.onboarding.schema_store import load_schema_descriptions
@@ -196,6 +197,13 @@ async def _query_approve(
         )
 
         total = result["total_examples"]
+
+        # Record knowledge capture in trace
+        span = trace.get_current_span()
+        span.set_attribute("knowledge.capture", "example_approved")
+        span.set_attribute("knowledge.example_id", result["example_id"])
+        span.set_attribute("knowledge.total_examples", total)
+
         return {
             "status": "approved",
             "example_id": result["example_id"],
@@ -292,6 +300,15 @@ async def _query_feedback(
             if example_result.get("added"):
                 example_added = example_result["example_id"]
 
+        # Record knowledge capture in trace
+        span = trace.get_current_span()
+        span.set_attribute("knowledge.capture", f"feedback_{fb_type.value}")
+        span.set_attribute("knowledge.feedback_id", result["feedback_id"])
+        span.set_attribute("knowledge.feedback_type", fb_type.value)
+        span.set_attribute("knowledge.total_feedback", result["total_feedback"])
+        if example_added:
+            span.set_attribute("knowledge.correction_saved_as_example", True)
+
         return {
             "status": "recorded",
             "feedback_id": result["feedback_id"],
@@ -333,6 +350,12 @@ async def _query_add_rule(
 
     if result.get("added"):
         total = result["total_rules"]
+
+        # Record knowledge capture in trace
+        span = trace.get_current_span()
+        span.set_attribute("knowledge.capture", "rule_added")
+        span.set_attribute("knowledge.total_rules", total)
+
         return {
             "status": "added",
             "total_rules": total,
@@ -474,6 +497,14 @@ async def _import_instructions(rules: list[str]) -> dict:
 
     if result["saved"]:
         total = len(instructions.rules)
+
+        # Record knowledge capture in trace
+        span = trace.get_current_span()
+        span.set_attribute("knowledge.capture", "rules_imported")
+        span.set_attribute("knowledge.rules_added", added_count)
+        span.set_attribute("knowledge.rules_skipped", skipped_count)
+        span.set_attribute("knowledge.total_rules", total)
+
         return {
             "status": "success",
             "provider_id": provider_id,
@@ -567,6 +598,14 @@ async def _import_examples(examples: list[dict]) -> dict:
             skipped_count += 1
 
     total = load_examples(provider_id).count()
+
+    # Record knowledge capture in trace
+    span = trace.get_current_span()
+    span.set_attribute("knowledge.capture", "examples_imported")
+    span.set_attribute("knowledge.examples_added", added_count)
+    span.set_attribute("knowledge.examples_skipped", skipped_count)
+    span.set_attribute("knowledge.total_examples", total)
+
     return {
         "status": "success",
         "provider_id": provider_id,

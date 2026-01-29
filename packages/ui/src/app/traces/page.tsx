@@ -4,22 +4,21 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { listTraces, clearTraces, getTraceDates } from "@/lib/bicp";
 import type { Trace } from "@/lib/bicp";
 import { TraceList } from "@/components/traces/TraceList";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-interface DayGroup {
-  date: string;
-  label: string;
-  traces: Trace[];
-  isLive: boolean;
+/** Local-time YYYY-MM-DD (matches JSONL filenames written with local date). */
+function localDateStr(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function formatDateLabel(dateStr: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const today = localDateStr();
+  const yesterday = localDateStr(new Date(Date.now() - 86400000));
   if (dateStr === today) return "Today";
   if (dateStr === yesterday) return "Yesterday";
-  // Format as "Mon, Jan 28"
   const d = new Date(dateStr + "T00:00:00");
   return d.toLocaleDateString("en-US", {
     weekday: "short",
@@ -28,12 +27,32 @@ function formatDateLabel(dateStr: string): string {
   });
 }
 
+/** Merge two trace arrays, deduplicating by trace_id, most recent first. */
+function mergeTraces(a: Trace[], b: Trace[]): Trace[] {
+  const seen = new Set<string>();
+  const merged: Trace[] = [];
+  for (const t of a) {
+    if (!seen.has(t.trace_id)) {
+      seen.add(t.trace_id);
+      merged.push(t);
+    }
+  }
+  for (const t of b) {
+    if (!seen.has(t.trace_id)) {
+      seen.add(t.trace_id);
+      merged.push(t);
+    }
+  }
+  merged.sort((a, b) => b.start_time - a.start_time);
+  return merged;
+}
+
 export default function TracesPage() {
   const [liveTraces, setLiveTraces] = useState<Trace[]>([]);
-  const [historicalGroups, setHistoricalGroups] = useState<DayGroup[]>([]);
-  const [expandedDays, setExpandedDays] = useState<Set<string>>(
-    new Set(["live"]),
-  );
+  const [historicalByDate, setHistoricalByDate] = useState<
+    Record<string, Trace[]>
+  >({});
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dates, setDates] = useState<string[]>([]);
@@ -41,68 +60,54 @@ export default function TracesPage() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch live traces
   const fetchLive = useCallback(async () => {
     try {
       const result = await listTraces("live");
-      if (result.success) {
-        setLiveTraces(result.traces);
-      }
+      if (result.success) setLiveTraces(result.traces);
     } catch {
-      // Silent - live polling shouldn't show errors
+      /* silent */
     }
   }, []);
 
-  // Fetch available dates
   const fetchDates = useCallback(async () => {
     try {
       const result = await getTraceDates();
-      if (result.success && result.enabled) {
-        setDates(result.dates);
-      }
+      if (result.success && result.enabled) setDates(result.dates);
     } catch {
-      // Silent
+      /* silent */
     }
   }, []);
 
-  // Fetch historical traces for a specific date
   const fetchHistorical = useCallback(async (date: string) => {
     try {
       const result = await listTraces("historical", date);
       if (result.success) {
-        setHistoricalGroups((prev) => {
-          const filtered = prev.filter((g) => g.date !== date);
-          if (result.traces.length === 0) return filtered;
-          const group: DayGroup = {
-            date,
-            label: formatDateLabel(date),
-            traces: result.traces,
-            isLive: false,
-          };
-          const updated = [...filtered, group];
-          updated.sort((a, b) => b.date.localeCompare(a.date));
-          return updated;
-        });
+        setHistoricalByDate((prev) => ({
+          ...prev,
+          [date]: result.traces,
+        }));
         setLoadedDates((prev) => new Set([...prev, date]));
       }
     } catch {
-      // Silent
+      /* silent */
     }
   }, []);
 
-  // Initial load: fetch live + dates
+  // Initial load: fetch live + dates + today's historical
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchLive(), fetchDates()]).finally(() => setLoading(false));
+    const today = localDateStr();
+    Promise.all([fetchLive(), fetchDates(), fetchHistorical(today)]).finally(
+      () => setLoading(false),
+    );
+    setExpandedDays(new Set([today]));
 
-    // Poll live traces
     pollRef.current = setInterval(fetchLive, 3000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchLive, fetchDates]);
+  }, [fetchLive, fetchDates, fetchHistorical]);
 
-  // When a day accordion is expanded, load its historical data
   const toggleDay = useCallback(
     (key: string) => {
       setExpandedDays((prev) => {
@@ -111,10 +116,7 @@ export default function TracesPage() {
           next.delete(key);
         } else {
           next.add(key);
-          // Load historical data for this date if not yet loaded
-          if (key !== "live" && !loadedDates.has(key)) {
-            fetchHistorical(key);
-          }
+          if (!loadedDates.has(key)) fetchHistorical(key);
         }
         return next;
       });
@@ -122,48 +124,50 @@ export default function TracesPage() {
     [loadedDates, fetchHistorical],
   );
 
-  const handleClear = async () => {
+  const handleClear = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     try {
       await clearTraces();
       setLiveTraces([]);
     } catch {
-      // ignore
+      /* ignore */
     }
   };
 
   const handleRefresh = async () => {
     setLoading(true);
-    // Reload live and dates
-    await Promise.all([fetchLive(), fetchDates()]);
-    // Reload any expanded historical days
+    const today = localDateStr();
+    await Promise.all([fetchLive(), fetchDates(), fetchHistorical(today)]);
     const reloadPromises = [...expandedDays]
-      .filter((d) => d !== "live")
+      .filter((d) => d !== today)
       .map((d) => fetchHistorical(d));
     await Promise.all(reloadPromises);
     setLoading(false);
   };
 
-  // Build day groups for display
-  const today = new Date().toISOString().slice(0, 10);
-  const allDays: { key: string; label: string; traceCount: number }[] = [];
+  // Build day list from server dates
+  const today = localDateStr();
+  const hasLive = liveTraces.length > 0;
 
-  // Live / Today always first
-  allDays.push({
-    key: "live",
-    label: "Today (Live)",
-    traceCount: liveTraces.length,
-  });
+  // Ensure today is always in the list even if server didn't return it
+  const allDates = dates.includes(today) ? dates : [today, ...dates];
 
-  // Historical dates (skip today since it's covered by live)
-  for (const date of dates) {
-    if (date === today) continue;
-    const loaded = historicalGroups.find((g) => g.date === date);
-    allDays.push({
+  // For each date, compute the traces to show
+  const dayEntries = allDates.map((date) => {
+    const historical = historicalByDate[date] ?? [];
+    const isToday = date === today;
+    // Merge live traces into today
+    const traces = isToday ? mergeTraces(liveTraces, historical) : historical;
+    const isLoaded = loadedDates.has(date) || isToday;
+
+    return {
       key: date,
       label: formatDateLabel(date),
-      traceCount: loaded?.traces.length ?? -1, // -1 = not loaded yet
-    });
-  }
+      traces,
+      traceCount: isLoaded ? traces.length : -1,
+      isToday,
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -174,43 +178,40 @@ export default function TracesPage() {
             OpenTelemetry trace viewer for MCP server operations
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-gray-700 text-gray-300 hover:bg-gray-800"
-            onClick={handleRefresh}
+        <button
+          onClick={handleRefresh}
+          disabled={loading}
+          className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+          title="Refresh traces"
+        >
+          <svg
+            className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
           >
-            Refresh
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-gray-700 text-gray-300 hover:bg-gray-800"
-            onClick={handleClear}
-          >
-            Clear Live
-          </Button>
-        </div>
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+        </button>
       </div>
 
       {error && (
         <div className="text-center py-4 text-red-400 text-sm">{error}</div>
       )}
 
-      {loading && liveTraces.length === 0 && dates.length === 0 && (
+      {loading && dayEntries.every((d) => d.traceCount <= 0) && (
         <div className="text-center py-8 text-gray-500">Loading traces...</div>
       )}
 
-      {/* Day-grouped accordion */}
       <div className="space-y-2">
-        {allDays.map(({ key, label, traceCount }) => {
+        {dayEntries.map(({ key, label, traces, traceCount, isToday }) => {
           const isExpanded = expandedDays.has(key);
-          const isLive = key === "live";
-          const traces = isLive
-            ? liveTraces
-            : (historicalGroups.find((g) => g.date === key)?.traces ?? []);
-          const notLoaded = !isLive && traceCount === -1;
+          const notLoaded = traceCount === -1;
 
           return (
             <div
@@ -247,7 +248,8 @@ export default function TracesPage() {
                   {label}
                 </span>
 
-                {isLive && (
+                {/* Green pulse when live traces are flowing into today */}
+                {isToday && hasLive && (
                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                 )}
 
@@ -256,6 +258,29 @@ export default function TracesPage() {
                     ? "click to load"
                     : `${traceCount} trace${traceCount !== 1 ? "s" : ""}`}
                 </span>
+
+                {/* Clear live traces button — only on today when live is active */}
+                {isToday && hasLive && (
+                  <button
+                    onClick={handleClear}
+                    className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors ml-1"
+                    title="Clear live traces"
+                  >
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                      />
+                    </svg>
+                  </button>
+                )}
               </button>
 
               {isExpanded && (
@@ -274,7 +299,6 @@ export default function TracesPage() {
         })}
       </div>
 
-      {/* Live polling indicator */}
       <div className="text-center text-xs text-gray-600">
         Live traces auto-refresh every 3 seconds
       </div>

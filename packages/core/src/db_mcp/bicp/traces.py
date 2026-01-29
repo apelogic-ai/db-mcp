@@ -7,7 +7,8 @@ Also provides trace analysis for semantic layer insights.
 
 import json
 import logging
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -156,7 +157,430 @@ def _normalize_sql(sql: str) -> str:
     return " ".join(sql.split()).strip()
 
 
-def analyze_traces(traces: list[dict], connection_path: Path | None = None) -> dict:
+# Words too generic to be meaningful business terms — filter these out
+_STOP_WORDS = frozenset(
+    {
+        # Vault structure words
+        "table",
+        "tables",
+        "column",
+        "columns",
+        "schema",
+        "schemas",
+        "domain",
+        "example",
+        "examples",
+        "instruction",
+        "instructions",
+        "rule",
+        "rules",
+        "training",
+        "metrics",
+        "learnings",
+        "vault",
+        "connection",
+        # File types / extensions
+        "yaml",
+        "yml",
+        "md",
+        "json",
+        "csv",
+        "txt",
+        # Common grep noise
+        "description",
+        "descriptions",
+        "name",
+        "type",
+        "id",
+        "key",
+        "value",
+        "select",
+        "from",
+        "where",
+        "join",
+        "order",
+        "group",
+        "limit",
+        "having",
+        "insert",
+        "update",
+        "delete",
+        "create",
+        "drop",
+        "alter",
+        "index",
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "distinct",
+        "between",
+        "like",
+        "null",
+        "true",
+        "false",
+        "case",
+        "when",
+        "then",
+        "else",
+        "end",
+        "duration",
+        "timestamp",
+        "date",
+        "time",
+        "interval",
+        "cast",
+        # Single characters and very short tokens
+        "a",
+        "an",
+        "the",
+        "is",
+        "in",
+        "on",
+        "of",
+        "to",
+        "for",
+        "and",
+        "or",
+    }
+)
+
+
+def _extract_search_terms(command: str) -> list[str]:
+    """Extract search terms from grep/find commands.
+
+    Parses patterns like:
+        grep -ri "venue" examples/       → ["venue"]
+        grep -i 'CUI' schema/            → ["CUI"]
+        find examples -name "*cui*"       → ["cui"]
+        grep -rn "nas_id" schema/ examples/  → ["nas_id"]
+
+    Filters out structural/generic words that aren't real business terms.
+    """
+    terms: list[str] = []
+    cmd_lower = command.lower().strip()
+
+    if cmd_lower.startswith("grep"):
+        # Extract quoted arguments from grep commands
+        quoted = re.findall(r"""['"]([^'"]+)['"]""", command)
+        for q in quoted:
+            # Skip file paths and glob patterns
+            if "/" in q or q.startswith(".") or q.startswith("*"):
+                continue
+            # Split on regex alternation (\|) first, then clean each part
+            # e.g. "cui\b\|CUI\b" → ["cui\b", "CUI\b"] → ["cui", "CUI"]
+            parts = re.split(r"\\?\|", q)
+            for part in parts:
+                # Strip regex metacharacters: \b \w \d anchors etc.
+                cleaned = re.sub(r"\\[bBwWdDsS]", "", part)
+                cleaned = re.sub(r"[\\^$.*+?{}()\[\]:\-]+", "", cleaned)
+                cleaned = cleaned.strip().lower()
+                if cleaned and len(cleaned) >= 2 and cleaned not in _STOP_WORDS:
+                    terms.append(cleaned)
+
+    elif cmd_lower.startswith("find"):
+        # find ... -name "*pattern*" or -iname "*pattern*"
+        name_matches = re.findall(r'-i?name\s+["\']?\*?([^"\'*\s]+)\*?["\']?', command, re.I)
+        for t in name_matches:
+            cleaned = t.lower().strip()
+            if cleaned and len(cleaned) >= 2 and cleaned not in _STOP_WORDS:
+                terms.append(cleaned)
+
+    return terms
+
+
+def _are_similar(a: str, b: str) -> bool:
+    """Check if two terms are similar enough to group together.
+
+    Uses substring matching and underscore-stripped comparison.
+    e.g. "nas_id" and "nasid" → True, "cui" and "nasid" → False
+    """
+    a_stripped = a.replace("_", "").replace("-", "")
+    b_stripped = b.replace("_", "").replace("-", "")
+
+    # One is substring of other (min length 2)
+    if len(a) >= 2 and len(b) >= 2:
+        if a_stripped in b_stripped or b_stripped in a_stripped:
+            return True
+
+    return False
+
+
+def _find_schema_matches(terms: list[str], connection_path: Path | None) -> list[dict]:
+    """Find schema columns/tables whose names contain any of the given terms.
+
+    Returns list of {name, table, type} matches.
+    """
+    if not connection_path:
+        return []
+
+    schema_file = connection_path / "schema" / "descriptions.yaml"
+    if not schema_file.exists() or schema_file.stat().st_size < 10:
+        return []
+
+    try:
+        import yaml
+
+        with open(schema_file) as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        return []
+
+    matches: list[dict] = []
+    seen: set[str] = set()
+    tables = data.get("tables", [])
+
+    for table in tables:
+        table_name = (table.get("full_name") or table.get("name", "")).lower()
+        for term in terms:
+            if term in table_name.replace("_", "") or term in table_name:
+                key = f"table:{table_name}"
+                if key not in seen:
+                    seen.add(key)
+                    matches.append(
+                        {
+                            "name": table.get("full_name") or table.get("name", ""),
+                            "description": table.get("description", ""),
+                            "type": "table",
+                        }
+                    )
+
+        for col in table.get("columns", []):
+            col_name = col.get("name", "").lower()
+            for term in terms:
+                if term in col_name.replace("_", "") or term in col_name:
+                    key = f"col:{table_name}.{col_name}"
+                    if key not in seen:
+                        seen.add(key)
+                        matches.append(
+                            {
+                                "name": col.get("name", ""),
+                                "table": table.get("full_name") or table.get("name", ""),
+                                "description": col.get("description", ""),
+                                "type": "column",
+                            }
+                        )
+
+    return matches[:5]  # Limit to top 5 matches
+
+
+def _detect_vocabulary_gaps(traces: list[dict], connection_path: Path | None = None) -> list[dict]:
+    """Detect vocabulary gap patterns and group related terms.
+
+    A vocabulary gap occurs when the agent can't map a user's business term
+    to the schema, causing a burst of grep/find shell commands all searching
+    for the same term with no results.
+
+    Detection heuristic:
+    - Group shell traces by session.id
+    - Within each session, extract search terms from grep/find commands
+    - If a term appears in 3+ search commands, flag it as an unmapped term
+    - Group related terms (same session + substring similarity)
+    - Find potential schema column matches for each group
+    - Suggest a business rule synonym string
+
+    Returns:
+        List of grouped gap dicts:
+        [{
+            terms: [{term, searchCount, session, timestamp}],
+            totalSearches: int,
+            timestamp: float,
+            schemaMatches: [{name, table?, description, type}],
+            suggestedRule: str | None,
+        }]
+    """
+    # Group shell search commands by session
+    session_searches: dict[str, list[dict]] = defaultdict(list)
+
+    for trace_data in traces:
+        for span in trace_data.get("spans", []):
+            attrs = span.get("attributes", {})
+            tool_name = attrs.get("tool.name", "")
+            command = attrs.get("command", "")
+            session_id = attrs.get("session.id", "unknown")
+
+            if tool_name != "shell" or not command:
+                continue
+
+            terms = _extract_search_terms(command)
+            for term in terms:
+                session_searches[session_id].append(
+                    {
+                        "term": term,
+                        "command": command[:200],
+                        "timestamp": span.get("start_time", 0),
+                        "trace_id": trace_data.get("trace_id", ""),
+                    }
+                )
+
+    # Find terms searched 3+ times within a session
+    raw_gaps: list[dict] = []
+    seen_terms: set[str] = set()
+
+    for session_id, searches in session_searches.items():
+        term_counts: Counter[str] = Counter(s["term"] for s in searches)
+        for term, count in term_counts.items():
+            if count >= 3 and term not in seen_terms:
+                first = min(s["timestamp"] for s in searches if s["term"] == term)
+                raw_gaps.append(
+                    {
+                        "term": term,
+                        "searchCount": count,
+                        "session": session_id[:8],
+                        "timestamp": first,
+                    }
+                )
+                seen_terms.add(term)
+
+    if not raw_gaps:
+        return []
+
+    # ── Group related terms ─────────────────────────────────────────
+    # Two terms are grouped if they share a session OR are substring-similar.
+    # Use union-find to merge groups.
+    parent: dict[int, int] = {i: i for i in range(len(raw_gaps))}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        pa, pb = find(a), find(b)
+        if pa != pb:
+            parent[pa] = pb
+
+    for i in range(len(raw_gaps)):
+        for j in range(i + 1, len(raw_gaps)):
+            # Only group by substring similarity — same session alone
+            # is not enough (user may search multiple unrelated terms)
+            if _are_similar(raw_gaps[i]["term"], raw_gaps[j]["term"]):
+                union(i, j)
+
+    # Build groups
+    groups_map: dict[int, list[int]] = defaultdict(list)
+    for i in range(len(raw_gaps)):
+        groups_map[find(i)].append(i)
+
+    # Build final grouped output
+    grouped_gaps: list[dict] = []
+    for indices in groups_map.values():
+        group_terms = [raw_gaps[i] for i in indices]
+        group_terms.sort(key=lambda g: g["searchCount"], reverse=True)
+        total_searches = sum(g["searchCount"] for g in group_terms)
+        earliest = min(g["timestamp"] for g in group_terms)
+
+        # Find schema matches for this group
+        term_strings = [g["term"] for g in group_terms]
+        schema_matches = _find_schema_matches(term_strings, connection_path)
+
+        # Build suggested rule
+        suggested_rule = _build_suggested_rule(term_strings, schema_matches)
+
+        grouped_gaps.append(
+            {
+                "terms": group_terms,
+                "totalSearches": total_searches,
+                "timestamp": earliest,
+                "schemaMatches": schema_matches,
+                "suggestedRule": suggested_rule,
+            }
+        )
+
+    grouped_gaps.sort(key=lambda g: g["totalSearches"], reverse=True)
+    return grouped_gaps
+
+
+def _build_suggested_rule(terms: list[str], schema_matches: list[dict]) -> str | None:
+    """Build a suggested business rule synonym string.
+
+    e.g. "CUI, chargeable_user_identity, nas_id are synonyms."
+    Includes the best schema column match if found.
+    """
+    # Collect unique names: user terms + matched column names
+    all_names: list[str] = []
+    seen: set[str] = set()
+
+    # Add schema column matches first (canonical names)
+    for m in schema_matches:
+        if m["type"] == "column":
+            name = m["name"]
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                all_names.append(name)
+
+    # Add user search terms
+    for t in terms:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            all_names.append(t)
+
+    if len(all_names) < 2:
+        return None
+
+    return ", ".join(all_names) + " are synonyms."
+
+
+def _detect_filesystem_captures(connection_path: Path | None, days: int = 7) -> list[dict]:
+    """Detect knowledge captures by checking example file modification times.
+
+    This is a fallback for when span instrumentation isn't present (e.g. the
+    MCP server hasn't been restarted after adding training.py spans). It checks
+    the examples/ directory for files created/modified within the analysis window.
+
+    Args:
+        connection_path: Path to the connection directory
+        days: Number of days to look back
+
+    Returns:
+        List of capture dicts: [{type, filename, timestamp}]
+    """
+    if not connection_path or not connection_path.exists():
+        return []
+
+    import time as _time
+
+    cutoff = _time.time() - (days * 86400)
+    captures: list[dict] = []
+
+    # Check examples directory
+    examples_dir = connection_path / "examples"
+    if not examples_dir.exists():
+        examples_dir = connection_path / "training" / "examples"
+
+    if examples_dir.exists():
+        for f in examples_dir.iterdir():
+            if f.suffix in (".yaml", ".yml") and f.is_file():
+                mtime = f.stat().st_mtime
+                if mtime >= cutoff:
+                    captures.append(
+                        {
+                            "type": "example_saved",
+                            "filename": f.name,
+                            "timestamp": mtime,
+                        }
+                    )
+
+    # Check feedback file
+    feedback_file = connection_path / "training" / "feedback.yaml"
+    if feedback_file.exists():
+        mtime = feedback_file.stat().st_mtime
+        if mtime >= cutoff:
+            captures.append(
+                {
+                    "type": "feedback_given",
+                    "filename": feedback_file.name,
+                    "timestamp": mtime,
+                }
+            )
+
+    captures.sort(key=lambda c: c["timestamp"], reverse=True)
+    return captures
+
+
+def analyze_traces(traces: list[dict], connection_path: Path | None = None, days: int = 7) -> dict:
     """Analyze traces for semantic layer gaps and inefficiencies.
 
     Examines tool call patterns to surface:
@@ -187,6 +611,11 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None) -> d
     knowledge_events: list[dict] = []
     shell_commands: list[dict] = []
     total_duration_ms = 0.0
+
+    # Knowledge-flow tracking
+    knowledge_usage_snapshots: list[dict] = []  # per-get_data call
+    knowledge_captures: list[dict] = []  # per-approve/feedback/import call
+    sessions_seen: set[str] = set()
 
     for trace in user_traces:
         total_duration_ms += trace.get("duration_ms", 0)
@@ -288,6 +717,39 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None) -> d
                     }
                 )
 
+            # Session tracking
+            session_id = attrs.get("session.id")
+            if session_id:
+                sessions_seen.add(str(session_id))
+
+            # Knowledge usage (from get_data spans instrumented in generation.py)
+            examples_avail = attrs.get("knowledge.examples_available")
+            if examples_avail is not None:
+                knowledge_usage_snapshots.append(
+                    {
+                        "tool": tool_name or name,
+                        "schema_tables": attrs.get("knowledge.schema_tables", 0),
+                        "examples_available": examples_avail,
+                        "examples_in_context": attrs.get("knowledge.examples_in_context", 0),
+                        "rules_available": attrs.get("knowledge.rules_available", 0),
+                        "timestamp": span.get("start_time", 0),
+                    }
+                )
+
+            # Knowledge capture (from training.py instrumentation)
+            capture_type = attrs.get("knowledge.capture")
+            if capture_type:
+                knowledge_captures.append(
+                    {
+                        "type": str(capture_type),
+                        "total_examples": attrs.get("knowledge.total_examples"),
+                        "total_rules": attrs.get("knowledge.total_rules"),
+                        "total_feedback": attrs.get("knowledge.total_feedback"),
+                        "feedback_type": attrs.get("knowledge.feedback_type"),
+                        "timestamp": span.get("start_time", 0),
+                    }
+                )
+
     # Identify repeated SQL (same query executed multiple times)
     repeated_queries = []
     for norm_sql, occurrences in sql_seen.items():
@@ -305,6 +767,71 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None) -> d
     # Check knowledge layer completeness
     knowledge_status = _check_knowledge_status(connection_path) if connection_path else {}
 
+    # ── Compute real insights ───────────────────────────────────────────
+
+    # 1. "Is the agent finding what it needs?"
+    #    Look at knowledge usage snapshots — were examples/rules available?
+    generation_calls = len(knowledge_usage_snapshots)
+    calls_with_examples = sum(
+        1 for s in knowledge_usage_snapshots if s.get("examples_in_context", 0) > 0
+    )
+    calls_with_rules = sum(1 for s in knowledge_usage_snapshots if s.get("rules_available", 0) > 0)
+    calls_without_examples = generation_calls - calls_with_examples
+
+    # 2. "Is it using prior knowledge to cut the line?"
+    #    Ratio of generation calls that had examples in context
+    example_hit_rate = (
+        round(calls_with_examples / generation_calls * 100) if generation_calls > 0 else None
+    )
+
+    # 3. "Are there SQL generation mistakes?"
+    #    Already captured in error_traces and validation_errors
+    #    Add: ratio of validate_sql calls that failed
+    validate_calls = tool_counts.get("validate_sql", 0)
+    validate_fail_rate = (
+        round(len(validation_errors) / validate_calls * 100) if validate_calls > 0 else None
+    )
+
+    # 4. "Are we capturing new knowledge?"
+    #    Compare knowledge capture events to total tool traces
+    #    Use filesystem fallback when spans lack instrumentation
+    capture_by_type: Counter[str] = Counter()
+    for kc in knowledge_captures:
+        capture_by_type[kc["type"]] += 1
+
+    # Filesystem-based fallback: detect captures from file modification times
+    fs_captures = _detect_filesystem_captures(connection_path, days=days)
+    if fs_captures and not knowledge_captures:
+        # No span-based captures found — use filesystem detection instead
+        for fc in fs_captures:
+            capture_by_type[fc["type"]] += 1
+            knowledge_captures.append(
+                {
+                    "type": fc["type"],
+                    "total_examples": None,
+                    "total_rules": None,
+                    "total_feedback": None,
+                    "feedback_type": None,
+                    "timestamp": fc["timestamp"],
+                    "source": "filesystem",
+                }
+            )
+
+    insights = {
+        "generationCalls": generation_calls,
+        "callsWithExamples": calls_with_examples,
+        "callsWithRules": calls_with_rules,
+        "callsWithoutExamples": calls_without_examples,
+        "exampleHitRate": example_hit_rate,
+        "validateCalls": validate_calls,
+        "validateFailRate": validate_fail_rate,
+        "knowledgeCapturesByType": dict(capture_by_type),
+        "sessionCount": len(sessions_seen),
+    }
+
+    # ── Vocabulary gap detection ──────────────────────────────────────
+    vocabulary_gaps = _detect_vocabulary_gaps(user_traces, connection_path)
+
     return {
         "traceCount": len(user_traces),
         "protocolTracesFiltered": len(traces) - len(user_traces),
@@ -318,9 +845,11 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None) -> d
         "repeatedQueries": repeated_queries[:10],
         "tablesReferenced": dict(tables_referenced.most_common(20)),
         "knowledgeEvents": knowledge_events[:20],
-        "knowledgeCaptureCount": len(knowledge_events),
+        "knowledgeCaptureCount": len(knowledge_events) or len(knowledge_captures),
         "shellCommands": shell_commands[:10],
         "knowledgeStatus": knowledge_status,
+        "insights": insights,
+        "vocabularyGaps": vocabulary_gaps,
     }
 
 

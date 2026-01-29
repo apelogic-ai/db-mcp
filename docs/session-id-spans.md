@@ -1,52 +1,27 @@
 # Session ID in OTel Spans
 
-## Status: Planned (not yet implemented)
+## Status: Implemented
 
-## Problem
+## What was done
 
-There's no session/conversation ID in the current span attributes, so we can't group traces into sessions/conversations in the Traces UI.
+Added `session.id` and `client.id` span attributes to all MCP protocol traces via the `TracingMiddleware` in `instrument.py`.
 
-## Findings
+### How it works
 
-### FastMCP Context already exposes `session_id`
+- `MiddlewareContext.fastmcp_context` provides access to the FastMCP `Context` object
+- `Context.session_id` returns a UUID (persisted on the session object via `_fastmcp_id`, or derived from MCP session headers)
+- `Context.client_id` returns the client name (e.g. `"claude-desktop"`)
+- `_extract_session_attrs(context)` extracts both and adds them to every span
 
-**File**: `.venv/.../fastmcp/server/context.py`
+### Attributes added
 
-```python
-@property
-def session_id(self) -> str | None:
-    return str(id(self.session))  # Python object id
-```
+| Attribute | Value | Example |
+|-----------|-------|---------|
+| `session.id` | UUID string | `"a1b2c3d4-..."` |
+| `client.id` | Client name | `"claude-desktop"` |
 
-Also available: `context.client_id` → e.g. `"claude-desktop"`.
+These appear on every span (tool calls, list operations, initialize, etc.) and flow through all exporters automatically.
 
-### Middleware API mismatch
+### Future: UI session grouping
 
-The current `TracingMiddleware` in `instrument.py` uses the **old** FastMCP middleware pattern:
-
-```python
-async def on_call_tool(self, context, call_next):
-    ...
-    result = await call_next(context)
-```
-
-The installed FastMCP version uses `asynccontextmanager`-based hooks:
-
-```python
-@contextlib.asynccontextmanager
-async def on_call_tool(self, request: ToolRequest, context: Context):
-    yield request  # before/after pattern
-```
-
-### Implementation plan
-
-1. **Rewrite `TracingMiddleware`** to use the current `asynccontextmanager` API
-2. **Extract `context.session_id` and `context.client_id`** in every hook
-3. **Add `session.id` and `client.id`** as span attributes — they flow through all exporters automatically
-4. **UI**: Add session grouping toggle in Traces page, show session duration
-
-### Notes
-
-- `session_id` is `str(id(session))` — a Python memory address, unique per session within a process lifetime, resets on restart
-- Could generate proper UUIDs via `on_initialize` hook if persistent IDs are needed
-- All three exporters (HttpSpanExporter, JSONLSpanExporter, ConsoleSpanExporter) already preserve all attributes, so `session.id` flows through with no exporter changes
+With `session.id` on all spans, the Traces UI can optionally group traces by session to show conversation-level views. This is a UI-only change — the data is already there.

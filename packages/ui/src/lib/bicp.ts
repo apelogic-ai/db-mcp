@@ -280,6 +280,39 @@ export async function revertToCommit(
   });
 }
 
+// Context read/write
+export interface ContextReadResult {
+  success: boolean;
+  content?: string;
+  isStockReadme?: boolean;
+  error?: string;
+}
+
+export interface ContextWriteResult {
+  success: boolean;
+  gitCommit?: boolean;
+  error?: string;
+}
+
+export async function contextRead(
+  connection: string,
+  path: string,
+): Promise<ContextReadResult> {
+  return bicpCall<ContextReadResult>("context/read", { connection, path });
+}
+
+export async function contextWrite(
+  connection: string,
+  path: string,
+  content: string,
+): Promise<ContextWriteResult> {
+  return bicpCall<ContextWriteResult>("context/write", {
+    connection,
+    path,
+    content,
+  });
+}
+
 // Traces types
 export interface TraceSpan {
   trace_id: string;
@@ -391,6 +424,34 @@ export interface InsightsAnalysis {
     exampleCount: number;
     ruleCount: number;
   };
+  insights: {
+    generationCalls: number;
+    callsWithExamples: number;
+    callsWithRules: number;
+    callsWithoutExamples: number;
+    exampleHitRate: number | null;
+    validateCalls: number;
+    validateFailRate: number | null;
+    knowledgeCapturesByType: Record<string, number>;
+    sessionCount: number;
+  };
+  vocabularyGaps: Array<{
+    terms: Array<{
+      term: string;
+      searchCount: number;
+      session: string;
+      timestamp: number;
+    }>;
+    totalSearches: number;
+    timestamp: number;
+    schemaMatches: Array<{
+      name: string;
+      table?: string;
+      description: string;
+      type: "table" | "column";
+    }>;
+    suggestedRule: string | null;
+  }>;
 }
 
 export interface InsightsAnalyzeResult {

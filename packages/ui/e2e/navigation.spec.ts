@@ -11,9 +11,8 @@ test.describe("Navigation", () => {
     const nav = page.locator("nav");
     await expect(nav.getByText("Connectors")).toBeVisible();
     await expect(nav.getByText("Context")).toBeVisible();
-    await expect(nav.getByText("Query")).toBeVisible();
-    await expect(nav.getByText("Tools")).toBeVisible();
-    await expect(nav.getByText("Explorer")).toBeVisible();
+    await expect(nav.getByText("Traces")).toBeVisible();
+    await expect(nav.getByText("Insights")).toBeVisible();
   });
 
   test("navigate between tabs", async ({ page }) => {

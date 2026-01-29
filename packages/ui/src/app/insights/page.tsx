@@ -9,7 +9,13 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { analyzeInsights, type InsightsAnalysis } from "@/lib/bicp";
+import {
+  analyzeInsights,
+  bicpCall,
+  contextRead,
+  contextWrite,
+  type InsightsAnalysis,
+} from "@/lib/bicp";
 
 function formatDuration(ms: number): string {
   if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
@@ -54,6 +60,343 @@ function Bar({
       </div>
       <span className="w-8 text-gray-500 tabular-nums text-right">{value}</span>
     </div>
+  );
+}
+
+function KnowledgeFlowCard({
+  insights,
+  traceCount,
+}: {
+  insights: InsightsAnalysis["insights"];
+  traceCount: number;
+}) {
+  const {
+    generationCalls,
+    callsWithExamples,
+    callsWithoutExamples,
+    callsWithRules,
+    exampleHitRate,
+    validateCalls,
+    validateFailRate,
+    knowledgeCapturesByType,
+    sessionCount,
+  } = insights;
+
+  const captureTotal = Object.values(knowledgeCapturesByType).reduce(
+    (a, b) => a + b,
+    0,
+  );
+
+  // Build insight items — each is a question + answer + severity
+  type Insight = {
+    question: string;
+    answer: string;
+    severity: "good" | "warn" | "bad" | "neutral";
+  };
+
+  const items: Insight[] = [];
+
+  // 1. Is the agent finding what it needs?
+  if (generationCalls > 0) {
+    if (exampleHitRate !== null && exampleHitRate >= 80) {
+      items.push({
+        question: "Is the agent finding what it needs?",
+        answer: `Yes \u2014 ${exampleHitRate}% of generation calls had examples in context (${callsWithExamples}/${generationCalls})`,
+        severity: "good",
+      });
+    } else if (exampleHitRate !== null && exampleHitRate > 0) {
+      items.push({
+        question: "Is the agent finding what it needs?",
+        answer: `Partially \u2014 only ${exampleHitRate}% of generation calls had examples (${callsWithExamples}/${generationCalls}). ${callsWithoutExamples} calls had no examples.`,
+        severity: "warn",
+      });
+    } else {
+      items.push({
+        question: "Is the agent finding what it needs?",
+        answer: `No examples were available for any of the ${generationCalls} generation calls. Add training examples to improve accuracy.`,
+        severity: "bad",
+      });
+    }
+  }
+
+  // 2. Is it using prior knowledge?
+  if (generationCalls > 0) {
+    if (callsWithRules > 0 && callsWithExamples > 0) {
+      items.push({
+        question: "Is it reusing prior knowledge?",
+        answer: `Yes \u2014 ${callsWithRules}/${generationCalls} calls used business rules, ${callsWithExamples}/${generationCalls} used examples`,
+        severity: "good",
+      });
+    } else if (callsWithRules > 0 || callsWithExamples > 0) {
+      const missing = callsWithRules === 0 ? "business rules" : "examples";
+      items.push({
+        question: "Is it reusing prior knowledge?",
+        answer: `Partially \u2014 no ${missing} available. Add them to improve generation.`,
+        severity: "warn",
+      });
+    } else {
+      items.push({
+        question: "Is it reusing prior knowledge?",
+        answer:
+          "No prior knowledge used. The agent is generating SQL without examples or rules.",
+        severity: "bad",
+      });
+    }
+  }
+
+  // 3. Are there SQL generation mistakes?
+  if (validateCalls > 0) {
+    if (validateFailRate !== null && validateFailRate === 0) {
+      items.push({
+        question: "Are there SQL mistakes?",
+        answer: `No \u2014 all ${validateCalls} validations passed`,
+        severity: "good",
+      });
+    } else if (validateFailRate !== null) {
+      items.push({
+        question: "Are there SQL mistakes?",
+        answer: `${validateFailRate}% of validations failed (${validateCalls} total). Check errors below for patterns.`,
+        severity: validateFailRate > 20 ? "bad" : "warn",
+      });
+    }
+  }
+
+  // 4. Are we capturing new knowledge?
+  if (traceCount > 5) {
+    if (captureTotal > 0) {
+      const parts = Object.entries(knowledgeCapturesByType)
+        .map(([type, count]) => `${count} ${type.replace("_", " ")}`)
+        .join(", ");
+      items.push({
+        question: "Are we capturing new knowledge?",
+        answer: `Yes \u2014 ${parts}`,
+        severity: "good",
+      });
+    } else {
+      items.push({
+        question: "Are we capturing new knowledge?",
+        answer:
+          "No knowledge captured in this period. Use query_approve after successful queries to save examples.",
+        severity: "warn",
+      });
+    }
+  }
+
+  if (items.length === 0) {
+    // Not enough data yet
+    items.push({
+      question: "Not enough data yet",
+      answer:
+        generationCalls === 0
+          ? "Use get_data or query_generate to start generating SQL. Insights will appear once generation traces are recorded."
+          : "Keep using tools to build up trace data for analysis.",
+      severity: "neutral",
+    });
+  }
+
+  const severityColor = {
+    good: "text-green-400",
+    warn: "text-yellow-400",
+    bad: "text-red-400",
+    neutral: "text-gray-400",
+  };
+
+  const severityIcon = {
+    good: "\u2713",
+    warn: "\u26A0",
+    bad: "\u2717",
+    neutral: "\u2022",
+  };
+
+  return (
+    <Card className="bg-gray-900 border-gray-800 col-span-2">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-white text-sm">
+          Knowledge Flow Insights
+        </CardTitle>
+        <CardDescription className="text-gray-500 text-xs">
+          Is the semantic layer helping the agent generate better SQL?
+          {sessionCount > 0 && (
+            <span className="ml-2 text-gray-600">
+              ({sessionCount} session{sessionCount !== 1 ? "s" : ""})
+            </span>
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {items.map((item, i) => (
+          <div key={i} className="border border-gray-800 rounded p-3">
+            <div className="flex items-start gap-2">
+              <span
+                className={`${severityColor[item.severity]} text-sm shrink-0 mt-0.5`}
+              >
+                {severityIcon[item.severity]}
+              </span>
+              <div>
+                <p className="text-gray-300 text-sm font-medium">
+                  {item.question}
+                </p>
+                <p className="text-gray-500 text-xs mt-0.5">{item.answer}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function VocabularyGapsCard({
+  gaps,
+}: {
+  gaps: InsightsAnalysis["vocabularyGaps"];
+}) {
+  const [addingIdx, setAddingIdx] = useState<number | null>(null);
+  const [addedIdxs, setAddedIdxs] = useState<Set<number>>(new Set());
+  const [addError, setAddError] = useState<string | null>(null);
+
+  if (!gaps || gaps.length === 0) return null;
+
+  const handleAddRule = async (groupIdx: number, rule: string) => {
+    setAddingIdx(groupIdx);
+    setAddError(null);
+    try {
+      // Get active connection
+      const connResult = await bicpCall<{
+        connections: Array<{ name: string; isActive: boolean }>;
+        activeConnection: string | null;
+      }>("connections/list", {});
+      const conn = connResult.activeConnection;
+      if (!conn) {
+        setAddError("No active connection");
+        return;
+      }
+
+      // Read current business rules
+      const path = "instructions/business_rules.yaml";
+      const readResult = await contextRead(conn, path);
+
+      let content: string;
+      if (
+        readResult.success &&
+        readResult.content &&
+        !readResult.isStockReadme
+      ) {
+        // Append rule to existing file
+        content = readResult.content.trimEnd() + "\n- " + rule + "\n";
+      } else {
+        // Create new file with the rule
+        content = "version: 1.0.0\nrules:\n- " + rule + "\n";
+      }
+
+      const writeResult = await contextWrite(conn, path, content);
+      if (writeResult.success) {
+        setAddedIdxs((prev) => new Set(prev).add(groupIdx));
+      } else {
+        setAddError(writeResult.error || "Failed to write rule");
+      }
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : "Failed to add rule");
+    } finally {
+      setAddingIdx(null);
+    }
+  };
+
+  const totalTerms = gaps.reduce((sum, g) => sum + g.terms.length, 0);
+
+  return (
+    <Card className="bg-gray-900 border-gray-800 col-span-2">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-white text-sm flex items-center gap-2">
+          <span className="text-yellow-400">&#x26A0;</span>
+          Unmapped Terms
+          <Badge
+            variant="secondary"
+            className="bg-yellow-900/50 text-yellow-400"
+          >
+            {totalTerms}
+          </Badge>
+          {gaps.length < totalTerms && (
+            <span className="text-gray-600 text-xs font-normal">
+              in {gaps.length} group{gaps.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </CardTitle>
+        <CardDescription className="text-gray-500 text-xs">
+          Business terms the agent couldn&apos;t find in schema, examples, or
+          rules &mdash; causing repeated searches. Add these as aliases in
+          business rules.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {addError && <p className="text-red-400 text-xs">{addError}</p>}
+        {gaps.map((group, gi) => (
+          <div
+            key={gi}
+            className="border border-yellow-900/30 rounded p-3 space-y-2"
+          >
+            {/* Terms row */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {group.terms.map((t, ti) => (
+                <span key={ti} className="flex items-center gap-1">
+                  <code className="text-yellow-300 font-mono text-sm font-bold">
+                    {t.term}
+                  </code>
+                  <span className="text-gray-600 text-[10px]">
+                    {t.searchCount}x
+                  </span>
+                  {ti < group.terms.length - 1 && (
+                    <span className="text-gray-700 mx-0.5">/</span>
+                  )}
+                </span>
+              ))}
+              <span className="text-gray-600 text-xs ml-auto">
+                {formatTimestamp(group.timestamp)}
+              </span>
+            </div>
+
+            {/* Schema matches */}
+            {group.schemaMatches.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-gray-600 text-[10px]">found in:</span>
+                {group.schemaMatches.map((m, mi) => (
+                  <span
+                    key={mi}
+                    className="text-[10px] bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded font-mono"
+                  >
+                    {m.type === "column" && m.table
+                      ? `${m.table}.${m.name}`
+                      : m.name}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Suggested rule + Add button */}
+            {group.suggestedRule && (
+              <div className="flex items-center gap-2">
+                <code className="text-gray-500 text-[11px] flex-1 truncate">
+                  {group.suggestedRule}
+                </code>
+                {addedIdxs.has(gi) ? (
+                  <span className="text-green-400 text-xs whitespace-nowrap">
+                    &#x2713; Added
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleAddRule(gi, group.suggestedRule!)}
+                    disabled={addingIdx !== null}
+                    className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap disabled:opacity-50 transition-colors"
+                  >
+                    {addingIdx === gi ? "Adding..." : "+ Add Rule"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -515,7 +858,20 @@ export default function InsightsPage() {
             ))}
           </div>
 
-          {/* Main grid */}
+          {/* Knowledge Flow Insights — the real insights */}
+          {analysis.insights && (
+            <KnowledgeFlowCard
+              insights={analysis.insights}
+              traceCount={analysis.traceCount}
+            />
+          )}
+
+          {/* Vocabulary gaps — unmapped business terms */}
+          {analysis.vocabularyGaps && analysis.vocabularyGaps.length > 0 && (
+            <VocabularyGapsCard gaps={analysis.vocabularyGaps} />
+          )}
+
+          {/* Detail grid */}
           <div className="grid grid-cols-2 gap-4">
             <SemanticLayerCard status={analysis.knowledgeStatus} />
             <ToolUsageCard usage={analysis.toolUsage} />

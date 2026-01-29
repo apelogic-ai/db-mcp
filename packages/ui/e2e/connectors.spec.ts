@@ -4,13 +4,14 @@ test.describe("Connectors Page", () => {
   test("displays connection list with badges", async ({ page }) => {
     await page.goto("/connectors");
 
-    // Both connections visible
-    await expect(page.getByText("production")).toBeVisible();
-    await expect(page.getByText("staging")).toBeVisible();
+    // Both connections visible (scoped to main to avoid nav selector match)
+    const main = page.locator("main");
+    await expect(main.getByText("production")).toBeVisible();
+    await expect(main.getByText("staging")).toBeVisible();
 
     // Dialect badges
-    await expect(page.getByText("postgresql")).toBeVisible();
-    await expect(page.getByText("clickhouse")).toBeVisible();
+    await expect(main.getByText("postgresql")).toBeVisible();
+    await expect(main.getByText("clickhouse")).toBeVisible();
   });
 
   test("empty state when no connections", async ({ page, bicpMock }) => {

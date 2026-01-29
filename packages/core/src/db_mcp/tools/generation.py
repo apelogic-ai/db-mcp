@@ -351,10 +351,24 @@ async def _get_data(
             "phase": "schema_required",
         }
 
-    # Build context
+    # Build context (and record knowledge-flow metrics)
+    examples_store = load_examples(provider_id)
+    instructions_store = load_instructions(provider_id)
+
     schema_context = _build_schema_context(provider_id, tables_hint)
     examples_context = _build_examples_context(provider_id)
     rules_context = _build_rules_context(provider_id)
+
+    # Record knowledge-flow attributes on current span
+    current_span = trace.get_current_span()
+    current_span.set_attribute("knowledge.schema_tables", len(schema.tables))
+    current_span.set_attribute("knowledge.examples_available", len(examples_store.examples))
+    current_span.set_attribute(
+        "knowledge.examples_in_context", min(len(examples_store.examples), 5)
+    )
+    current_span.set_attribute("knowledge.rules_available", len(instructions_store.rules))
+    current_span.set_attribute("knowledge.has_schema", True)
+    current_span.set_attribute("knowledge.has_domain", bool(schema_context))
 
     full_context = f"""
 User Intent: {intent}

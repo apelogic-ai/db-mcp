@@ -4,15 +4,17 @@ test.describe("Context Page", () => {
   test("renders tree with connections", async ({ page }) => {
     await page.goto("/context");
 
-    await expect(page.getByText("production")).toBeVisible();
-    await expect(page.getByText("staging")).toBeVisible();
+    const main = page.locator("main");
+    await expect(main.getByText("production")).toBeVisible();
+    await expect(main.getByText("staging")).toBeVisible();
   });
 
   test("expand connection shows folders", async ({ page }) => {
     await page.goto("/context");
 
-    // Click production to expand
-    await page.getByText("production").click();
+    // Click production to expand (scoped to main to avoid nav selector)
+    const main = page.locator("main");
+    await main.getByText("production").click();
 
     // Folders should appear — use exact match to avoid matching page description text
     await expect(page.getByText("schema", { exact: true })).toBeVisible({
@@ -28,7 +30,7 @@ test.describe("Context Page", () => {
     await page.goto("/context");
 
     // Expand production connection
-    await page.getByText("production").click();
+    await page.locator("main").getByText("production").click();
     await expect(page.getByText("schema", { exact: true })).toBeVisible({
       timeout: 5000,
     });
@@ -46,7 +48,7 @@ test.describe("Context Page", () => {
     await page.goto("/context");
 
     // Expand tree to file
-    await page.getByText("production").click();
+    await page.locator("main").getByText("production").click();
     await expect(page.getByText("schema", { exact: true })).toBeVisible({
       timeout: 5000,
     });
@@ -72,7 +74,7 @@ test.describe("Context Page", () => {
     await page.goto("/context");
 
     // Expand production
-    await page.getByText("production").click();
+    await page.locator("main").getByText("production").click();
     await expect(page.getByText("metrics", { exact: true })).toBeVisible({
       timeout: 5000,
     });
@@ -92,15 +94,15 @@ test.describe("Context Page", () => {
   test("tree highlighting on connection level", async ({ page }) => {
     await page.goto("/context");
 
-    await page.getByText("production").click();
-    await expect(page.getByText("production")).toBeVisible();
+    await page.locator("main").getByText("production").click();
+    await expect(page.locator("main").getByText("production")).toBeVisible();
   });
 
   test("tree highlighting on file level", async ({ page }) => {
     await page.goto("/context");
 
     // Navigate to file
-    await page.getByText("production").click();
+    await page.locator("main").getByText("production").click();
     await expect(page.getByText("schema", { exact: true })).toBeVisible({
       timeout: 5000,
     });
@@ -118,7 +120,7 @@ test.describe("Context Page", () => {
     await page.goto("/context");
 
     // Navigate to a file to enable toolbar
-    await page.getByText("production").click();
+    await page.locator("main").getByText("production").click();
     await expect(page.getByText("schema", { exact: true })).toBeVisible({
       timeout: 5000,
     });
@@ -179,7 +181,7 @@ test.describe("Context Page", () => {
     await page.goto("/context");
 
     // Navigate to file
-    await page.getByText("production").click();
+    await page.locator("main").getByText("production").click();
     await expect(page.getByText("schema", { exact: true })).toBeVisible({
       timeout: 5000,
     });

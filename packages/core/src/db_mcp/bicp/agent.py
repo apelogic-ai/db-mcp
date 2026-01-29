@@ -2065,7 +2065,7 @@ This knowledge helps the AI generate better queries over time.
                 seen_ids.add(tid)
                 unique_traces.append(t)
 
-        analysis = analyze_traces(unique_traces, connection_path)
+        analysis = analyze_traces(unique_traces, connection_path, days=days)
 
         return {"success": True, "analysis": analysis}
 
