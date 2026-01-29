@@ -12,8 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   analyzeInsights,
   bicpCall,
-  contextRead,
-  contextWrite,
+  contextAddRule,
   type InsightsAnalysis,
 } from "@/lib/bicp";
 
@@ -254,14 +253,24 @@ function VocabularyGapsCard({
   const [addingIdx, setAddingIdx] = useState<number | null>(null);
   const [addedIdxs, setAddedIdxs] = useState<Set<number>>(new Set());
   const [addError, setAddError] = useState<string | null>(null);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [customRule, setCustomRule] = useState("");
 
   if (!gaps || gaps.length === 0) return null;
 
-  const handleAddRule = async (groupIdx: number, rule: string) => {
+  const openGaps = gaps.filter((g) => g.status !== "resolved");
+  const resolvedGaps = gaps.filter((g) => g.status === "resolved");
+  const openCount = openGaps.length;
+  const resolvedCount = resolvedGaps.length;
+
+  const handleAddRule = async (
+    groupIdx: number,
+    rule: string,
+    gapId?: string,
+  ) => {
     setAddingIdx(groupIdx);
     setAddError(null);
     try {
-      // Get active connection
       const connResult = await bicpCall<{
         connections: Array<{ name: string; isActive: boolean }>;
         activeConnection: string | null;
@@ -272,28 +281,13 @@ function VocabularyGapsCard({
         return;
       }
 
-      // Read current business rules
-      const path = "instructions/business_rules.yaml";
-      const readResult = await contextRead(conn, path);
-
-      let content: string;
-      if (
-        readResult.success &&
-        readResult.content &&
-        !readResult.isStockReadme
-      ) {
-        // Append rule to existing file
-        content = readResult.content.trimEnd() + "\n- " + rule + "\n";
-      } else {
-        // Create new file with the rule
-        content = "version: 1.0.0\nrules:\n- " + rule + "\n";
-      }
-
-      const writeResult = await contextWrite(conn, path, content);
-      if (writeResult.success) {
+      const result = await contextAddRule(conn, rule, gapId);
+      if (result.success) {
         setAddedIdxs((prev) => new Set(prev).add(groupIdx));
+        setEditingIdx(null);
+        setCustomRule("");
       } else {
-        setAddError(writeResult.error || "Failed to write rule");
+        setAddError(result.error || "Failed to add rule");
       }
     } catch (e) {
       setAddError(e instanceof Error ? e.message : "Failed to add rule");
@@ -301,8 +295,6 @@ function VocabularyGapsCard({
       setAddingIdx(null);
     }
   };
-
-  const totalTerms = gaps.reduce((sum, g) => sum + g.terms.length, 0);
 
   return (
     <Card className="bg-gray-900 border-gray-800 col-span-2">
@@ -314,12 +306,15 @@ function VocabularyGapsCard({
             variant="secondary"
             className="bg-yellow-900/50 text-yellow-400"
           >
-            {totalTerms}
+            {openCount} open
           </Badge>
-          {gaps.length < totalTerms && (
-            <span className="text-gray-600 text-xs font-normal">
-              in {gaps.length} group{gaps.length !== 1 ? "s" : ""}
-            </span>
+          {resolvedCount > 0 && (
+            <Badge
+              variant="secondary"
+              className="bg-green-900/50 text-green-400"
+            >
+              {resolvedCount} resolved
+            </Badge>
           )}
         </CardTitle>
         <CardDescription className="text-gray-500 text-xs">
@@ -330,9 +325,10 @@ function VocabularyGapsCard({
       </CardHeader>
       <CardContent className="space-y-3">
         {addError && <p className="text-red-400 text-xs">{addError}</p>}
-        {gaps.map((group, gi) => (
+        {/* Open gaps */}
+        {openGaps.map((group, gi) => (
           <div
-            key={gi}
+            key={`open-${gi}`}
             className="border border-yellow-900/30 rounded p-3 space-y-2"
           >
             {/* Terms row */}
@@ -342,14 +338,24 @@ function VocabularyGapsCard({
                   <code className="text-yellow-300 font-mono text-sm font-bold">
                     {t.term}
                   </code>
-                  <span className="text-gray-600 text-[10px]">
-                    {t.searchCount}x
-                  </span>
+                  {t.searchCount > 0 && (
+                    <span className="text-gray-600 text-[10px]">
+                      {t.searchCount}x
+                    </span>
+                  )}
                   {ti < group.terms.length - 1 && (
                     <span className="text-gray-700 mx-0.5">/</span>
                   )}
                 </span>
               ))}
+              {group.source && (
+                <Badge
+                  variant="secondary"
+                  className="bg-gray-800 text-gray-500 text-[10px]"
+                >
+                  {group.source === "schema_scan" ? "schema scan" : "traces"}
+                </Badge>
+              )}
               <span className="text-gray-600 text-xs ml-auto">
                 {formatTimestamp(group.timestamp)}
               </span>
@@ -372,29 +378,100 @@ function VocabularyGapsCard({
               </div>
             )}
 
-            {/* Suggested rule + Add button */}
-            {group.suggestedRule && (
+            {/* Rule action */}
+            {addedIdxs.has(gi) ? (
               <div className="flex items-center gap-2">
-                <code className="text-gray-500 text-[11px] flex-1 truncate">
-                  {group.suggestedRule}
-                </code>
-                {addedIdxs.has(gi) ? (
-                  <span className="text-green-400 text-xs whitespace-nowrap">
-                    &#x2713; Added
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => handleAddRule(gi, group.suggestedRule!)}
-                    disabled={addingIdx !== null}
-                    className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap disabled:opacity-50 transition-colors"
-                  >
-                    {addingIdx === gi ? "Adding..." : "+ Add Rule"}
-                  </button>
+                <span className="text-green-400 text-xs whitespace-nowrap">
+                  &#x2713; Added
+                </span>
+              </div>
+            ) : editingIdx === gi ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={customRule}
+                  onChange={(e) => setCustomRule(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && customRule.trim()) {
+                      handleAddRule(gi, customRule.trim(), group.id);
+                    } else if (e.key === "Escape") {
+                      setEditingIdx(null);
+                      setCustomRule("");
+                    }
+                  }}
+                  placeholder={`e.g. ${group.terms[0]?.term || "term"} means ...`}
+                  autoFocus
+                  className="flex-1 bg-gray-800 border border-gray-700 text-gray-300 text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={() => {
+                    if (customRule.trim()) {
+                      handleAddRule(gi, customRule.trim(), group.id);
+                    }
+                  }}
+                  disabled={!customRule.trim() || addingIdx !== null}
+                  className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap disabled:opacity-50 transition-colors"
+                >
+                  {addingIdx === gi ? "Adding..." : "Save"}
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingIdx(null);
+                    setCustomRule("");
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {group.suggestedRule && (
+                  <code className="text-gray-500 text-[11px] flex-1 truncate">
+                    {group.suggestedRule}
+                  </code>
                 )}
+                <button
+                  onClick={() => {
+                    setEditingIdx(gi);
+                    setCustomRule(group.suggestedRule || "");
+                  }}
+                  className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap transition-colors ml-auto"
+                >
+                  + Add Rule
+                </button>
               </div>
             )}
           </div>
         ))}
+        {/* Resolved gaps — shown dimmed */}
+        {resolvedGaps.length > 0 && (
+          <div className="space-y-2 pt-2 border-t border-gray-800">
+            {resolvedGaps.map((group, gi) => (
+              <div
+                key={`resolved-${gi}`}
+                className="border border-gray-800/50 rounded p-3 opacity-60"
+              >
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-green-500 text-sm">&#x2713;</span>
+                  {group.terms.map((t, ti) => (
+                    <span key={ti} className="flex items-center gap-1">
+                      <code className="text-gray-400 font-mono text-sm line-through">
+                        {t.term}
+                      </code>
+                      {ti < group.terms.length - 1 && (
+                        <span className="text-gray-700 mx-0.5">/</span>
+                      )}
+                    </span>
+                  ))}
+                  <span className="text-gray-600 text-xs ml-auto">
+                    resolved
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

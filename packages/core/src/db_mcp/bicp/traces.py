@@ -830,7 +830,85 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
     }
 
     # ── Vocabulary gap detection ──────────────────────────────────────
-    vocabulary_gaps = _detect_vocabulary_gaps(user_traces, connection_path)
+    # Detect new gaps from traces
+    trace_detected_gaps = _detect_vocabulary_gaps(user_traces, connection_path)
+
+    # Persist newly detected gaps and read back the full persisted list
+    persisted_gaps: list[dict] = []
+    if connection_path:
+        try:
+            from db_mcp.gaps.store import load_gaps_from_path, merge_trace_gaps
+
+            # Persist any newly detected trace gaps
+            if trace_detected_gaps:
+                provider_id_for_gaps = connection_path.name
+                merge_trace_gaps(provider_id_for_gaps, trace_detected_gaps)
+
+            # Read back all persisted gaps, rebuilding groups by group_id
+            all_gaps = load_gaps_from_path(connection_path)
+
+            # Group gaps by group_id (ungrouped gaps get their own entry)
+            groups: dict[str, list] = {}  # group_id -> list of gaps
+            ungrouped: list = []
+            for gap in all_gaps.gaps:
+                if gap.group_id:
+                    groups.setdefault(gap.group_id, []).append(gap)
+                else:
+                    ungrouped.append(gap)
+
+            def _gap_to_entry(gap_list: list) -> dict:
+                terms = []
+                all_columns: list[str] = []
+                suggested = None
+                earliest = float("inf")
+                status = "resolved"  # resolved unless any is open
+                source = gap_list[0].source.value if gap_list else "traces"
+                for g in gap_list:
+                    terms.append(
+                        {
+                            "term": g.term,
+                            "searchCount": 0,
+                            "session": "",
+                            "timestamp": g.detected_at.timestamp(),
+                        }
+                    )
+                    all_columns.extend(g.related_columns)
+                    if g.suggested_rule:
+                        suggested = g.suggested_rule
+                    earliest = min(earliest, g.detected_at.timestamp())
+                    if g.status.value == "open":
+                        status = "open"
+                    source = g.source.value
+                # Deduplicate columns
+                seen_cols: set[str] = set()
+                unique_cols: list[str] = []
+                for c in all_columns:
+                    if c not in seen_cols:
+                        seen_cols.add(c)
+                        unique_cols.append(c)
+                return {
+                    "id": gap_list[0].id,
+                    "terms": terms,
+                    "totalSearches": 0,
+                    "timestamp": earliest,
+                    "schemaMatches": [
+                        {"name": c.split(".")[-1], "table": c, "type": "column"}
+                        for c in unique_cols[:10]
+                    ],
+                    "suggestedRule": suggested,
+                    "status": status,
+                    "source": source,
+                }
+
+            for gap_list in groups.values():
+                persisted_gaps.append(_gap_to_entry(gap_list))
+            for gap in ungrouped:
+                persisted_gaps.append(_gap_to_entry([gap]))
+        except Exception as e:
+            logger.warning(f"Failed to persist knowledge gaps: {e}")
+            persisted_gaps = trace_detected_gaps
+    else:
+        persisted_gaps = trace_detected_gaps
 
     return {
         "traceCount": len(user_traces),
@@ -849,7 +927,7 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
         "shellCommands": shell_commands[:10],
         "knowledgeStatus": knowledge_status,
         "insights": insights,
-        "vocabularyGaps": vocabulary_gaps,
+        "vocabularyGaps": persisted_gaps,
     }
 
 

@@ -38,6 +38,44 @@ from db_mcp.onboarding.state import (
 logger = logging.getLogger(__name__)
 
 
+def _run_schema_gap_scan(provider_id: str) -> int:
+    """Run deterministic schema gap scan and save results.
+
+    Called at the SCHEMA→DOMAIN transition to seed the knowledge_gaps.yaml file.
+    Returns the number of new gaps detected.
+    """
+    try:
+        schema = load_schema_descriptions(provider_id)
+        if schema is None:
+            return 0
+
+        from db_mcp.gaps.scanner import scan_schema_deterministic
+        from db_mcp.gaps.store import load_gaps, save_gaps
+
+        schema_data = schema.model_dump(mode="json")
+        detected = scan_schema_deterministic(schema_data)
+
+        if not detected:
+            return 0
+
+        # Merge into existing gaps file (may already have trace-detected gaps)
+        gaps = load_gaps(provider_id)
+        added = 0
+        for gap in detected:
+            if not gaps.has_term(gap.term):
+                gaps.add_gap(gap)
+                added += 1
+
+        if added > 0:
+            save_gaps(gaps)
+            logger.info(f"Schema gap scan: added {added} new knowledge gaps")
+
+        return added
+    except Exception as e:
+        logger.warning(f"Schema gap scan failed: {e}")
+        return 0
+
+
 async def _report_progress(ctx: Context | None, progress: float, total: float = 100) -> None:
     """Report progress if context supports it.
 
@@ -974,8 +1012,11 @@ async def _onboarding_next(provider_id: str | None = None) -> dict:
         state.phase = OnboardingPhase.DOMAIN
         save_state(state)
 
+        # Run deterministic schema gap scan
+        gaps_found = _run_schema_gap_scan(provider_id)
+
         counts = schema.count_by_status()
-        return {
+        result: dict = {
             "complete": True,
             "message": "All tables have been described. Moving to domain model phase.",
             "phase": state.phase.value,
@@ -1000,6 +1041,12 @@ async def _onboarding_next(provider_id: str | None = None) -> dict:
                 ),
             },
         }
+        if gaps_found > 0:
+            result["knowledge_gaps_detected"] = gaps_found
+            result["guidance"]["next_steps"].insert(
+                0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)"
+            )
+        return result
 
     # Update current table in state
     state.current_table = next_table.full_name
@@ -1313,9 +1360,20 @@ async def _onboarding_bulk_approve(
     state.phase = OnboardingPhase.DOMAIN
     save_state(state)
 
+    # Run deterministic schema gap scan
+    gaps_found = _run_schema_gap_scan(provider_id)
+
     counts_after = schema.count_by_status()
 
-    return {
+    next_steps = [
+        "Add business rules for SQL generation",
+        "Add query examples",
+        "Import existing rules/examples from files",
+    ]
+    if gaps_found > 0:
+        next_steps.insert(0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)")
+
+    result: dict = {
         "approved": approved_count,
         "tables_described": counts_after.get("approved", 0) + counts_after.get("skipped", 0),
         "tables_total": state.tables_total,
@@ -1325,11 +1383,7 @@ async def _onboarding_bulk_approve(
         "schema_file": schema_result.get("file_path"),
         "guidance": {
             "summary": f"Bulk approved {approved_count} tables. Schema phase complete!",
-            "next_steps": [
-                "Add business rules for SQL generation",
-                "Add query examples",
-                "Import existing rules/examples from files",
-            ],
+            "next_steps": next_steps,
             "suggested_response": (
                 f"✓ **Bulk approved {approved_count} tables!**\n\n"
                 "Auto-generated descriptions have been saved. You can refine them later "
@@ -1343,3 +1397,6 @@ async def _onboarding_bulk_approve(
             ),
         },
     }
+    if gaps_found > 0:
+        result["knowledge_gaps_detected"] = gaps_found
+    return result

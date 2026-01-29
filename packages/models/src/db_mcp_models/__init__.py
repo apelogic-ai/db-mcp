@@ -1,5 +1,6 @@
 """Shared Pydantic models for db-mcp."""
 
+from db_mcp_models.gaps import GapSource, GapStatus, KnowledgeGap, KnowledgeGaps
 from db_mcp_models.metrics import Metric, MetricParameter, MetricsCatalog
 from db_mcp_models.onboarding import (
     ColumnDescription,
@@ -26,6 +27,11 @@ from db_mcp_models.ui import ChartSpec, ColumnSpec, GridSpec
 __version__ = "0.1.0"
 
 __all__ = [
+    # Knowledge Gaps
+    "KnowledgeGap",
+    "KnowledgeGaps",
+    "GapStatus",
+    "GapSource",
     # Task
     "Task",
     "TaskStatus",

@@ -29,6 +29,7 @@ from db_mcp.tools.domain import (
     _domain_skip,
     _domain_status,
 )
+from db_mcp.tools.gaps import _get_knowledge_gaps
 from db_mcp.tools.generation import (
     _export_results,
     _get_data,
@@ -391,6 +392,9 @@ def _create_server() -> FastMCP:
         server.tool(name="query_add_rule")(_query_add_rule)
         server.tool(name="query_list_examples")(_query_list_examples)
         server.tool(name="query_list_rules")(_query_list_rules)
+
+        # Knowledge gaps tool
+        server.tool(name="get_knowledge_gaps")(_get_knowledge_gaps)
 
         # Advanced generation tools
         server.tool(name="get_data")(_get_data)

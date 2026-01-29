@@ -313,6 +313,17 @@ export async function contextWrite(
   });
 }
 
+export async function contextAddRule(
+  connection: string,
+  rule: string,
+  gapId?: string,
+): Promise<{ success: boolean; duplicate?: boolean; error?: string }> {
+  return bicpCall<{ success: boolean; duplicate?: boolean; error?: string }>(
+    "context/add-rule",
+    { connection, rule, gapId },
+  );
+}
+
 // Traces types
 export interface TraceSpan {
   trace_id: string;
@@ -436,6 +447,7 @@ export interface InsightsAnalysis {
     sessionCount: number;
   };
   vocabularyGaps: Array<{
+    id?: string;
     terms: Array<{
       term: string;
       searchCount: number;
@@ -447,10 +459,12 @@ export interface InsightsAnalysis {
     schemaMatches: Array<{
       name: string;
       table?: string;
-      description: string;
+      description?: string;
       type: "table" | "column";
     }>;
     suggestedRule: string | null;
+    status?: "open" | "resolved";
+    source?: "schema_scan" | "traces";
   }>;
 }
 

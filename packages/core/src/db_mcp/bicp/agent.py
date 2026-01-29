@@ -94,6 +94,7 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["context/write"] = self._handle_context_write
         self._method_handlers["context/create"] = self._handle_context_create
         self._method_handlers["context/delete"] = self._handle_context_delete
+        self._method_handlers["context/add-rule"] = self._handle_context_add_rule
 
         # Git history handlers
         self._method_handlers["context/git/history"] = self._handle_git_history
@@ -1673,6 +1674,92 @@ This knowledge helps the AI generate better queries over time.
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    async def _handle_context_add_rule(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Add a business rule to the connection's rules file.
+
+        Properly parses YAML and appends to the rules list.
+        Optionally resolves a knowledge gap by ID.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "rule": str - The rule text to add
+                "gapId": str | None - Optional gap ID to resolve
+            }
+        """
+        import yaml
+
+        connection = params.get("connection")
+        rule = params.get("rule")
+        gap_id = params.get("gapId")
+
+        if not connection or not rule:
+            return {
+                "success": False,
+                "error": "connection and rule are required",
+            }
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {
+                "success": False,
+                "error": f"Connection '{connection}' not found",
+            }
+
+        rules_path = conn_path / "instructions" / "business_rules.yaml"
+
+        try:
+            if rules_path.exists():
+                with open(rules_path) as f:
+                    data = yaml.safe_load(f) or {}
+            else:
+                rules_path.parent.mkdir(parents=True, exist_ok=True)
+                data = {
+                    "version": "1.0.0",
+                    "provider_id": connection,
+                    "rules": [],
+                }
+
+            rules = data.get("rules", [])
+            if not isinstance(rules, list):
+                rules = []
+
+            # Skip if rule already exists
+            if rule in rules:
+                return {"success": True, "duplicate": True}
+
+            rules.append(rule)
+            data["rules"] = rules
+
+            with open(rules_path, "w") as f:
+                yaml.dump(
+                    data,
+                    f,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
+
+            # Git commit if enabled
+            rel_path = "instructions/business_rules.yaml"
+            self._git_commit(conn_path, "Add business rule", [rel_path])
+
+            # Resolve gap if ID provided
+            if gap_id:
+                try:
+                    from db_mcp.gaps.store import resolve_gap
+
+                    resolve_gap(connection, gap_id, "business_rules")
+                except Exception as e:
+                    logger.warning(f"Failed to resolve gap {gap_id}: {e}")
+
+            logger.info(f"Added business rule to {connection}: {rule[:60]}")
+            return {"success": True}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # ========== Git History Methods ==========
 
     async def _handle_git_history(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -2066,6 +2153,86 @@ This knowledge helps the AI generate better queries over time.
                 unique_traces.append(t)
 
         analysis = analyze_traces(unique_traces, connection_path, days=days)
+
+        # Auto-resolve gaps whose terms now appear in business rules
+        if connection_path:
+            try:
+                from db_mcp.gaps.store import auto_resolve_gaps
+
+                provider_id = connection_path.name
+                resolved = auto_resolve_gaps(provider_id)
+                if resolved > 0:
+                    # Re-read gaps, rebuilding groups by group_id
+                    from db_mcp.gaps.store import load_gaps_from_path
+
+                    all_gaps = load_gaps_from_path(connection_path)
+                    groups: dict[str, list] = {}
+                    ungrouped: list = []
+                    for gap in all_gaps.gaps:
+                        if gap.group_id:
+                            groups.setdefault(gap.group_id, []).append(gap)
+                        else:
+                            ungrouped.append(gap)
+
+                    def _gap_to_entry(gap_list: list) -> dict:
+                        terms = []
+                        all_cols: list[str] = []
+                        suggested = None
+                        earliest = float("inf")
+                        st = "resolved"
+                        src = gap_list[0].source.value if gap_list else "traces"
+                        for g in gap_list:
+                            terms.append(
+                                {
+                                    "term": g.term,
+                                    "searchCount": 0,
+                                    "session": "",
+                                    "timestamp": (g.detected_at.timestamp()),
+                                }
+                            )
+                            all_cols.extend(g.related_columns)
+                            if g.suggested_rule:
+                                suggested = g.suggested_rule
+                            earliest = min(
+                                earliest,
+                                g.detected_at.timestamp(),
+                            )
+                            if g.status.value == "open":
+                                st = "open"
+                            src = g.source.value
+                        seen: set[str] = set()
+                        unique: list[str] = []
+                        for c in all_cols:
+                            if c not in seen:
+                                seen.add(c)
+                                unique.append(c)
+                        return {
+                            "id": gap_list[0].id,
+                            "terms": terms,
+                            "totalSearches": 0,
+                            "timestamp": earliest,
+                            "schemaMatches": [
+                                {
+                                    "name": c.split(".")[-1],
+                                    "table": c,
+                                    "type": "column",
+                                }
+                                for c in unique[:10]
+                            ],
+                            "suggestedRule": suggested,
+                            "status": st,
+                            "source": src,
+                        }
+
+                    persisted_gaps = []
+                    for gl in groups.values():
+                        persisted_gaps.append(_gap_to_entry(gl))
+                    for gap in ungrouped:
+                        persisted_gaps.append(_gap_to_entry([gap]))
+                    analysis["vocabularyGaps"] = persisted_gaps
+                    logger.info(f"Auto-resolved {resolved} knowledge gaps on insights refresh")
+            except Exception as e:
+                logger.warning(f"Failed to auto-resolve knowledge gaps: {e}")
 
         return {"success": True, "analysis": analysis}
 
