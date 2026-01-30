@@ -485,9 +485,21 @@ export const INSIGHTS_HAPPY = {
     repeatedQueries: [
       {
         sql_preview: "SELECT count(*) FROM users",
+        full_sql: "SELECT count(*) FROM users",
         count: 3,
         first_seen: NOW - 3600,
         last_seen: NOW - 600,
+        is_example: false,
+        example_id: null,
+      },
+      {
+        sql_preview: "SELECT id, name FROM users WHERE active = true",
+        full_sql: "SELECT id, name FROM users WHERE active = true",
+        count: 2,
+        first_seen: NOW - 7200,
+        last_seen: NOW - 1800,
+        is_example: true,
+        example_id: "abc123",
       },
     ],
     tablesReferenced: {
@@ -642,4 +654,10 @@ export const ADD_RULE_DUPLICATE = {
 export const DISMISS_GAP_SUCCESS = {
   success: true,
   count: 1,
+};
+
+export const SAVE_EXAMPLE_SUCCESS = {
+  success: true,
+  example_id: "def456",
+  total_examples: 32,
 };

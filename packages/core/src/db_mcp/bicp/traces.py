@@ -157,6 +157,62 @@ def _normalize_sql(sql: str) -> str:
     return " ".join(sql.split()).strip()
 
 
+def _summarize_sql(sql: str) -> str:
+    """Generate a short human-readable summary of a SQL query.
+
+    Extracts the main operation, tables, and key clauses to produce
+    a natural-language hint like "Count records from users grouped by status".
+    """
+    import re
+
+    upper = sql.upper()
+    parts: list[str] = []
+
+    # Detect main operation
+    if re.search(r"\bCOUNT\s*\(", upper):
+        parts.append("Count")
+    elif re.search(r"\bAVG\s*\(", upper):
+        parts.append("Average")
+    elif re.search(r"\bSUM\s*\(", upper):
+        parts.append("Sum")
+    elif re.search(r"\bMAX\s*\(", upper):
+        parts.append("Max")
+    elif re.search(r"\bMIN\s*\(", upper):
+        parts.append("Min")
+    elif upper.lstrip().startswith("SELECT"):
+        parts.append("Select")
+    elif upper.lstrip().startswith("WITH"):
+        parts.append("Query")
+
+    # Extract tables from FROM clause
+    from_match = re.search(r"\bFROM\s+([^\s,(]+)", sql, re.IGNORECASE)
+    if from_match:
+        table = from_match.group(1).split(".")[-1]  # last part of dotted name
+        parts.append(f"from {table}")
+
+    # JOIN tables
+    joins = re.findall(r"\bJOIN\s+([^\s,(]+)", sql, re.IGNORECASE)
+    if joins:
+        join_tables = [j.split(".")[-1] for j in joins[:2]]
+        parts.append(f"joining {', '.join(join_tables)}")
+
+    # WHERE hint
+    if re.search(r"\bWHERE\b", upper):
+        parts.append("with filters")
+
+    # GROUP BY hint
+    if re.search(r"\bGROUP\s+BY\b", upper):
+        parts.append("grouped")
+
+    # ORDER BY / LIMIT hint
+    if re.search(r"\bORDER\s+BY\b", upper):
+        parts.append("ordered")
+    if re.search(r"\bLIMIT\b", upper):
+        parts.append("limited")
+
+    return " ".join(parts) if parts else "SQL query"
+
+
 # Words too generic to be meaningful business terms — filter these out
 _STOP_WORDS = frozenset(
     {
@@ -555,10 +611,22 @@ def _detect_filesystem_captures(connection_path: Path | None, days: int = 7) -> 
             if f.suffix in (".yaml", ".yml") and f.is_file():
                 mtime = f.stat().st_mtime
                 if mtime >= cutoff:
+                    # Read intent from example file
+                    intent = None
+                    try:
+                        import yaml
+
+                        with open(f) as fh:
+                            data = yaml.safe_load(fh)
+                        if isinstance(data, dict):
+                            intent = data.get("intent")
+                    except Exception:
+                        pass
                     captures.append(
                         {
                             "type": "example_saved",
                             "filename": f.name,
+                            "intent": intent,
                             "timestamp": mtime,
                         }
                     )
@@ -629,19 +697,26 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
             if tool_name:
                 tool_counts[tool_name] += 1
 
-            # Track errors
+            # Track errors (hard failures: exceptions, and soft failures: error results)
             is_error = (
                 span.get("status") == "error"
                 or attrs.get("tool.success") is False
                 or str(attrs.get("tool.success", "")).lower() == "false"
             )
-            if is_error:
+            is_soft_failure = (
+                attrs.get("tool.soft_failure") is True
+                or str(attrs.get("tool.soft_failure", "")).lower() == "true"
+            )
+            if is_error or is_soft_failure:
                 error_traces.append(
                     {
                         "trace_id": trace.get("trace_id", ""),
                         "span_name": name,
                         "tool": tool_name,
-                        "error": attrs.get("tool.error", attrs.get("error.message", "")),
+                        "error": attrs.get("tool.error")
+                        or attrs.get("tool.failure_detail")
+                        or attrs.get("error.message", ""),
+                        "error_type": "hard" if is_error else "soft",
                         "timestamp": span.get("start_time", 0),
                     }
                 )
@@ -661,16 +736,21 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
                 )
 
             # Validation failures
-            if tool_name in ("validate_sql", "explain_sql") or "validate" in name.lower():
+            if (
+                tool_name in ("validate_sql", "explain_sql", "get_data")
+                or "validate" in name.lower()
+            ):
                 rejected = attrs.get("validation.rejected")
                 error_type = attrs.get("error.type")
-                if rejected or error_type or is_error:
+                failure_detail = attrs.get("tool.failure_detail")
+                if rejected or error_type or is_error or (is_soft_failure and sql):
                     validation_errors.append(
                         {
                             "sql_preview": (sql or "")[:100],
                             "rejected_keyword": rejected,
-                            "error_type": error_type,
-                            "error_message": attrs.get("error.message", ""),
+                            "error_type": error_type
+                            or ("soft_failure" if is_soft_failure else None),
+                            "error_message": failure_detail or attrs.get("error.message", ""),
                             "timestamp": span.get("start_time", 0),
                         }
                     )
@@ -757,12 +837,34 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
             repeated_queries.append(
                 {
                     "sql_preview": norm_sql[:100],
+                    "full_sql": norm_sql,
+                    "suggested_intent": _summarize_sql(norm_sql),
                     "count": len(occurrences),
                     "first_seen": min(o["timestamp"] for o in occurrences),
                     "last_seen": max(o["timestamp"] for o in occurrences),
+                    "is_example": False,
+                    "example_id": None,
                 }
             )
     repeated_queries.sort(key=lambda r: r["count"], reverse=True)
+
+    # Check which repeated queries are already saved as training examples
+    if connection_path and repeated_queries:
+        try:
+            from db_mcp.training.store import load_examples
+
+            provider_id = connection_path.name
+            examples = load_examples(provider_id)
+            example_sqls: dict[str, str] = {}
+            for ex in examples.examples:
+                example_sqls[_normalize_sql(ex.sql)] = ex.id
+            for rq in repeated_queries:
+                ex_id = example_sqls.get(rq["full_sql"])
+                if ex_id:
+                    rq["is_example"] = True
+                    rq["example_id"] = ex_id
+        except Exception:
+            pass
 
     # Check knowledge layer completeness
     knowledge_status = _check_knowledge_status(connection_path) if connection_path else {}
@@ -813,6 +915,8 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
                     "total_feedback": None,
                     "feedback_type": None,
                     "timestamp": fc["timestamp"],
+                    "filename": fc.get("filename"),
+                    "intent": fc.get("intent"),
                     "source": "filesystem",
                 }
             )
@@ -922,13 +1026,40 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
         "costTiers": dict(cost_tiers),
         "repeatedQueries": repeated_queries[:10],
         "tablesReferenced": dict(tables_referenced.most_common(20)),
-        "knowledgeEvents": knowledge_events[:20],
+        "knowledgeEvents": _merge_knowledge_events(knowledge_events, knowledge_captures)[:20],
         "knowledgeCaptureCount": len(knowledge_events) or len(knowledge_captures),
         "shellCommands": shell_commands[:10],
         "knowledgeStatus": knowledge_status,
         "insights": insights,
         "vocabularyGaps": persisted_gaps,
     }
+
+
+def _merge_knowledge_events(events: list[dict], captures: list[dict]) -> list[dict]:
+    """Merge span-based knowledge events with filesystem-detected captures.
+
+    If there are explicit tool events (query_approve, etc.), use those.
+    Otherwise fall back to filesystem captures, converting them to the
+    same format so the UI can display detail rows.
+    """
+    if events:
+        return sorted(events, key=lambda e: e.get("timestamp", 0), reverse=True)
+
+    # Convert filesystem captures to event format
+    merged = []
+    for cap in captures:
+        merged.append(
+            {
+                "tool": cap.get("type", "unknown"),
+                "feedback_type": cap.get("feedback_type"),
+                "examples_added": cap.get("total_examples"),
+                "rules_added": cap.get("total_rules"),
+                "filename": cap.get("filename"),
+                "intent": cap.get("intent"),
+                "timestamp": cap.get("timestamp", 0),
+            }
+        )
+    return sorted(merged, key=lambda e: e.get("timestamp", 0), reverse=True)
 
 
 def _check_knowledge_status(connection_path: Path) -> dict:

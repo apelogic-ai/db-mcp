@@ -35,6 +35,38 @@ def _safe_str(obj: Any, max_len: int = 2000) -> str:
     return s
 
 
+def _detect_soft_failure(text: str, span) -> None:
+    """Detect soft failures from tool result JSON.
+
+    Tools like validate_sql and get_data return success responses (no exception)
+    but the result body indicates failure: {"valid": false}, {"status": "rejected"}, etc.
+    These are invisible to error tracking unless we inspect the return value.
+    """
+    try:
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return
+
+        failure_detail = ""
+
+        # Pattern 1: {"valid": false, "error": "..."}
+        if data.get("valid") is False:
+            failure_detail = str(data.get("error", "validation failed"))
+
+        # Pattern 2: {"status": "rejected"/"invalid"/"failed"/"error"}
+        status = str(data.get("status", "")).lower()
+        if status in ("rejected", "invalid", "failed", "error"):
+            failure_detail = str(
+                data.get("error", data.get("reason", data.get("cost_tier", status)))
+            )
+
+        if failure_detail:
+            span.set_attribute("tool.soft_failure", True)
+            span.set_attribute("tool.failure_detail", failure_detail[:500])
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        pass
+
+
 def _extract_key_args(tool_name: str, args: dict | None) -> dict[str, str]:
     """Extract key arguments worth displaying based on tool name."""
     if not args:
@@ -184,7 +216,7 @@ def create_tracing_middleware():
 
                         tool_span.set_attribute("tool.success", True)
 
-                        # Extract result preview
+                        # Extract result preview and detect soft failures
                         if result is not None and hasattr(result, "content"):
                             content = result.content
                             if isinstance(content, list) and content:
@@ -200,6 +232,9 @@ def create_tracing_middleware():
                                         tool_span.set_attribute(
                                             "result.info", "see result.preview"
                                         )
+
+                                    # Detect soft failures from result content
+                                    _detect_soft_failure(text, tool_span)
 
                         return result
 

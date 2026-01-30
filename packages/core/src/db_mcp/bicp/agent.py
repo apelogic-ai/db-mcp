@@ -109,6 +109,7 @@ class DBMCPAgent(BICPAgent):
         # Insights handlers
         self._method_handlers["insights/analyze"] = self._handle_insights_analyze
         self._method_handlers["gaps/dismiss"] = self._handle_gaps_dismiss
+        self._method_handlers["insights/save-example"] = self._handle_insights_save_example
 
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
@@ -1807,6 +1808,66 @@ This knowledge helps the AI generate better queries over time.
                 return {
                     "success": False,
                     "error": result.get("error", "Failed to dismiss gap"),
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_insights_save_example(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Save a repeated query as a training example.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "sql": str - The SQL query to save
+                "intent": str - Natural language description
+            }
+        """
+        connection = params.get("connection")
+        sql = params.get("sql")
+        intent = params.get("intent")
+
+        if not connection or not sql or not intent:
+            return {
+                "success": False,
+                "error": "connection, sql, and intent are required",
+            }
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {
+                "success": False,
+                "error": f"Connection '{connection}' not found",
+            }
+
+        try:
+            from db_mcp.training.store import add_example
+
+            result = add_example(
+                provider_id=connection,
+                natural_language=intent,
+                sql=sql,
+            )
+
+            if result.get("added"):
+                # Git commit if enabled
+                file_path = result.get("file_path")
+                if file_path:
+                    self._git_commit(
+                        conn_path,
+                        "Add training example from insights",
+                        [file_path],
+                    )
+
+                return {
+                    "success": True,
+                    "example_id": result["example_id"],
+                    "total_examples": result["total_examples"],
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "Failed to save example"),
                 }
         except Exception as e:
             return {"success": False, "error": str(e)}

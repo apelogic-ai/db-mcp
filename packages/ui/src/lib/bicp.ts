@@ -324,6 +324,24 @@ export async function contextAddRule(
   );
 }
 
+export async function saveExample(
+  connection: string,
+  sql: string,
+  intent: string,
+): Promise<{
+  success: boolean;
+  example_id?: string;
+  total_examples?: number;
+  error?: string;
+}> {
+  return bicpCall<{
+    success: boolean;
+    example_id?: string;
+    total_examples?: number;
+    error?: string;
+  }>("insights/save-example", { connection, sql, intent });
+}
+
 export async function dismissGap(
   connection: string,
   gapId: string,
@@ -408,6 +426,7 @@ export interface InsightsAnalysis {
     span_name: string;
     tool: string;
     error: string;
+    error_type?: "hard" | "soft";
     timestamp: number;
   }>;
   errorCount: number;
@@ -422,9 +441,13 @@ export interface InsightsAnalysis {
   costTiers: Record<string, number>;
   repeatedQueries: Array<{
     sql_preview: string;
+    full_sql?: string;
+    suggested_intent?: string;
     count: number;
     first_seen: number;
     last_seen: number;
+    is_example?: boolean;
+    example_id?: string;
   }>;
   tablesReferenced: Record<string, number>;
   knowledgeEvents: Array<{
@@ -433,6 +456,8 @@ export interface InsightsAnalysis {
     examples_added: number | null;
     rules_added: number | null;
     timestamp: number;
+    intent?: string;
+    filename?: string;
   }>;
   knowledgeCaptureCount: number;
   shellCommands: Array<{

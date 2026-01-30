@@ -90,7 +90,9 @@ test.describe("Insights Page", () => {
     );
 
     // Save and Cancel buttons
-    await expect(main.getByRole("button", { name: "Save" })).toBeVisible();
+    await expect(
+      main.getByRole("button", { name: "Save", exact: true }),
+    ).toBeVisible();
     await expect(main.getByRole("button", { name: "Cancel" })).toBeVisible();
   });
 
@@ -147,8 +149,10 @@ test.describe("Insights Page", () => {
     await main.getByRole("button", { name: "+ Add Rule" }).first().click();
 
     // Wait for input to appear and click Save
-    await expect(main.getByRole("button", { name: "Save" })).toBeVisible();
-    await main.getByRole("button", { name: "Save" }).click();
+    await expect(
+      main.getByRole("button", { name: "Save", exact: true }),
+    ).toBeVisible();
+    await main.getByRole("button", { name: "Save", exact: true }).click();
 
     // Wait for success feedback
     await expect(main.getByText("\u2713 Added").first()).toBeVisible();
@@ -250,5 +254,34 @@ test.describe("Insights Page", () => {
 
     // No vocabulary gaps card (empty array)
     await expect(main.getByText("Unmapped Terms")).not.toBeVisible();
+  });
+
+  test("repeated queries shows saved state and save-as-example flow", async ({
+    page,
+  }) => {
+    await page.goto("/insights");
+    const main = page.locator("main");
+
+    // Wait for card to load
+    await expect(main.getByText("Repeated Queries")).toBeVisible();
+
+    // Already-saved query shows checkmark
+    await expect(main.getByText("✓ Saved")).toBeVisible();
+
+    // Unsaved query shows Save as Example button
+    const saveBtn = main.getByText("Save as Example");
+    await expect(saveBtn).toBeVisible();
+
+    // Click Save as Example — intent input appears
+    await saveBtn.click();
+    const input = main.getByPlaceholder(/Describe the intent/);
+    await expect(input).toBeVisible();
+
+    // Type intent and submit
+    await input.fill("Count all users");
+    await main.getByRole("button", { name: "Save" }).click();
+
+    // After save, shows checkmark instead of button
+    await expect(main.getByText("✓ Saved").first()).toBeVisible();
   });
 });
