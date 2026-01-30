@@ -517,6 +517,144 @@ export async function analyzeInsights(
   return bicpCall<InsightsAnalyzeResult>("insights/analyze", { days });
 }
 
+// Metrics & Dimensions types
+export interface MetricDefinition {
+  name: string;
+  display_name?: string;
+  description: string;
+  sql: string;
+  tables?: string[];
+  parameters?: Array<{
+    name: string;
+    type: string;
+    required: boolean;
+    default?: string;
+    description?: string;
+  }>;
+  tags?: string[];
+  dimensions?: string[];
+  notes?: string;
+  created_at?: string;
+  created_by?: string;
+}
+
+export interface DimensionDefinition {
+  name: string;
+  display_name?: string;
+  description: string;
+  type: "temporal" | "categorical" | "geographic" | "entity";
+  column: string;
+  tables?: string[];
+  values?: string[];
+  synonyms?: string[];
+  created_at?: string;
+  created_by?: string;
+}
+
+export interface MetricsListResult {
+  success: boolean;
+  metrics: MetricDefinition[];
+  dimensions: DimensionDefinition[];
+  metricCount: number;
+  dimensionCount: number;
+  error?: string;
+}
+
+export interface MetricCandidateResult {
+  metric: MetricDefinition;
+  confidence: number;
+  source: string;
+  evidence: string[];
+}
+
+export interface DimensionCandidateResult {
+  dimension: DimensionDefinition;
+  confidence: number;
+  source: string;
+  evidence: string[];
+  category: string;
+}
+
+export interface MetricsCandidatesResult {
+  success: boolean;
+  metricCandidates: MetricCandidateResult[];
+  dimensionCandidates: DimensionCandidateResult[];
+  error?: string;
+}
+
+export interface MetricsActionResult {
+  success: boolean;
+  name?: string;
+  type?: string;
+  filePath?: string;
+  error?: string;
+}
+
+// Metrics & Dimensions API functions
+export async function listMetrics(
+  connection: string,
+): Promise<MetricsListResult> {
+  return bicpCall<MetricsListResult>("metrics/list", { connection });
+}
+
+export async function addMetricOrDimension(
+  connection: string,
+  type: "metric" | "dimension",
+  data: Record<string, unknown>,
+): Promise<MetricsActionResult> {
+  return bicpCall<MetricsActionResult>("metrics/add", {
+    connection,
+    type,
+    data,
+  });
+}
+
+export async function updateMetricOrDimension(
+  connection: string,
+  type: "metric" | "dimension",
+  name: string,
+  data: Record<string, unknown>,
+): Promise<MetricsActionResult> {
+  return bicpCall<MetricsActionResult>("metrics/update", {
+    connection,
+    type,
+    name,
+    data,
+  });
+}
+
+export async function deleteMetricOrDimension(
+  connection: string,
+  type: "metric" | "dimension",
+  name: string,
+): Promise<MetricsActionResult> {
+  return bicpCall<MetricsActionResult>("metrics/delete", {
+    connection,
+    type,
+    name,
+  });
+}
+
+export async function mineMetricsCandidates(
+  connection: string,
+): Promise<MetricsCandidatesResult> {
+  return bicpCall<MetricsCandidatesResult>("metrics/candidates", {
+    connection,
+  });
+}
+
+export async function approveCandidate(
+  connection: string,
+  type: "metric" | "dimension",
+  data: Record<string, unknown>,
+): Promise<MetricsActionResult> {
+  return bicpCall<MetricsActionResult>("metrics/approve", {
+    connection,
+    type,
+    data,
+  });
+}
+
 // React hook for BICP operations
 export interface UseBICPResult {
   isInitialized: boolean;

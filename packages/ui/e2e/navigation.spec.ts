@@ -11,6 +11,7 @@ test.describe("Navigation", () => {
     const nav = page.locator("nav");
     await expect(nav.getByText("Connectors")).toBeVisible();
     await expect(nav.getByText("Context")).toBeVisible();
+    await expect(nav.getByText("Metrics")).toBeVisible();
     await expect(nav.getByText("Traces")).toBeVisible();
     await expect(nav.getByText("Insights")).toBeVisible();
   });

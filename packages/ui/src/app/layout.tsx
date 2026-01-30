@@ -11,6 +11,7 @@ import { ConnectionSelector } from "@/components/ConnectionSelector";
 const navItems = [
   { href: "/connectors", label: "Connectors" },
   { href: "/context", label: "Context" },
+  { href: "/metrics", label: "Metrics" },
   { href: "/traces", label: "Traces" },
   { href: "/insights", label: "Insights" },
 ];

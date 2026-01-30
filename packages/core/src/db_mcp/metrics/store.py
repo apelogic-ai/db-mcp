@@ -1,13 +1,21 @@
-"""Metrics persistence - catalog storage and retrieval.
+"""Metrics and dimensions persistence - catalog storage and retrieval.
 
 Metrics are stored in metrics/catalog.yaml within each connection directory.
+Dimensions are stored in metrics/dimensions.yaml.
 """
 
 from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
-from db_mcp_models import Metric, MetricParameter, MetricsCatalog
+from db_mcp_models import (
+    Dimension,
+    DimensionsCatalog,
+    DimensionType,
+    Metric,
+    MetricParameter,
+    MetricsCatalog,
+)
 
 from db_mcp.onboarding.state import get_provider_dir
 
@@ -56,6 +64,7 @@ def _metric_from_dict(data: dict) -> Metric:
         tables=data.get("tables", []),
         parameters=parameters,
         tags=data.get("tags", []),
+        dimensions=data.get("dimensions", []),
         notes=data.get("notes"),
         created_at=created_at,
         created_by=data.get("created_by"),
@@ -90,6 +99,9 @@ def _metric_to_dict(metric: Metric) -> dict:
 
     if metric.tags:
         result["tags"] = metric.tags
+
+    if metric.dimensions:
+        result["dimensions"] = metric.dimensions
 
     if metric.notes:
         result["notes"] = metric.notes
@@ -197,6 +209,7 @@ def add_metric(
     tables: list[str] | None = None,
     parameters: list[dict] | None = None,
     tags: list[str] | None = None,
+    dimensions: list[str] | None = None,
     notes: str | None = None,
 ) -> dict:
     """Add a new metric to the catalog.
@@ -210,6 +223,7 @@ def add_metric(
         tables: Tables used
         parameters: SQL template parameters
         tags: Categorization tags
+        dimensions: Dimension names this metric can be sliced by
         notes: Additional notes
 
     Returns:
@@ -234,6 +248,7 @@ def add_metric(
         tables=tables or [],
         parameters=params,
         tags=tags or [],
+        dimensions=dimensions or [],
         notes=notes,
         created_at=datetime.now(UTC),
     )
@@ -290,4 +305,212 @@ def search_metrics(provider_id: str, query: str) -> list[Metric]:
         List of matching metrics
     """
     catalog = load_metrics(provider_id)
+    return catalog.search(query)
+
+
+# =============================================================================
+# Dimensions — Load / Save
+# =============================================================================
+
+
+def get_dimensions_file_path(provider_id: str) -> Path:
+    """Get path to dimensions catalog file."""
+    return get_metrics_dir(provider_id) / "dimensions.yaml"
+
+
+def _dimension_from_dict(data: dict) -> Dimension:
+    """Convert dict to Dimension model."""
+    created_at = None
+    if data.get("created_at"):
+        try:
+            if isinstance(data["created_at"], datetime):
+                created_at = data["created_at"]
+            else:
+                created_at = datetime.fromisoformat(str(data["created_at"]).replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            created_at = None
+
+    dim_type = DimensionType.CATEGORICAL
+    raw_type = data.get("type")
+    if raw_type:
+        try:
+            dim_type = DimensionType(raw_type)
+        except ValueError:
+            pass
+
+    return Dimension(
+        name=data.get("name", ""),
+        display_name=data.get("display_name"),
+        description=data.get("description", ""),
+        type=dim_type,
+        column=data.get("column", ""),
+        tables=data.get("tables", []),
+        values=data.get("values", []),
+        synonyms=data.get("synonyms", []),
+        created_at=created_at,
+        created_by=data.get("created_by"),
+    )
+
+
+def _dimension_to_dict(dimension: Dimension) -> dict:
+    """Convert Dimension to dict for YAML storage."""
+    result: dict = {
+        "name": dimension.name,
+        "description": dimension.description,
+        "type": dimension.type.value,
+        "column": dimension.column,
+    }
+
+    if dimension.display_name:
+        result["display_name"] = dimension.display_name
+
+    if dimension.tables:
+        result["tables"] = dimension.tables
+
+    if dimension.values:
+        result["values"] = dimension.values
+
+    if dimension.synonyms:
+        result["synonyms"] = dimension.synonyms
+
+    if dimension.created_at:
+        result["created_at"] = dimension.created_at.isoformat()
+
+    if dimension.created_by:
+        result["created_by"] = dimension.created_by
+
+    return result
+
+
+def load_dimensions(provider_id: str) -> DimensionsCatalog:
+    """Load dimensions catalog from YAML file."""
+    dim_file = get_dimensions_file_path(provider_id)
+
+    if not dim_file.exists():
+        return DimensionsCatalog(provider_id=provider_id)
+
+    try:
+        with open(dim_file) as f:
+            data = yaml.safe_load(f)
+
+        if not data:
+            return DimensionsCatalog(provider_id=provider_id)
+
+        dimensions = [_dimension_from_dict(d) for d in data.get("dimensions", [])]
+
+        return DimensionsCatalog(
+            version=data.get("version", "1.0.0"),
+            provider_id=provider_id,
+            dimensions=dimensions,
+        )
+    except Exception:
+        return DimensionsCatalog(provider_id=provider_id)
+
+
+def save_dimensions(catalog: DimensionsCatalog) -> dict:
+    """Save dimensions catalog to YAML file."""
+    try:
+        metrics_dir = get_metrics_dir(catalog.provider_id)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+
+        data = {
+            "version": catalog.version,
+            "provider_id": catalog.provider_id,
+            "dimensions": [_dimension_to_dict(d) for d in catalog.dimensions],
+        }
+
+        dim_file = get_dimensions_file_path(catalog.provider_id)
+        with open(dim_file, "w") as f:
+            yaml.dump(
+                data,
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+
+        return {"saved": True, "file_path": str(dim_file), "error": None}
+    except Exception as e:
+        return {"saved": False, "file_path": None, "error": str(e)}
+
+
+# =============================================================================
+# Dimensions — CRUD Operations
+# =============================================================================
+
+
+def get_dimension(provider_id: str, name: str) -> Dimension | None:
+    """Get a dimension by name."""
+    catalog = load_dimensions(provider_id)
+    return catalog.get_dimension(name)
+
+
+def add_dimension(
+    provider_id: str,
+    name: str,
+    column: str,
+    description: str = "",
+    display_name: str | None = None,
+    dim_type: str = "categorical",
+    tables: list[str] | None = None,
+    values: list[str] | None = None,
+    synonyms: list[str] | None = None,
+) -> dict:
+    """Add a new dimension to the catalog."""
+    catalog = load_dimensions(provider_id)
+
+    try:
+        dtype = DimensionType(dim_type)
+    except ValueError:
+        dtype = DimensionType.CATEGORICAL
+
+    dimension = Dimension(
+        name=name,
+        display_name=display_name,
+        description=description,
+        type=dtype,
+        column=column,
+        tables=tables or [],
+        values=values or [],
+        synonyms=synonyms or [],
+        created_at=datetime.now(UTC),
+        created_by="manual",
+    )
+
+    catalog.add_dimension(dimension)
+    result = save_dimensions(catalog)
+
+    if result["saved"]:
+        return {
+            "added": True,
+            "dimension_name": name,
+            "total_dimensions": catalog.count(),
+            "file_path": result["file_path"],
+        }
+    else:
+        return {"added": False, "error": result["error"]}
+
+
+def delete_dimension(provider_id: str, name: str) -> dict:
+    """Delete a dimension from the catalog."""
+    catalog = load_dimensions(provider_id)
+
+    if not catalog.remove_dimension(name):
+        return {"deleted": False, "error": f"Dimension '{name}' not found"}
+
+    result = save_dimensions(catalog)
+
+    if result["saved"]:
+        return {
+            "deleted": True,
+            "dimension_name": name,
+            "total_dimensions": catalog.count(),
+        }
+    else:
+        return {"deleted": False, "error": result["error"]}
+
+
+def search_dimensions(provider_id: str, query: str) -> list[Dimension]:
+    """Search dimensions by name, description, or synonyms."""
+    catalog = load_dimensions(provider_id)
     return catalog.search(query)

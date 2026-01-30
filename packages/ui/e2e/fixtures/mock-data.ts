@@ -661,3 +661,164 @@ export const SAVE_EXAMPLE_SUCCESS = {
   example_id: "def456",
   total_examples: 32,
 };
+
+// ── Metrics & Dimensions ────────────────────────────────────
+
+export const METRICS_LIST_HAPPY = {
+  success: true,
+  metrics: [
+    {
+      name: "daily_active_users",
+      display_name: "Daily Active Users",
+      description:
+        "Count of unique users who logged in within the last 24 hours",
+      sql: "SELECT COUNT(DISTINCT user_id) FROM sessions WHERE created_at >= CURRENT_DATE",
+      tables: ["sessions"],
+      parameters: [],
+      tags: ["engagement", "kpi"],
+      dimensions: ["carrier", "city"],
+      notes: "Excludes test accounts",
+      created_at: "2025-01-15T10:00:00Z",
+      created_by: "manual",
+    },
+    {
+      name: "total_revenue",
+      display_name: "Total Revenue",
+      description: "Sum of all completed order totals",
+      sql: "SELECT SUM(total) FROM orders WHERE status = 'completed'",
+      tables: ["orders"],
+      parameters: [],
+      tags: ["revenue", "kpi"],
+      dimensions: [],
+      notes: null,
+      created_at: "2025-01-10T08:00:00Z",
+      created_by: "approved",
+    },
+  ],
+  dimensions: [
+    {
+      name: "carrier",
+      display_name: "Carrier",
+      description: "Mobile network carrier",
+      type: "categorical",
+      column: "cdr_agg_day.carrier",
+      tables: ["cdr_agg_day"],
+      values: ["tmo", "helium_mobile", "att"],
+      synonyms: ["network", "provider"],
+      created_at: "2025-01-12T09:00:00Z",
+      created_by: "approved",
+    },
+    {
+      name: "report_date",
+      display_name: "Report Date",
+      description: "Date dimension for daily aggregations",
+      type: "temporal",
+      column: "cdr_agg_day.report_date",
+      tables: ["cdr_agg_day"],
+      values: [],
+      synonyms: ["date", "day"],
+      created_at: "2025-01-12T09:00:00Z",
+      created_by: "manual",
+    },
+  ],
+  metricCount: 2,
+  dimensionCount: 2,
+};
+
+export const METRICS_LIST_EMPTY = {
+  success: true,
+  metrics: [],
+  dimensions: [],
+  metricCount: 0,
+  dimensionCount: 0,
+};
+
+export const METRICS_ADD_SUCCESS = {
+  success: true,
+  name: "new_metric",
+  type: "metric",
+  filePath: "/home/user/.db-mcp/connections/production/metrics/catalog.yaml",
+};
+
+export const METRICS_ADD_DIMENSION_SUCCESS = {
+  success: true,
+  name: "new_dimension",
+  type: "dimension",
+  filePath: "/home/user/.db-mcp/connections/production/metrics/dimensions.yaml",
+};
+
+export const METRICS_UPDATE_SUCCESS = {
+  success: true,
+  name: "daily_active_users",
+  type: "metric",
+};
+
+export const METRICS_DELETE_SUCCESS = {
+  success: true,
+  name: "daily_active_users",
+  type: "metric",
+};
+
+export const METRICS_CANDIDATES_HAPPY = {
+  success: true,
+  metricCandidates: [
+    {
+      metric: {
+        name: "count_sessions",
+        display_name: "Count Sessions",
+        description: "Count all sessions from the sessions table",
+        sql: "SELECT COUNT(*) FROM sessions",
+        tables: ["sessions"],
+        tags: [],
+        dimensions: [],
+      },
+      confidence: 0.7,
+      source: "examples",
+      evidence: ["example_001.yaml"],
+    },
+    {
+      metric: {
+        name: "avg_duration",
+        display_name: "Avg Duration",
+        description: "Average session duration",
+        sql: "SELECT AVG(duration_ms) FROM sessions",
+        tables: ["sessions"],
+        tags: [],
+        dimensions: [],
+      },
+      confidence: 0.5,
+      source: "examples",
+      evidence: ["example_003.yaml"],
+    },
+  ],
+  dimensionCandidates: [
+    {
+      dimension: {
+        name: "city",
+        display_name: "City",
+        description: "Dimension from GROUP BY in: sessions by city",
+        type: "geographic",
+        column: "sessions.city",
+        tables: ["sessions"],
+        values: [],
+        synonyms: [],
+      },
+      confidence: 0.6,
+      source: "examples",
+      evidence: ["example_002.yaml"],
+      category: "Location",
+    },
+  ],
+};
+
+export const METRICS_CANDIDATES_EMPTY = {
+  success: true,
+  metricCandidates: [],
+  dimensionCandidates: [],
+};
+
+export const METRICS_APPROVE_SUCCESS = {
+  success: true,
+  name: "count_sessions",
+  type: "metric",
+};

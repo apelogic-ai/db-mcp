@@ -36,7 +36,8 @@ connection/
 │   └── failures/            # Failed query logs
 │       └── {uuid}.yaml
 └── metrics/
-    └── catalog.yaml         # Business metric definitions
+    ├── catalog.yaml         # Business metric definitions (KPIs, aggregations)
+    └── dimensions.yaml      # Dimension definitions (axes for slicing metrics)
 ```
 
 ## CRITICAL: Use Cached Schema First
@@ -91,6 +92,29 @@ cat instructions/business_rules.yaml 2>/dev/null
 
 These rules are accumulated from analyst feedback and trace analysis.
 Ignoring them leads to incorrect queries.
+
+## Metrics & Dimensions
+
+The `metrics/` directory stores business metric and dimension definitions:
+
+- **`metrics/catalog.yaml`** — Named metrics (KPIs, aggregations) with SQL expressions
+  - Example: DAU, monthly revenue, churn rate
+  - Each metric has: name, description, SQL expression, related tables, tags
+
+- **`metrics/dimensions.yaml`** — Dimension definitions (axes for slicing metrics)
+  - Example: country, device_type, subscription_plan
+  - Each dimension has: name, column, type (categorical/temporal/geographic), related tables
+
+**Use `metrics_list()` to check existing metrics before generating SQL.**
+When a user asks about a business KPI, check the metrics catalog first — it may
+already have an approved SQL definition.
+
+To discover new metrics and dimensions from the schema, use `metrics_discover()`.
+This mines the knowledge vault (schema, examples, business rules) for candidates
+and groups them by semantic category (Location, Time, Device, etc.).
+
+Approve candidates with `metrics_approve()` or manually define with `metrics_add()`.
+Remove obsolete entries with `metrics_remove()`.
 
 ## Database Hierarchy
 
@@ -317,6 +341,11 @@ Beyond `shell`, these tools are available for structured operations:
 | `run_sql` / `get_data` | Execute queries |
 | `get_result` | Poll for async query results |
 | `export_results` | Export data to CSV/JSON |
+| `metrics_discover` | Mine knowledge vault for metric/dimension candidates |
+| `metrics_list` | List approved metrics and dimensions |
+| `metrics_approve` | Approve a discovered candidate into the catalog |
+| `metrics_add` | Manually define a metric or dimension |
+| `metrics_remove` | Remove a metric or dimension from the catalog |
 
 ## Useful Commands
 
@@ -346,6 +375,7 @@ CONNECTION_DIRS = [
     "examples",
     "learnings",
     "learnings/failures",
+    "metrics",
 ]
 
 # Files to always overwrite (system-controlled, shipped with each deploy)

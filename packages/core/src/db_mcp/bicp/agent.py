@@ -111,6 +111,14 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["gaps/dismiss"] = self._handle_gaps_dismiss
         self._method_handlers["insights/save-example"] = self._handle_insights_save_example
 
+        # Metrics & dimensions handlers
+        self._method_handlers["metrics/list"] = self._handle_metrics_list
+        self._method_handlers["metrics/add"] = self._handle_metrics_add
+        self._method_handlers["metrics/update"] = self._handle_metrics_update
+        self._method_handlers["metrics/delete"] = self._handle_metrics_delete
+        self._method_handlers["metrics/candidates"] = self._handle_metrics_candidates
+        self._method_handlers["metrics/approve"] = self._handle_metrics_approve
+
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
         self._method_handlers["schema/schemas"] = self._handle_schema_schemas
@@ -2347,6 +2355,302 @@ This knowledge helps the AI generate better queries over time.
                 logger.warning(f"Failed to auto-resolve knowledge gaps: {e}")
 
         return {"success": True, "analysis": analysis}
+
+    # ========== Metrics & Dimensions Methods ==========
+
+    async def _handle_metrics_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List approved metrics and dimensions for a connection.
+
+        Args:
+            params: {"connection": str}
+        """
+        connection = params.get("connection")
+        if not connection:
+            return {"success": False, "error": "connection is required"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        from db_mcp.metrics.store import load_dimensions, load_metrics
+
+        metrics_catalog = load_metrics(connection)
+        dimensions_catalog = load_dimensions(connection)
+
+        return {
+            "success": True,
+            "metrics": [m.model_dump(mode="json") for m in metrics_catalog.metrics],
+            "dimensions": [d.model_dump(mode="json") for d in dimensions_catalog.dimensions],
+            "metricCount": metrics_catalog.count(),
+            "dimensionCount": dimensions_catalog.count(),
+        }
+
+    async def _handle_metrics_add(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Add a metric or dimension to the approved catalog.
+
+        Args:
+            params: {
+                "connection": str,
+                "type": "metric" | "dimension",
+                "data": dict  - metric or dimension fields
+            }
+        """
+        connection = params.get("connection")
+        item_type = params.get("type", "metric")
+        data = params.get("data", {})
+
+        if not connection:
+            return {"success": False, "error": "connection is required"}
+        if not data or not data.get("name"):
+            return {"success": False, "error": "data with name is required"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        try:
+            if item_type == "dimension":
+                from db_mcp.metrics.store import add_dimension
+
+                result = add_dimension(
+                    provider_id=connection,
+                    name=data["name"],
+                    column=data.get("column", ""),
+                    description=data.get("description", ""),
+                    display_name=data.get("display_name"),
+                    dim_type=data.get("type", "categorical"),
+                    tables=data.get("tables", []),
+                    values=data.get("values", []),
+                    synonyms=data.get("synonyms", []),
+                )
+
+                if result.get("added"):
+                    file_path = result.get("file_path", "")
+                    rel = "metrics/dimensions.yaml"
+                    self._git_commit(conn_path, f"Add dimension: {data['name']}", [rel])
+                    return {
+                        "success": True,
+                        "name": data["name"],
+                        "type": "dimension",
+                        "filePath": file_path,
+                    }
+                return {"success": False, "error": result.get("error", "Failed to add")}
+            else:
+                from db_mcp.metrics.store import add_metric
+
+                result = add_metric(
+                    provider_id=connection,
+                    name=data["name"],
+                    description=data.get("description", ""),
+                    sql=data.get("sql", ""),
+                    display_name=data.get("display_name"),
+                    tables=data.get("tables", []),
+                    parameters=data.get("parameters", []),
+                    tags=data.get("tags", []),
+                    dimensions=data.get("dimensions", []),
+                    notes=data.get("notes"),
+                )
+
+                if result.get("added"):
+                    file_path = result.get("file_path", "")
+                    rel = "metrics/catalog.yaml"
+                    self._git_commit(conn_path, f"Add metric: {data['name']}", [rel])
+                    return {
+                        "success": True,
+                        "name": data["name"],
+                        "type": "metric",
+                        "filePath": file_path,
+                    }
+                return {"success": False, "error": result.get("error", "Failed to add")}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_metrics_update(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Update an existing metric or dimension.
+
+        Deletes the old entry and re-adds with updated data.
+
+        Args:
+            params: {
+                "connection": str,
+                "type": "metric" | "dimension",
+                "name": str,
+                "data": dict
+            }
+        """
+        connection = params.get("connection")
+        item_type = params.get("type", "metric")
+        name = params.get("name")
+        data = params.get("data", {})
+
+        if not connection or not name:
+            return {"success": False, "error": "connection and name are required"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        try:
+            if item_type == "dimension":
+                from db_mcp.metrics.store import add_dimension, delete_dimension
+
+                delete_dimension(connection, name)
+                new_name = data.get("name", name)
+                result = add_dimension(
+                    provider_id=connection,
+                    name=new_name,
+                    column=data.get("column", ""),
+                    description=data.get("description", ""),
+                    display_name=data.get("display_name"),
+                    dim_type=data.get("type", "categorical"),
+                    tables=data.get("tables", []),
+                    values=data.get("values", []),
+                    synonyms=data.get("synonyms", []),
+                )
+                if result.get("added"):
+                    rel = "metrics/dimensions.yaml"
+                    self._git_commit(conn_path, f"Update dimension: {new_name}", [rel])
+                    return {"success": True, "name": new_name, "type": "dimension"}
+                return {"success": False, "error": result.get("error", "Failed to update")}
+            else:
+                from db_mcp.metrics.store import add_metric, delete_metric
+
+                delete_metric(connection, name)
+                new_name = data.get("name", name)
+                result = add_metric(
+                    provider_id=connection,
+                    name=new_name,
+                    description=data.get("description", ""),
+                    sql=data.get("sql", ""),
+                    display_name=data.get("display_name"),
+                    tables=data.get("tables", []),
+                    parameters=data.get("parameters", []),
+                    tags=data.get("tags", []),
+                    dimensions=data.get("dimensions", []),
+                    notes=data.get("notes"),
+                )
+                if result.get("added"):
+                    rel = "metrics/catalog.yaml"
+                    self._git_commit(conn_path, f"Update metric: {new_name}", [rel])
+                    return {"success": True, "name": new_name, "type": "metric"}
+                return {"success": False, "error": result.get("error", "Failed to update")}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_metrics_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Delete a metric or dimension from the catalog.
+
+        Args:
+            params: {
+                "connection": str,
+                "type": "metric" | "dimension",
+                "name": str
+            }
+        """
+        connection = params.get("connection")
+        item_type = params.get("type", "metric")
+        name = params.get("name")
+
+        if not connection or not name:
+            return {"success": False, "error": "connection and name are required"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        try:
+            if item_type == "dimension":
+                from db_mcp.metrics.store import delete_dimension
+
+                result = delete_dimension(connection, name)
+                if result.get("deleted"):
+                    rel = "metrics/dimensions.yaml"
+                    self._git_commit(conn_path, f"Delete dimension: {name}", [rel])
+                    return {"success": True, "name": name, "type": "dimension"}
+                return {"success": False, "error": result.get("error", "Not found")}
+            else:
+                from db_mcp.metrics.store import delete_metric
+
+                result = delete_metric(connection, name)
+                if result.get("deleted"):
+                    rel = "metrics/catalog.yaml"
+                    self._git_commit(conn_path, f"Delete metric: {name}", [rel])
+                    return {"success": True, "name": name, "type": "metric"}
+                return {"success": False, "error": result.get("error", "Not found")}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_metrics_candidates(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Mine the vault for metric and dimension candidates.
+
+        Args:
+            params: {"connection": str}
+        """
+        connection = params.get("connection")
+        if not connection:
+            return {"success": False, "error": "connection is required"}
+
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        try:
+            from db_mcp.metrics.mining import mine_metrics_and_dimensions
+
+            result = await mine_metrics_and_dimensions(conn_path)
+
+            return {
+                "success": True,
+                "metricCandidates": [
+                    {
+                        "metric": c.metric.model_dump(mode="json"),
+                        "confidence": c.confidence,
+                        "source": c.source,
+                        "evidence": c.evidence,
+                    }
+                    for c in result.get("metric_candidates", [])
+                ],
+                "dimensionCandidates": [
+                    {
+                        "dimension": c.dimension.model_dump(mode="json"),
+                        "confidence": c.confidence,
+                        "source": c.source,
+                        "evidence": c.evidence,
+                        "category": c.category,
+                    }
+                    for c in result.get("dimension_candidates", [])
+                ],
+            }
+
+        except Exception as e:
+            logger.exception(f"Mining failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _handle_metrics_approve(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Approve a mined candidate into the catalog.
+
+        Args:
+            params: {
+                "connection": str,
+                "type": "metric" | "dimension",
+                "data": dict  - the candidate's metric/dimension data (possibly edited)
+            }
+        """
+        # Approving is the same as adding — the data comes from a candidate
+        # but the user may have edited it before approving
+        params_copy = dict(params)
+        data = params_copy.get("data", {})
+        data["created_by"] = "approved"
+        params_copy["data"] = data
+        return await self._handle_metrics_add(params_copy)
 
     # ========== Schema Explorer Methods ==========
 

@@ -159,6 +159,14 @@ Database metadata and query intelligence server.
    shell(command="cat instructions/sql_rules.md")
    ```
 
+3. Check business metrics and dimensions:
+   ```
+   metrics_list()
+   ```
+   Use these canonical definitions when the user asks about KPIs, aggregations, or
+   dimensions. Prefer metric SQL templates over generating from scratch.
+   Use `metrics_discover()` to mine the vault for new candidates.
+
 ## CRITICAL: Database Hierarchy
 
 Many databases use 3-level hierarchy: `catalog.schema.table`
@@ -179,6 +187,7 @@ Save examples and tell the user what you saved. See PROTOCOL.md for details.
 - Knowledge vault: shell (bash access to examples, learnings, instructions)
 - Business rules: query_add_rule, query_list_rules
 - Knowledge gaps: get_knowledge_gaps, dismiss_knowledge_gap
+- Metrics: metrics_list, metrics_discover, metrics_approve, metrics_add, metrics_remove
 - Training: query_approve, query_feedback, query_list_examples
 - Setup: mcp_setup_*, mcp_domain_*
 
@@ -226,6 +235,7 @@ This tells you exactly how to:
 - get_knowledge_gaps - View unmapped business terms from previous sessions
 - dismiss_knowledge_gap - Dismiss a gap as false positive
 - query_add_rule / query_list_rules - Manage business rules (synonyms, filters)
+- metrics_list / metrics_discover / metrics_approve / metrics_add / metrics_remove
 - query_approve / query_feedback - Save examples and feedback
 - mcp_setup_* / mcp_domain_* - Admin setup (not for regular queries)
 
@@ -419,6 +429,21 @@ def _create_server() -> FastMCP:
         # Knowledge gaps tools
         server.tool(name="get_knowledge_gaps")(_get_knowledge_gaps)
         server.tool(name="dismiss_knowledge_gap")(_dismiss_knowledge_gap)
+
+        # Metrics & dimensions tools
+        from db_mcp.tools.metrics import (
+            _metrics_add,
+            _metrics_approve,
+            _metrics_discover,
+            _metrics_list,
+            _metrics_remove,
+        )
+
+        server.tool(name="metrics_discover")(_metrics_discover)
+        server.tool(name="metrics_list")(_metrics_list)
+        server.tool(name="metrics_approve")(_metrics_approve)
+        server.tool(name="metrics_add")(_metrics_add)
+        server.tool(name="metrics_remove")(_metrics_remove)
 
         # Advanced generation tools
         server.tool(name="get_data")(_get_data)

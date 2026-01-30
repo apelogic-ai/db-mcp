@@ -78,6 +78,14 @@ export class BICPMock {
     this.on("context/add-rule", () => mockData.ADD_RULE_SUCCESS);
     this.on("gaps/dismiss", () => mockData.DISMISS_GAP_SUCCESS);
     this.on("insights/save-example", () => mockData.SAVE_EXAMPLE_SUCCESS);
+
+    // Metrics & Dimensions
+    this.on("metrics/list", () => mockData.METRICS_LIST_HAPPY);
+    this.on("metrics/add", () => mockData.METRICS_ADD_SUCCESS);
+    this.on("metrics/update", () => mockData.METRICS_UPDATE_SUCCESS);
+    this.on("metrics/delete", () => mockData.METRICS_DELETE_SUCCESS);
+    this.on("metrics/candidates", () => mockData.METRICS_CANDIDATES_HAPPY);
+    this.on("metrics/approve", () => mockData.METRICS_APPROVE_SUCCESS);
   }
 
   /** Register a handler for a BICP method. */
