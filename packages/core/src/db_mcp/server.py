@@ -39,6 +39,13 @@ from db_mcp.tools.generation import (
     _test_sampling,
     _validate_sql,
 )
+from db_mcp.tools.metrics import (
+    _metrics_add,
+    _metrics_approve,
+    _metrics_discover,
+    _metrics_list,
+    _metrics_remove,
+)
 from db_mcp.tools.onboarding import (
     _onboarding_add_ignore_pattern,
     _onboarding_approve,
@@ -431,14 +438,6 @@ def _create_server() -> FastMCP:
         server.tool(name="dismiss_knowledge_gap")(_dismiss_knowledge_gap)
 
         # Metrics & dimensions tools
-        from db_mcp.tools.metrics import (
-            _metrics_add,
-            _metrics_approve,
-            _metrics_discover,
-            _metrics_list,
-            _metrics_remove,
-        )
-
         server.tool(name="metrics_discover")(_metrics_discover)
         server.tool(name="metrics_list")(_metrics_list)
         server.tool(name="metrics_approve")(_metrics_approve)

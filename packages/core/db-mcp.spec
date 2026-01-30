@@ -116,6 +116,8 @@ a = Analysis(
         "db_mcp.ui_server",
         "fastapi",
         "fastapi.middleware.cors",
+        # Traces module (lazy import in _configure_observability)
+        "db_mcp.traces",
         # Console module
         "db_mcp.console",
         "db_mcp.console.collector",
