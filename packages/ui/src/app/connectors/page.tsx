@@ -40,6 +40,7 @@ interface TestResult {
   message?: string;
   dialect?: string;
   error?: string;
+  hint?: string;
 }
 
 interface DeleteResult {
@@ -82,6 +83,7 @@ export default function ConnectorsPage() {
     testing: boolean;
     success: boolean | null;
     message: string;
+    hint?: string;
   } | null>(null);
 
   // Auto-test debounce
@@ -163,6 +165,7 @@ export default function ConnectorsPage() {
           message: result.success
             ? result.dialect || "Connected"
             : result.error || "Connection failed",
+          hint: result.hint || undefined,
         });
       } catch (err) {
         setTestStatus({
@@ -572,9 +575,16 @@ export default function ConnectorsPage() {
                   {testStatus &&
                     !testStatus.testing &&
                     testStatus.success === false && (
-                      <span className="text-red-400 ml-2">
-                        {testStatus.message}
-                      </span>
+                      <>
+                        <span className="text-red-400 ml-2">
+                          {testStatus.message}
+                        </span>
+                        {testStatus.hint && (
+                          <span className="text-yellow-400 ml-1">
+                            {testStatus.hint}
+                          </span>
+                        )}
+                      </>
                     )}
                 </p>
               </div>

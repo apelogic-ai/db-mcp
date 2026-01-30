@@ -852,21 +852,21 @@ class DBMCPAgent(BICPAgent):
     async def _test_database_url(self, database_url: str) -> dict[str, Any]:
         """Test a database URL by attempting to connect.
 
+        Uses get_engine() from db.connection which handles URL normalization
+        (postgres:// → postgresql://) and dialect-specific config (Trino SSL).
+
         Returns:
             {"success": bool, "message": str, "dialect": str | None, "error": str | None}
         """
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import text
+
+        from db_mcp.db.connection import get_engine
 
         dialect = self._detect_dialect_from_url(database_url)
 
         try:
-            # Create engine with short timeout
-            engine = create_engine(
-                database_url,
-                connect_args={"connect_timeout": 10} if dialect == "postgresql" else {},
-            )
+            engine = get_engine(database_url)
 
-            # Try to connect and run simple query
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
 
@@ -880,15 +880,22 @@ class DBMCPAgent(BICPAgent):
 
         except Exception as e:
             error_msg = str(e)
-            # Clean up sensitive info from error message
             if database_url in error_msg:
                 error_msg = error_msg.replace(database_url, "[DATABASE_URL]")
+
+            # Suggest sslmode=require for PostgreSQL SSL errors
+            hint = None
+            if dialect == "postgresql" and "sslmode" not in database_url:
+                ssl_keywords = ["ssl", "SSL", "certificate", "tls", "TLS", "HTTPS"]
+                if any(kw in error_msg for kw in ssl_keywords):
+                    hint = "Try adding ?sslmode=require to the database URL."
 
             logger.warning(f"Connection test failed: {error_msg}")
 
             return {
                 "success": False,
                 "error": error_msg,
+                "hint": hint,
                 "dialect": dialect,
             }
 
