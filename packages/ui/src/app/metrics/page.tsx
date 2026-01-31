@@ -20,7 +20,6 @@ import {
   type MetricDefinition,
   type DimensionDefinition,
   type MetricCandidateResult,
-  type DimensionCandidateResult,
 } from "@/lib/bicp";
 
 // =============================================================================
@@ -34,27 +33,40 @@ const DIM_TYPE_COLORS: Record<string, string> = {
   entity: "bg-orange-900/50 text-orange-300",
 };
 
-function ConfidenceBadge({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  const color =
-    pct >= 70
-      ? "bg-green-900/50 text-green-300"
-      : pct >= 40
-        ? "bg-yellow-900/50 text-yellow-300"
-        : "bg-red-900/50 text-red-300";
-  return <Badge className={color}>{pct}%</Badge>;
-}
-
-function SourceBadge({ source }: { source: string }) {
-  const colors: Record<string, string> = {
-    examples: "bg-blue-900/50 text-blue-300",
-    rules: "bg-purple-900/50 text-purple-300",
-    schema: "bg-gray-700 text-gray-300",
-  };
+function TagFilter({
+  tags,
+  selected,
+  onToggle,
+}: {
+  tags: string[];
+  selected: Set<string>;
+  onToggle: (tag: string) => void;
+}) {
+  if (tags.length === 0) return null;
   return (
-    <Badge className={colors[source] || "bg-gray-700 text-gray-300"}>
-      {source}
-    </Badge>
+    <div className="flex flex-wrap gap-1.5 mb-3">
+      {tags.map((t) => (
+        <button
+          key={t}
+          onClick={() => onToggle(t)}
+          className={`px-2 py-0.5 text-[11px] rounded border transition-colors ${
+            selected.has(t)
+              ? "bg-blue-600 border-blue-500 text-white"
+              : "bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          {t}
+        </button>
+      ))}
+      {selected.size > 0 && (
+        <button
+          onClick={() => selected.forEach((t) => onToggle(t))}
+          className="px-2 py-0.5 text-[11px] text-gray-500 hover:text-gray-300"
+        >
+          clear
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -78,10 +90,16 @@ function MetricForm({
   initial,
   onSave,
   onCancel,
+  mode = "add",
+  onUpdate,
+  onReject,
 }: {
   initial?: MetricDefinition;
   onSave: (data: MetricDefinition) => void;
   onCancel: () => void;
+  mode?: "add" | "edit" | "candidate";
+  onUpdate?: (data: MetricDefinition) => void;
+  onReject?: () => void;
 }) {
   const [name, setName] = useState(initial?.name || "");
   const [displayName, setDisplayName] = useState(initial?.display_name || "");
@@ -94,27 +112,41 @@ function MetricForm({
   );
   const [notes, setNotes] = useState(initial?.notes || "");
 
-  const handleSubmit = () => {
-    onSave({
-      name: name.trim().toLowerCase().replace(/\s+/g, "_"),
-      display_name: displayName.trim() || undefined,
-      description: description.trim(),
-      sql: sql.trim(),
-      tables: tables
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      tags: tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      dimensions: dimensions
-        .split(",")
-        .map((d) => d.trim())
-        .filter(Boolean),
-      notes: notes.trim() || undefined,
-    });
-  };
+  const buildData = (): MetricDefinition => ({
+    name: name.trim().toLowerCase().replace(/\s+/g, "_"),
+    display_name: displayName.trim() || undefined,
+    description: description.trim(),
+    sql: sql.trim(),
+    tables: tables
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+    tags: tags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+    dimensions: dimensions
+      .split(",")
+      .map((d) => d.trim())
+      .filter(Boolean),
+    notes: notes.trim() || undefined,
+  });
+
+  // Track dirty state for candidate mode
+  const isDirty =
+    mode === "candidate" &&
+    initial &&
+    (name !== (initial.name || "") ||
+      displayName !== (initial.display_name || "") ||
+      description !== (initial.description || "") ||
+      sql !== (initial.sql || "") ||
+      tables !== (initial.tables?.join(", ") || "") ||
+      tags !== (initial.tags?.join(", ") || "") ||
+      dimensions !== (initial.dimensions?.join(", ") || "") ||
+      notes !== (initial.notes || ""));
+
+  const baseValid = !!name.trim() && !!description.trim();
+  const fullValid = baseValid && !!sql.trim();
 
   return (
     <div className="space-y-3">
@@ -152,7 +184,9 @@ function MetricForm({
         />
       </div>
       <div>
-        <label className="text-xs text-gray-400 block mb-1">SQL *</label>
+        <label className="text-xs text-gray-400 block mb-1">
+          SQL{mode === "add" ? " *" : ""}
+        </label>
         <textarea
           className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 font-mono h-24"
           value={sql}
@@ -200,166 +234,52 @@ function MetricForm({
           onChange={(e) => setNotes(e.target.value)}
         />
       </div>
-      <div className="flex justify-end gap-2 pt-2">
-        <button
-          onClick={onCancel}
-          className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={!name.trim() || !description.trim() || !sql.trim()}
-          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {initial ? "Update" : "Add"} Metric
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DimensionForm({
-  initial,
-  onSave,
-  onCancel,
-}: {
-  initial?: DimensionDefinition;
-  onSave: (data: DimensionDefinition) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(initial?.name || "");
-  const [displayName, setDisplayName] = useState(initial?.display_name || "");
-  const [description, setDescription] = useState(initial?.description || "");
-  const [dimType, setDimType] = useState(initial?.type || "categorical");
-  const [column, setColumn] = useState(initial?.column || "");
-  const [tables, setTables] = useState(initial?.tables?.join(", ") || "");
-  const [values, setValues] = useState(initial?.values?.join(", ") || "");
-  const [synonyms, setSynonyms] = useState(initial?.synonyms?.join(", ") || "");
-
-  const handleSubmit = () => {
-    onSave({
-      name: name.trim().toLowerCase().replace(/\s+/g, "_"),
-      display_name: displayName.trim() || undefined,
-      description: description.trim(),
-      type: dimType as DimensionDefinition["type"],
-      column: column.trim(),
-      tables: tables
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      values: values
-        .split(",")
-        .map((v) => v.trim())
-        .filter(Boolean),
-      synonyms: synonyms
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs text-gray-400 block mb-1">Name *</label>
-          <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. carrier"
-          />
-        </div>
-        <div>
-          <label className="text-xs text-gray-400 block mb-1">
-            Display Name
-          </label>
-          <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="e.g. Carrier"
-          />
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs text-gray-400 block mb-1">Type *</label>
-          <select
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100"
-            value={dimType}
-            onChange={(e) =>
-              setDimType(e.target.value as DimensionDefinition["type"])
-            }
+      <div className="flex items-center pt-2">
+        {onReject && (
+          <button
+            onClick={onReject}
+            className="px-3 py-1.5 text-xs text-gray-400 hover:text-red-400"
           >
-            <option value="categorical">Categorical</option>
-            <option value="temporal">Temporal</option>
-            <option value="geographic">Geographic</option>
-            <option value="entity">Entity</option>
-          </select>
+            Reject
+          </button>
+        )}
+        <div className="flex-1" />
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200"
+          >
+            Cancel
+          </button>
+          {mode === "candidate" ? (
+            <>
+              {isDirty && onUpdate && (
+                <button
+                  onClick={() => onUpdate(buildData())}
+                  disabled={!baseValid}
+                  className="px-3 py-1.5 text-sm text-white rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Update
+                </button>
+              )}
+              <button
+                onClick={() => onSave(buildData())}
+                disabled={!baseValid}
+                className="px-3 py-1.5 text-sm text-white rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDirty ? "Update & Approve" : "Approve"}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => onSave(buildData())}
+              disabled={mode === "add" ? !fullValid : !baseValid}
+              className="px-3 py-1.5 text-sm text-white rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {mode === "edit" ? "Update Metric" : "Add Metric"}
+            </button>
+          )}
         </div>
-        <div>
-          <label className="text-xs text-gray-400 block mb-1">Column *</label>
-          <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100"
-            value={column}
-            onChange={(e) => setColumn(e.target.value)}
-            placeholder="e.g. cdr_agg_day.carrier"
-          />
-        </div>
-      </div>
-      <div>
-        <label className="text-xs text-gray-400 block mb-1">Description</label>
-        <textarea
-          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 h-16"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </div>
-      <div className="grid grid-cols-3 gap-3">
-        <div>
-          <label className="text-xs text-gray-400 block mb-1">Tables</label>
-          <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100"
-            value={tables}
-            onChange={(e) => setTables(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="text-xs text-gray-400 block mb-1">
-            Known Values
-          </label>
-          <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100"
-            value={values}
-            onChange={(e) => setValues(e.target.value)}
-            placeholder="tmo, helium_mobile"
-          />
-        </div>
-        <div>
-          <label className="text-xs text-gray-400 block mb-1">Synonyms</label>
-          <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100"
-            value={synonyms}
-            onChange={(e) => setSynonyms(e.target.value)}
-          />
-        </div>
-      </div>
-      <div className="flex justify-end gap-2 pt-2">
-        <button
-          onClick={onCancel}
-          className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={!name.trim() || !column.trim()}
-          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {initial ? "Update" : "Add"} Dimension
-        </button>
       </div>
     </div>
   );
@@ -381,14 +301,31 @@ function CatalogTab({
   onRefresh: () => void;
 }) {
   const [showAddMetric, setShowAddMetric] = useState(false);
-  const [showAddDimension, setShowAddDimension] = useState(false);
   const [editingMetric, setEditingMetric] = useState<MetricDefinition | null>(
     null,
   );
-  const [editingDimension, setEditingDimension] =
-    useState<DimensionDefinition | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedMetric, setExpandedMetric] = useState<string | null>(null);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+
+  // Build dimension lookup for inline display
+  const dimensionMap = new Map(dimensions.map((d) => [d.name, d]));
+
+  // Collect all unique tags and filter metrics
+  const allTags = [...new Set(metrics.flatMap((m) => m.tags || []))].sort();
+  const filteredMetrics =
+    selectedTags.size === 0
+      ? metrics
+      : metrics.filter((m) => m.tags?.some((t) => selectedTags.has(t)));
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  };
 
   const handleAddMetric = async (data: MetricDefinition) => {
     setError(null);
@@ -402,21 +339,6 @@ function CatalogTab({
       onRefresh();
     } else {
       setError(result.error || "Failed to add metric");
-    }
-  };
-
-  const handleAddDimension = async (data: DimensionDefinition) => {
-    setError(null);
-    const result = await addMetricOrDimension(
-      connection,
-      "dimension",
-      data as unknown as Record<string, unknown>,
-    );
-    if (result.success) {
-      setShowAddDimension(false);
-      onRefresh();
-    } else {
-      setError(result.error || "Failed to add dimension");
     }
   };
 
@@ -437,30 +359,8 @@ function CatalogTab({
     }
   };
 
-  const handleUpdateDimension = async (data: DimensionDefinition) => {
-    if (!editingDimension) return;
-    setError(null);
-    const result = await updateMetricOrDimension(
-      connection,
-      "dimension",
-      editingDimension.name,
-      data as unknown as Record<string, unknown>,
-    );
-    if (result.success) {
-      setEditingDimension(null);
-      onRefresh();
-    } else {
-      setError(result.error || "Failed to update dimension");
-    }
-  };
-
   const handleDeleteMetric = async (name: string) => {
     const result = await deleteMetricOrDimension(connection, "metric", name);
-    if (result.success) onRefresh();
-  };
-
-  const handleDeleteDimension = async (name: string) => {
-    const result = await deleteMetricOrDimension(connection, "dimension", name);
     if (result.success) onRefresh();
   };
 
@@ -509,33 +409,45 @@ function CatalogTab({
                 Edit: {editingMetric.name}
               </h4>
               <MetricForm
+                key={editingMetric.name}
                 initial={editingMetric}
+                mode="edit"
                 onSave={handleUpdateMetric}
                 onCancel={() => setEditingMetric(null)}
               />
             </div>
           )}
 
-          {metrics.length === 0 && !showAddMetric ? (
+          <TagFilter
+            tags={allTags}
+            selected={selectedTags}
+            onToggle={toggleTag}
+          />
+
+          {filteredMetrics.length === 0 && !showAddMetric ? (
             <p className="text-sm text-gray-500">
-              No metrics defined yet. Add one manually or mine the vault for
-              candidates.
+              {metrics.length === 0
+                ? "No metrics defined yet. Add one manually or mine the vault for candidates."
+                : "No metrics match the selected tags."}
             </p>
           ) : (
             <div className="space-y-2">
-              {metrics.map((m) => (
+              {filteredMetrics.map((m) => (
                 <div
                   key={m.name}
                   className="bg-gray-800/50 rounded-lg border border-gray-700/50"
                 >
                   <div
-                    className="flex items-start justify-between p-3 cursor-pointer"
+                    className="flex items-start gap-2 p-3 cursor-pointer"
                     onClick={() =>
                       setExpandedMetric(
                         expandedMetric === m.name ? null : m.name,
                       )
                     }
                   >
+                    <span className="text-gray-500 text-xs mt-1 shrink-0">
+                      {expandedMetric === m.name ? "▼" : "▶"}
+                    </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-white">
@@ -576,151 +488,63 @@ function CatalogTab({
                       >
                         Delete
                       </button>
-                      <span className="text-gray-600 text-xs">
-                        {expandedMetric === m.name ? "▲" : "▼"}
-                      </span>
                     </div>
                   </div>
 
                   {expandedMetric === m.name && (
-                    <div className="px-3 pb-3 border-t border-gray-700/50 pt-2">
-                      <pre className="text-xs text-gray-300 font-mono bg-gray-900 p-2 rounded overflow-x-auto">
-                        {m.sql}
-                      </pre>
+                    <div className="px-3 pb-3 border-t border-gray-700/50 pt-2 ml-5 space-y-2">
+                      <p className="text-xs text-gray-300">{m.description}</p>
+                      {m.sql && (
+                        <pre className="text-xs text-gray-300 font-mono bg-gray-900 p-2 rounded overflow-x-auto">
+                          {m.sql}
+                        </pre>
+                      )}
                       {m.tables && m.tables.length > 0 && (
-                        <div className="mt-2 text-xs text-gray-500">
+                        <div className="text-xs text-gray-500">
                           Tables: {m.tables.join(", ")}
                         </div>
                       )}
                       {m.dimensions && m.dimensions.length > 0 && (
-                        <div className="mt-1 text-xs text-gray-500">
-                          Dimensions: {m.dimensions.join(", ")}
+                        <div className="space-y-1">
+                          <div className="text-xs text-gray-500">
+                            Dimensions:
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {m.dimensions.map((dName) => {
+                              const dim = dimensionMap.get(dName);
+                              return (
+                                <div
+                                  key={dName}
+                                  className="flex items-center gap-1.5 px-2 py-1 bg-gray-900 rounded border border-gray-700/50"
+                                >
+                                  <span className="text-xs text-white">
+                                    {dName}
+                                  </span>
+                                  {dim && (
+                                    <Badge
+                                      className={`text-[10px] ${DIM_TYPE_COLORS[dim.type] || "bg-gray-700 text-gray-300"}`}
+                                    >
+                                      {dim.type}
+                                    </Badge>
+                                  )}
+                                  {dim?.column && (
+                                    <span className="text-[10px] text-gray-500 font-mono">
+                                      {dim.column}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
                       {m.notes && (
-                        <div className="mt-1 text-xs text-gray-400 italic">
+                        <div className="text-xs text-gray-400 italic">
                           {m.notes}
                         </div>
                       )}
                     </div>
                   )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Dimensions Section */}
-      <Card className="bg-gray-900 border-gray-800">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-white text-base">Dimensions</CardTitle>
-              <CardDescription>
-                {dimensions.length} dimension
-                {dimensions.length !== 1 ? "s" : ""} defined
-              </CardDescription>
-            </div>
-            <button
-              onClick={() => setShowAddDimension(true)}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-500"
-            >
-              + Add Dimension
-            </button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {showAddDimension && (
-            <div className="mb-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-              <h4 className="text-sm font-medium text-white mb-3">
-                New Dimension
-              </h4>
-              <DimensionForm
-                onSave={handleAddDimension}
-                onCancel={() => setShowAddDimension(false)}
-              />
-            </div>
-          )}
-
-          {editingDimension && (
-            <div className="mb-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-              <h4 className="text-sm font-medium text-white mb-3">
-                Edit: {editingDimension.name}
-              </h4>
-              <DimensionForm
-                initial={editingDimension}
-                onSave={handleUpdateDimension}
-                onCancel={() => setEditingDimension(null)}
-              />
-            </div>
-          )}
-
-          {dimensions.length === 0 && !showAddDimension ? (
-            <p className="text-sm text-gray-500">
-              No dimensions defined yet. Add one manually or mine the vault for
-              candidates.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {dimensions.map((d) => (
-                <div
-                  key={d.name}
-                  className="flex items-start justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700/50"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-white">
-                        {d.display_name || d.name}
-                      </span>
-                      <Badge
-                        className={
-                          DIM_TYPE_COLORS[d.type] || "bg-gray-700 text-gray-300"
-                        }
-                      >
-                        {d.type}
-                      </Badge>
-                      <span className="text-xs text-gray-500 font-mono">
-                        {d.column}
-                      </span>
-                    </div>
-                    {d.description && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {d.description}
-                      </p>
-                    )}
-                    {d.values && d.values.length > 0 && (
-                      <div className="flex gap-1 mt-1 flex-wrap">
-                        {d.values.slice(0, 5).map((v) => (
-                          <span
-                            key={v}
-                            className="text-[10px] px-1.5 py-0.5 bg-gray-700 text-gray-400 rounded"
-                          >
-                            {v}
-                          </span>
-                        ))}
-                        {d.values.length > 5 && (
-                          <span className="text-[10px] text-gray-500">
-                            +{d.values.length - 5} more
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 ml-2 shrink-0">
-                    <button
-                      onClick={() => setEditingDimension(d)}
-                      className="px-2 py-1 text-xs text-gray-400 hover:text-blue-400"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeleteDimension(d.name)}
-                      className="px-2 py-1 text-xs text-gray-400 hover:text-red-400"
-                    >
-                      Delete
-                    </button>
-                  </div>
                 </div>
               ))}
             </div>
@@ -738,39 +562,42 @@ function CatalogTab({
 function CandidatesTab({
   connection,
   onRefresh,
+  onCandidateCount,
 }: {
   connection: string;
   onRefresh: () => void;
+  onCandidateCount?: (count: number) => void;
 }) {
   const [mining, setMining] = useState(false);
   const [mined, setMined] = useState(false);
   const [metricCandidates, setMetricCandidates] = useState<
     MetricCandidateResult[]
   >([]);
-  const [dimensionCandidates, setDimensionCandidates] = useState<
-    DimensionCandidateResult[]
-  >([]);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
   const [approved, setApproved] = useState<Set<string>>(new Set());
   const [rejected, setRejected] = useState<Set<string>>(new Set());
-  const [typeFilters, setTypeFilters] = useState<Set<string>>(
-    new Set(["temporal", "categorical", "geographic", "entity"]),
-  );
-  const [sourceFilters, setSourceFilters] = useState<Set<string>>(
-    new Set(["examples", "rules", "schema"]),
-  );
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [editingCandidate, setEditingCandidate] = useState<string | null>(null);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
 
-  const handleMine = async () => {
+  const toggleTag = (tag: string) => {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  };
+
+  const handleMine = useCallback(async () => {
     setMining(true);
     setError(null);
     try {
       const result = await mineMetricsCandidates(connection);
       if (result.success) {
         setMetricCandidates(result.metricCandidates);
-        setDimensionCandidates(result.dimensionCandidates);
         setMined(true);
+        onCandidateCount?.(result.metricCandidates.length);
       } else {
         setError(result.error || "Mining failed");
       }
@@ -779,16 +606,17 @@ function CandidatesTab({
     } finally {
       setMining(false);
     }
-  };
+  }, [connection, onCandidateCount]);
 
-  const handleApprove = async (
-    type: "metric" | "dimension",
-    data: Record<string, unknown>,
-    key: string,
-  ) => {
+  // Auto-load candidates (mined + persisted) on mount
+  useEffect(() => {
+    handleMine();
+  }, [handleMine]);
+
+  const handleApprove = async (data: Record<string, unknown>, key: string) => {
     setApproving(key);
     try {
-      const result = await approveCandidate(connection, type, data);
+      const result = await approveCandidate(connection, "metric", data);
       if (result.success) {
         setApproved((prev) => new Set(prev).add(key));
         onRefresh();
@@ -802,6 +630,37 @@ function CandidatesTab({
     }
   };
 
+  const handleUpdate = async (data: Record<string, unknown>, name: string) => {
+    setError(null);
+    try {
+      const result = await updateMetricOrDimension(connection, "metric", name, {
+        ...data,
+        status: "candidate",
+      });
+      if (result.success) {
+        // Update local state with new data
+        setMetricCandidates((prev) =>
+          prev.map((c) =>
+            c.metric.name === name
+              ? {
+                  ...c,
+                  metric: {
+                    ...c.metric,
+                    ...(data as Partial<MetricDefinition>),
+                  },
+                }
+              : c,
+          ),
+        );
+        setEditingCandidate(null);
+      } else {
+        setError(result.error || "Update failed");
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const handleReject = (key: string) => {
     setRejected((prev) => new Set(prev).add(key));
   };
@@ -811,107 +670,33 @@ function CandidatesTab({
       !approved.has(`m:${c.metric.name}`) &&
       !rejected.has(`m:${c.metric.name}`),
   );
-  const visibleDimensions = dimensionCandidates.filter(
-    (c) =>
-      !approved.has(`d:${c.dimension.name}`) &&
-      !rejected.has(`d:${c.dimension.name}`),
-  );
 
-  // Apply type + source filters
-  const filteredDimensions = visibleDimensions.filter(
-    (c) => typeFilters.has(c.dimension.type) && sourceFilters.has(c.source),
-  );
-
-  // Group by semantic category
-  const groupedDimensions = new Map<string, DimensionCandidateResult[]>();
-  for (const c of filteredDimensions) {
-    const cat = c.category || "Other";
-    const group = groupedDimensions.get(cat) || [];
-    group.push(c);
-    groupedDimensions.set(cat, group);
-  }
-  // Sort groups by size (largest first)
-  const sortedGroups = [...groupedDimensions.entries()].sort(
-    (a, b) => b[1].length - a[1].length,
-  );
-
-  const toggleFilter = (
-    set: Set<string>,
-    setter: (s: Set<string>) => void,
-    value: string,
-  ) => {
-    const next = new Set(set);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    setter(next);
-  };
-
-  const toggleGroup = (table: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(table)) next.delete(table);
-      else next.add(table);
-      return next;
-    });
-  };
-
-  const handleBulkApprove = async (candidates: DimensionCandidateResult[]) => {
-    for (const c of candidates) {
-      const key = `d:${c.dimension.name}`;
-      if (!approved.has(key) && !rejected.has(key)) {
-        await handleApprove(
-          "dimension",
-          c.dimension as unknown as Record<string, unknown>,
-          key,
+  const allCandidateTags = [
+    ...new Set(visibleMetrics.flatMap((c) => c.metric.tags || [])),
+  ].sort();
+  const filteredCandidates =
+    selectedTags.size === 0
+      ? visibleMetrics
+      : visibleMetrics.filter((c) =>
+          c.metric.tags?.some((t) => selectedTags.has(t)),
         );
-      }
-    }
-  };
-
-  const handleBulkReject = (candidates: DimensionCandidateResult[]) => {
-    setRejected((prev) => {
-      const next = new Set(prev);
-      for (const c of candidates) {
-        next.add(`d:${c.dimension.name}`);
-      }
-      return next;
-    });
-  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-400">
-            Mine the knowledge vault to discover metric and dimension candidates
-            from training examples, business rules, and schema descriptions.
-          </p>
-        </div>
-        <button
-          onClick={handleMine}
-          disabled={mining}
-          className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-500 disabled:opacity-50 shrink-0"
-        >
-          {mining ? "Mining..." : "Mine Vault"}
-        </button>
-      </div>
-
       {error && (
         <div className="bg-red-900/30 border border-red-700 rounded p-3 text-sm text-red-300">
           {error}
         </div>
       )}
 
-      {mined &&
-        visibleMetrics.length === 0 &&
-        visibleDimensions.length === 0 && (
-          <div className="text-center py-8 text-gray-500">
-            <p className="text-sm">
-              No new candidates found. All candidates have been approved or
-              rejected, or the vault has no material to mine.
-            </p>
-          </div>
-        )}
+      {mined && visibleMetrics.length === 0 && (
+        <div className="text-center py-8 text-gray-500">
+          <p className="text-sm">
+            No new candidates found. All candidates have been approved or
+            rejected, or the vault has no material to mine.
+          </p>
+        </div>
+      )}
 
       {/* Metric Candidates */}
       {visibleMetrics.length > 0 && (
@@ -924,252 +709,117 @@ function CandidatesTab({
               Review and approve metric definitions discovered in the vault
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {visibleMetrics.map((c) => {
-              const key = `m:${c.metric.name}`;
-              const isApproving = approving === key;
-              return (
-                <div
-                  key={key}
-                  className="p-3 bg-gray-800/50 rounded-lg border border-gray-700/50"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-white">
-                          {c.metric.display_name || c.metric.name}
-                        </span>
-                        <ConfidenceBadge value={c.confidence} />
-                        <SourceBadge source={c.source} />
-                      </div>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {c.metric.description}
-                      </p>
-                      {c.metric.sql && !c.metric.sql.startsWith("--") && (
-                        <pre className="text-xs text-gray-500 font-mono mt-1 truncate">
-                          {c.metric.sql.slice(0, 120)}
-                          {c.metric.sql.length > 120 ? "..." : ""}
-                        </pre>
-                      )}
-                      {c.evidence.length > 0 && (
-                        <div className="text-[10px] text-gray-600 mt-1">
-                          Evidence: {c.evidence.join(", ")}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 ml-2 shrink-0">
-                      <button
-                        onClick={() =>
-                          handleApprove(
-                            "metric",
-                            c.metric as unknown as Record<string, unknown>,
-                            key,
-                          )
-                        }
-                        disabled={isApproving}
-                        className="px-2 py-1 text-xs bg-green-700 text-green-100 rounded hover:bg-green-600 disabled:opacity-50"
-                      >
-                        {isApproving ? "..." : "Approve"}
-                      </button>
-                      <button
-                        onClick={() => handleReject(key)}
-                        className="px-2 py-1 text-xs text-gray-400 hover:text-red-400"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Dimension Candidates */}
-      {visibleDimensions.length > 0 && (
-        <Card className="bg-gray-900 border-gray-800">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-white text-base">
-              Dimension Candidates ({visibleDimensions.length})
-            </CardTitle>
-            <CardDescription>
-              Review and approve dimension definitions discovered in the vault
-            </CardDescription>
-
-            {/* Filter bar */}
-            <div className="flex flex-wrap items-center gap-3 mt-3">
-              <span className="text-xs text-gray-500">Type:</span>
-              {(
-                ["temporal", "categorical", "geographic", "entity"] as const
-              ).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => toggleFilter(typeFilters, setTypeFilters, t)}
-                  className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
-                    typeFilters.has(t)
-                      ? `${DIM_TYPE_COLORS[t]} border-transparent`
-                      : "border-gray-600 text-gray-500 bg-transparent"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-
-              <span className="text-xs text-gray-600 mx-1">|</span>
-
-              <span className="text-xs text-gray-500">Source:</span>
-              {(["examples", "rules", "schema"] as const).map((s) => {
-                const sourceColors: Record<string, string> = {
-                  examples: "bg-blue-900/50 text-blue-300",
-                  rules: "bg-purple-900/50 text-purple-300",
-                  schema: "bg-gray-700 text-gray-300",
-                };
+          <CardContent>
+            <TagFilter
+              tags={allCandidateTags}
+              selected={selectedTags}
+              onToggle={toggleTag}
+            />
+            <div className="space-y-2">
+              {filteredCandidates.map((c) => {
+                const key = `m:${c.metric.name}`;
+                const isApproving = approving === key;
+                const isEditing = editingCandidate === c.metric.name;
                 return (
-                  <button
-                    key={s}
-                    onClick={() =>
-                      toggleFilter(sourceFilters, setSourceFilters, s)
-                    }
-                    className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
-                      sourceFilters.has(s)
-                        ? `${sourceColors[s]} border-transparent`
-                        : "border-gray-600 text-gray-500 bg-transparent"
-                    }`}
+                  <div
+                    key={key}
+                    className="bg-gray-800/50 rounded-lg border border-gray-700/50"
                   >
-                    {s}
-                  </button>
+                    <div
+                      className="flex items-start gap-2 p-3 cursor-pointer"
+                      onClick={() =>
+                        setEditingCandidate(isEditing ? null : c.metric.name)
+                      }
+                    >
+                      <span className="text-gray-500 text-xs mt-1 shrink-0">
+                        {isEditing ? "▼" : "▶"}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white">
+                            {c.metric.display_name || c.metric.name}
+                          </span>
+                          {c.metric.tags?.map((t) => (
+                            <Badge
+                              key={t}
+                              className="bg-gray-700 text-gray-300 text-[10px]"
+                            >
+                              {t}
+                            </Badge>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">
+                          {c.metric.description}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 ml-2 shrink-0">
+                        {!isEditing && (
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleApprove(
+                                  c.metric as unknown as Record<
+                                    string,
+                                    unknown
+                                  >,
+                                  key,
+                                );
+                              }}
+                              disabled={isApproving}
+                              className="px-2 py-1 text-xs bg-green-700 text-green-100 rounded hover:bg-green-600 disabled:opacity-50"
+                            >
+                              {isApproving ? "..." : "Approve"}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReject(key);
+                              }}
+                              className="px-2 py-1 text-xs text-gray-400 hover:text-red-400"
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {isEditing && (
+                      <div className="px-3 pb-3 border-t border-gray-700/50 pt-2 ml-5">
+                        {c.evidence.length > 0 && (
+                          <div className="text-[10px] text-gray-500 mb-3">
+                            Evidence: {c.evidence.join(", ")}
+                          </div>
+                        )}
+                        <MetricForm
+                          key={c.metric.name}
+                          initial={c.metric}
+                          mode="candidate"
+                          onSave={(data) => {
+                            handleApprove(
+                              data as unknown as Record<string, unknown>,
+                              key,
+                            );
+                          }}
+                          onUpdate={(data) => {
+                            handleUpdate(
+                              data as unknown as Record<string, unknown>,
+                              c.metric.name,
+                            );
+                          }}
+                          onCancel={() => setEditingCandidate(null)}
+                          onReject={() => {
+                            handleReject(key);
+                            setEditingCandidate(null);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 );
               })}
-
-              <span className="text-xs text-gray-500 ml-auto">
-                Showing {filteredDimensions.length} of{" "}
-                {visibleDimensions.length}
-              </span>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {sortedGroups.map(([table, candidates]) => {
-              const isExpanded = expandedGroups.has(table);
-              return (
-                <div
-                  key={table}
-                  className="rounded-lg border border-gray-700/50 overflow-hidden"
-                >
-                  {/* Group header */}
-                  <div
-                    className="flex items-center justify-between px-3 py-2 bg-gray-800/80 cursor-pointer hover:bg-gray-800"
-                    onClick={() => toggleGroup(table)}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500 text-xs">
-                        {isExpanded ? "▼" : "▶"}
-                      </span>
-                      <span className="text-sm font-medium text-gray-200">
-                        {table}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        ({candidates.length})
-                      </span>
-                    </div>
-                    <div
-                      className="flex items-center gap-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        onClick={() => handleBulkApprove(candidates)}
-                        className="px-2 py-0.5 text-[10px] bg-green-800/50 text-green-300 rounded hover:bg-green-700/50"
-                      >
-                        Approve All
-                      </button>
-                      <button
-                        onClick={() => handleBulkReject(candidates)}
-                        className="px-2 py-0.5 text-[10px] text-gray-500 hover:text-red-400"
-                      >
-                        Reject All
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Group contents */}
-                  {isExpanded && (
-                    <div className="space-y-1 p-2">
-                      {candidates.map((c) => {
-                        const key = `d:${c.dimension.name}`;
-                        const isApprovingThis = approving === key;
-                        return (
-                          <div
-                            key={key}
-                            className="p-2 bg-gray-800/30 rounded border border-gray-700/30"
-                          >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-medium text-white">
-                                    {c.dimension.display_name ||
-                                      c.dimension.name}
-                                  </span>
-                                  <Badge
-                                    className={
-                                      DIM_TYPE_COLORS[c.dimension.type] ||
-                                      "bg-gray-700 text-gray-300"
-                                    }
-                                  >
-                                    {c.dimension.type}
-                                  </Badge>
-                                  <ConfidenceBadge value={c.confidence} />
-                                  <SourceBadge source={c.source} />
-                                </div>
-                                {c.dimension.description && (
-                                  <p className="text-xs text-gray-400 mt-0.5">
-                                    {c.dimension.description}
-                                  </p>
-                                )}
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-xs text-gray-500 font-mono">
-                                    {c.dimension.column}
-                                  </span>
-                                  {c.dimension.tables &&
-                                    c.dimension.tables.length > 0 && (
-                                      <span className="text-[10px] text-gray-600">
-                                        table: {c.dimension.tables.join(", ")}
-                                      </span>
-                                    )}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1 ml-2 shrink-0">
-                                <button
-                                  onClick={() =>
-                                    handleApprove(
-                                      "dimension",
-                                      c.dimension as unknown as Record<
-                                        string,
-                                        unknown
-                                      >,
-                                      key,
-                                    )
-                                  }
-                                  disabled={isApprovingThis}
-                                  className="px-2 py-1 text-xs bg-green-700 text-green-100 rounded hover:bg-green-600 disabled:opacity-50"
-                                >
-                                  {isApprovingThis ? "..." : "Approve"}
-                                </button>
-                                <button
-                                  onClick={() => handleReject(key)}
-                                  className="px-2 py-1 text-xs text-gray-400 hover:text-red-400"
-                                >
-                                  Reject
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </CardContent>
         </Card>
       )}
@@ -1188,6 +838,7 @@ export default function MetricsPage() {
   const [metrics, setMetrics] = useState<MetricDefinition[]>([]);
   const [dimensions, setDimensions] = useState<DimensionDefinition[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [candidateCount, setCandidateCount] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
     const conn = await getActiveConnection();
@@ -1198,12 +849,18 @@ export default function MetricsPage() {
     }
 
     try {
-      const result = await listMetrics(conn);
+      const [result, candidates] = await Promise.all([
+        listMetrics(conn),
+        mineMetricsCandidates(conn).catch(() => null),
+      ]);
       if (result.success) {
         setMetrics(result.metrics);
         setDimensions(result.dimensions);
       } else {
         setError(result.error || "Failed to load metrics");
+      }
+      if (candidates?.success) {
+        setCandidateCount(candidates.metricCandidates.length);
       }
     } catch (e) {
       setError(String(e));
@@ -1236,17 +893,12 @@ export default function MetricsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">
-            Metrics & Dimensions
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Define business metrics and the dimensions they can be sliced by.
-            Mine the knowledge vault to discover candidates automatically.
-          </p>
-        </div>
-        <Badge className="bg-gray-700 text-gray-300">{connection}</Badge>
+      <div>
+        <h1 className="text-2xl font-bold text-white">Metrics</h1>
+        <p className="text-sm text-gray-400 mt-1">
+          Define business metrics with their dimensions. Mine the knowledge
+          vault to discover candidates automatically.
+        </p>
       </div>
 
       {error && (
@@ -1265,7 +917,7 @@ export default function MetricsPage() {
               : "text-gray-400 hover:text-gray-200"
           }`}
         >
-          Catalog ({metrics.length + dimensions.length})
+          Catalog ({metrics.length})
         </button>
         <button
           onClick={() => setTab("candidates")}
@@ -1275,7 +927,7 @@ export default function MetricsPage() {
               : "text-gray-400 hover:text-gray-200"
           }`}
         >
-          Candidates
+          Candidates{candidateCount !== null ? ` (${candidateCount})` : ""}
         </button>
       </div>
 
@@ -1287,7 +939,11 @@ export default function MetricsPage() {
           onRefresh={loadData}
         />
       ) : (
-        <CandidatesTab connection={connection} onRefresh={loadData} />
+        <CandidatesTab
+          connection={connection}
+          onRefresh={loadData}
+          onCandidateCount={setCandidateCount}
+        />
       )}
     </div>
   );

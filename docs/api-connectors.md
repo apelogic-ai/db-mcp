@@ -1,132 +1,230 @@
-# API Connectors
+# Universal Connectors
 
-**Status**: Conceptual
+**Status**: Design
 **Created**: 2026-01-28
-**Related**: [data-gateway.md](data-gateway.md)
+**Updated**: 2026-01-30
+**Related**: [data-gateway.md](data-gateway.md), [metrics-layer.md](metrics-layer.md)
 
 ## Overview
 
-Extend db-mcp to onboard connectors for any API returning structured data (REST, GraphQL, gRPC) alongside existing SQL database support. This enables natural language queries against SaaS platforms (Stripe, HubSpot, Salesforce, Jira, etc.) and internal services, using the same knowledge vault, onboarding flow, and semantic layer that currently powers database connections.
+Extend db-mcp to support three source types through a unified architecture:
 
-## Problem Statement
+| Source Type | Schema Discovery | Data Fetching | Examples |
+|---|---|---|---|
+| **SQL** (existing) | `SHOW TABLES` / `DESCRIBE` | SQL via SQLAlchemy | PostgreSQL, Trino, ClickHouse |
+| **API** (new) | OpenAPI spec / endpoint probing | HTTP calls with pagination | Stripe, HubSpot, Jira |
+| **File** (new) | Header inference / DuckDB `DESCRIBE` | DuckDB reads directly | CSV, Parquet, Excel, JSON |
 
-Most organizations have critical data locked in SaaS tools and internal APIs with no SQL access. Today, querying this data requires:
-- Reading API docs, writing code, handling pagination
-- Manual joins between API data and database records
-- No semantic layer — every query starts from scratch
+All three source types share the same knowledge vault structure. The LLM sees identical `descriptions.yaml` regardless of source. Domain models, business rules, metrics, and examples work unchanged.
 
-Meanwhile, db-mcp already has a mature semantic layer (schema descriptions, domain models, business rules, examples) that is **mostly source-agnostic**. The knowledge layer doesn't care if "customers" lives in PostgreSQL or Stripe — it just needs structured metadata about the data source.
+**The LLM is the planner.** There is no explicit execution plan format. The LLM decides what data it needs, calls the appropriate `get_data()` tool per source, and synthesizes results. For cross-source queries, DuckDB merges the pieces.
 
-## Conceptual Mapping
+## Core Principle: Everything Is a Table
 
-API sources map cleanly onto the relational model that db-mcp already understands:
+The insight that makes this work: API endpoints and files map cleanly onto the relational model that db-mcp already understands.
 
-| SQL Concept | API Equivalent | Example |
-|---|---|---|
-| Catalog | API service name | `stripe`, `hubspot` |
-| Schema | Resource group / API version | `/v1/billing`, `/v1/core` |
-| Table | Endpoint returning a collection | `/customers`, `/invoices` |
-| Column | Field in response object | `customer.name`, `invoice.amount` |
-| Row | Single object in response array | One customer JSON object |
-| Primary key | Resource ID | `customer.id` |
-| Foreign key | ID reference between endpoints | `invoice.customer_id` -> `customer.id` |
-| Sample data | `GET /endpoint?limit=5` | First 5 records |
-| `SELECT * WHERE` | `GET /endpoint?filter=value` | Query parameters |
+| SQL Concept | SQL Source | API Source | File Source |
+|---|---|---|---|
+| Catalog | Database catalog | Service name (`stripe`) | Directory name |
+| Schema | Database schema | API version / group (`/v1`) | Subdirectory |
+| Table | Database table | GET endpoint returning a collection | Individual file |
+| Column | Table column | Response object field | CSV header / JSON key |
+| Row | Table row | Single object in response array | File row / JSON object |
+| Primary key | PK constraint | Resource `id` field | Row number or inferred |
+| Foreign key | FK constraint | ID reference between endpoints | Matching column names |
+| Sample data | `SELECT * LIMIT 5` | `GET /endpoint?limit=5` | First 5 rows |
 
-## Architecture
+Since the LLM context is built from `descriptions.yaml`, and that file uses the same format for all sources, the entire downstream pipeline (domain model generation, business rules, metrics mining, query examples) works without modification.
+
+## How Each Source Type Works
+
+### SQL Sources (Existing)
+
+Today's implementation. No changes needed.
+
+**Schema discovery**: SQLAlchemy `inspect()`, dialect-specific `SHOW` commands.
+**Data fetching**: SQL query via `engine.execute(text(sql))`.
+**What the LLM sees**: `descriptions.yaml` with tables and columns from introspection.
 
 ```
-                    db-mcp
-                      |
-        +-------------+-------------+
-        |                           |
-   SQL Connector              API Connector
-   (existing)                 (new)
-        |                           |
-   SQLAlchemy Engine          HTTP Client
-        |                           |
-   +----+----+              +-------+-------+
-   |         |              |               |
-  Query   Introspect     Execute Plan    Introspect
-  (SQL)   (SHOW/DESC)   (HTTP calls)    (OpenAPI/probe)
-                                |
-                          +-----+-----+
-                          |           |
-                      Direct API   DuckDB
-                      (simple)     (analytics)
+~/.db-mcp/connections/main_db/
+├── .env                    # DATABASE_URL
+├── connector.yaml          # type: sql (optional, inferred from .env)
+├── schema/descriptions.yaml
+├── domain/model.md
+└── ...
 ```
 
-### Connector Interface
+### API Sources (New)
 
-A new abstraction layer sits between the tools and the execution engine:
+**Schema discovery** — three strategies in order of preference:
 
-```python
-class Connector(Protocol):
-    """Abstract connector for any data source."""
-    connector_type: str                           # "sql" | "api"
+1. **OpenAPI / Swagger spec** (best). Parse the spec to extract GET endpoints as "tables" and response schema properties as "columns". OpenAPI specs are often richer than SQL introspection — they include human-written descriptions, parameter constraints, and example values.
 
-    async def test_connection(self) -> dict: ...
-    async def introspect(self) -> SourceSchema: ...
-    async def execute(self, plan: ExecutionPlan) -> QueryResult: ...
+2. **GraphQL introspection**. GraphQL APIs expose their full type system via the introspection query. Types map to tables, fields map to columns, with nullability and relationships included.
 
+3. **Endpoint probing** (fallback). Call each known endpoint with `?limit=1`, infer schema from the response JSON. Detect field types from values, flatten nested objects with dot notation (`address.city`), detect ID references.
 
-class SQLConnector(Connector):
-    """Current db-mcp implementation, refactored behind the interface."""
-    connector_type = "sql"
-    # Wraps SQLAlchemy — no behavior change
+**Data fetching**: HTTP GET with auth, pagination, and rate limiting handled transparently. The fetcher returns rows (list of dicts) — same shape as SQL results.
 
-
-class APIConnector(Connector):
-    """New: executes multi-step API call plans."""
-    connector_type = "api"
-    # HTTP client with auth, pagination, rate limiting
-```
-
-The tools layer (`tools/generation.py`, `tools/onboarding.py`) calls `Connector` methods without knowing the source type. The LLM context-building reads the same vault artifacts regardless.
-
-## Onboarding an API Source
-
-### Connection Setup
-
-```bash
-db-mcp init stripe --type api
-
-# Interactive prompts:
-#   Base URL: https://api.stripe.com
-#   Auth type: bearer / api_key / oauth2
-#   API key: sk_live_...
-#   OpenAPI spec URL (optional): https://raw.githubusercontent.com/.../openapi/spec3.yaml
-```
-
-Stored in the vault:
+**What the LLM sees**: Same `descriptions.yaml`. An API endpoint like `GET /v1/customers` appears as a table named `customers` with columns for each response field.
 
 ```
 ~/.db-mcp/connections/stripe/
-├── .env                          # API_KEY, BASE_URL (gitignored)
-├── connector.yaml                # type: api, auth, spec_url, pagination strategy
-├── schema/
-│   └── descriptions.yaml         # endpoints described as "tables"
-├── domain/
-│   └── model.md                  # business entities
-├── instructions/
-│   └── business_rules.yaml       # "invoice.status=paid means finalized"
-└── examples/
-    └── *.yaml                    # intent -> API call plan
+├── .env                    # STRIPE_API_KEY (gitignored)
+├── connector.yaml          # type: api, base_url, auth, pagination, spec_url
+├── schema/descriptions.yaml
+├── domain/model.md
+└── ...
 ```
 
-**`connector.yaml`** (new file, replaces `.env`-only config for API sources):
+**Nested data handling**: API responses with nested objects get flattened with dot notation. `customer.address.city` becomes column `address_city`. Arrays become separate virtual "tables" with parent ID references: `customer.subscriptions` becomes a `customer_subscriptions` table joinable on `customer_id`.
+
+### File Sources (New)
+
+**Schema discovery**: DuckDB can introspect any supported file format:
+
+```sql
+DESCRIBE SELECT * FROM 'data/sales.csv'
+DESCRIBE SELECT * FROM 'data/events.parquet'
+DESCRIBE SELECT * FROM read_json('data/records.json')
+```
+
+This returns column names and inferred types. For CSV, DuckDB auto-detects delimiters, headers, and types. For Parquet, the schema is embedded. For JSON, types are inferred from values.
+
+**Data fetching**: DuckDB reads files directly — no loading step. A query against a CSV is just `SELECT * FROM 'path/to/file.csv' WHERE ...`.
+
+**What the LLM sees**: Same `descriptions.yaml`. Each file appears as a table. A file `sales_2024.csv` with columns `date, product, amount, region` looks identical to a database table.
+
+```
+~/.db-mcp/connections/local_files/
+├── connector.yaml          # type: file, paths: [~/exports/, ~/data/]
+├── schema/descriptions.yaml
+├── domain/model.md
+└── ...
+```
+
+**Directory watching**: File connections can point at directories. New files matching configured patterns (e.g., `*.csv`, `*.parquet`) are auto-discovered and added to the schema on next introspection.
+
+## Cross-Source Queries
+
+When the LLM needs data from multiple sources, DuckDB acts as the merge engine.
+
+### Flow
+
+```
+User: "Show me Stripe revenue by customer segment from our database"
+
+LLM reasons:
+  1. "revenue" → Stripe charges (API source)
+  2. "customer segment" → internal DB users table (SQL source)
+  3. Need to join on customer email
+
+LLM actions:
+  1. Calls get_data(source="stripe", intent="all charges this month")
+     → API fetcher returns charges rows
+  2. Calls get_data(source="main_db", intent="customer emails and segments")
+     → SQL fetcher returns user rows
+  3. Calls merge_data(
+       datasets=["charges", "users"],
+       join="charges.customer_email = users.email",
+       query="SELECT segment, SUM(amount) as revenue GROUP BY 1"
+     )
+     → DuckDB loads both as temp tables, executes SQL, returns merged result
+  4. LLM presents the result to the user
+```
+
+The LLM doesn't need to know about DuckDB. It just knows:
+- `get_data()` fetches rows from any source
+- `merge_data()` joins multiple fetched datasets using SQL
+
+### DuckDB as Scratch Space
+
+DuckDB runs in-memory, session-scoped. Each `get_data()` call optionally registers its results as a named temp table. The LLM can then write SQL against these tables for joins, aggregations, and transformations.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    DuckDB (in-memory)                │
+│                                                      │
+│  temp.stripe_charges    ← API fetch results          │
+│  temp.db_users          ← SQL query results          │
+│  temp.sales_csv         ← File read results          │
+│                                                      │
+│  SELECT u.segment, SUM(c.amount) as revenue          │
+│  FROM temp.stripe_charges c                          │
+│  JOIN temp.db_users u ON c.email = u.email           │
+│  GROUP BY 1                                          │
+└─────────────────────────────────────────────────────┘
+```
+
+For file sources, DuckDB reads files directly without a temp table step — the file path *is* the table reference.
+
+## MCP Tools
+
+### Data Fetching (Source-Aware)
+
+The existing `get_data()` and `run_sql()` tools evolve to be source-aware:
+
+```
+get_data(intent, source?)
+  → If source is SQL: generates and executes SQL (current behavior)
+  → If source is API: generates HTTP call plan, fetches, returns rows
+  → If source is File: generates DuckDB SQL against file, returns rows
+  → If source omitted: LLM picks based on schema context
+
+run_sql(query_id)
+  → Unchanged for SQL sources
+  → For API/File: executes DuckDB SQL against fetched/file data
+
+merge_data(datasets, query)
+  → Load named datasets into DuckDB temp tables
+  → Execute SQL query against them
+  → Return merged results
+```
+
+### Schema Discovery (Source-Specific)
+
+```
+list_tables(source?)        → Tables/endpoints/files across sources
+describe_table(table)       → Columns with types and descriptions
+sample_table(table, limit)  → Sample rows from any source
+```
+
+These tools already exist for SQL. They extend to cover API endpoints and files using the same return format.
+
+### Connection Management
+
+```
+db-mcp init stripe --type api
+db-mcp init my-data --type file --path ~/exports/
+db-mcp init main-db                          # type: sql (default, existing)
+```
+
+## Connection Configuration
+
+### `connector.yaml`
+
+Each connection has a `connector.yaml` that defines source-specific settings.
+
+**SQL** (optional — `.env` with `DATABASE_URL` is sufficient):
+
+```yaml
+type: sql
+# Everything else comes from .env DATABASE_URL
+```
+
+**API**:
 
 ```yaml
 type: api
 base_url: https://api.stripe.com
 auth:
   type: bearer                    # bearer | api_key | oauth2 | basic
-  token_env: STRIPE_API_KEY       # reference to .env variable
-  header: Authorization           # custom header name if needed
+  token_env: STRIPE_API_KEY       # references .env variable
+  header: Authorization
 spec:
-  type: openapi                   # openapi | graphql_introspection | manual
+  type: openapi                   # openapi | graphql | manual
   url: https://raw.githubusercontent.com/.../spec3.yaml
-  version: "3.0"
 pagination:
   type: cursor                    # cursor | offset | page | link_header
   cursor_param: starting_after
@@ -136,360 +234,33 @@ pagination:
 rate_limit:
   requests_per_second: 25
   retry_on_429: true
-  backoff_strategy: exponential
+allow_writes: false               # safety: GET-only by default
 ```
 
-### Schema Discovery
-
-Three introspection strategies, in order of preference:
-
-**1. OpenAPI / Swagger spec** (best case)
-
-Parse the spec to extract endpoints, request/response schemas, parameter types, descriptions. OpenAPI specs are richer than SQL introspection — they include human-written descriptions, parameter constraints, and example values.
-
-```python
-async def introspect_from_openapi(spec_url: str) -> SourceSchema:
-    """Parse OpenAPI spec into db-mcp schema format.
-
-    Extracts:
-    - GET endpoints returning arrays -> "tables"
-    - Response schema properties -> "columns" with types
-    - Path/query parameters -> filterable fields
-    - Descriptions -> column descriptions (often better than DB)
-    - Nested objects -> flattened with dot notation (address.city)
-    """
-```
-
-**2. GraphQL introspection** (self-describing)
-
-GraphQL APIs expose their full type system via the introspection query. This maps directly to schema descriptions with types, nullability, and relationships.
-
-**3. Endpoint probing** (fallback)
-
-Call each known endpoint with `?limit=1`, infer schema from the response JSON. Less reliable but works for any REST API.
-
-```python
-async def introspect_from_probing(
-    endpoints: list[str],
-) -> SourceSchema:
-    """Call each endpoint, infer schema from response.
-
-    - Detect field types from values (string, number, bool, datetime)
-    - Detect arrays vs objects
-    - Detect ID references (fields ending in _id)
-    - Flatten nested objects with dot notation
-    """
-```
-
-### Onboarding Flow
-
-The existing onboarding phases work with minimal changes:
-
-| Phase | SQL (today) | API (new) |
-|---|---|---|
-| **INIT** | SQLAlchemy `test_connection()` | HTTP `GET /` or health endpoint |
-| **SCHEMA** | `SHOW TABLES`, `DESCRIBE` | OpenAPI parse or endpoint probing |
-| **DOMAIN** | LLM generates from descriptions | Same — source-agnostic |
-| **BUSINESS_RULES** | User adds rules | Same |
-| **QUERY_TRAINING** | User adds SQL examples | User adds API call examples |
-
-The INIT and SCHEMA phases need connector-specific implementations. DOMAIN onward is identical.
-
-## Query Execution
-
-### The Core Difference: Plans vs Queries
-
-SQL sources generate a single query string. API sources generate a **multi-step execution plan** because:
-
-- No server-side joins — must fetch collections separately and join client-side
-- Pagination — a single "query" may require dozens of HTTP calls
-- Dependent fetches — get customer IDs first, then fetch their invoices
-- Filtering varies — some APIs filter server-side, others require client-side
-
-### Execution Plan Format
-
-```python
-class APICallStep(BaseModel):
-    """One HTTP call in an execution plan."""
-    method: str = "GET"
-    endpoint: str                     # /v1/customers
-    params: dict[str, str] = {}       # query parameters
-    extract: list[str] = []           # fields to keep from response
-    paginate: bool = True             # auto-paginate?
-    alias: str                        # reference name for joins
-
-class JoinStep(BaseModel):
-    """Client-side join between two fetched collections."""
-    left: str                         # alias of left collection
-    right: str                        # alias of right collection
-    left_key: str                     # join field
-    right_key: str
-    type: str = "inner"               # inner | left | right
-
-class AggregateStep(BaseModel):
-    """Client-side aggregation."""
-    source: str                       # alias
-    group_by: list[str]
-    aggregations: dict[str, str]      # field -> function (SUM, COUNT, AVG)
-
-class ExecutionPlan(BaseModel):
-    """Complete API query plan."""
-    steps: list[APICallStep | JoinStep | AggregateStep]
-    output_fields: list[str]
-    limit: int | None = None
-```
-
-### Example
-
-User: "Show me total Stripe revenue by customer email this month"
-
-LLM generates:
+**File**:
 
 ```yaml
-steps:
-  - method: GET
-    endpoint: /v1/charges
-    params:
-      created[gte]: "1738368000"    # 2026-01-01
-      status: succeeded
-    extract: [id, amount, currency, customer]
-    paginate: true
-    alias: charges
-
-  - method: GET
-    endpoint: /v1/customers
-    params:
-      ids: "{charges.customer}"     # dependent fetch
-    extract: [id, email]
-    paginate: true
-    alias: customers
-
-  - left: charges
-    right: customers
-    left_key: customer
-    right_key: id
-    type: inner
-
-  - source: joined_result
-    group_by: [email]
-    aggregations:
-      amount: SUM
-output_fields: [email, total_amount]
+type: file
+paths:
+  - ~/exports/                    # directories to scan
+  - ~/data/quarterly_report.csv   # individual files
+patterns:
+  - "*.csv"
+  - "*.parquet"
+  - "*.json"
+ignore:
+  - "*.tmp"
+  - "._*"
 ```
 
-### Two Execution Modes
+### Pre-Built Templates
 
-**Direct API execution** — For simple lookups and small datasets:
-- Execute the plan step by step
-- In-memory joins using Python dicts
-- Good for: "Get customer X", "List recent invoices"
+Common APIs have well-known schemas. Ship templates so users skip manual config:
 
-**DuckDB federation** — For analytics and cross-source joins:
-- Fetch API data into DuckDB temp tables
-- Generate and execute SQL against DuckDB
-- Good for: "Revenue by segment", joins with database tables
-
-```python
-async def execute_plan(plan: ExecutionPlan) -> QueryResult:
-    """Execute API call plan.
-
-    For simple plans (single fetch, no aggregation):
-        -> Direct HTTP calls, return results
-
-    For complex plans (joins, aggregations, cross-source):
-        -> Fetch all collections
-        -> Load into DuckDB as temp tables
-        -> Generate SQL for joins/aggregations
-        -> Execute in DuckDB
-        -> Return results
-    """
+```bash
+db-mcp init my-stripe --template stripe
+# Prompts only for API key, everything else pre-configured
 ```
-
-The LLM doesn't need to decide which mode — the execution engine picks based on plan complexity.
-
-## Mixing and Merging Data from Different Sources
-
-### Cross-Source Relationships
-
-A new vault artifact maps relationships between sources:
-
-```yaml
-# ~/.db-mcp/connections/{name}/relationships/cross_source.yaml
-
-mappings:
-  - name: stripe_customer_to_db_user
-    left:
-      source: stripe           # connection name
-      collection: customers    # endpoint / table
-      field: email
-    right:
-      source: main_db
-      collection: public.users
-      field: email
-    type: one_to_one
-    confidence: high           # user-confirmed
-
-  - name: hubspot_contact_to_stripe
-    left:
-      source: hubspot
-      collection: contacts
-      field: properties.stripe_id
-    right:
-      source: stripe
-      collection: customers
-      field: id
-    type: one_to_one
-    confidence: detected       # auto-detected from field names
-```
-
-These mappings are:
-- **Auto-detected** during onboarding (fields named `*_id`, matching email fields, etc.)
-- **User-confirmed** through the onboarding flow or business rules
-- **Used by the LLM** when generating cross-source query plans
-
-### Cross-Source Query Flow
-
-```
-User: "Show me Stripe revenue by customer segment from our database"
-
-1. Intent analysis:
-   - "Stripe revenue" -> stripe connection, /v1/charges
-   - "customer segment" -> main_db connection, public.users.segment
-   - Cross-source join needed
-
-2. Plan generation:
-   Step 1: GET stripe /v1/charges?created[gte]=... -> charges
-   Step 2: SQL main_db SELECT id, email, segment FROM users -> segments
-   Step 3: Load both into DuckDB
-   Step 4: DuckDB SQL:
-           SELECT s.segment, SUM(c.amount)/100 as revenue
-           FROM charges c
-           JOIN segments s ON c.customer_email = s.email
-           GROUP BY 1
-
-3. Execution:
-   - API connector fetches Stripe charges (paginated)
-   - SQL connector runs users query
-   - DuckDB joins and aggregates
-   - Return unified result
-```
-
-### Unified Domain Model
-
-The domain model spans all connected sources:
-
-```markdown
-# Domain Model
-
-## Customer
-A person or organization that uses our product.
-
-**Sources:**
-- `main_db.public.users` — account info, segment, created_at
-- `stripe.customers` — billing info, payment methods, subscription status
-- `hubspot.contacts` — marketing info, lifecycle stage, last activity
-
-**Join keys:**
-- main_db.users.email = stripe.customers.email = hubspot.contacts.email
-
-**Business rules:**
-- "customer" always means the merged entity from all sources
-- Segment comes from main_db (source of truth)
-- Revenue comes from Stripe (source of truth)
-- When a user says "active customer", check both main_db.users.status = 'active'
-  AND stripe.customers.delinquent = false
-```
-
-### Conflict Resolution
-
-When the same concept exists in multiple sources:
-
-| Conflict | Strategy |
-|---|---|
-| Same field, different values | Define canonical source per field in business rules |
-| Same metric, different calculation | User picks during onboarding, document in rules |
-| Different naming | Business rules synonyms ("Stripe 'charge' = our 'payment'") |
-| Different granularity | Define aggregation rules (daily vs per-event) |
-
-## Challenges
-
-### 1. No Composable Query Language
-
-SQL is declarative and composable — one statement can express complex logic. APIs are imperative: fetch, paginate, filter, join client-side. The LLM must generate **execution plans** instead of queries.
-
-**Mitigation**: The plan format is structured (Pydantic models), and the LLM is good at generating structured output. For analytics queries, DuckDB provides SQL composability after data is fetched.
-
-### 2. Pagination and Rate Limits
-
-A SQL query returns all matching rows. An API query for the same data might require 50+ paginated calls with rate limiting.
-
-**Mitigation**: `connector.yaml` defines pagination strategy per source. The execution engine handles pagination transparently. Rate limiters with exponential backoff prevent 429s. Caching avoids re-fetching unchanged data.
-
-### 3. Data Volume Limits
-
-APIs are not designed for bulk analytics. Fetching 1M Stripe charges via API is impractical.
-
-**Mitigation**:
-- Cost estimation before execution ("This will require ~500 API calls and take ~2 minutes. Proceed?")
-- Encourage users to set up data warehousing for large-scale analytics (Fivetran/Airbyte -> warehouse -> db-mcp SQL connector)
-- Cache fetched data in DuckDB for repeat queries within a session
-- Time-range filters to limit data volume
-
-### 4. Schema Instability
-
-API responses can change without notice. Fields get added, deprecated, or restructured.
-
-**Mitigation**:
-- Periodic re-introspection (compare current response schema to stored schema)
-- Knowledge gaps detection works here too — if the LLM references a field that no longer exists, it surfaces as a gap
-- Pin to API versions where available (`/v1/`, `/v2/`)
-
-### 5. Authentication Complexity
-
-APIs use diverse auth: API keys, OAuth2 (with refresh), JWT, HMAC signatures, custom headers.
-
-**Mitigation**: Auth is configured in `connector.yaml` and handled by the HTTP client layer. Start with bearer/API key (covers 80% of APIs). Add OAuth2 flow later.
-
-### 6. Nested / Non-Tabular Data
-
-API responses often have nested objects and arrays that don't map cleanly to flat tables.
-
-**Mitigation**:
-- Flatten with dot notation: `address.city`, `address.zip`
-- Arrays become separate "tables" with parent ID references: `customer.subscriptions` -> virtual `customer_subscriptions` endpoint
-- Let the LLM understand nesting through schema descriptions
-
-### 7. Write Safety
-
-SQL has `EXPLAIN` for read-only validation. APIs have no equivalent — a POST creates real data.
-
-**Mitigation**:
-- Default to read-only (GET only) unless explicitly enabled
-- Write operations require explicit user confirmation
-- `connector.yaml` has `allow_writes: false` by default
-- Sandbox/test mode detection (Stripe test keys, HubSpot sandbox, etc.)
-
-## Opportunities
-
-### 1. Knowledge Layer is Already Source-Agnostic
-
-Domain models, business rules, examples, metrics, knowledge gaps — all plain text that works regardless of data source. No changes needed to these components.
-
-### 2. OpenAPI Specs Are Richer Than SQL Introspection
-
-An OpenAPI spec provides endpoint descriptions, parameter types, response schemas with descriptions, example values, and deprecation notices. This is better metadata than `SHOW TABLES` + `DESCRIBE` gives for most databases.
-
-### 3. SaaS Data Becomes Queryable
-
-Critical business data locked in Stripe, HubSpot, Salesforce, Jira, GitHub, etc. becomes accessible through the same natural language interface. This is data that most teams can't query today without writing custom code.
-
-### 4. Cross-Source Joins Unlock New Insights
-
-"Revenue by customer segment" requires Stripe (revenue) + internal DB (segments). Today this requires a data engineer to build a pipeline. With API connectors + DuckDB federation, the LLM handles it.
-
-### 5. Pre-Built Connector Templates
-
-Common SaaS APIs have well-known schemas. We can ship templates:
 
 ```yaml
 # templates/stripe.yaml
@@ -505,125 +276,173 @@ collections:
   customers:
     endpoint: /v1/customers
     description: "People or businesses that purchase from you"
-    key_fields: [id, email, name, created, delinquent]
   charges:
     endpoint: /v1/charges
     description: "Payment charges"
-    key_fields: [id, amount, currency, customer, status, created]
-  # ...
+  invoices:
+    endpoint: /v1/invoices
+    description: "Invoices sent to customers"
 ```
 
-Users run `db-mcp init my-stripe --template stripe`, enter their API key, and the connection is immediately usable with pre-configured schema, pagination, and sample descriptions.
+## Cross-Source Relationships
 
-## Implementation Path
+A vault artifact maps how entities relate across sources:
+
+```yaml
+# ~/.db-mcp/connections/{name}/relationships/cross_source.yaml
+mappings:
+  - name: stripe_to_db_customer
+    left:
+      source: stripe
+      table: customers
+      field: email
+    right:
+      source: main_db
+      table: public.users
+      field: email
+    type: one_to_one
+    confidence: confirmed         # confirmed | detected
+
+  - name: csv_sales_to_db_products
+    left:
+      source: sales_files
+      table: sales_2024.csv
+      field: product_id
+    right:
+      source: main_db
+      table: public.products
+      field: id
+    type: many_to_one
+    confidence: detected
+```
+
+These mappings are:
+- **Auto-detected** during onboarding (matching column names, `*_id` patterns, email fields)
+- **User-confirmed** through onboarding or business rules
+- **Used by the LLM** when planning cross-source queries
+
+## Onboarding Flow
+
+The existing onboarding phases work for all source types with minimal changes:
+
+| Phase | SQL (today) | API (new) | File (new) |
+|---|---|---|---|
+| **Init** | `test_connection()` | HTTP GET health check | Verify paths exist |
+| **Schema** | `SHOW TABLES`, `DESCRIBE` | OpenAPI parse / probe | DuckDB `DESCRIBE` |
+| **Review** | User describes tables | User describes endpoints | User describes files |
+| **Domain** | LLM generates model | Same | Same |
+| **Rules** | User adds rules | Same | Same |
+
+Init and Schema need source-specific implementations. Review onward is identical — the LLM works from `descriptions.yaml` regardless of source.
+
+## Challenges and Mitigations
+
+### API-Specific
+
+| Challenge | Mitigation |
+|---|---|
+| No server-side joins | DuckDB handles joins client-side after fetching |
+| Pagination / rate limits | `connector.yaml` defines strategy; fetcher handles transparently |
+| Data volume limits | Cost estimation before fetch ("~500 API calls, ~2 min"); encourage warehousing for bulk analytics |
+| Schema instability | Periodic re-introspection; pin to API versions; knowledge gaps detection |
+| Auth complexity | Start with bearer/API key (80% of APIs); add OAuth2 flow later |
+| Nested responses | Flatten with dot notation; arrays become virtual tables |
+| Write safety | `allow_writes: false` default; GET-only unless explicitly enabled |
+
+### File-Specific
+
+| Challenge | Mitigation |
+|---|---|
+| Schema inference errors | DuckDB is good at type inference; user can override in descriptions.yaml |
+| Large files | DuckDB handles multi-GB files efficiently; streaming reads |
+| File format variations | DuckDB supports CSV, Parquet, JSON, Excel natively |
+| Files changing on disk | Re-introspect on access; warn if schema changed since last onboarding |
+
+### Cross-Source
+
+| Challenge | Mitigation |
+|---|---|
+| Join key discovery | Auto-detect matching column names; user confirms |
+| Type mismatches | DuckDB casts types at join time; warn on lossy casts |
+| Data freshness | API data is live per-query; file data is current on disk; SQL is live |
+| Naming conflicts | Prefix with source name in DuckDB temp tables |
+
+## Opportunities
+
+1. **Knowledge layer is already source-agnostic.** Domain models, business rules, examples, metrics — all plain text that works regardless of source. No changes needed.
+
+2. **OpenAPI specs are richer than SQL introspection.** They include endpoint descriptions, parameter types, response schemas with descriptions, example values, and deprecation notices.
+
+3. **DuckDB reads files natively.** CSV, Parquet, JSON, Excel — zero config, zero loading. A file connection is the simplest onboarding possible.
+
+4. **SaaS data becomes queryable.** Critical business data locked in Stripe, HubSpot, Salesforce, Jira becomes accessible through the same natural language interface.
+
+5. **Cross-source joins unlock new insights.** "Revenue by customer segment" (Stripe + DB), "Sales vs targets" (CSV + DB) — queries that currently require a data engineer.
+
+6. **Pre-built templates reduce friction.** Common APIs ship with known schemas, pagination configs, and sample descriptions.
+
+## Implementation Phases
 
 ### Phase 1: Connector Abstraction
 
-Extract interfaces from SQL-specific code. Create `Connector`, `Introspector` protocols. Move current SQLAlchemy code behind them. No behavior change — just structural refactoring.
+Extract a thin `Connector` protocol from existing SQL code. No behavior change — structural refactoring only.
 
-**Files:**
-- `connectors/__init__.py` — Protocol definitions
-- `connectors/sql.py` — Current implementation, refactored
-- `db/connection.py` — Delegates to connector
-- `db/introspection.py` — Delegates to connector
+- `connectors/__init__.py` — `Connector` protocol: `test_connection()`, `introspect()`, `fetch_data()`
+- `connectors/sql.py` — Current SQLAlchemy implementation behind the protocol
+- `connector.yaml` parsing in config
+- Tools delegate to connector instead of calling SQLAlchemy directly
 
-### Phase 2: API Connector Core
+### Phase 2: File Connector
 
-Implement the API connector with HTTP client, auth, pagination, and OpenAPI introspection.
+Simplest new source type. DuckDB does the heavy lifting.
 
-**Files:**
-- `connectors/api/__init__.py`
+- `connectors/file.py` — Scan directories, infer schema via DuckDB, read files
+- `db-mcp init --type file` CLI flow
+- DuckDB dependency added
+- File-specific onboarding (directory scan → schema review → domain model)
+
+### Phase 3: API Connector
+
 - `connectors/api/connector.py` — HTTP client with auth and rate limiting
-- `connectors/api/introspector.py` — OpenAPI parser + endpoint probing
+- `connectors/api/introspector.py` — OpenAPI parser + endpoint probing fallback
 - `connectors/api/pagination.py` — Cursor, offset, page strategies
-- `connector.yaml` schema in models package
+- `db-mcp init --type api` CLI flow
+- Pre-built templates for common APIs
 
-### Phase 3: Execution Plans
+### Phase 4: Cross-Source Merge
 
-Replace single-query generation with plan generation for API sources. Add DuckDB as local compute engine for joins and aggregations.
-
-**Files:**
-- `connectors/api/planner.py` — LLM generates ExecutionPlan
-- `connectors/api/executor.py` — Execute plan (direct or via DuckDB)
-- Models: `ExecutionPlan`, `APICallStep`, `JoinStep`, `AggregateStep`
-
-### Phase 4: Cross-Source Federation
-
-DuckDB federation layer. Cross-source relationship mapping. Unified query planning across SQL + API sources.
-
-**Files:**
-- `federation/duckdb.py` — DuckDB session management, virtual tables
-- `federation/planner.py` — Multi-source query planning
-- `relationships/cross_source.yaml` — Vault artifact
-- Onboarding updates for relationship detection
+- `merge/duckdb.py` — DuckDB session management, temp table registration
+- `merge_data()` MCP tool — load datasets, execute SQL, return merged results
+- Cross-source relationship detection during onboarding
+- `relationships/cross_source.yaml` vault artifact
 
 ### Phase 5: Templates and Polish
 
-Pre-built connector templates for popular APIs. Auto-detection of API type from URL. Improved onboarding UX for API sources.
-
-**Files:**
-- `templates/stripe.yaml`, `templates/hubspot.yaml`, etc.
-- `connectors/api/templates.py` — Template loader
-- Onboarding flow updates for `--template` flag
-
-## Key Design Decisions
-
-### 1. Query Language for API Sources
-
-| Option | Description | Pros | Cons |
-|---|---|---|---|
-| API call plans (JSON) | LLM generates structured HTTP call sequences | Natural for APIs, precise | New execution engine, no composability |
-| SQL against DuckDB | Fetch data first, then SQL | Reuses SQL generation | Requires pre-fetching, wasteful for simple lookups |
-| **Hybrid** | Simple lookups -> direct API; analytics -> DuckDB SQL | Best of both | More complex routing logic |
-
-**Decision**: Hybrid. The execution engine decides based on plan complexity. Simple lookups (single endpoint, no joins) go direct. Anything with joins or aggregations routes through DuckDB.
-
-### 2. Schema Storage Format
-
-| Option | Description |
-|---|---|
-| Separate format for APIs | New `api_schema.yaml` with endpoint-specific fields |
-| **Unified format** | Same `descriptions.yaml`, API endpoints stored as "tables" |
-
-**Decision**: Unified. API endpoints are stored as tables in `descriptions.yaml` with a `source_type: api` annotation. This means the entire LLM context-building pipeline works unchanged.
-
-### 3. DuckDB Lifecycle
-
-| Option | Description |
-|---|---|
-| Persistent | DuckDB database file per connection |
-| **Session-scoped** | In-memory DuckDB, populated per query |
-| Cached | Persist fetched data across queries, invalidate on TTL |
-
-**Decision**: Start session-scoped (simplest). Add caching in Phase 5 for repeated queries against the same API data.
-
-### 4. Connector Config Location
-
-| Option | Description |
-|---|---|
-| Extend `.env` | Add API fields to existing env file |
-| **New `connector.yaml`** | Dedicated config for connector-specific settings |
-
-**Decision**: New `connector.yaml`. SQL connections continue using `.env` for DATABASE_URL. API connections use `connector.yaml` for base URL, auth type, pagination strategy, rate limits — settings that are too structured for flat env vars. `.env` still holds secrets (API keys).
+- Pre-built connector templates (Stripe, HubSpot, Salesforce, GitHub, Jira)
+- Auto-detection of source type from URL
+- `connector.yaml` validation and migration
+- Documentation and examples
 
 ## Relationship to Data Gateway
 
-This doc focuses on adding API connector support **within db-mcp itself**. The [data-gateway.md](data-gateway.md) describes a broader vision where multiple MCP servers (db-mcp, csv-mcp, superset-mcp) are orchestrated by a gateway.
+This doc describes adding API and file support **within db-mcp itself**. The [data-gateway.md](data-gateway.md) describes a broader vision where multiple specialized MCP servers are orchestrated by a gateway.
 
 These are complementary:
-- **This doc**: db-mcp natively supports SQL + API sources, with DuckDB for cross-source joins
-- **Data gateway**: Multiple specialized MCPs behind a unified proxy, each handling different source types
+- **This doc**: db-mcp natively handles SQL + API + file sources, with DuckDB for cross-source joins
+- **Data gateway**: Multiple MCPs behind a unified proxy, each specializing in different source types
 
-The API connector work here could later be extracted into a standalone `api-mcp` if the gateway architecture is adopted. Or it stays in db-mcp as a built-in capability. Either path works.
+The connector work here stays within db-mcp. If the gateway architecture is adopted later, individual connectors could be extracted into standalone MCPs. Either path works — the unified schema format ensures compatibility.
 
 ## Open Questions
 
-1. **GraphQL as first-class citizen?** GraphQL has its own query language and type system. Should it get a dedicated connector type (`--type graphql`) rather than being treated as a REST variant?
+1. **GraphQL as first-class type?** GraphQL has its own query language and introspection. Dedicated `--type graphql` or treat as API variant?
 
-2. **Webhook / streaming APIs?** Some APIs push data (WebSockets, SSE, webhooks). Out of scope for now, but worth considering for real-time dashboards.
+2. **OAuth2 flows?** Token refresh requires persistent state and sometimes browser-based auth. How does this work in a CLI/MCP context?
 
-3. **API versioning?** When an API ships v2 with breaking changes, how do we handle schema migration? Auto-detect? User-triggered re-introspection?
+3. **API cost tracking?** Some APIs charge per call (Twilio, AWS). Should the fetcher estimate API call costs the way SQL validation estimates query costs?
 
-4. **Credential management for OAuth2?** Token refresh flows require persistent state and sometimes a browser-based auth flow. How does this work in a CLI tool?
+4. **File change detection?** Should file connections detect changes and re-introspect automatically, or only on explicit `onboarding_discover()`?
 
-5. **Cost tracking?** Some APIs charge per call (Twilio, AWS). Should the execution engine estimate API call costs the way SQL validation estimates query costs?
+5. **DuckDB persistence?** Start session-scoped (in-memory). Add optional persistence for caching fetched API data across sessions?
+
+6. **Streaming / real-time?** WebSocket and SSE APIs are out of scope for now, but worth considering for future dashboards.

@@ -57,6 +57,10 @@ class Metric(BaseModel):
         default_factory=list, description="Dimension names this metric can be sliced by"
     )
     notes: str | None = Field(default=None, description="Additional notes or gotchas")
+    status: str = Field(
+        default="approved",
+        description="Lifecycle status: 'candidate' (discovered, needs review) or 'approved' (verified, in catalog)",
+    )
     created_at: datetime | None = Field(default=None, description="When the metric was created")
     created_by: str | None = Field(default=None, description="Who created the metric")
 
@@ -86,6 +90,14 @@ class MetricsCatalog(BaseModel):
         original_count = len(self.metrics)
         self.metrics = [m for m in self.metrics if m.name != name]
         return len(self.metrics) < original_count
+
+    def approved(self) -> list[Metric]:
+        """Return only approved metrics (status != 'candidate')."""
+        return [m for m in self.metrics if m.status != "candidate"]
+
+    def candidates(self) -> list[Metric]:
+        """Return only candidate metrics (status == 'candidate')."""
+        return [m for m in self.metrics if m.status == "candidate"]
 
     def count(self) -> int:
         """Return number of metrics."""
@@ -134,6 +146,10 @@ class Dimension(BaseModel):
     synonyms: list[str] = Field(
         default_factory=list, description="Alternative names from business rules"
     )
+    status: str = Field(
+        default="approved",
+        description="Lifecycle status: 'candidate' (discovered, needs review) or 'approved' (verified, in catalog)",
+    )
     created_at: datetime | None = Field(default=None, description="When the dimension was created")
     created_by: str | None = Field(
         default=None, description="Origin: 'mined', 'manual', or 'approved'"
@@ -164,6 +180,14 @@ class DimensionsCatalog(BaseModel):
         original_count = len(self.dimensions)
         self.dimensions = [d for d in self.dimensions if d.name != name]
         return len(self.dimensions) < original_count
+
+    def approved(self) -> list[Dimension]:
+        """Return only approved dimensions (status != 'candidate')."""
+        return [d for d in self.dimensions if d.status != "candidate"]
+
+    def candidates(self) -> list[Dimension]:
+        """Return only candidate dimensions (status == 'candidate')."""
+        return [d for d in self.dimensions if d.status == "candidate"]
 
     def count(self) -> int:
         """Return number of dimensions."""

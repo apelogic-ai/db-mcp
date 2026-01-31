@@ -2378,12 +2378,15 @@ This knowledge helps the AI generate better queries over time.
         metrics_catalog = load_metrics(connection)
         dimensions_catalog = load_dimensions(connection)
 
+        approved_metrics = metrics_catalog.approved()
+        approved_dimensions = dimensions_catalog.approved()
+
         return {
             "success": True,
-            "metrics": [m.model_dump(mode="json") for m in metrics_catalog.metrics],
-            "dimensions": [d.model_dump(mode="json") for d in dimensions_catalog.dimensions],
-            "metricCount": metrics_catalog.count(),
-            "dimensionCount": dimensions_catalog.count(),
+            "metrics": [m.model_dump(mode="json") for m in approved_metrics],
+            "dimensions": [d.model_dump(mode="json") for d in approved_dimensions],
+            "metricCount": len(approved_metrics),
+            "dimensionCount": len(approved_dimensions),
         }
 
     async def _handle_metrics_add(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -2424,6 +2427,7 @@ This knowledge helps the AI generate better queries over time.
                     tables=data.get("tables", []),
                     values=data.get("values", []),
                     synonyms=data.get("synonyms", []),
+                    status=data.get("status", "approved"),
                 )
 
                 if result.get("added"):
@@ -2451,6 +2455,7 @@ This knowledge helps the AI generate better queries over time.
                     tags=data.get("tags", []),
                     dimensions=data.get("dimensions", []),
                     notes=data.get("notes"),
+                    status=data.get("status", "approved"),
                 )
 
                 if result.get("added"):
@@ -2532,6 +2537,7 @@ This knowledge helps the AI generate better queries over time.
                     tags=data.get("tags", []),
                     dimensions=data.get("dimensions", []),
                     notes=data.get("notes"),
+                    status=data.get("status", "approved"),
                 )
                 if result.get("added"):
                     rel = "metrics/catalog.yaml"
@@ -2604,30 +2610,64 @@ This knowledge helps the AI generate better queries over time.
 
         try:
             from db_mcp.metrics.mining import mine_metrics_and_dimensions
+            from db_mcp.metrics.store import load_dimensions, load_metrics
 
             result = await mine_metrics_and_dimensions(conn_path)
 
+            mined_metric_names = {c.metric.name for c in result.get("metric_candidates", [])}
+            mined_dim_names = {c.dimension.name for c in result.get("dimension_candidates", [])}
+
+            metric_candidates_out = [
+                {
+                    "metric": c.metric.model_dump(mode="json"),
+                    "confidence": c.confidence,
+                    "source": c.source,
+                    "evidence": c.evidence,
+                }
+                for c in result.get("metric_candidates", [])
+            ]
+            dimension_candidates_out = [
+                {
+                    "dimension": c.dimension.model_dump(mode="json"),
+                    "confidence": c.confidence,
+                    "source": c.source,
+                    "evidence": c.evidence,
+                    "category": c.category,
+                }
+                for c in result.get("dimension_candidates", [])
+            ]
+
+            # Include persisted candidates (status=candidate in catalog)
+            # that weren't already found by mining
+            metrics_catalog = load_metrics(connection)
+            for m in metrics_catalog.candidates():
+                if m.name not in mined_metric_names:
+                    metric_candidates_out.append(
+                        {
+                            "metric": m.model_dump(mode="json"),
+                            "confidence": 0.6,
+                            "source": "catalog",
+                            "evidence": [],
+                        }
+                    )
+
+            dimensions_catalog = load_dimensions(connection)
+            for d in dimensions_catalog.candidates():
+                if d.name not in mined_dim_names:
+                    dimension_candidates_out.append(
+                        {
+                            "dimension": d.model_dump(mode="json"),
+                            "confidence": 0.6,
+                            "source": "catalog",
+                            "evidence": [],
+                            "category": "Other",
+                        }
+                    )
+
             return {
                 "success": True,
-                "metricCandidates": [
-                    {
-                        "metric": c.metric.model_dump(mode="json"),
-                        "confidence": c.confidence,
-                        "source": c.source,
-                        "evidence": c.evidence,
-                    }
-                    for c in result.get("metric_candidates", [])
-                ],
-                "dimensionCandidates": [
-                    {
-                        "dimension": c.dimension.model_dump(mode="json"),
-                        "confidence": c.confidence,
-                        "source": c.source,
-                        "evidence": c.evidence,
-                        "category": c.category,
-                    }
-                    for c in result.get("dimension_candidates", [])
-                ],
+                "metricCandidates": metric_candidates_out,
+                "dimensionCandidates": dimension_candidates_out,
             }
 
         except Exception as e:
@@ -2644,11 +2684,12 @@ This knowledge helps the AI generate better queries over time.
                 "data": dict  - the candidate's metric/dimension data (possibly edited)
             }
         """
-        # Approving is the same as adding — the data comes from a candidate
-        # but the user may have edited it before approving
+        # Approving sets status to "approved" so it moves from
+        # the Candidates tab to the Catalog tab
         params_copy = dict(params)
         data = params_copy.get("data", {})
         data["created_by"] = "approved"
+        data["status"] = "approved"
         params_copy["data"] = data
         return await self._handle_metrics_add(params_copy)
 

@@ -14,13 +14,9 @@ def temp_provider(monkeypatch):
         conn_path = Path(tmpdir) / "connections" / "test-conn"
         conn_path.mkdir(parents=True)
 
-        # Patch get_provider_dir everywhere it's used
+        # Patch _get_connection_dir to use temp directory
         monkeypatch.setattr(
-            "db_mcp.onboarding.state.get_provider_dir",
-            lambda provider_id: conn_path,
-        )
-        monkeypatch.setattr(
-            "db_mcp.metrics.store.get_provider_dir",
+            "db_mcp.metrics.store._get_connection_dir",
             lambda provider_id: conn_path,
         )
 

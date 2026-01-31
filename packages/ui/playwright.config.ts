@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const port = process.env.PW_PORT ? parseInt(process.env.PW_PORT) : 3000;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -9,7 +11,7 @@ export default defineConfig({
   reporter: "html",
 
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: `http://localhost:${port}`,
     colorScheme: "dark",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
@@ -23,8 +25,8 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "bun run dev",
-    url: "http://localhost:3000",
+    command: `bun run dev --port ${port}`,
+    url: `http://localhost:${port}`,
     reuseExistingServer: !process.env.CI,
   },
 });

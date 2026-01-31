@@ -194,6 +194,7 @@ async def _metrics_approve(
             tags=tags,
             dimensions=dimensions,
             notes=notes,
+            status="approved",
         )
         return {
             "approved": result.get("added", False),
@@ -222,6 +223,7 @@ async def _metrics_approve(
             dim_type=dim_type,
             tables=tables,
             values=values,
+            status="approved",
         )
         return {
             "approved": result.get("added", False),

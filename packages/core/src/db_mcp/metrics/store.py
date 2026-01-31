@@ -17,12 +17,15 @@ from db_mcp_models import (
     MetricsCatalog,
 )
 
-from db_mcp.onboarding.state import get_provider_dir
+
+def _get_connection_dir(provider_id: str) -> Path:
+    """Resolve connection directory from connection name."""
+    return Path.home() / ".db-mcp" / "connections" / provider_id
 
 
 def get_metrics_dir(provider_id: str) -> Path:
     """Get path to metrics directory."""
-    return get_provider_dir(provider_id) / "metrics"
+    return _get_connection_dir(provider_id) / "metrics"
 
 
 def get_catalog_file_path(provider_id: str) -> Path:
@@ -66,6 +69,7 @@ def _metric_from_dict(data: dict) -> Metric:
         tags=data.get("tags", []),
         dimensions=data.get("dimensions", []),
         notes=data.get("notes"),
+        status=data.get("status", "approved"),
         created_at=created_at,
         created_by=data.get("created_by"),
     )
@@ -108,6 +112,9 @@ def _metric_to_dict(metric: Metric) -> dict:
 
     if metric.created_at:
         result["created_at"] = metric.created_at.isoformat()
+
+    if metric.status and metric.status != "approved":
+        result["status"] = metric.status
 
     if metric.created_by:
         result["created_by"] = metric.created_by
@@ -211,6 +218,7 @@ def add_metric(
     tags: list[str] | None = None,
     dimensions: list[str] | None = None,
     notes: str | None = None,
+    status: str = "approved",
 ) -> dict:
     """Add a new metric to the catalog.
 
@@ -250,6 +258,7 @@ def add_metric(
         tags=tags or [],
         dimensions=dimensions or [],
         notes=notes,
+        status=status,
         created_at=datetime.now(UTC),
     )
 
@@ -347,6 +356,7 @@ def _dimension_from_dict(data: dict) -> Dimension:
         tables=data.get("tables", []),
         values=data.get("values", []),
         synonyms=data.get("synonyms", []),
+        status=data.get("status", "approved"),
         created_at=created_at,
         created_by=data.get("created_by"),
     )
@@ -372,6 +382,9 @@ def _dimension_to_dict(dimension: Dimension) -> dict:
 
     if dimension.synonyms:
         result["synonyms"] = dimension.synonyms
+
+    if dimension.status and dimension.status != "approved":
+        result["status"] = dimension.status
 
     if dimension.created_at:
         result["created_at"] = dimension.created_at.isoformat()
@@ -455,6 +468,7 @@ def add_dimension(
     tables: list[str] | None = None,
     values: list[str] | None = None,
     synonyms: list[str] | None = None,
+    status: str = "approved",
 ) -> dict:
     """Add a new dimension to the catalog."""
     catalog = load_dimensions(provider_id)
@@ -473,6 +487,7 @@ def add_dimension(
         tables=tables or [],
         values=values or [],
         synonyms=synonyms or [],
+        status=status,
         created_at=datetime.now(UTC),
         created_by="manual",
     )

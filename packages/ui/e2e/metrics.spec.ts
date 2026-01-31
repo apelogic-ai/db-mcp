@@ -3,23 +3,23 @@ import { test, expect, mockData } from "./fixtures";
 test.describe("Metrics Page", () => {
   // ── Catalog Tab ─────────────────────────────────────────────
 
-  test("renders page header with connection badge", async ({ page }) => {
+  test("renders page header", async ({ page }) => {
     await page.goto("/metrics");
 
     const main = page.locator("main");
-    await expect(
-      main.getByRole("heading", { name: "Metrics & Dimensions" }),
-    ).toBeVisible();
-    await expect(main.getByText("production")).toBeVisible();
+    await expect(main.getByRole("heading", { name: "Metrics" })).toBeVisible();
   });
 
-  test("displays catalog tab with metrics and dimensions", async ({ page }) => {
+  test("displays catalog tab with metrics", async ({ page }) => {
     await page.goto("/metrics");
 
     const main = page.locator("main");
 
-    // Catalog tab is active by default
-    await expect(main.getByText("Catalog (4)")).toBeVisible();
+    // Catalog tab is active by default (metrics count only)
+    await expect(main.getByText("Catalog (2)")).toBeVisible();
+
+    // Candidate count loads on page init
+    await expect(main.getByText("Candidates (2)")).toBeVisible();
 
     // Metrics section
     await expect(main.getByText("2 metrics defined")).toBeVisible();
@@ -29,19 +29,6 @@ test.describe("Metrics Page", () => {
     // Tags
     await expect(main.getByText("engagement").first()).toBeVisible();
     await expect(main.getByText("kpi").first()).toBeVisible();
-
-    // Dimensions section
-    await expect(main.getByText("2 dimensions defined")).toBeVisible();
-    await expect(main.getByText("Carrier", { exact: true })).toBeVisible();
-    await expect(main.getByText("Report Date", { exact: true })).toBeVisible();
-
-    // Dimension type badges
-    await expect(main.getByText("categorical")).toBeVisible();
-    await expect(main.getByText("temporal")).toBeVisible();
-
-    // Known values
-    await expect(main.getByText("tmo")).toBeVisible();
-    await expect(main.getByText("helium_mobile")).toBeVisible();
   });
 
   test("expanding a metric shows SQL and details", async ({ page }) => {
@@ -60,8 +47,13 @@ test.describe("Metrics Page", () => {
     // Tables info
     await expect(main.getByText("Tables: sessions")).toBeVisible();
 
-    // Dimensions info
-    await expect(main.getByText("Dimensions: carrier, city")).toBeVisible();
+    // Dimensions shown inline as badges
+    await expect(main.getByText("Dimensions:")).toBeVisible();
+    await expect(main.getByText("carrier", { exact: true })).toBeVisible();
+    await expect(main.getByText("city", { exact: true })).toBeVisible();
+
+    // Dimension type badge from registry lookup
+    await expect(main.getByText("categorical")).toBeVisible();
 
     // Notes
     await expect(main.getByText("Excludes test accounts")).toBeVisible();
@@ -76,9 +68,6 @@ test.describe("Metrics Page", () => {
     await expect(main.getByText("Catalog (0)")).toBeVisible();
     await expect(
       main.getByText("No metrics defined yet").first(),
-    ).toBeVisible();
-    await expect(
-      main.getByText("No dimensions defined yet").first(),
     ).toBeVisible();
   });
 
@@ -118,41 +107,6 @@ test.describe("Metrics Page", () => {
         name: "new_metric",
         description: "A new test metric",
         sql: "SELECT COUNT(*) FROM test_table",
-      },
-    });
-  });
-
-  test("+ Add Dimension opens form and submits", async ({ page, bicpMock }) => {
-    await page.goto("/metrics");
-
-    const main = page.locator("main");
-
-    // Click Add Dimension
-    await main.getByRole("button", { name: "+ Add Dimension" }).click();
-
-    // Form fields appear
-    await expect(main.getByText("New Dimension")).toBeVisible();
-
-    // Fill form - use exact match to avoid "e.g. Carrier" (display name)
-    await main.getByPlaceholder("e.g. carrier", { exact: true }).fill("region");
-    await main
-      .getByPlaceholder("e.g. cdr_agg_day.carrier")
-      .fill("users.region");
-
-    // Submit
-    await main
-      .getByRole("button", { name: "Add Dimension", exact: true })
-      .click();
-
-    // Verify the BICP call
-    const calls = bicpMock.getCalls("metrics/add");
-    expect(calls.length).toBe(1);
-    expect(calls[0].params).toMatchObject({
-      connection: "production",
-      type: "dimension",
-      data: {
-        name: "region",
-        column: "users.region",
       },
     });
   });
@@ -210,7 +164,10 @@ test.describe("Metrics Page", () => {
 
   // ── Candidates Tab ──────────────────────────────────────────
 
-  test("switching to Candidates tab shows mine button", async ({ page }) => {
+  test("switching to Candidates tab auto-loads candidates", async ({
+    page,
+    bicpMock,
+  }) => {
     await page.goto("/metrics");
 
     const main = page.locator("main");
@@ -218,82 +175,59 @@ test.describe("Metrics Page", () => {
     // Switch to Candidates tab
     await main.getByRole("button", { name: "Candidates" }).click();
 
-    // Mine button is visible
-    await expect(
-      main.getByRole("button", { name: "Mine Vault" }),
-    ).toBeVisible();
-
-    // Description text
-    await expect(
-      main.getByText("Mine the knowledge vault to discover metric"),
-    ).toBeVisible();
-  });
-
-  test("Mine Vault returns candidates", async ({ page, bicpMock }) => {
-    await page.goto("/metrics");
-
-    const main = page.locator("main");
-
-    // Switch to Candidates tab
-    await main.getByRole("button", { name: "Candidates" }).click();
-
-    // Click Mine
-    await main.getByRole("button", { name: "Mine Vault" }).click();
-
-    // Metric candidates appear
+    // Candidates auto-load on mount — metric candidates appear
     await expect(main.getByText("Metric Candidates (2)")).toBeVisible();
     await expect(main.getByText("Count Sessions")).toBeVisible();
     await expect(main.getByText("Avg Duration")).toBeVisible();
 
-    // Dimension candidates section with grouping
-    await expect(main.getByText("Dimension Candidates (1)")).toBeVisible();
-
-    // Dimensions are grouped by semantic category — "Location" group visible but collapsed
-    await expect(main.getByText("Location", { exact: true })).toBeVisible();
-
-    // "City" not visible until group is expanded
-    await expect(main.getByText("City", { exact: true })).not.toBeVisible();
-
-    // Expand the Location group
-    await main.getByText("Location", { exact: true }).click();
-    await expect(main.getByText("City", { exact: true })).toBeVisible();
-
-    // Confidence badges (metrics visible, dimension now expanded)
-    await expect(main.getByText("70%")).toBeVisible();
-    await expect(main.getByText("50%")).toBeVisible();
-    await expect(main.getByText("60%")).toBeVisible();
-
-    // Source badges
-    await expect(main.getByText("examples").first()).toBeVisible();
-
-    // Evidence
-    await expect(main.getByText("example_001.yaml").first()).toBeVisible();
-
-    // Approve and Reject buttons: 2 metric + 1 dimension individual (exact to exclude "Approve All")
+    // Approve and Reject buttons (2 metric candidates)
     const approveButtons = main.getByRole("button", {
       name: "Approve",
       exact: true,
     });
-    expect(await approveButtons.count()).toBe(3);
+    expect(await approveButtons.count()).toBe(2);
 
     const rejectButtons = main.getByRole("button", {
       name: "Reject",
       exact: true,
     });
-    expect(await rejectButtons.count()).toBe(3);
+    expect(await rejectButtons.count()).toBe(2);
 
-    // Bulk actions on group header
-    await expect(
-      main.getByRole("button", { name: "Approve All" }),
-    ).toBeVisible();
-    await expect(
-      main.getByRole("button", { name: "Reject All" }),
-    ).toBeVisible();
-
-    // Verify mine call was made
+    // Verify mine calls: page load + tab mount (may double in React strict mode)
     const calls = bicpMock.getCalls("metrics/candidates");
-    expect(calls.length).toBe(1);
+    expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(calls[0].params).toMatchObject({ connection: "production" });
+  });
+
+  test("expanding a metric candidate shows editable form", async ({ page }) => {
+    await page.goto("/metrics");
+
+    const main = page.locator("main");
+
+    // Switch to Candidates tab, wait for auto-load
+    await main.getByRole("button", { name: "Candidates" }).click();
+    await expect(main.getByText("Count Sessions")).toBeVisible();
+
+    // Click to expand — opens edit form
+    await main.getByText("Count Sessions").click();
+
+    // Form fields appear pre-filled
+    const nameInput = main.getByPlaceholder("e.g. daily_active_users");
+    await expect(nameInput).toHaveValue("count_sessions");
+
+    // SQL field pre-filled
+    const sqlField = main.getByPlaceholder(
+      "SELECT COUNT(DISTINCT user_id) FROM ...",
+    );
+    await expect(sqlField).toHaveValue("SELECT COUNT(*) FROM sessions");
+
+    // Evidence shown
+    await expect(main.getByText("example_001.yaml")).toBeVisible();
+
+    // Approve button (green) in the form — use first() since collapsed row also has one
+    await expect(
+      main.getByRole("button", { name: "Approve", exact: true }).first(),
+    ).toBeVisible();
   });
 
   test("Approve candidate calls metrics/approve", async ({
@@ -304,11 +238,8 @@ test.describe("Metrics Page", () => {
 
     const main = page.locator("main");
 
-    // Switch to Candidates, mine
+    // Switch to Candidates, wait for auto-load
     await main.getByRole("button", { name: "Candidates" }).click();
-    await main.getByRole("button", { name: "Mine Vault" }).click();
-
-    // Wait for candidates
     await expect(main.getByText("Count Sessions")).toBeVisible();
 
     // Approve first metric candidate
@@ -328,11 +259,8 @@ test.describe("Metrics Page", () => {
 
     const main = page.locator("main");
 
-    // Switch to Candidates, mine
+    // Switch to Candidates, wait for auto-load
     await main.getByRole("button", { name: "Candidates" }).click();
-    await main.getByRole("button", { name: "Mine Vault" }).click();
-
-    // Wait for candidates
     await expect(main.getByText("Count Sessions")).toBeVisible();
 
     // Reject first metric candidate
@@ -348,9 +276,8 @@ test.describe("Metrics Page", () => {
 
     const main = page.locator("main");
 
-    // Switch to Candidates, mine
+    // Switch to Candidates tab — auto-mines on mount
     await main.getByRole("button", { name: "Candidates" }).click();
-    await main.getByRole("button", { name: "Mine Vault" }).click();
 
     // Empty message
     await expect(main.getByText("No new candidates found")).toBeVisible();
