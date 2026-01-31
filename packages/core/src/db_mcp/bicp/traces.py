@@ -1072,6 +1072,7 @@ def _check_knowledge_status(connection_path: Path) -> dict:
         "hasDomain": False,
         "exampleCount": 0,
         "ruleCount": 0,
+        "metricCount": 0,
     }
 
     if not connection_path or not connection_path.exists():
@@ -1106,6 +1107,22 @@ def _check_knowledge_status(connection_path: Path) -> dict:
                 data = yaml.safe_load(f) or {}
             rules = data.get("rules", [])
             status["ruleCount"] = len(rules) if isinstance(rules, list) else 0
+        except Exception:
+            pass
+
+    # Metrics catalog (count only approved metrics)
+    catalog_file = connection_path / "metrics" / "catalog.yaml"
+    if catalog_file.exists():
+        try:
+            import yaml
+
+            with open(catalog_file) as f:
+                data = yaml.safe_load(f) or {}
+            metrics = data.get("metrics", [])
+            if isinstance(metrics, list):
+                status["metricCount"] = sum(
+                    1 for m in metrics if isinstance(m, dict) and m.get("status") != "candidate"
+                )
         except Exception:
             pass
 

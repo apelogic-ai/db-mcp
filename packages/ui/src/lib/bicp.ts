@@ -470,6 +470,7 @@ export interface InsightsAnalysis {
     hasDomain: boolean;
     exampleCount: number;
     ruleCount: number;
+    metricCount: number;
   };
   insights: {
     generationCalls: number;

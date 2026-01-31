@@ -556,9 +556,15 @@ function SemanticLayerCard({
       ok: status.ruleCount > 0,
       detail: `${status.ruleCount} defined`,
     },
+    {
+      label: "Metrics",
+      ok: (status.metricCount ?? 0) > 0,
+      detail: `${status.metricCount ?? 0} approved`,
+    },
   ];
 
   const completeness = items.filter((i) => i.ok).length;
+  const total = items.length;
 
   return (
     <Card className="bg-gray-900 border-gray-800">
@@ -568,14 +574,14 @@ function SemanticLayerCard({
           <Badge
             variant="secondary"
             className={
-              completeness === 4
+              completeness === total
                 ? "bg-green-900/50 text-green-400"
                 : completeness >= 2
                   ? "bg-yellow-900/50 text-yellow-400"
                   : "bg-red-900/50 text-red-400"
             }
           >
-            {completeness}/4
+            {completeness}/{total}
           </Badge>
         </CardTitle>
         <CardDescription className="text-gray-500 text-xs">
