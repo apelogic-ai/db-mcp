@@ -496,6 +496,7 @@ async def _onboarding_discover(
                 file=sys.stderr,
                 flush=True,
             )
+            # Keep None catalogs for flat-hierarchy connectors (e.g. file/DuckDB)
             state.catalogs_discovered = [c for c in catalogs if c is not None]
         except Exception as e:
             print(f"[DISCOVERY] Error discovering catalogs: {e}", file=sys.stderr, flush=True)
@@ -534,7 +535,19 @@ async def _onboarding_discover(
                                 "full_name": f"{catalog}.{schema}" if catalog else schema,
                             }
                         )
-            state.schemas_discovered = all_schemas
+                    else:
+                        # Flat-hierarchy connector (e.g. file/DuckDB): no named schemas
+                        all_schemas_with_catalog.append(
+                            {
+                                "catalog": catalog,
+                                "schema": None,
+                                "full_name": "(default)",
+                            }
+                        )
+            # Store schema names; use sentinel for flat-hierarchy connectors
+            state.schemas_discovered = (
+                all_schemas if all_schemas else (["(default)"] if all_schemas_with_catalog else [])
+            )
             print(
                 f"[DISCOVERY] Total schemas discovered: {len(all_schemas)}",
                 file=sys.stderr,
@@ -623,9 +636,12 @@ async def _onboarding_discover(
         for schema in schemas:
             if schema is not None:
                 all_schemas_filtered.append({"catalog": catalog, "schema": schema})
+            else:
+                # Flat-hierarchy connector (e.g. file/DuckDB): no named schemas
+                all_schemas_filtered.append({"catalog": catalog, "schema": None})
 
     # Update state with filtered schemas
-    state.schemas_discovered = [s["schema"] for s in all_schemas_filtered]
+    state.schemas_discovered = [s["schema"] or "(default)" for s in all_schemas_filtered]
     total_schemas = len(all_schemas_filtered)
 
     print(

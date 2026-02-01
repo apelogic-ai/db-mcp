@@ -66,10 +66,53 @@ def _make_mock_connector(connected=True, error=None):
     return mock
 
 
+def _make_mock_file_connector():
+    """Create a mock file connector with flat hierarchy (None catalog/schema)."""
+    mock = MagicMock()
+    mock.test_connection.return_value = {
+        "connected": True,
+        "dialect": "duckdb",
+        "sources": {"users_export": 1, "orders_export": 1},
+        "error": None,
+    }
+    mock.get_dialect.return_value = "duckdb"
+    mock.get_catalogs.return_value = [None]
+    mock.get_schemas.return_value = [None]
+    mock.get_tables.return_value = [
+        {
+            "name": "users_export",
+            "schema": None,
+            "catalog": None,
+            "type": "view",
+            "full_name": "users_export",
+        },
+        {
+            "name": "orders_export",
+            "schema": None,
+            "catalog": None,
+            "type": "view",
+            "full_name": "orders_export",
+        },
+    ]
+    mock.get_columns.return_value = [
+        {"name": "id", "type": "BIGINT", "nullable": False},
+        {"name": "email", "type": "VARCHAR", "nullable": True},
+    ]
+    return mock
+
+
 @pytest.fixture
 def mock_connector():
     """Shared mock connector used by mock_db_connection and mock_introspection."""
     mock = _make_mock_connector()
+    with patch("db_mcp.tools.onboarding.get_connector", return_value=mock):
+        yield mock
+
+
+@pytest.fixture
+def mock_file_connector():
+    """Mock file connector for flat-hierarchy testing."""
+    mock = _make_mock_file_connector()
     with patch("db_mcp.tools.onboarding.get_connector", return_value=mock):
         yield mock
 
@@ -201,6 +244,43 @@ class TestOnboardingDiscover:
         state = load_state("test-provider")
         assert state.phase == OnboardingPhase.SCHEMA
         assert state.tables_total == 2
+
+        # Verify schema file created
+        schema_file = get_schema_file_path("test-provider")
+        assert schema_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_discover_file_connector_flat_hierarchy(
+        self, temp_connection_dir, mock_file_connector
+    ):
+        """Test discovery with file connector (None catalogs/schemas).
+
+        File connectors return [None] for catalogs and schemas since they
+        have no hierarchy. Discovery must still find tables.
+        """
+        # Start onboarding
+        await _onboarding_start(provider_id="test-provider")
+
+        # Phase 1: structure discovery — should succeed with flat hierarchy
+        structure_result = await _onboarding_discover(
+            provider_id="test-provider", phase="structure"
+        )
+        assert structure_result["discovered"] is True
+        assert structure_result["discovery_phase"] == "structure"
+
+        # Phase 2: tables discovery — must not be blocked by empty schemas
+        tables_result = await _onboarding_discover(provider_id="test-provider", phase="tables")
+        assert tables_result["discovered"] is True
+        assert tables_result["discovery_phase"] == "tables"
+        assert tables_result["tables_found"] == 2
+        assert tables_result["phase"] == "schema"
+
+        # Verify state
+        state = load_state("test-provider")
+        assert state.phase == OnboardingPhase.SCHEMA
+        assert state.tables_total == 2
+        assert "users_export" in state.tables_discovered
+        assert "orders_export" in state.tables_discovered
 
         # Verify schema file created
         schema_file = get_schema_file_path("test-provider")

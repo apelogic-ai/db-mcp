@@ -122,7 +122,7 @@ def create_initial_schema(
         table_descriptions.append(
             TableDescription(
                 name=t.get("name", ""),
-                schema_name=t.get("schema", "public"),
+                schema_name=t.get("schema") or "default",
                 catalog_name=t.get("catalog"),  # 3-level hierarchy support
                 full_name=t.get("full_name"),
                 description=None,
