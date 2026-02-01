@@ -1169,6 +1169,7 @@ async def _onboarding_approve(
     save_schema_descriptions(schema)
 
     # Clear current table
+    approved_table = state.current_table
     state.current_table = None
     save_state(state)
 
@@ -1176,9 +1177,45 @@ async def _onboarding_approve(
     tables_described = counts.get("approved", 0) + counts.get("skipped", 0)
     remaining = state.tables_total - tables_described
 
+    # If all tables described, advance to domain phase
+    if remaining == 0:
+        state.phase = OnboardingPhase.DOMAIN
+        save_state(state)
+        gaps_found = _run_schema_gap_scan(provider_id)
+
+        next_steps = [
+            "Generate domain model with mcp_domain_generate",
+            "Add business rules for SQL generation",
+            "Add query examples",
+        ]
+        if gaps_found > 0:
+            next_steps.insert(
+                0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)"
+            )
+
+        result: dict = {
+            "approved": True,
+            "table_name": approved_table,
+            "tables_described": tables_described,
+            "tables_total": state.tables_total,
+            "phase": state.phase.value,
+            "progress": f"{tables_described}/{state.tables_total}",
+            "guidance": {
+                "summary": "Schema phase complete! All tables documented.",
+                "next_steps": next_steps,
+                "suggested_response": (
+                    f"✓ **Saved!** Progress: {tables_described}/{state.tables_total}\n\n"
+                    "All tables are now described! Let's move to the domain model."
+                ),
+            },
+        }
+        if gaps_found > 0:
+            result["knowledge_gaps_detected"] = gaps_found
+        return result
+
     return {
         "approved": True,
-        "table_name": state.current_table,
+        "table_name": approved_table,
         "tables_described": tables_described,
         "tables_total": state.tables_total,
         "progress": f"{tables_described}/{state.tables_total}",
@@ -1188,19 +1225,10 @@ async def _onboarding_approve(
             "next_steps": [
                 "Continue to the next table",
                 "Or bulk-approve remaining tables",
-            ]
-            if remaining > 0
-            else [
-                "Move to business rules phase",
-                "Add query examples",
             ],
             "suggested_response": (
                 f"✓ **Saved!** Progress: {tables_described}/{state.tables_total}\n\n"
-                + (
-                    f"{remaining} tables to go. Ready for the next one?"
-                    if remaining > 0
-                    else "All tables are now described! Let's move to business rules."
-                )
+                f"{remaining} tables to go. Ready for the next one?"
             ),
         },
     }
@@ -1256,6 +1284,41 @@ async def _onboarding_skip(provider_id: str | None = None) -> dict:
     tables_described = counts.get("approved", 0) + counts.get("skipped", 0)
     remaining = state.tables_total - tables_described
 
+    # If all tables described, advance to domain phase
+    if remaining == 0:
+        state.phase = OnboardingPhase.DOMAIN
+        save_state(state)
+        gaps_found = _run_schema_gap_scan(provider_id)
+
+        next_steps = [
+            "Generate domain model with mcp_domain_generate",
+            "Add business rules for SQL generation",
+        ]
+        if gaps_found > 0:
+            next_steps.insert(
+                0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)"
+            )
+
+        result: dict = {
+            "skipped": True,
+            "table_name": skipped_table,
+            "tables_described": tables_described,
+            "tables_total": state.tables_total,
+            "phase": state.phase.value,
+            "progress": f"{tables_described}/{state.tables_total}",
+            "guidance": {
+                "summary": "Schema phase complete! All tables processed.",
+                "next_steps": next_steps,
+                "suggested_response": (
+                    f"↷ **Skipped.** Progress: {tables_described}/{state.tables_total}\n\n"
+                    "All tables processed! Let's move to the domain model."
+                ),
+            },
+        }
+        if gaps_found > 0:
+            result["knowledge_gaps_detected"] = gaps_found
+        return result
+
     return {
         "skipped": True,
         "table_name": skipped_table,
@@ -1267,18 +1330,10 @@ async def _onboarding_skip(provider_id: str | None = None) -> dict:
             "next_steps": [
                 "Continue to the next table",
                 "Or bulk-approve remaining tables",
-            ]
-            if remaining > 0
-            else [
-                "Move to business rules phase",
             ],
             "suggested_response": (
                 f"↷ **Skipped.** Progress: {tables_described}/{state.tables_total}\n\n"
-                + (
-                    f"{remaining} tables to go. Ready for the next one?"
-                    if remaining > 0
-                    else "All tables processed! Let's move to business rules."
-                )
+                f"{remaining} tables to go. Ready for the next one?"
             ),
         },
     }
@@ -1327,12 +1382,38 @@ async def _onboarding_bulk_approve(
     pending_count = counts_before.get("pending", 0)
 
     if pending_count == 0:
-        return {
+        # All tables already described — advance phase to DOMAIN
+        state.phase = OnboardingPhase.DOMAIN
+        save_state(state)
+        gaps_found = _run_schema_gap_scan(provider_id)
+
+        next_steps = [
+            "Generate domain model with mcp_domain_generate",
+            "Add business rules for SQL generation",
+            "Add query examples",
+        ]
+        if gaps_found > 0:
+            next_steps.insert(
+                0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)"
+            )
+
+        result: dict = {
             "approved": 0,
-            "message": "No tables remaining to approve.",
+            "phase": state.phase.value,
+            "message": "All tables already described. Advanced to domain phase.",
             "tables_described": counts_before.get("approved", 0) + counts_before.get("skipped", 0),
             "tables_total": state.tables_total,
+            "guidance": {
+                "summary": "All tables already described. Schema phase complete!",
+                "next_steps": next_steps,
+                "suggested_response": (
+                    "All tables were already described. Moving to domain model phase."
+                ),
+            },
         }
+        if gaps_found > 0:
+            result["knowledge_gaps_detected"] = gaps_found
+        return result
 
     # Clear current table if set
     state.current_table = None

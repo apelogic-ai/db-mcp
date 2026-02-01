@@ -9,8 +9,12 @@ from db_mcp_models import OnboardingPhase
 from db_mcp.onboarding.schema_store import get_schema_file_path
 from db_mcp.onboarding.state import load_state
 from db_mcp.tools.onboarding import (
+    _onboarding_approve,
+    _onboarding_bulk_approve,
     _onboarding_discover,
+    _onboarding_next,
     _onboarding_reset,
+    _onboarding_skip,
     _onboarding_start,
     _onboarding_status,
 )
@@ -455,3 +459,111 @@ class TestOnboardingFlowIntegration:
         # Should be able to discover again (structure phase)
         discover_result = await _onboarding_discover(provider_id=provider, phase="structure")
         assert discover_result["discovered"] is True
+
+
+class TestPhaseAdvancement:
+    """Tests for phase advancement when all tables are described."""
+
+    async def _setup_schema_phase(self, provider, mock_connector):
+        """Helper: start onboarding and discover tables, ending in SCHEMA phase."""
+        await _onboarding_start(provider_id=provider)
+        await _onboarding_discover(provider_id=provider, phase="structure")
+        await _onboarding_discover(provider_id=provider, phase="tables")
+        state = load_state(provider)
+        assert state.phase == OnboardingPhase.SCHEMA
+        assert state.tables_total == 2
+        return state
+
+    @pytest.mark.asyncio
+    async def test_approve_last_table_advances_to_domain(
+        self, temp_connection_dir, mock_connector
+    ):
+        """When the last table is approved, phase should advance to DOMAIN."""
+        provider = "phase-test"
+        await self._setup_schema_phase(provider, mock_connector)
+
+        # Get and approve first table
+        next1 = await _onboarding_next(provider_id=provider)
+        assert "table_name" in next1
+        result1 = await _onboarding_approve(description="First table", provider_id=provider)
+        assert result1["approved"] is True
+        state = load_state(provider)
+        assert state.phase == OnboardingPhase.SCHEMA  # Still in schema
+
+        # Get and approve second (last) table
+        next2 = await _onboarding_next(provider_id=provider)
+        assert "table_name" in next2
+        result2 = await _onboarding_approve(description="Second table", provider_id=provider)
+        assert result2["approved"] is True
+
+        # Phase should now be DOMAIN
+        state = load_state(provider)
+        assert state.phase == OnboardingPhase.DOMAIN
+        assert result2.get("phase") == "domain"
+
+    @pytest.mark.asyncio
+    async def test_skip_last_table_advances_to_domain(self, temp_connection_dir, mock_connector):
+        """When the last table is skipped, phase should advance to DOMAIN."""
+        provider = "skip-phase-test"
+        await self._setup_schema_phase(provider, mock_connector)
+
+        # Get and approve first table
+        next1 = await _onboarding_next(provider_id=provider)
+        assert "table_name" in next1
+        await _onboarding_approve(description="First table", provider_id=provider)
+
+        # Get and skip second (last) table
+        next2 = await _onboarding_next(provider_id=provider)
+        assert "table_name" in next2
+        result2 = await _onboarding_skip(provider_id=provider)
+        assert result2["skipped"] is True
+
+        # Phase should now be DOMAIN
+        state = load_state(provider)
+        assert state.phase == OnboardingPhase.DOMAIN
+        assert result2.get("phase") == "domain"
+
+    @pytest.mark.asyncio
+    async def test_bulk_approve_zero_pending_advances_to_domain(
+        self, temp_connection_dir, mock_connector
+    ):
+        """bulk_approve with 0 pending tables should still advance phase."""
+        provider = "bulk-zero-test"
+        await self._setup_schema_phase(provider, mock_connector)
+
+        # Approve both tables individually via next+approve
+        for _ in range(2):
+            await _onboarding_next(provider_id=provider)
+            await _onboarding_approve(description="A table", provider_id=provider)
+
+        # Phase advanced to DOMAIN already (from fix 1)
+        # But simulate the old scenario: force phase back to SCHEMA
+        state = load_state(provider)
+        state.phase = OnboardingPhase.SCHEMA
+        from db_mcp.onboarding.state import save_state
+
+        save_state(state)
+
+        # Now call bulk_approve with 0 pending — should still advance
+        result = await _onboarding_bulk_approve(provider_id=provider)
+        assert result.get("phase") == "domain"
+
+        state = load_state(provider)
+        assert state.phase == OnboardingPhase.DOMAIN
+
+    @pytest.mark.asyncio
+    async def test_approve_non_last_table_stays_in_schema(
+        self, temp_connection_dir, mock_connector
+    ):
+        """Approving a non-last table should keep phase in SCHEMA."""
+        provider = "stay-schema-test"
+        await self._setup_schema_phase(provider, mock_connector)
+
+        # Get and approve first table only
+        await _onboarding_next(provider_id=provider)
+        result = await _onboarding_approve(description="First table", provider_id=provider)
+        assert result["approved"] is True
+
+        # Phase should stay SCHEMA (1 table remaining)
+        state = load_state(provider)
+        assert state.phase == OnboardingPhase.SCHEMA
