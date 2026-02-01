@@ -29,9 +29,9 @@ test.describe("Navigation", () => {
   test("active tab is highlighted", async ({ page }) => {
     await page.goto("/connectors");
     const connectorsLink = page.locator("nav").getByText("Connectors");
-    await expect(connectorsLink).toHaveClass(/bg-gray-800/);
+    await expect(connectorsLink).toHaveClass(/bg-orange-600/);
 
     const contextLink = page.locator("nav").getByText("Context");
-    await expect(contextLink).not.toHaveClass(/bg-gray-800/);
+    await expect(contextLink).not.toHaveClass(/bg-orange-600/);
   });
 });

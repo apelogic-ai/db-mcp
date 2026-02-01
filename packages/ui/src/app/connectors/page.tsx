@@ -499,7 +499,7 @@ export default function ConnectorsPage() {
         label: "Building",
         color: "bg-purple-900 text-purple-300",
       },
-      complete: { label: "Complete", color: "bg-green-900 text-green-300" },
+      complete: { label: "Complete", color: "bg-orange-900 text-orange-300" },
     };
     const info = phaseLabels[phase] || {
       label: phase,
@@ -514,18 +514,18 @@ export default function ConnectorsPage() {
       <div
         className={`p-4 rounded-lg border ${
           conn.isActive
-            ? "bg-green-950/30 border-green-800"
+            ? "bg-orange-950/30 border-orange-900"
             : "bg-gray-950 border-gray-800 hover:border-gray-700"
         } ${editingConnection === conn.name ? "rounded-b-none border-b-0" : ""}`}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div
-              className={`w-2 h-2 rounded-full ${conn.isActive ? "bg-green-500" : "bg-gray-600"}`}
+              className={`w-2 h-2 rounded-full ${conn.isActive ? "bg-brand" : "bg-gray-600"}`}
             />
             <span className="text-white font-medium">{conn.name}</span>
             {conn.isActive && (
-              <Badge className="bg-green-900 text-green-300 text-xs">
+              <Badge className="bg-orange-900 text-orange-300 text-xs">
                 Active
               </Badge>
             )}
@@ -765,7 +765,7 @@ export default function ConnectorsPage() {
                     resetFormState();
                     setShowCreateSqlForm(true);
                   }}
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  className="bg-brand hover:bg-brand-dark text-white"
                 >
                   + Add Database
                 </Button>
@@ -801,7 +801,7 @@ export default function ConnectorsPage() {
                       !newName.trim() ||
                       !fullDatabaseUrl.trim()
                     }
-                    className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 text-xs"
+                    className="bg-brand hover:bg-brand-dark text-white disabled:opacity-50 text-xs"
                   >
                     {createLoading ? "Creating..." : "Create"}
                   </Button>
@@ -882,7 +882,7 @@ export default function ConnectorsPage() {
                   resetFormState();
                   setShowCreateSqlForm(true);
                 }}
-                className="bg-green-600 hover:bg-green-700 text-white"
+                className="bg-brand hover:bg-brand-dark text-white"
               >
                 + Add Your First Database
               </Button>
@@ -946,7 +946,7 @@ export default function ConnectorsPage() {
                     resetFormState();
                     setShowCreateFileForm(true);
                   }}
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  className="bg-brand hover:bg-brand-dark text-white"
                 >
                   + Add File Connection
                 </Button>
@@ -978,7 +978,7 @@ export default function ConnectorsPage() {
                     disabled={
                       createLoading || !newName.trim() || !directoryPath.trim()
                     }
-                    className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 text-xs"
+                    className="bg-brand hover:bg-brand-dark text-white disabled:opacity-50 text-xs"
                   >
                     {createLoading ? "Creating..." : "Create"}
                   </Button>
@@ -1067,7 +1067,7 @@ export default function ConnectorsPage() {
                   resetFormState();
                   setShowCreateFileForm(true);
                 }}
-                className="bg-green-600 hover:bg-green-700 text-white"
+                className="bg-brand hover:bg-brand-dark text-white"
               >
                 + Add Your First File Connection
               </Button>

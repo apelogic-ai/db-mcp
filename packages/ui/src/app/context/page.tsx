@@ -503,7 +503,7 @@ export default function ContextPage() {
                 size="sm"
                 onClick={handleCreateFile}
                 disabled={createLoading || !newFileName.trim()}
-                className="bg-green-600 hover:bg-green-700 text-white"
+                className="bg-brand hover:bg-brand-dark text-white"
               >
                 {createLoading ? "Creating..." : "Create"}
               </Button>

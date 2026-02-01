@@ -265,7 +265,7 @@ function MetricForm({
               <button
                 onClick={() => onSave(buildData())}
                 disabled={!baseValid}
-                className="px-3 py-1.5 text-sm text-white rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-sm text-white rounded bg-brand hover:bg-brand-dark disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isDirty ? "Update & Approve" : "Approve"}
               </button>
@@ -767,7 +767,7 @@ function CandidatesTab({
                                 );
                               }}
                               disabled={isApproving}
-                              className="px-2 py-1 text-xs bg-green-700 text-green-100 rounded hover:bg-green-600 disabled:opacity-50"
+                              className="px-2 py-1 text-xs bg-brand text-white rounded hover:bg-brand-dark disabled:opacity-50"
                             >
                               {isApproving ? "..." : "Approve"}
                             </button>

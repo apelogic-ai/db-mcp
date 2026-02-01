@@ -3,10 +3,21 @@
 import "./globals.css";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Space_Grotesk, Inconsolata } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { BICPProvider } from "@/lib/bicp-context";
 import { ContextViewerProvider } from "@/lib/context-viewer-context";
 import { ConnectionSelector } from "@/components/ConnectionSelector";
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-sans",
+});
+
+const inconsolata = Inconsolata({
+  subsets: ["latin"],
+  variable: "--font-mono",
+});
 
 const navItems = [
   { href: "/connectors", label: "Connectors" },
@@ -29,7 +40,13 @@ export default function RootLayout({
         <title>db-mcp</title>
         <meta name="description" content="Database Intelligence Platform" />
       </head>
-      <body className="bg-gray-950 text-gray-100 min-h-screen">
+      <body
+        className={cn(
+          spaceGrotesk.variable,
+          inconsolata.variable,
+          "font-sans bg-gray-950 text-gray-100 min-h-screen",
+        )}
+      >
         <BICPProvider baseUrl="/bicp" autoConnect>
           <header className="border-b border-gray-800">
             <div className="max-w-7xl mx-auto px-4 py-4">
@@ -49,7 +66,7 @@ export default function RootLayout({
                         className={cn(
                           "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all",
                           isActive
-                            ? "bg-gray-800 text-white shadow"
+                            ? "bg-orange-600 text-white shadow"
                             : "text-gray-400 hover:text-gray-200",
                         )}
                       >

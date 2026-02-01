@@ -10,8 +10,8 @@ test.describe("Connectors Page", () => {
     await expect(main.getByText("staging")).toBeVisible();
 
     // Dialect badges
-    await expect(main.getByText("postgresql")).toBeVisible();
-    await expect(main.getByText("clickhouse")).toBeVisible();
+    await expect(main.getByText("postgresql", { exact: true })).toBeVisible();
+    await expect(main.getByText("clickhouse", { exact: true })).toBeVisible();
   });
 
   test("empty state when no connections", async ({ page, bicpMock }) => {
@@ -19,15 +19,15 @@ test.describe("Connectors Page", () => {
     await page.goto("/connectors");
 
     await expect(
-      page.getByText("No connections configured yet."),
+      page.getByText("No database connections configured yet."),
     ).toBeVisible();
   });
 
   test("create connection flow", async ({ page, bicpMock }) => {
     await page.goto("/connectors");
 
-    // Click "+ Add Connection" button
-    await page.getByRole("button", { name: /add connection/i }).click();
+    // Click "+ Add Database" button in the Database section
+    await page.getByRole("button", { name: /add database/i }).click();
 
     // Fill the form fields by placeholder text
     await page.getByPlaceholder("my-database").fill("new-connection");
