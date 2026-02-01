@@ -33,7 +33,8 @@ from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 from sqlalchemy import text
 
 from db_mcp.config import get_settings
-from db_mcp.db.connection import get_engine
+from db_mcp.connectors import get_connector
+from db_mcp.connectors.sql import SQLConnector
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.tasks.store import QueryStatus, get_query_store
 from db_mcp.tools.shell import inject_protocol
@@ -206,7 +207,9 @@ def _execute_query(
         try:
             # Get database connection
             with tracer.start_as_current_span("db_connect") as conn_span:
-                engine = get_engine()
+                connector = get_connector()
+                assert isinstance(connector, SQLConnector), "SQL execution requires SQLConnector"
+                engine = connector.get_engine()
                 conn_span.set_attribute("db.provider", settings.provider_id)
 
             # Execute query

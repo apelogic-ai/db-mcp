@@ -1,13 +1,7 @@
 """Database MCP tools."""
 
-from db_mcp.db.connection import detect_dialect_from_url, test_connection
-from db_mcp.db.introspection import (
-    get_catalogs,
-    get_columns,
-    get_schemas,
-    get_table_sample,
-    get_tables,
-)
+from db_mcp.connectors import get_connector
+from db_mcp.db.connection import detect_dialect_from_url
 from db_mcp.tools.shell import inject_protocol
 
 
@@ -20,7 +14,13 @@ async def _test_connection(database_url: str | None = None) -> dict:
     Returns:
         Connection status and info
     """
-    return test_connection(database_url)
+    if database_url:
+        # Direct URL provided — use legacy path for one-off testing
+        from db_mcp.db.connection import test_connection
+
+        return test_connection(database_url)
+    connector = get_connector()
+    return connector.test_connection()
 
 
 async def _detect_dialect(database_url: str) -> dict:
@@ -49,7 +49,8 @@ async def _list_catalogs(database_url: str | None = None) -> dict:
         List of catalog names
     """
     try:
-        catalogs = get_catalogs(database_url)
+        connector = get_connector()
+        catalogs = connector.get_catalogs()
         # Filter out None values for display
         catalogs_list = [c for c in catalogs if c is not None]
         return inject_protocol(
@@ -82,7 +83,8 @@ async def _list_schemas(catalog: str | None = None, database_url: str | None = N
         List of schema names
     """
     try:
-        schemas = get_schemas(database_url, catalog=catalog)
+        connector = get_connector()
+        schemas = connector.get_schemas(catalog=catalog)
         # Filter out None values for display
         schemas_list = [s for s in schemas if s is not None]
         return inject_protocol(
@@ -126,7 +128,8 @@ async def _list_tables(
         List of table info with fully qualified names
     """
     try:
-        tables = get_tables(schema=schema, catalog=catalog, database_url=database_url)
+        connector = get_connector()
+        tables = connector.get_tables(schema=schema, catalog=catalog)
         return inject_protocol(
             {
                 "tables": tables,
@@ -181,9 +184,8 @@ async def _describe_table(
     """
     full_name = _make_full_name(table_name, schema, catalog)
     try:
-        columns = get_columns(
-            table_name, schema=schema, catalog=catalog, database_url=database_url
-        )
+        connector = get_connector()
+        columns = connector.get_columns(table_name, schema=schema, catalog=catalog)
         return inject_protocol(
             {
                 "table_name": table_name,
@@ -233,12 +235,12 @@ async def _sample_table(
     full_name = _make_full_name(table_name, schema, catalog)
 
     try:
-        rows = get_table_sample(
+        connector = get_connector()
+        rows = connector.get_table_sample(
             table_name,
             schema=schema,
             catalog=catalog,
             limit=limit,
-            database_url=database_url,
         )
         return inject_protocol(
             {

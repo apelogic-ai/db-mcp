@@ -9,7 +9,9 @@ from opentelemetry import trace
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from db_mcp.db.connection import DatabaseError, detect_dialect_from_url, get_engine
+from db_mcp.connectors import get_connector
+from db_mcp.connectors.sql import SQLConnector
+from db_mcp.db.connection import DatabaseError
 
 tracer = trace.get_tracer("db_mcp.validation")
 
@@ -408,8 +410,10 @@ def explain_sql(sql: str, database_url: str | None = None) -> ExplainResult:
         attributes={"sql.preview": sql[:200] + "..." if len(sql) > 200 else sql},
     ) as span:
         try:
-            engine = get_engine(database_url)
-            dialect = detect_dialect_from_url(str(engine.url))
+            connector = get_connector()
+            assert isinstance(connector, SQLConnector), "EXPLAIN requires SQLConnector"
+            engine = connector.get_engine()
+            dialect = connector.get_dialect()
             explain_cmd = get_explain_command(dialect)
             span.set_attribute("db.dialect", dialect)
 

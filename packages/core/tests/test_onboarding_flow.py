@@ -1,7 +1,7 @@
 """Tests for onboarding flow - start, discover, reset."""
 
 import tempfile
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from db_mcp_models import OnboardingPhase
@@ -30,58 +30,65 @@ def temp_connection_dir(monkeypatch):
         yield tmpdir
 
 
+def _make_mock_connector(connected=True, error=None):
+    """Create a mock connector with standard return values."""
+    mock = MagicMock()
+    mock.test_connection.return_value = {
+        "connected": connected,
+        "dialect": "trino",
+        "url_host": "localhost",
+        "url_database": "test_catalog/test_schema",
+        "error": error,
+    }
+    mock.get_dialect.return_value = "trino"
+    mock.get_catalogs.return_value = ["test_catalog"]
+    mock.get_schemas.return_value = ["test_schema"]
+    mock.get_tables.return_value = [
+        {
+            "name": "users",
+            "schema": "test_schema",
+            "catalog": "test_catalog",
+            "type": "table",
+            "full_name": "test_catalog.test_schema.users",
+        },
+        {
+            "name": "orders",
+            "schema": "test_schema",
+            "catalog": "test_catalog",
+            "type": "table",
+            "full_name": "test_catalog.test_schema.orders",
+        },
+    ]
+    mock.get_columns.return_value = [
+        {"name": "id", "type": "INTEGER", "nullable": False},
+        {"name": "name", "type": "VARCHAR", "nullable": True},
+    ]
+    return mock
+
+
 @pytest.fixture
-def mock_db_connection():
+def mock_connector():
+    """Shared mock connector used by mock_db_connection and mock_introspection."""
+    mock = _make_mock_connector()
+    with patch("db_mcp.tools.onboarding.get_connector", return_value=mock):
+        yield mock
+
+
+@pytest.fixture
+def mock_db_connection(mock_connector):
     """Mock database connection for testing without real DB."""
-    with patch("db_mcp.tools.onboarding.test_connection") as mock_conn:
-        mock_conn.return_value = {
-            "connected": True,
-            "dialect": "trino",
-            "url_host": "localhost",
-            "url_database": "test_catalog/test_schema",
-            "error": None,
-        }
-        yield mock_conn
+    yield mock_connector
 
 
 @pytest.fixture
-def mock_introspection():
-    """Mock database introspection functions."""
-    with (
-        patch("db_mcp.tools.onboarding.get_catalogs") as mock_catalogs,
-        patch("db_mcp.tools.onboarding.get_schemas") as mock_schemas,
-        patch("db_mcp.tools.onboarding.get_tables") as mock_tables,
-        patch("db_mcp.tools.onboarding.get_columns") as mock_columns,
-    ):
-        mock_catalogs.return_value = ["test_catalog"]
-        mock_schemas.return_value = ["test_schema"]
-        mock_tables.return_value = [
-            {
-                "name": "users",
-                "schema": "test_schema",
-                "catalog": "test_catalog",
-                "type": "table",
-                "full_name": "test_catalog.test_schema.users",
-            },
-            {
-                "name": "orders",
-                "schema": "test_schema",
-                "catalog": "test_catalog",
-                "type": "table",
-                "full_name": "test_catalog.test_schema.orders",
-            },
-        ]
-        mock_columns.return_value = [
-            {"name": "id", "type": "INTEGER", "nullable": False},
-            {"name": "name", "type": "VARCHAR", "nullable": True},
-        ]
-
-        yield {
-            "catalogs": mock_catalogs,
-            "schemas": mock_schemas,
-            "tables": mock_tables,
-            "columns": mock_columns,
-        }
+def mock_introspection(mock_connector):
+    """Mock database introspection functions (included in connector)."""
+    yield {
+        "catalogs": mock_connector.get_catalogs,
+        "schemas": mock_connector.get_schemas,
+        "tables": mock_connector.get_tables,
+        "columns": mock_connector.get_columns,
+    }
 
 
 class TestOnboardingStart:
@@ -152,12 +159,12 @@ class TestOnboardingStart:
     @pytest.mark.asyncio
     async def test_start_connection_failed(self, temp_connection_dir):
         """Test start when DB connection fails."""
-        with patch("db_mcp.tools.onboarding.test_connection") as mock_conn:
-            mock_conn.return_value = {
-                "connected": False,
-                "error": "Connection refused",
-            }
-
+        mock = _make_mock_connector(connected=False, error="Connection refused")
+        mock.test_connection.return_value = {
+            "connected": False,
+            "error": "Connection refused",
+        }
+        with patch("db_mcp.tools.onboarding.get_connector", return_value=mock):
             result = await _onboarding_start(provider_id="test-provider")
 
             assert result["started"] is False

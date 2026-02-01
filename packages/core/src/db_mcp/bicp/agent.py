@@ -35,8 +35,8 @@ from bicp_agent.session import QueryState
 from sqlalchemy import text
 
 from db_mcp.config import get_settings
-from db_mcp.db.connection import get_engine
-from db_mcp.db.introspection import get_catalogs, get_columns, get_schemas, get_tables
+from db_mcp.connectors import get_connector
+from db_mcp.connectors.sql import SQLConnector
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.training.store import load_examples
 from db_mcp.validation.explain import ExplainResult, explain_sql, validate_read_only
@@ -129,8 +129,8 @@ class DBMCPAgent(BICPAgent):
     def _detect_dialect(self) -> str:
         """Detect the database dialect from configuration."""
         try:
-            engine = get_engine()
-            return engine.dialect.name
+            connector = get_connector()
+            return connector.get_dialect()
         except Exception:
             return "unknown"
 
@@ -291,7 +291,9 @@ class DBMCPAgent(BICPAgent):
         start_time = time.time()
 
         try:
-            engine = get_engine()
+            connector = get_connector()
+            assert isinstance(connector, SQLConnector), "SQL execution requires SQLConnector"
+            engine = connector.get_engine()
 
             with engine.connect() as conn:
                 result = conn.execute(text(sql))
@@ -328,17 +330,18 @@ class DBMCPAgent(BICPAgent):
         Uses db-mcp's introspection to list catalogs and schemas.
         """
         try:
+            connector = get_connector()
             catalog = params.catalog
             schemas_list = []
 
             if catalog:
                 # List schemas in specific catalog
-                schema_names = get_schemas(catalog=catalog)
+                schema_names = connector.get_schemas(catalog=catalog)
                 for name in schema_names:
                     if name:
                         # Get table count for this schema
                         try:
-                            tables = get_tables(schema=name, catalog=catalog)
+                            tables = connector.get_tables(schema=name, catalog=catalog)
                             table_count = len(tables)
                         except Exception:
                             table_count = None
@@ -352,9 +355,9 @@ class DBMCPAgent(BICPAgent):
                         )
             else:
                 # List all catalogs and their schemas
-                catalogs = get_catalogs()
+                catalogs = connector.get_catalogs()
                 for cat in catalogs:
-                    schema_names = get_schemas(catalog=cat)
+                    schema_names = connector.get_schemas(catalog=cat)
                     for name in schema_names:
                         if name:
                             schemas_list.append(
@@ -380,8 +383,9 @@ class DBMCPAgent(BICPAgent):
         include_columns = params.include_columns
 
         try:
+            connector = get_connector()
             # Get tables from database
-            tables = get_tables(schema=schema_name, catalog=catalog)
+            tables = connector.get_tables(schema=schema_name, catalog=catalog)
 
             # Load schema descriptions if available
             provider_id = self._settings.provider_id
@@ -399,7 +403,7 @@ class DBMCPAgent(BICPAgent):
                 columns = []
                 if include_columns:
                     try:
-                        col_data = get_columns(
+                        col_data = connector.get_columns(
                             table["name"],
                             schema=schema_name,
                             catalog=catalog,
@@ -620,9 +624,24 @@ class DBMCPAgent(BICPAgent):
                 has_credentials = (conn_path / ".env").exists()
                 has_state = (conn_path / "state.yaml").exists()
 
-                # Try to detect dialect from .env
+                # Detect connector type from connector.yaml
+                connector_type = "sql"
+                connector_yaml = conn_path / "connector.yaml"
+                if connector_yaml.exists():
+                    try:
+                        import yaml as _yaml
+
+                        with open(connector_yaml) as f:
+                            cdata = _yaml.safe_load(f) or {}
+                            connector_type = cdata.get("type", "sql")
+                    except Exception:
+                        pass
+
+                # Try to detect dialect
                 dialect = None
-                if has_credentials:
+                if connector_type == "file":
+                    dialect = "duckdb"
+                elif has_credentials:
                     env_file = conn_path / ".env"
                     try:
                         with open(env_file) as f:
@@ -653,6 +672,7 @@ class DBMCPAgent(BICPAgent):
                         "hasSchema": has_schema,
                         "hasDomain": has_domain,
                         "hasCredentials": has_credentials,
+                        "connectorType": connector_type,
                         "dialect": dialect,
                         "onboardingPhase": onboarding_phase,
                     }
@@ -728,7 +748,9 @@ class DBMCPAgent(BICPAgent):
         Args:
             params: {
                 "name": str - Connection name (alphanumeric, dash, underscore)
-                "databaseUrl": str - Database connection URL
+                "connectorType": "sql" | "file" - Connector type (default: "sql")
+                "databaseUrl": str - Database connection URL (for sql type)
+                "directory": str - Directory path (for file type)
                 "setActive": bool - Whether to set as active connection (default: True)
             }
 
@@ -737,10 +759,9 @@ class DBMCPAgent(BICPAgent):
         """
         import re
 
-        import yaml
 
         name = params.get("name", "").strip()
-        database_url = params.get("databaseUrl", "").strip()
+        connector_type = params.get("connectorType", "sql")
         set_active = params.get("setActive", True)
 
         # Validate name
@@ -753,10 +774,6 @@ class DBMCPAgent(BICPAgent):
                 "error": "Invalid name. Use only letters, numbers, dashes, underscores.",
             }
 
-        # Validate database URL
-        if not database_url:
-            return {"success": False, "error": "Database URL is required"}
-
         connections_dir = Path.home() / ".db-mcp" / "connections"
         config_file = Path.home() / ".db-mcp" / "config.yaml"
         conn_path = connections_dir / name
@@ -764,6 +781,18 @@ class DBMCPAgent(BICPAgent):
         # Check if connection already exists
         if conn_path.exists():
             return {"success": False, "error": f"Connection '{name}' already exists"}
+
+        if connector_type == "file":
+            return await self._create_file_connection(
+                name, params, conn_path, config_file, set_active
+            )
+
+        # --- SQL connection (existing behavior) ---
+        database_url = params.get("databaseUrl", "").strip()
+
+        # Validate database URL
+        if not database_url:
+            return {"success": False, "error": "Database URL is required"}
 
         # Detect dialect
         dialect = self._detect_dialect_from_url(database_url)
@@ -796,16 +825,7 @@ class DBMCPAgent(BICPAgent):
 
         # Set as active if requested
         if set_active:
-            config = {}
-            if config_file.exists():
-                with open(config_file) as f:
-                    config = yaml.safe_load(f) or {}
-
-            config["active_connection"] = name
-
-            config_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(config_file, "w") as f:
-                yaml.dump(config, f, default_flow_style=False)
+            self._set_active_connection(name, config_file)
 
         logger.info(f"Created connection: {name} ({dialect})")
 
@@ -816,18 +836,98 @@ class DBMCPAgent(BICPAgent):
             "isActive": set_active,
         }
 
+    async def _create_file_connection(
+        self,
+        name: str,
+        params: dict[str, Any],
+        conn_path: Path,
+        config_file: Path,
+        set_active: bool,
+    ) -> dict[str, Any]:
+        """Create a file-type connection."""
+        import yaml
+
+        directory = params.get("directory", "").strip()
+        if not directory:
+            return {"success": False, "error": "Directory path is required"}
+
+        # Test the directory
+        test_result = self._test_file_directory(directory)
+        if not test_result["success"]:
+            return {
+                "success": False,
+                "error": f"Connection test failed: {test_result.get('error', 'Unknown error')}",
+            }
+
+        # Create connection directory
+        conn_path.mkdir(parents=True, exist_ok=True)
+
+        # Write connector.yaml
+        connector_yaml = conn_path / "connector.yaml"
+        with open(connector_yaml, "w") as f:
+            yaml.dump(
+                {"type": "file", "directory": directory},
+                f,
+                default_flow_style=False,
+            )
+
+        # Create .gitignore
+        gitignore_file = conn_path / ".gitignore"
+        with open(gitignore_file, "w") as f:
+            f.write("# Ignore local state\n")
+            f.write("state.yaml\n")
+
+        # Set as active if requested
+        if set_active:
+            self._set_active_connection(name, config_file)
+
+        logger.info(f"Created file connection: {name} (directory: {directory})")
+
+        return {
+            "success": True,
+            "name": name,
+            "dialect": "duckdb",
+            "isActive": set_active,
+        }
+
+    def _set_active_connection(self, name: str, config_file: Path) -> None:
+        """Set a connection as active in config.yaml."""
+        import yaml
+
+        config = {}
+        if config_file.exists():
+            with open(config_file) as f:
+                config = yaml.safe_load(f) or {}
+
+        config["active_connection"] = name
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_file, "w") as f:
+            yaml.dump(config, f, default_flow_style=False)
+
     async def _handle_connections_test(self, params: dict[str, Any]) -> dict[str, Any]:
         """Test a database connection.
 
         Args:
             params: {
                 "name": str - Test existing connection by name, OR
-                "databaseUrl": str - Test a database URL directly
+                "databaseUrl": str - Test a database URL directly, OR
+                "connectorType": "file", "directory": str - Test a file connection
             }
 
         Returns:
             {"success": bool, "message": str, "error": str | None, "dialect": str | None}
         """
+        connector_type = params.get("connectorType", "sql")
+
+        # File connector test
+        if connector_type == "file":
+            directory = params.get("directory", "").strip()
+            if not directory:
+                return {"success": False, "error": "Directory path is required"}
+            return self._test_file_directory(directory)
+
+        # SQL connector test
         name = params.get("name")
         database_url = params.get("databaseUrl")
 
@@ -857,6 +957,29 @@ class DBMCPAgent(BICPAgent):
             return {"success": False, "error": "Either 'name' or 'databaseUrl' is required"}
 
         return await self._test_database_url(database_url)
+
+    def _test_file_directory(self, directory: str) -> dict[str, Any]:
+        """Test a file directory by checking for supported files."""
+        from db_mcp.connectors.file import FileConnector, FileConnectorConfig
+
+        config = FileConnectorConfig(directory=directory)
+        connector = FileConnector(config)
+        result = connector.test_connection()
+
+        if result["connected"]:
+            source_count = len(result.get("sources", {}))
+            return {
+                "success": True,
+                "message": f"Found {source_count} table{'s' if source_count != 1 else ''}",
+                "dialect": "duckdb",
+                "sources": result.get("sources", {}),
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "No supported files found"),
+                "dialect": "duckdb",
+            }
 
     async def _test_database_url(self, database_url: str) -> dict[str, Any]:
         """Test a database URL by attempting to connect.
@@ -965,14 +1088,16 @@ class DBMCPAgent(BICPAgent):
         return {"success": True, "name": name}
 
     async def _handle_connections_get(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Get connection details including database URL.
+        """Get connection details.
 
         Args:
             params: {"name": str} - Connection name
 
         Returns:
-            {"success": bool, "name": str, "databaseUrl": str, "error": str | None}
+            {"success": bool, "name": str, "connectorType": str,
+             "databaseUrl": str (sql), "directory": str (file)}
         """
+        import yaml
         from dotenv import dotenv_values
 
         name = params.get("name")
@@ -981,12 +1106,26 @@ class DBMCPAgent(BICPAgent):
 
         connections_dir = Path.home() / ".db-mcp" / "connections"
         conn_path = connections_dir / name
-        env_file = conn_path / ".env"
 
         if not conn_path.exists():
             return {"success": False, "error": f"Connection '{name}' not found"}
 
-        # Load database URL from .env file
+        # Detect connector type
+        connector_yaml = conn_path / "connector.yaml"
+        if connector_yaml.exists():
+            with open(connector_yaml) as f:
+                cdata = yaml.safe_load(f) or {}
+            connector_type = cdata.get("type", "sql")
+            if connector_type == "file":
+                return {
+                    "success": True,
+                    "name": name,
+                    "connectorType": "file",
+                    "directory": cdata.get("directory", ""),
+                }
+
+        # SQL connection
+        env_file = conn_path / ".env"
         database_url = ""
         if env_file.exists():
             env_vars = dotenv_values(env_file)
@@ -995,34 +1134,53 @@ class DBMCPAgent(BICPAgent):
         return {
             "success": True,
             "name": name,
+            "connectorType": "sql",
             "databaseUrl": database_url,
         }
 
     async def _handle_connections_update(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Update a connection's database URL.
+        """Update a connection.
 
         Args:
-            params: {"name": str, "databaseUrl": str} - Connection name and new URL
+            params: {"name": str, "databaseUrl": str} for SQL,
+                    {"name": str, "directory": str} for file
 
         Returns:
             {"success": bool, "error": str | None}
         """
-        name = params.get("name")
-        database_url = params.get("databaseUrl")
+        import yaml
 
+        name = params.get("name")
         if not name:
             return {"success": False, "error": "Connection name is required"}
-        if not database_url:
-            return {"success": False, "error": "Database URL is required"}
 
         connections_dir = Path.home() / ".db-mcp" / "connections"
         conn_path = connections_dir / name
-        env_file = conn_path / ".env"
 
         if not conn_path.exists():
             return {"success": False, "error": f"Connection '{name}' not found"}
 
-        # Update the .env file
+        # Detect connector type
+        connector_yaml = conn_path / "connector.yaml"
+        if connector_yaml.exists():
+            with open(connector_yaml) as f:
+                cdata = yaml.safe_load(f) or {}
+            if cdata.get("type") == "file":
+                directory = params.get("directory", "").strip()
+                if not directory:
+                    return {"success": False, "error": "Directory path is required"}
+                cdata["directory"] = directory
+                with open(connector_yaml, "w") as f:
+                    yaml.dump(cdata, f, default_flow_style=False)
+                logger.info(f"Updated file connection: {name}")
+                return {"success": True, "name": name}
+
+        # SQL connection
+        database_url = params.get("databaseUrl")
+        if not database_url:
+            return {"success": False, "error": "Database URL is required"}
+
+        env_file = conn_path / ".env"
         with open(env_file, "w") as f:
             f.write(f"DATABASE_URL={database_url}\n")
 
@@ -2709,7 +2867,8 @@ This knowledge helps the AI generate better queries over time.
             }
         """
         try:
-            catalogs = get_catalogs()
+            connector = get_connector()
+            catalogs = connector.get_catalogs()
             return {"success": True, "catalogs": catalogs}
         except Exception as e:
             logger.exception(f"Failed to list catalogs: {e}")
@@ -2733,15 +2892,16 @@ This knowledge helps the AI generate better queries over time.
         catalog = params.get("catalog")
 
         try:
+            connector = get_connector()
             schemas_list = []
-            schema_names = get_schemas(catalog=catalog)
+            schema_names = connector.get_schemas(catalog=catalog)
 
             for name in schema_names:
                 if name:
                     # Try to get table count
                     table_count = None
                     try:
-                        tables = get_tables(schema=name, catalog=catalog)
+                        tables = connector.get_tables(schema=name, catalog=catalog)
                         table_count = len(tables)
                     except Exception:
                         pass
@@ -2782,7 +2942,8 @@ This knowledge helps the AI generate better queries over time.
             return {"success": False, "tables": [], "error": "schema is required"}
 
         try:
-            tables = get_tables(schema=schema, catalog=catalog)
+            connector = get_connector()
+            tables = connector.get_tables(schema=schema, catalog=catalog)
 
             # Load schema descriptions if available
             provider_id = self._settings.provider_id
@@ -2842,7 +3003,8 @@ This knowledge helps the AI generate better queries over time.
             return {"success": False, "columns": [], "error": "table is required"}
 
         try:
-            columns = get_columns(table, schema=schema, catalog=catalog)
+            connector = get_connector()
+            columns = connector.get_columns(table, schema=schema, catalog=catalog)
 
             # Load schema descriptions if available
             provider_id = self._settings.provider_id
@@ -2926,9 +3088,10 @@ This knowledge helps the AI generate better queries over time.
         }
 
         try:
+            connector = get_connector()
             # Validate table exists
             if table and schema:
-                tables = get_tables(schema=schema, catalog=catalog)
+                tables = connector.get_tables(schema=schema, catalog=catalog)
                 table_names = [t.get("name", t) if isinstance(t, dict) else t for t in tables]
                 if table not in table_names:
                     return {
@@ -2940,7 +3103,7 @@ This knowledge helps the AI generate better queries over time.
 
                 # Validate column if specified
                 if column:
-                    columns = get_columns(table, schema=schema, catalog=catalog)
+                    columns = connector.get_columns(table, schema=schema, catalog=catalog)
                     column_names = [c["name"] for c in columns]
                     if column not in column_names:
                         return {

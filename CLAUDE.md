@@ -324,6 +324,18 @@ npx next build                   # Type check + build (required — catches erro
 npx playwright test              # E2E tests (required)
 ```
 
+### Test-Driven Development (TDD)
+
+All new Python code must follow TDD. The workflow is:
+
+1. **Write tests first** — before writing any implementation code, write failing tests that define the expected behavior
+2. **Run tests to confirm they fail** — verify the tests fail for the right reason (not import errors or typos)
+3. **Write the minimal implementation** — make the tests pass with the simplest code possible
+4. **Refactor** — clean up while keeping tests green
+5. **Repeat** — for each new piece of functionality
+
+This applies to new modules, new functions, and new features. Bug fixes should also start with a failing test that reproduces the bug.
+
 ### Requirements before considering a task complete
 
 1. All linting errors must be fixed

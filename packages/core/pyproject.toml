@@ -25,6 +25,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
     "dulwich>=0.22.0",
+    "duckdb>=1.0.0",
 ]
 
 [project.scripts]

@@ -7,14 +7,7 @@ from db_mcp_models import OnboardingPhase, TableDescriptionStatus
 from mcp.server.fastmcp import Context
 
 from db_mcp.config import get_settings
-from db_mcp.db.connection import test_connection
-from db_mcp.db.introspection import (
-    get_catalogs,
-    get_columns,
-    get_schemas,
-    get_table_sample,
-    get_tables,
-)
+from db_mcp.connectors import get_connector
 from db_mcp.onboarding.ignore import (
     add_ignore_pattern,
     import_ignore_patterns,
@@ -338,7 +331,8 @@ async def _onboarding_start(provider_id: str | None = None, force: bool = False)
                 pass
 
     # Test connection
-    conn_result = test_connection()
+    connector = get_connector()
+    conn_result = connector.test_connection()
     if not conn_result["connected"]:
         return {
             "started": False,
@@ -484,11 +478,13 @@ async def _onboarding_discover(
     # ============================================================
     # PHASE: STRUCTURE - Discover catalogs and schemas only (fast)
     # ============================================================
+    connector = get_connector()
+
     if phase == "structure":
         # Discover catalogs first (for Trino 3-level hierarchy)
         try:
             print("[DISCOVERY] Discovering catalogs...", file=sys.stderr, flush=True)
-            catalogs = get_catalogs()
+            catalogs = connector.get_catalogs()
             print(
                 f"[DISCOVERY] Found catalogs (before filter): {catalogs}",
                 file=sys.stderr,
@@ -516,7 +512,7 @@ async def _onboarding_discover(
                     file=sys.stderr,
                     flush=True,
                 )
-                schemas = get_schemas(catalog=catalog)
+                schemas = connector.get_schemas(catalog=catalog)
                 print(
                     f"[DISCOVERY] Found schemas in {catalog} (before filter): {schemas}",
                     file=sys.stderr,
@@ -622,7 +618,7 @@ async def _onboarding_discover(
     catalogs = state.catalogs_discovered if state.catalogs_discovered else [None]
 
     for catalog in catalogs:
-        schemas = get_schemas(catalog=catalog)
+        schemas = connector.get_schemas(catalog=catalog)
         schemas = ignore.filter_schemas(schemas)
         for schema in schemas:
             if schema is not None:
@@ -657,7 +653,7 @@ async def _onboarding_discover(
                 file=sys.stderr,
                 flush=True,
             )
-            tables = get_tables(schema=schema, catalog=catalog)
+            tables = connector.get_tables(schema=schema, catalog=catalog)
             print(
                 f"[DISCOVERY] Found {len(tables)} tables in {catalog}.{schema} (pre-filter)",
                 file=sys.stderr,
@@ -673,7 +669,7 @@ async def _onboarding_discover(
             for t in tables:
                 # Get columns for each table
                 try:
-                    columns = get_columns(t["name"], schema=schema, catalog=catalog)
+                    columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
                 except Exception as e:
                     print(
                         f"[DISCOVERY] Error getting columns for {t['name']}: {e}",
@@ -1054,7 +1050,8 @@ async def _onboarding_next(provider_id: str | None = None) -> dict:
 
     # Get sample data
     try:
-        sample = get_table_sample(
+        connector = get_connector()
+        sample = connector.get_table_sample(
             next_table.name,
             schema=next_table.schema_name,
             catalog=next_table.catalog_name,
