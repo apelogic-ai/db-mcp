@@ -93,6 +93,22 @@ export const CONNECTION_SYNC_SUCCESS = {
   errors: [],
 };
 
+export const CONNECTION_DISCOVER_SUCCESS = {
+  success: true,
+  strategy: "openapi",
+  spec_url: "https://api.stripe.com/v1/openapi.json",
+  api_title: "Stripe API",
+  api_description: "The Stripe REST API",
+  endpoints_found: 3,
+  endpoints: [
+    { name: "charges", path: "/charges", fields: 5 },
+    { name: "customers", path: "/customers", fields: 4 },
+    { name: "invoices", path: "/invoices", fields: 6 },
+  ],
+  pagination: { type: "cursor", data_field: "data" },
+  errors: [],
+};
+
 export const CONNECTIONS_WITH_API = {
   connections: [
     {

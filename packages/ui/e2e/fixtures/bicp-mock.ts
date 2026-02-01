@@ -48,6 +48,7 @@ export class BICPMock {
     this.on("connections/delete", () => mockData.CONNECTION_DELETE_SUCCESS);
     this.on("connections/switch", () => mockData.CONNECTION_SWITCH_SUCCESS);
     this.on("connections/sync", () => mockData.CONNECTION_SYNC_SUCCESS);
+    this.on("connections/discover", () => mockData.CONNECTION_DISCOVER_SUCCESS);
 
     // Context
     this.on("context/tree", () => mockData.CONTEXT_TREE_HAPPY);

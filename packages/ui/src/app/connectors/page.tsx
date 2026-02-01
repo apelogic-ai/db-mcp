@@ -196,6 +196,11 @@ export default function ConnectorsPage() {
     success: boolean;
     message: string;
   } | null>(null);
+  const [discoverLoading, setDiscoverLoading] = useState<string | null>(null);
+  const [discoverResult, setDiscoverResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
 
   // Auto-test debounce
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -610,6 +615,49 @@ export default function ConnectorsPage() {
       });
     } finally {
       setSyncLoading(null);
+    }
+  };
+
+  const handleDiscoverEndpoints = async (name: string) => {
+    setDiscoverLoading(name);
+    setDiscoverResult(null);
+    try {
+      const result = await call<{
+        success: boolean;
+        strategy?: string;
+        endpoints_found?: number;
+        api_title?: string;
+        endpoints?: Array<{ name: string; path: string; fields: number }>;
+        errors?: string[];
+        error?: string;
+      }>("connections/discover", { name });
+
+      if (result.success && (result.endpoints_found || 0) > 0) {
+        const title = result.api_title ? ` (${result.api_title})` : "";
+        setDiscoverResult({
+          success: true,
+          message: `Found ${result.endpoints_found} endpoint${result.endpoints_found !== 1 ? "s" : ""} via ${result.strategy}${title}`,
+        });
+        // Refresh connections list to show updated endpoint count
+        await fetchConnections();
+      } else if (result.success) {
+        setDiscoverResult({
+          success: false,
+          message: "No endpoints discovered. Configure endpoints manually.",
+        });
+      } else {
+        setDiscoverResult({
+          success: false,
+          message: result.error || "Discovery failed",
+        });
+      }
+    } catch (err) {
+      setDiscoverResult({
+        success: false,
+        message: err instanceof Error ? err.message : "Discovery failed",
+      });
+    } finally {
+      setDiscoverLoading(null);
     }
   };
 
@@ -1510,18 +1558,40 @@ export default function ConnectorsPage() {
               {apiConnections.map((conn) => (
                 <div key={conn.name}>
                   {renderConnectionItem(conn)}
-                  {/* Sync button for API connections */}
+                  {/* Discover & Sync buttons for API connections */}
                   {editingConnection !== conn.name && (
-                    <div className="flex items-center gap-2 mt-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleSyncConnection(conn.name)}
-                        disabled={syncLoading === conn.name}
-                        className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
-                      >
-                        {syncLoading === conn.name ? "Syncing..." : "Sync Data"}
-                      </Button>
+                    <div className="flex flex-col gap-1.5 mt-2">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDiscoverEndpoints(conn.name)}
+                          disabled={discoverLoading === conn.name}
+                          className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                        >
+                          {discoverLoading === conn.name
+                            ? "Discovering..."
+                            : "Discover Endpoints"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSyncConnection(conn.name)}
+                          disabled={syncLoading === conn.name}
+                          className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                        >
+                          {syncLoading === conn.name
+                            ? "Syncing..."
+                            : "Sync Data"}
+                        </Button>
+                      </div>
+                      {discoverResult && discoverLoading === null && (
+                        <span
+                          className={`text-xs ${discoverResult.success ? "text-green-400" : "text-yellow-400"}`}
+                        >
+                          {discoverResult.message}
+                        </span>
+                      )}
                       {syncResult && syncLoading === null && (
                         <span
                           className={`text-xs ${syncResult.success ? "text-green-400" : "text-red-400"}`}

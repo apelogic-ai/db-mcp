@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+import yaml
 
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig
 
@@ -344,3 +345,100 @@ class APIConnector(FileConnector):
         with open(path, "w") as f:
             for row in rows:
                 f.write(json.dumps(row, default=str) + "\n")
+
+    # -- Discovery ----------------------------------------------------------
+
+    def discover(self) -> dict[str, Any]:
+        """Discover API endpoints, pagination, and schema.
+
+        Uses the three-stage discovery pipeline from api_discovery module.
+        Updates self.api_config with discovered endpoints and pagination.
+
+        Returns:
+            Dict with discovery results including endpoints found and strategy used.
+        """
+        from db_mcp.connectors.api_discovery import discover_api
+
+        try:
+            auth_headers = self._resolve_auth_headers()
+        except ValueError:
+            auth_headers = {}
+        auth_params = self._resolve_auth_params()
+
+        result = discover_api(
+            base_url=self.api_config.base_url,
+            auth_headers=auth_headers,
+            auth_params=auth_params,
+            rate_limit_rps=self.api_config.rate_limit_rps,
+        )
+
+        # Update config with discovered endpoints
+        if result.endpoints:
+            self.api_config.endpoints = [
+                APIEndpointConfig(name=ep.name, path=ep.path, method=ep.method)
+                for ep in result.endpoints
+            ]
+
+        # Update pagination if discovered
+        if result.pagination.type != "none":
+            self.api_config.pagination = APIPaginationConfig(
+                type=result.pagination.type,
+                cursor_param=result.pagination.cursor_param or "starting_after",
+                cursor_field=result.pagination.cursor_field or "data[-1].id",
+                page_size_param=result.pagination.page_size_param or "limit",
+                page_size=result.pagination.page_size,
+                data_field=result.pagination.data_field or "data",
+            )
+
+        return {
+            "strategy": result.strategy,
+            "spec_url": result.spec_url,
+            "api_title": result.api_title,
+            "api_description": result.api_description,
+            "endpoints_found": len(result.endpoints),
+            "endpoints": [
+                {"name": ep.name, "path": ep.path, "fields": len(ep.fields)}
+                for ep in result.endpoints
+            ],
+            "pagination": {
+                "type": result.pagination.type,
+                "data_field": result.pagination.data_field,
+            },
+            "errors": result.errors,
+        }
+
+    def save_connector_yaml(self, yaml_path: str | Path) -> None:
+        """Save current api_config to a connector.yaml file.
+
+        Args:
+            yaml_path: Path to write the connector.yaml file.
+        """
+        data: dict[str, Any] = {
+            "type": "api",
+            "base_url": self.api_config.base_url,
+            "auth": {
+                "type": self.api_config.auth.type,
+                "token_env": self.api_config.auth.token_env,
+                "header_name": self.api_config.auth.header_name,
+                "param_name": self.api_config.auth.param_name,
+            },
+            "endpoints": [
+                {"name": ep.name, "path": ep.path, "method": ep.method}
+                for ep in self.api_config.endpoints
+            ],
+            "pagination": {
+                "type": self.api_config.pagination.type,
+                "cursor_param": self.api_config.pagination.cursor_param,
+                "cursor_field": self.api_config.pagination.cursor_field,
+                "page_size_param": self.api_config.pagination.page_size_param,
+                "page_size": self.api_config.pagination.page_size,
+                "data_field": self.api_config.pagination.data_field,
+            },
+            "rate_limit": {
+                "requests_per_second": self.api_config.rate_limit_rps,
+            },
+        }
+
+        path = Path(yaml_path)
+        with open(path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)

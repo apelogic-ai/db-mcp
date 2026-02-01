@@ -242,6 +242,24 @@ test.describe("Connectors Page", () => {
     expect(value).toBe("https://api.stripe.com/v1");
   });
 
+  test("discover API endpoints", async ({ page, bicpMock }) => {
+    bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
+    await page.goto("/connectors");
+
+    // Click Discover Endpoints button
+    await page.getByRole("button", { name: "Discover Endpoints" }).click();
+
+    // Verify discover was called
+    const calls = bicpMock.getCalls("connections/discover");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params).toMatchObject({ name: "stripe-api" });
+
+    // Success message should appear
+    await expect(page.getByText(/found 3 endpoint/i)).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
   test("sync API connection", async ({ page, bicpMock }) => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
     await page.goto("/connectors");

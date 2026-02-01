@@ -121,6 +121,7 @@ class DBMCPAgent(BICPAgent):
 
         # API connector handlers
         self._method_handlers["connections/sync"] = self._handle_connections_sync
+        self._method_handlers["connections/discover"] = self._handle_connections_discover
 
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
@@ -1036,6 +1037,62 @@ class DBMCPAgent(BICPAgent):
 
         except Exception as e:
             logger.exception(f"API sync failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _handle_connections_discover(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Discover API endpoints for a connection.
+
+        Uses OpenAPI spec parsing or endpoint probing to automatically
+        find available endpoints and pagination config.
+
+        Args:
+            params: {
+                "name": str - Connection name
+            }
+
+        Returns:
+            {"success": bool, "strategy": str, "endpoints_found": int, ...}
+        """
+        name = params.get("name")
+
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        conn_path = connections_dir / name
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' not found"}
+
+        connector_yaml = conn_path / "connector.yaml"
+        if not connector_yaml.exists():
+            return {"success": False, "error": "No connector.yaml found"}
+
+        try:
+            from db_mcp.connectors import ConnectorConfig
+            from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+
+            config = ConnectorConfig.from_yaml(connector_yaml)
+            if not isinstance(config, APIConnectorConfig):
+                return {"success": False, "error": "Connection is not an API connector"}
+
+            data_dir = str(conn_path / "data")
+            env_path = str(conn_path / ".env")
+            connector = APIConnector(config, data_dir, env_path=env_path)
+
+            result = connector.discover()
+
+            # Save updated config if endpoints were discovered
+            if result.get("endpoints_found", 0) > 0:
+                connector.save_connector_yaml(connector_yaml)
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        except Exception as e:
+            logger.exception(f"API discovery failed: {e}")
             return {"success": False, "error": str(e)}
 
     def _set_active_connection(self, name: str, config_file: Path) -> None:

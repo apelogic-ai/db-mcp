@@ -665,6 +665,19 @@ export interface ConnectionSyncResult {
   error?: string;
 }
 
+export interface ConnectionDiscoverResult {
+  success: boolean;
+  strategy?: string;
+  spec_url?: string | null;
+  api_title?: string;
+  api_description?: string;
+  endpoints_found?: number;
+  endpoints?: Array<{ name: string; path: string; fields: number }>;
+  pagination?: { type: string; data_field: string };
+  errors?: string[];
+  error?: string;
+}
+
 // API Connector functions
 export async function syncConnection(
   name: string,
@@ -674,6 +687,12 @@ export async function syncConnection(
     name,
     endpoint,
   });
+}
+
+export async function discoverEndpoints(
+  name: string,
+): Promise<ConnectionDiscoverResult> {
+  return bicpCall<ConnectionDiscoverResult>("connections/discover", { name });
 }
 
 // React hook for BICP operations
