@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastmcp import FastMCP
 from pydantic_ai import Agent
@@ -271,6 +272,19 @@ def _create_server() -> FastMCP:
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
 
+    # Detect connector type from connector.yaml
+    try:
+        from db_mcp.connectors import ConnectorConfig
+
+        conn_path = Path(settings.get_effective_connection_path())
+        yaml_path = conn_path / "connector.yaml"
+        _connector_config = ConnectorConfig.from_yaml(yaml_path)
+        connector_type = getattr(_connector_config, "type", "sql")
+    except Exception:
+        connector_type = "sql"
+
+    is_api = connector_type == "api"
+
     instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
 
     server = FastMCP(
@@ -372,13 +386,23 @@ def _create_server() -> FastMCP:
     server.tool(name="protocol")(_protocol)
 
     # =========================================================================
-    # SQL execution tools - always available
+    # SQL execution tools - SQL and File connectors only
     # =========================================================================
 
-    server.tool(name="validate_sql")(_validate_sql)
-    server.tool(name="run_sql")(_run_sql)
-    server.tool(name="get_result")(_get_result)
-    server.tool(name="export_results")(_export_results)
+    if not is_api:
+        server.tool(name="validate_sql")(_validate_sql)
+        server.tool(name="run_sql")(_run_sql)
+        server.tool(name="get_result")(_get_result)
+        server.tool(name="export_results")(_export_results)
+
+    # =========================================================================
+    # API connector tools - API connectors only
+    # =========================================================================
+
+    if is_api:
+        server.tool(name="api_discover")(_api_discover)
+        server.tool(name="api_query")(_api_query)
+        server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
 
     # =========================================================================
     # Admin/Setup tools - always available (not for casual query use)
@@ -407,16 +431,11 @@ def _create_server() -> FastMCP:
     server.tool(name="import_instructions")(_import_instructions)
     server.tool(name="import_examples")(_import_examples)
 
-    # API connector tools
-    server.tool(name="api_discover")(_api_discover)
-    server.tool(name="api_query")(_api_query)
-    server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
-
     # =========================================================================
     # Detailed mode ONLY - schema discovery and query helper tools
     # =========================================================================
 
-    if not is_shell_mode:
+    if not is_shell_mode and not is_api:
         # Database introspection tools
         server.tool(name="test_connection")(_test_connection)
         server.tool(name="detect_dialect")(_detect_dialect)
