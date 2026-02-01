@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from db_mcp.connectors import get_connector
+from db_mcp.connectors.file import FileConnector
 from db_mcp.connectors.sql import SQLConnector
 from db_mcp.db.connection import DatabaseError
 
@@ -395,6 +396,47 @@ def evaluate_cost_tier(
     return CostTier.AUTO, "Query within auto-execution limits"
 
 
+def _explain_duckdb(connector: "FileConnector", sql: str, span: Any) -> ExplainResult:
+    """Validate SQL using DuckDB's EXPLAIN for file-based connectors.
+
+    DuckDB queries run against local files, so cost is always low.
+    We validate by running EXPLAIN to check syntax and table references.
+    """
+    import duckdb
+
+    span.set_attribute("db.dialect", "duckdb")
+
+    try:
+        conn = connector._get_connection()
+        rows_raw = conn.execute(f"EXPLAIN {sql}").fetchall()
+        rows = [{"explain": row[1] if len(row) > 1 else row[0]} for row in rows_raw]
+    except (duckdb.CatalogException, duckdb.BinderException) as exc:
+        return ExplainResult(
+            valid=False,
+            error=str(exc),
+            cost_tier=CostTier.REJECT,
+            tier_reason="Invalid SQL",
+        )
+    except duckdb.ParserException as exc:
+        return ExplainResult(
+            valid=False,
+            error=f"SQL syntax error: {exc}",
+            cost_tier=CostTier.REJECT,
+            tier_reason="Invalid SQL",
+        )
+
+    # DuckDB queries run on local files — always AUTO tier
+    return ExplainResult(
+        valid=True,
+        explanation=rows,
+        estimated_rows=None,
+        estimated_cost=None,
+        estimated_size_gb=None,
+        cost_tier=CostTier.AUTO,
+        tier_reason="Local DuckDB query (file connector)",
+    )
+
+
 def explain_sql(sql: str, database_url: str | None = None) -> ExplainResult:
     """Validate SQL using EXPLAIN and evaluate cost tier.
 
@@ -411,7 +453,20 @@ def explain_sql(sql: str, database_url: str | None = None) -> ExplainResult:
     ) as span:
         try:
             connector = get_connector()
-            assert isinstance(connector, SQLConnector), "EXPLAIN requires SQLConnector"
+
+            # FileConnector (DuckDB): use DuckDB's own EXPLAIN
+            if isinstance(connector, FileConnector):
+                return _explain_duckdb(connector, sql, span)
+
+            # SQLConnector: use SQLAlchemy EXPLAIN
+            if not isinstance(connector, SQLConnector):
+                return ExplainResult(
+                    valid=False,
+                    error=f"EXPLAIN not supported for connector type: {type(connector).__name__}",
+                    cost_tier=CostTier.REJECT,
+                    tier_reason="Unsupported connector",
+                )
+
             engine = connector.get_engine()
             dialect = connector.get_dialect()
             explain_cmd = get_explain_command(dialect)

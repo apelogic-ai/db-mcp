@@ -19,7 +19,6 @@ All three source types share the same knowledge vault structure. The LLM sees id
 
 **The LLM is the planner.** There is no explicit execution plan format. The LLM decides what data it needs, calls the appropriate `get_data()` tool per source, and synthesizes results. For cross-source queries, DuckDB merges the pieces.
 
-## Core Principle: Everything Is a Table
 
 The insight that makes this work: API endpoints and files map cleanly onto the relational model that db-mcp already understands.
 
