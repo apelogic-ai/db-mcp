@@ -1,5 +1,7 @@
 """API connector MCP tools."""
 
+from typing import Any
+
 from db_mcp.config import get_settings
 from db_mcp.connectors import APIConnector, get_connector
 
@@ -46,3 +48,65 @@ async def _api_discover() -> dict:
         connector.save_connector_yaml(yaml_path)
 
     return result
+
+
+async def _api_query(
+    endpoint: str,
+    params: dict[str, str] | None = None,
+    max_pages: int = 1,
+) -> dict[str, Any]:
+    """Query an API endpoint with parameters.
+
+    Returns rows from the API endpoint matching the given parameters.
+    Use api_describe_endpoint to see available parameters first.
+
+    Args:
+        endpoint: Name of the endpoint to query (e.g. "markets", "events").
+        params: Query parameters as key-value pairs (e.g. {"active": "true"}).
+        max_pages: Maximum pages to fetch. Default 1 (single page, fast).
+
+    Returns:
+        {columns: [...], data: [...], rows_returned: int} or {error: "..."}.
+    """
+    connector = get_connector()
+    if not isinstance(connector, APIConnector):
+        return {"error": "Active connection is not an API connector"}
+    return connector.query_endpoint(endpoint, params, max_pages)
+
+
+async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:
+    """Describe an API endpoint's available query parameters.
+
+    Returns endpoint metadata including available filters, sorts,
+    and other query parameters with their types and descriptions.
+
+    Args:
+        endpoint: Name of the endpoint to describe (e.g. "markets", "events").
+
+    Returns:
+        Endpoint metadata including name, path, method, and query_params.
+    """
+    connector = get_connector()
+    if not isinstance(connector, APIConnector):
+        return {"error": "Active connection is not an API connector"}
+
+    for ep in connector.api_config.endpoints:
+        if ep.name == endpoint:
+            return {
+                "name": ep.name,
+                "path": ep.path,
+                "method": ep.method,
+                "query_params": [
+                    {
+                        "name": qp.name,
+                        "type": qp.type,
+                        "description": qp.description,
+                        "required": qp.required,
+                        "enum": qp.enum,
+                        "default": qp.default,
+                    }
+                    for qp in ep.query_params
+                ],
+            }
+
+    return {"error": f"Unknown endpoint: {endpoint}"}

@@ -19,12 +19,25 @@ from db_mcp.connectors.file import FileConnector, FileConnectorConfig
 
 
 @dataclass
+class APIQueryParamConfig:
+    """Metadata for a query parameter accepted by an API endpoint."""
+
+    name: str
+    type: str = "string"  # string, integer, number, boolean
+    description: str = ""
+    required: bool = False
+    enum: list[str] | None = None
+    default: str | None = None
+
+
+@dataclass
 class APIEndpointConfig:
     """A single API endpoint (maps to one table)."""
 
     name: str
     path: str
     method: str = "GET"
+    query_params: list[APIQueryParamConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -346,6 +359,184 @@ class APIConnector(FileConnector):
             for row in rows:
                 f.write(json.dumps(row, default=str) + "\n")
 
+    # -- Ad-hoc querying ----------------------------------------------------
+
+    def query_endpoint(
+        self,
+        endpoint_name: str,
+        params: dict[str, str] | None = None,
+        max_pages: int = 1,
+    ) -> dict[str, Any]:
+        """Query an API endpoint directly with params, return results.
+
+        Args:
+            endpoint_name: Name of the configured endpoint to query.
+            params: Query parameters to pass to the endpoint.
+            max_pages: Maximum number of pages to fetch (default 1).
+
+        Returns:
+            {columns: [...], data: [...], rows_returned: int}
+            or {error: "..."} on failure.
+        """
+        # Look up endpoint by name
+        endpoint = None
+        for ep in self.api_config.endpoints:
+            if ep.name == endpoint_name:
+                endpoint = ep
+                break
+        if endpoint is None:
+            return {"error": f"Unknown endpoint: {endpoint_name}"}
+
+        try:
+            headers = self._resolve_auth_headers()
+            base_params = self._resolve_auth_params()
+
+            # Merge user params
+            merged_params = dict(base_params)
+            if params:
+                merged_params.update(params)
+
+            url = self.api_config.base_url.rstrip("/") + endpoint.path
+            rows = self._fetch_with_pagination(url, headers, merged_params, max_pages)
+            flat_rows = self._flatten_rows(rows)
+
+            # Extract column names from all rows
+            columns: list[str] = []
+            seen: set[str] = set()
+            for row in flat_rows:
+                for key in row:
+                    if key not in seen:
+                        columns.append(key)
+                        seen.add(key)
+
+            return {
+                "columns": columns,
+                "data": flat_rows,
+                "rows_returned": len(flat_rows),
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    def _fetch_with_pagination(
+        self,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, str],
+        max_pages: int,
+    ) -> list[dict]:
+        """Fetch data from a URL, handling pagination up to max_pages."""
+        pg = self.api_config.pagination
+
+        if pg.type == "none":
+            return self._fetch_single(url, headers, params)
+
+        if pg.type == "cursor":
+            return self._fetch_cursor_paged(url, headers, params, pg, max_pages)
+
+        if pg.type == "offset":
+            return self._fetch_offset_paged(url, headers, params, pg, max_pages)
+
+        # Fallback: single fetch
+        return self._fetch_single(url, headers, params)
+
+    def _fetch_cursor_paged(
+        self,
+        url: str,
+        headers: dict[str, str],
+        base_params: dict[str, str],
+        pg: APIPaginationConfig,
+        max_pages: int,
+    ) -> list[dict]:
+        """Fetch pages using cursor pagination with a page cap."""
+        all_rows: list[dict] = []
+        params = dict(base_params)
+        if pg.page_size_param:
+            params[pg.page_size_param] = str(pg.page_size)
+
+        for _ in range(max_pages):
+            self._rate_limit()
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            resp.raise_for_status()
+            body = resp.json()
+
+            if isinstance(body, list):
+                data = body
+            else:
+                data = body.get(pg.data_field, [])
+            all_rows.extend(data)
+
+            # Check if there are more pages
+            has_more = body.get("has_more", False) if isinstance(body, dict) else False
+            if not has_more or not data:
+                break
+
+            cursor_value = self._extract_cursor(data, pg.cursor_field)
+            if cursor_value is None:
+                break
+            params[pg.cursor_param] = cursor_value
+
+        return all_rows
+
+    def _fetch_offset_paged(
+        self,
+        url: str,
+        headers: dict[str, str],
+        base_params: dict[str, str],
+        pg: APIPaginationConfig,
+        max_pages: int,
+    ) -> list[dict]:
+        """Fetch pages using offset pagination with a page cap."""
+        all_rows: list[dict] = []
+        offset = 0
+        params = dict(base_params)
+        if pg.page_size_param:
+            params[pg.page_size_param] = str(pg.page_size)
+
+        for _ in range(max_pages):
+            self._rate_limit()
+            params["offset"] = str(offset)
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            resp.raise_for_status()
+            body = resp.json()
+
+            data = body.get(pg.data_field, []) if isinstance(body, dict) else body
+            if not data:
+                break
+
+            all_rows.extend(data)
+            offset += len(data)
+
+            if len(data) < pg.page_size:
+                break
+
+        return all_rows
+
+    @staticmethod
+    def _flatten_rows(rows: list[dict]) -> list[dict]:
+        """Flatten nested dicts with _ separator.
+
+        {"user": {"name": "Alice"}} → {"user_name": "Alice"}
+        Nested arrays become JSON strings.
+        """
+        flat_rows: list[dict] = []
+        for row in rows:
+            flat: dict[str, Any] = {}
+            APIConnector._flatten_obj(row, "", flat)
+            flat_rows.append(flat)
+        return flat_rows
+
+    @staticmethod
+    def _flatten_obj(obj: dict, prefix: str, out: dict[str, Any]) -> None:
+        """Recursively flatten a dict into out with _ separator."""
+        for key, value in obj.items():
+            full_key = f"{prefix}_{key}" if prefix else key
+            if isinstance(value, dict):
+                APIConnector._flatten_obj(value, full_key, out)
+            elif isinstance(value, list):
+                out[full_key] = json.dumps(value, default=str)
+            else:
+                out[full_key] = value
+
     # -- Discovery ----------------------------------------------------------
 
     def discover(self) -> dict[str, Any]:
@@ -375,7 +566,22 @@ class APIConnector(FileConnector):
         # Update config with discovered endpoints
         if result.endpoints:
             self.api_config.endpoints = [
-                APIEndpointConfig(name=ep.name, path=ep.path, method=ep.method)
+                APIEndpointConfig(
+                    name=ep.name,
+                    path=ep.path,
+                    method=ep.method,
+                    query_params=[
+                        APIQueryParamConfig(
+                            name=qp.name,
+                            type=qp.type,
+                            description=qp.description,
+                            required=qp.required,
+                            enum=qp.enum,
+                            default=qp.default,
+                        )
+                        for qp in ep.query_params
+                    ],
+                )
                 for ep in result.endpoints
             ]
 
@@ -423,7 +629,32 @@ class APIConnector(FileConnector):
                 "param_name": self.api_config.auth.param_name,
             },
             "endpoints": [
-                {"name": ep.name, "path": ep.path, "method": ep.method}
+                {
+                    "name": ep.name,
+                    "path": ep.path,
+                    "method": ep.method,
+                    **(
+                        {
+                            "query_params": [
+                                {
+                                    k: v
+                                    for k, v in {
+                                        "name": qp.name,
+                                        "type": qp.type,
+                                        "description": qp.description,
+                                        "required": qp.required or None,
+                                        "enum": qp.enum,
+                                        "default": qp.default,
+                                    }.items()
+                                    if v
+                                }
+                                for qp in ep.query_params
+                            ]
+                        }
+                        if ep.query_params
+                        else {}
+                    ),
+                }
                 for ep in self.api_config.endpoints
             ],
             "pagination": {

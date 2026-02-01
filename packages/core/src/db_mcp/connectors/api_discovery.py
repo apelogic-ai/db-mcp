@@ -37,6 +37,18 @@ class DiscoveredField:
 
 
 @dataclass
+class DiscoveredQueryParam:
+    """A query parameter discovered from an API spec."""
+
+    name: str
+    type: str = "string"  # string, integer, number, boolean
+    description: str = ""
+    required: bool = False
+    enum: list[str] | None = None
+    default: str | None = None
+
+
+@dataclass
 class DiscoveredEndpoint:
     """An API endpoint discovered from a spec or probing."""
 
@@ -44,6 +56,7 @@ class DiscoveredEndpoint:
     path: str  # API path (e.g., "/markets")
     method: str = "GET"
     fields: list[DiscoveredField] = field(default_factory=list)
+    query_params: list[DiscoveredQueryParam] = field(default_factory=list)
 
 
 @dataclass
@@ -227,15 +240,39 @@ def parse_openapi_spec(
         # Determine if this is a collection endpoint
         fields, is_wrapped, wrapper_field = _extract_fields_from_schema(response_schema, spec)
 
-        endpoint_name = _path_to_name(path)
-        endpoints.append(DiscoveredEndpoint(name=endpoint_name, path=path, fields=fields))
-
-        # Collect pagination-related query params
+        # Extract query params
+        discovered_params: list[DiscoveredQueryParam] = []
         params = get_op.get("parameters", [])
         for p in params:
-            if isinstance(p, dict) and p.get("in") == "query":
+            if not isinstance(p, dict):
+                continue
+            if p.get("in") == "query":
                 pname = p.get("name", "")
                 all_pagination_params.append(pname)
+                schema = p.get("schema", {})
+                # Swagger 2.0 puts type directly on the parameter
+                if is_swagger2:
+                    param_type = p.get("type", "string")
+                else:
+                    param_type = schema.get("type", "string")
+                default_val = schema.get("default")
+                discovered_params.append(
+                    DiscoveredQueryParam(
+                        name=pname,
+                        type=param_type,
+                        description=p.get("description", ""),
+                        required=p.get("required", False),
+                        enum=schema.get("enum"),
+                        default=str(default_val) if default_val is not None else None,
+                    )
+                )
+
+        endpoint_name = _path_to_name(path)
+        endpoints.append(
+            DiscoveredEndpoint(
+                name=endpoint_name, path=path, fields=fields, query_params=discovered_params
+            )
+        )
 
     # Detect pagination from collected params and wrapped response pattern
     pagination = _detect_pagination_from_spec(all_pagination_params, spec)

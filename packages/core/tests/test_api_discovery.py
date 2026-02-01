@@ -417,6 +417,142 @@ class TestParseOpenAPISpec:
         assert endpoints == []
         assert title == "Empty"
 
+    def test_extracts_query_params(self):
+        """Should populate query_params on DiscoveredEndpoint from spec parameters."""
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "Params API"},
+            "paths": {
+                "/events": {
+                    "get": {
+                        "parameters": [
+                            {
+                                "name": "active",
+                                "in": "query",
+                                "schema": {"type": "boolean"},
+                                "description": "Filter by active status",
+                            },
+                            {
+                                "name": "order",
+                                "in": "query",
+                                "schema": {
+                                    "type": "string",
+                                    "enum": ["startDate", "endDate", "volume"],
+                                },
+                                "description": "Sort field",
+                            },
+                            {
+                                "name": "limit",
+                                "in": "query",
+                                "schema": {"type": "integer", "default": 100},
+                            },
+                        ],
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {"id": {"type": "string"}},
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        endpoints, _, _, _ = parse_openapi_spec(spec)
+        events = next(ep for ep in endpoints if ep.name == "events")
+        assert len(events.query_params) == 3
+        names = {qp.name for qp in events.query_params}
+        assert "active" in names
+        assert "order" in names
+        assert "limit" in names
+
+    def test_query_param_metadata(self):
+        """Should capture type, description, required, enum, default on query params."""
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "Meta API"},
+            "paths": {
+                "/items": {
+                    "get": {
+                        "parameters": [
+                            {
+                                "name": "status",
+                                "in": "query",
+                                "required": True,
+                                "schema": {
+                                    "type": "string",
+                                    "enum": ["open", "closed"],
+                                    "default": "open",
+                                },
+                                "description": "Filter by status",
+                            },
+                        ],
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"type": "array", "items": {"type": "object"}}
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        endpoints, _, _, _ = parse_openapi_spec(spec)
+        items = next(ep for ep in endpoints if ep.name == "items")
+        status_param = next(qp for qp in items.query_params if qp.name == "status")
+        assert status_param.type == "string"
+        assert status_param.description == "Filter by status"
+        assert status_param.required is True
+        assert status_param.enum == ["open", "closed"]
+        assert status_param.default == "open"
+
+    def test_excludes_path_params_from_query_params(self):
+        """Path params like {id} should not appear in query_params."""
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "Path API"},
+            "paths": {
+                "/items": {
+                    "get": {
+                        "parameters": [
+                            {"name": "page", "in": "query", "schema": {"type": "integer"}},
+                            {
+                                "name": "id",
+                                "in": "path",
+                                "required": True,
+                                "schema": {"type": "string"},
+                            },
+                        ],
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"type": "array", "items": {"type": "object"}}
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        endpoints, _, _, _ = parse_openapi_spec(spec)
+        items = next(ep for ep in endpoints if ep.name == "items")
+        names = {qp.name for qp in items.query_params}
+        assert "page" in names
+        assert "id" not in names
+
 
 # ---------------------------------------------------------------------------
 # Response probing (fallback)

@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse
 from db_mcp.config import get_settings
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
-from db_mcp.tools.api import _api_discover, _api_sync
+from db_mcp.tools.api import _api_describe_endpoint, _api_discover, _api_query, _api_sync
 from db_mcp.tools.database import (
     _describe_table,
     _detect_dialect,
@@ -410,6 +410,8 @@ def _create_server() -> FastMCP:
     # API connector tools
     server.tool(name="api_sync")(_api_sync)
     server.tool(name="api_discover")(_api_discover)
+    server.tool(name="api_query")(_api_query)
+    server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
 
     # =========================================================================
     # Detailed mode ONLY - schema discovery and query helper tools

@@ -16,6 +16,7 @@ from db_mcp.connectors.api import (
     APIConnectorConfig,
     APIEndpointConfig,
     APIPaginationConfig,
+    APIQueryParamConfig,
 )
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig, FileSourceConfig
 from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
@@ -61,7 +62,11 @@ class ConnectorConfig:
             auth = APIAuthConfig(**auth_data) if auth_data else APIAuthConfig()
 
             endpoints_data = data.get("endpoints", [])
-            endpoints = [APIEndpointConfig(**e) for e in endpoints_data]
+            endpoints = []
+            for e in endpoints_data:
+                qp_data = e.pop("query_params", [])
+                query_params = [APIQueryParamConfig(**qp) for qp in qp_data]
+                endpoints.append(APIEndpointConfig(**e, query_params=query_params))
 
             pagination_data = data.get("pagination", {})
             pagination = (
@@ -175,6 +180,7 @@ __all__ = [
     "APIConnectorConfig",
     "APIEndpointConfig",
     "APIPaginationConfig",
+    "APIQueryParamConfig",
     "Connector",
     "ConnectorConfig",
     "FileConnector",

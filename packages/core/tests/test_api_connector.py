@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from db_mcp.connectors import Connector
 
@@ -412,3 +413,308 @@ class TestAPIConnectorPagination:
             result = conn.sync(endpoint_name="items")
 
         assert result["rows_fetched"]["items"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Ad-hoc querying (query_endpoint)
+# ---------------------------------------------------------------------------
+
+
+class TestAPIConnectorAdHocQuery:
+    """Tests for direct ad-hoc API querying via query_endpoint()."""
+
+    def test_query_endpoint_returns_columns_and_data(self, data_dir, env_file):
+        """query_endpoint should return {columns, data, rows_returned} shape."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="users", path="/users")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {"id": 1, "name": "Alice"},
+            {"id": 2, "name": "Bob"},
+        ]
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+            result = conn.query_endpoint("users")
+
+        assert "columns" in result
+        assert "data" in result
+        assert "rows_returned" in result
+        assert set(result["columns"]) == {"id", "name"}
+        assert result["rows_returned"] == 2
+        assert len(result["data"]) == 2
+
+    def test_query_endpoint_passes_user_params(self, data_dir, env_file):
+        """User params should appear in the HTTP request."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="events", path="/events")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [{"id": 1}]
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+            conn.query_endpoint("events", params={"active": "true", "order": "startDate"})
+
+        call_kwargs = mock_get.call_args
+        passed_params = call_kwargs.kwargs.get("params", {})
+        assert passed_params["active"] == "true"
+        assert passed_params["order"] == "startDate"
+
+    def test_query_endpoint_merges_auth_params(self, data_dir, env_file):
+        """Auth params should be merged alongside user params."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="query_param", token_env="TEST_API_KEY", param_name="key"),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [{"id": 1}]
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+            conn.query_endpoint("items", params={"color": "red"})
+
+        passed_params = mock_get.call_args.kwargs.get("params", {})
+        assert passed_params["key"] == "sk-test-12345"
+        assert passed_params["color"] == "red"
+
+    def test_query_endpoint_unknown_endpoint_errors(self, api_connector):
+        """Should return error for unknown endpoint name."""
+        result = api_connector.query_endpoint("nonexistent")
+        assert "error" in result
+
+    def test_query_endpoint_flattens_nested_json(self, data_dir, env_file):
+        """Nested JSON should be flattened with parent_child column naming."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="users", path="/users")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {"id": 1, "address": {"city": "NYC", "zip": "10001"}},
+        ]
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+            result = conn.query_endpoint("users")
+
+        assert "address_city" in result["columns"]
+        assert "address_zip" in result["columns"]
+        assert result["data"][0]["address_city"] == "NYC"
+
+    def test_query_endpoint_single_page_default(self, data_dir, env_file):
+        """With max_pages=1 (default), only one HTTP call should be made."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+            APIPaginationConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+            pagination=APIPaginationConfig(
+                type="cursor",
+                data_field="data",
+                page_size=2,
+            ),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": [{"id": 1}, {"id": 2}], "has_more": True}
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+            result = conn.query_endpoint("items")
+
+        assert mock_get.call_count == 1
+        assert result["rows_returned"] == 2
+
+    def test_query_endpoint_multi_page(self, data_dir, env_file):
+        """With max_pages > 1, should follow pagination up to the limit."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+            APIPaginationConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+            pagination=APIPaginationConfig(
+                type="cursor",
+                cursor_param="after",
+                cursor_field="data[-1].id",
+                data_field="data",
+                page_size=2,
+            ),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        page1 = MagicMock()
+        page1.status_code = 200
+        page1.json.return_value = {"data": [{"id": "a"}, {"id": "b"}], "has_more": True}
+        page2 = MagicMock()
+        page2.status_code = 200
+        page2.json.return_value = {"data": [{"id": "c"}], "has_more": False}
+
+        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2]):
+            result = conn.query_endpoint("items", max_pages=3)
+
+        assert result["rows_returned"] == 3
+
+    def test_query_endpoint_respects_data_field(self, data_dir, env_file):
+        """Should extract rows from data_field wrapper."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+            APIPaginationConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+            pagination=APIPaginationConfig(data_field="results"),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"results": [{"id": 1}, {"id": 2}], "total": 2}
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+            result = conn.query_endpoint("items")
+
+        assert result["rows_returned"] == 2
+        assert result["data"][0]["id"] == 1
+
+
+# ---------------------------------------------------------------------------
+# YAML round-trip (query_params persistence)
+# ---------------------------------------------------------------------------
+
+
+class TestAPIConnectorYAMLRoundTrip:
+    """Tests for saving and loading query_params in connector.yaml."""
+
+    def test_save_and_load_query_params(self, tmp_path, data_dir, env_file):
+        """query_params should survive save → load round-trip."""
+        from db_mcp.connectors import ConnectorConfig
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+            APIQueryParamConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="events",
+                    path="/events",
+                    query_params=[
+                        APIQueryParamConfig(
+                            name="active",
+                            type="boolean",
+                            description="Filter by active",
+                        ),
+                        APIQueryParamConfig(
+                            name="order",
+                            type="string",
+                            enum=["startDate", "volume"],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        yaml_path = tmp_path / "connector.yaml"
+        conn.save_connector_yaml(yaml_path)
+
+        loaded = ConnectorConfig.from_yaml(yaml_path)
+        assert isinstance(loaded, APIConnectorConfig)
+        assert len(loaded.endpoints) == 1
+        ep = loaded.endpoints[0]
+        assert len(ep.query_params) == 2
+        active_qp = next(qp for qp in ep.query_params if qp.name == "active")
+        assert active_qp.type == "boolean"
+        assert active_qp.description == "Filter by active"
+        order_qp = next(qp for qp in ep.query_params if qp.name == "order")
+        assert order_qp.enum == ["startDate", "volume"]
+
+    def test_load_yaml_without_query_params(self, tmp_path):
+        """Loading connector.yaml without query_params should default to empty list."""
+        from db_mcp.connectors import ConnectorConfig
+        from db_mcp.connectors.api import APIConnectorConfig
+
+        yaml_path = tmp_path / "connector.yaml"
+        yaml_path.write_text(
+            yaml.dump(
+                {
+                    "type": "api",
+                    "base_url": "https://api.example.com",
+                    "endpoints": [{"name": "items", "path": "/items"}],
+                }
+            )
+        )
+
+        loaded = ConnectorConfig.from_yaml(yaml_path)
+        assert isinstance(loaded, APIConnectorConfig)
+        assert loaded.endpoints[0].query_params == []

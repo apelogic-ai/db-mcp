@@ -18,6 +18,7 @@ dedicated MCP tools for structured operations.
 ```
 connection/
 ├── PROTOCOL.md              # This file (system-managed, overwritten on updates)
+├── connector.yaml           # Connector config (sql/api/file) — absent = SQL
 ├── state.yaml               # Onboarding state
 ├── knowledge_gaps.yaml      # Tracked vocabulary gaps (auto-detected + manually added)
 ├── schema/
@@ -35,9 +36,11 @@ connection/
 │   ├── trace-analysis-patterns.md  # Patterns from trace analysis
 │   └── failures/            # Failed query logs
 │       └── {uuid}.yaml
-└── metrics/
-    ├── catalog.yaml         # Business metric definitions (KPIs, aggregations)
-    └── dimensions.yaml      # Dimension definitions (axes for slicing metrics)
+├── metrics/
+│   ├── catalog.yaml         # Business metric definitions (KPIs, aggregations)
+│   └── dimensions.yaml      # Dimension definitions (axes for slicing metrics)
+└── data/                    # (API/file connectors only) Synced data files
+    └── {endpoint}.jsonl
 ```
 
 ## CRITICAL: Use Cached Schema First
@@ -132,6 +135,37 @@ Before ANY query work:
 5. Only if cache missing: use `list_catalogs()` to discover
 
 Failing to do this will cause "table not found" errors.
+
+## Connection Types
+
+This connection may be one of three types (check `connector.yaml`):
+
+### SQL Connections (default)
+Standard database connections (PostgreSQL, ClickHouse, Trino, MySQL, SQL Server).
+Use `run_sql` / `get_data` for queries. The database hierarchy section above applies.
+
+### API Connections (`type: api`)
+REST API connections. Data is queried directly from API endpoints.
+
+**Workflow for API connections:**
+1. Use `api_describe_endpoint(endpoint)` to see available query parameters
+2. Use `api_query(endpoint, params)` to fetch data with filters
+3. `run_sql` still works over synced data (JSONL files queried via DuckDB)
+
+Key tools:
+- `api_describe_endpoint` — Shows endpoint metadata and available query params
+  (name, type, description, required, enum values)
+- `api_query` — Hit an endpoint directly with query params, returns
+  `{columns, data, rows_returned}`. Default: single page. Use `max_pages` for more.
+- `api_discover` — Auto-discover endpoints from OpenAPI spec or probing
+- `api_sync` — Fetch all data from endpoints into local JSONL for SQL querying
+
+**Prefer `api_query` for ad-hoc exploration** (fast, single page).
+Use `api_sync` + `run_sql` when you need joins, aggregations, or complex filtering.
+
+### File Connections (`type: file`)
+Local file connections (CSV, Parquet, JSON, JSONL) queried via DuckDB.
+Use `run_sql` for queries — DuckDB reads files directly.
 
 ## IMPORTANT: User Transparency
 
@@ -346,6 +380,10 @@ Beyond `shell`, these tools are available for structured operations:
 | `metrics_approve` | Approve a discovered candidate into the catalog |
 | `metrics_add` | Manually define a metric or dimension |
 | `metrics_remove` | Remove a metric or dimension from the catalog |
+| `api_query` | Query an API endpoint with params (API connectors) |
+| `api_describe_endpoint` | Show endpoint metadata and available query params |
+| `api_discover` | Auto-discover API endpoints from spec or probing |
+| `api_sync` | Sync API data to local JSONL for SQL querying |
 
 ## Useful Commands
 
