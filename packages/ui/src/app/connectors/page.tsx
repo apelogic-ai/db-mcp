@@ -21,7 +21,7 @@ interface Connection {
   hasCredentials: boolean;
   dialect: string | null;
   onboardingPhase: string | null;
-  connectorType: "sql" | "file";
+  connectorType: "sql" | "file" | "api";
 }
 
 interface ConnectionsListResult {
@@ -54,8 +54,25 @@ interface GetResult {
   success: boolean;
   name?: string;
   databaseUrl?: string;
-  connectorType?: "sql" | "file";
+  connectorType?: "sql" | "file" | "api";
   directory?: string;
+  baseUrl?: string;
+  auth?: {
+    type: string;
+    tokenEnv: string;
+    headerName: string;
+    paramName: string;
+  };
+  endpoints?: Array<{ name: string; path: string; method: string }>;
+  pagination?: {
+    type: string;
+    cursorParam: string;
+    cursorField: string;
+    pageSizeParam: string;
+    pageSize: number;
+    dataField: string;
+  };
+  rateLimitRps?: number;
   error?: string;
 }
 
@@ -150,10 +167,11 @@ export default function ConnectorsPage() {
   // Create/Edit form state
   const [showCreateSqlForm, setShowCreateSqlForm] = useState(false);
   const [showCreateFileForm, setShowCreateFileForm] = useState(false);
+  const [showCreateApiForm, setShowCreateApiForm] = useState(false);
   const [editingConnection, setEditingConnection] = useState<string | null>(
     null,
   );
-  const [editingType, setEditingType] = useState<"sql" | "file">("sql");
+  const [editingType, setEditingType] = useState<"sql" | "file" | "api">("sql");
   const [fullDatabaseUrl, setFullDatabaseUrl] = useState("");
   const [displayDatabaseUrl, setDisplayDatabaseUrl] = useState("");
   const [urlModified, setUrlModified] = useState(false);
@@ -168,12 +186,26 @@ export default function ConnectorsPage() {
     hint?: string;
   } | null>(null);
 
+  // API form state
+  const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [apiAuthType, setApiAuthType] = useState("bearer");
+  const [apiTokenEnv, setApiTokenEnv] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [syncLoading, setSyncLoading] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+
   // Auto-test debounce
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Filtered connection lists
-  const sqlConnections = connections.filter((c) => c.connectorType !== "file");
+  const sqlConnections = connections.filter(
+    (c) => c.connectorType !== "file" && c.connectorType !== "api",
+  );
   const fileConnections = connections.filter((c) => c.connectorType === "file");
+  const apiConnections = connections.filter((c) => c.connectorType === "api");
 
   const maskDatabaseUrl = (url: string): string => {
     try {
@@ -191,6 +223,7 @@ export default function ConnectorsPage() {
   const resetFormState = () => {
     setShowCreateSqlForm(false);
     setShowCreateFileForm(false);
+    setShowCreateApiForm(false);
     setEditingConnection(null);
     setFullDatabaseUrl("");
     setDisplayDatabaseUrl("");
@@ -199,6 +232,11 @@ export default function ConnectorsPage() {
     setNewName("");
     setTestStatus(null);
     setCreateError(null);
+    setApiBaseUrl("");
+    setApiAuthType("bearer");
+    setApiTokenEnv("");
+    setApiKey("");
+    setSyncResult(null);
   };
 
   const fetchConnections = useCallback(async () => {
@@ -235,8 +273,37 @@ export default function ConnectorsPage() {
   };
 
   const handleTestConnection = useCallback(
-    async (url?: string, dir?: string, type?: "sql" | "file") => {
+    async (url?: string, dir?: string, type?: "sql" | "file" | "api") => {
       const effectiveType = type ?? editingType;
+
+      if (effectiveType === "api") {
+        const baseUrlToTest = url ?? apiBaseUrl;
+        if (!baseUrlToTest.trim()) return;
+
+        setTestStatus({ testing: true, success: null, message: "" });
+        try {
+          const result = await call<TestResult>("connections/test", {
+            connectorType: "api",
+            baseUrl: baseUrlToTest,
+            apiKey: apiKey || undefined,
+            authType: apiAuthType,
+          });
+          setTestStatus({
+            testing: false,
+            success: result.success,
+            message: result.success
+              ? result.message || "API reachable"
+              : result.error || "Connection failed",
+          });
+        } catch (err) {
+          setTestStatus({
+            testing: false,
+            success: false,
+            message: err instanceof Error ? err.message : "Test failed",
+          });
+        }
+        return;
+      }
 
       if (effectiveType === "file") {
         const dirToTest = dir ?? directoryPath;
@@ -303,7 +370,15 @@ export default function ConnectorsPage() {
         });
       }
     },
-    [call, fullDatabaseUrl, directoryPath, editingType],
+    [
+      call,
+      fullDatabaseUrl,
+      directoryPath,
+      editingType,
+      apiBaseUrl,
+      apiKey,
+      apiAuthType,
+    ],
   );
 
   const handleDatabaseUrlChange = (value: string) => {
@@ -335,8 +410,13 @@ export default function ConnectorsPage() {
     }
   };
 
-  const handleCreateConnection = async (type: "sql" | "file") => {
-    if (type === "file") {
+  const handleCreateConnection = async (type: "sql" | "file" | "api") => {
+    if (type === "api") {
+      if (!newName.trim() || !apiBaseUrl.trim()) {
+        setCreateError("Name and Base URL are required");
+        return;
+      }
+    } else if (type === "file") {
       if (!newName.trim() || !directoryPath.trim()) {
         setCreateError("Name and Directory Path are required");
         return;
@@ -356,7 +436,12 @@ export default function ConnectorsPage() {
         connectorType: type,
         setActive: true,
       };
-      if (type === "file") {
+      if (type === "api") {
+        params.baseUrl = apiBaseUrl.trim();
+        params.authType = apiAuthType;
+        params.tokenEnv = apiTokenEnv.trim() || undefined;
+        params.apiKey = apiKey.trim() || undefined;
+      } else if (type === "file") {
         params.directory = directoryPath.trim();
       } else {
         params.databaseUrl = fullDatabaseUrl.trim();
@@ -407,7 +492,11 @@ export default function ConnectorsPage() {
         setEditingType(type);
         setNewName(name);
 
-        if (type === "file") {
+        if (type === "api") {
+          setApiBaseUrl(result.baseUrl || "");
+          setApiAuthType(result.auth?.type || "bearer");
+          setApiTokenEnv(result.auth?.tokenEnv || "");
+        } else if (type === "file") {
           setDirectoryPath(result.directory || "");
         } else {
           const url = result.databaseUrl || "";
@@ -427,7 +516,12 @@ export default function ConnectorsPage() {
   const handleUpdateConnection = async () => {
     if (!editingConnection) return;
 
-    if (editingType === "file") {
+    if (editingType === "api") {
+      if (!apiBaseUrl.trim()) {
+        setCreateError("Base URL is required");
+        return;
+      }
+    } else if (editingType === "file") {
       if (!directoryPath.trim()) {
         setCreateError("Directory Path is required");
         return;
@@ -449,7 +543,16 @@ export default function ConnectorsPage() {
     setCreateError(null);
     try {
       const params: Record<string, unknown> = { name: editingConnection };
-      if (editingType === "file") {
+      if (editingType === "api") {
+        params.baseUrl = apiBaseUrl.trim();
+        params.auth = {
+          type: apiAuthType,
+          tokenEnv: apiTokenEnv.trim(),
+        };
+        if (apiKey.trim()) {
+          params.apiKey = apiKey.trim();
+        }
+      } else if (editingType === "file") {
         params.directory = directoryPath.trim();
       } else {
         params.databaseUrl = fullDatabaseUrl.trim();
@@ -469,6 +572,44 @@ export default function ConnectorsPage() {
       );
     } finally {
       setCreateLoading(false);
+    }
+  };
+
+  const handleSyncConnection = async (name: string) => {
+    setSyncLoading(name);
+    setSyncResult(null);
+    try {
+      const result = await call<{
+        success: boolean;
+        synced?: string[];
+        rows_fetched?: Record<string, number>;
+        errors?: string[];
+        error?: string;
+      }>("connections/sync", { name });
+
+      if (result.success) {
+        const synced = result.synced || [];
+        const totalRows = Object.values(result.rows_fetched || {}).reduce(
+          (a, b) => a + b,
+          0,
+        );
+        setSyncResult({
+          success: true,
+          message: `Synced ${synced.length} endpoint${synced.length !== 1 ? "s" : ""} (${totalRows} rows)`,
+        });
+      } else {
+        setSyncResult({
+          success: false,
+          message: result.error || "Sync failed",
+        });
+      }
+    } catch (err) {
+      setSyncResult({
+        success: false,
+        message: err instanceof Error ? err.message : "Sync failed",
+      });
+    } finally {
+      setSyncLoading(null);
     }
   };
 
@@ -573,11 +714,13 @@ export default function ConnectorsPage() {
                 : "text-gray-600"
             }
           >
-            {conn.connectorType === "file"
-              ? "Directory"
-              : conn.hasCredentials
-                ? "Credentials"
-                : "No credentials"}
+            {conn.connectorType === "api"
+              ? "API"
+              : conn.connectorType === "file"
+                ? "Directory"
+                : conn.hasCredentials
+                  ? "Credentials"
+                  : "No credentials"}
           </span>
           <span className={conn.hasSchema ? "text-green-500" : "text-gray-600"}>
             {conn.hasSchema ? "Schema" : "No schema"}
@@ -591,7 +734,81 @@ export default function ConnectorsPage() {
       {/* Inline Edit Form */}
       {editingConnection === conn.name && (
         <div className="p-4 bg-gray-950 border border-gray-800 border-t-0 rounded-b-lg space-y-4">
-          {editingType === "file" ? (
+          {editingType === "api" ? (
+            <>
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">Base URL</label>
+                <div className="relative">
+                  <Input
+                    placeholder="https://api.example.com/v1"
+                    value={apiBaseUrl}
+                    onChange={(e) => {
+                      setApiBaseUrl(e.target.value);
+                      setUrlModified(true);
+                    }}
+                    className="bg-gray-900 border-gray-700 text-white font-mono text-sm pr-10"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <StatusIndicator testStatus={testStatus} />
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-400">Auth Type</label>
+                  <select
+                    value={apiAuthType}
+                    onChange={(e) => {
+                      setApiAuthType(e.target.value);
+                      setUrlModified(true);
+                    }}
+                    className="w-full bg-gray-900 border border-gray-700 text-white rounded-md px-3 py-2 text-sm"
+                  >
+                    <option value="bearer">Bearer Token</option>
+                    <option value="header">Custom Header</option>
+                    <option value="query_param">Query Parameter</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-400">Token Env Var</label>
+                  <Input
+                    placeholder="API_KEY"
+                    value={apiTokenEnv}
+                    onChange={(e) => {
+                      setApiTokenEnv(e.target.value);
+                      setUrlModified(true);
+                    }}
+                    className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">
+                  API Key (optional, updates .env)
+                </label>
+                <Input
+                  placeholder="sk-..."
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => {
+                    setApiKey(e.target.value);
+                    setUrlModified(true);
+                  }}
+                  className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
+                />
+              </div>
+              {testStatus &&
+                !testStatus.testing &&
+                testStatus.success === false && (
+                  <p className="text-xs text-red-400">{testStatus.message}</p>
+                )}
+              {testStatus &&
+                !testStatus.testing &&
+                testStatus.success === true && (
+                  <p className="text-xs text-green-400">{testStatus.message}</p>
+                )}
+            </>
+          ) : editingType === "file" ? (
             <div className="space-y-2">
               <label className="text-sm text-gray-400">Directory Path</label>
               <div className="relative">
@@ -667,12 +884,16 @@ export default function ConnectorsPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => handleTestConnection()}
+              onClick={() =>
+                handleTestConnection(undefined, undefined, editingType)
+              }
               disabled={
                 testStatus?.testing ||
-                (editingType === "file"
-                  ? !directoryPath.trim()
-                  : !fullDatabaseUrl.trim())
+                (editingType === "api"
+                  ? !apiBaseUrl.trim()
+                  : editingType === "file"
+                    ? !directoryPath.trim()
+                    : !fullDatabaseUrl.trim())
               }
               className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
             >
@@ -1080,18 +1301,240 @@ export default function ConnectorsPage() {
         </CardContent>
       </Card>
 
-      {/* Section 3: API Connections (placeholder) */}
+      {/* Section 3: API Connections */}
       <Card className="bg-gray-900 border-gray-800">
         <CardHeader>
-          <div>
-            <CardTitle className="text-white">API Connections</CardTitle>
-            <CardDescription className="text-gray-400">
-              Connect to REST APIs and external services.
-            </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-white flex items-center gap-2">
+                API Connections
+                {connectionsLoading && (
+                  <Badge
+                    variant="secondary"
+                    className="bg-gray-800 text-gray-300"
+                  >
+                    Loading...
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription className="text-gray-400">
+                Connect to REST APIs. Data is synced as JSONL and queried via
+                DuckDB.
+              </CardDescription>
+            </div>
+            {isInitialized && !showCreateApiForm && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={fetchConnections}
+                  disabled={connectionsLoading}
+                  className="text-gray-400 hover:text-white hover:bg-gray-800"
+                  title="Refresh"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={connectionsLoading ? "animate-spin" : ""}
+                  >
+                    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                    <path d="M21 3v5h-5" />
+                  </svg>
+                </Button>
+                <Button
+                  onClick={() => {
+                    resetFormState();
+                    setShowCreateApiForm(true);
+                  }}
+                  className="bg-brand hover:bg-brand-dark text-white"
+                >
+                  + Add API Connection
+                </Button>
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-500 text-sm text-center py-4">Coming soon.</p>
+          {/* Create API Connection Form */}
+          {showCreateApiForm && (
+            <div className="p-4 bg-gray-950 border border-gray-800 rounded-lg mb-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-medium">New API Connection</h3>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      handleTestConnection(apiBaseUrl, undefined, "api")
+                    }
+                    disabled={testStatus?.testing || !apiBaseUrl.trim()}
+                    className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                  >
+                    {testStatus?.testing ? "Testing..." : "Test"}
+                  </Button>
+                  <Button
+                    onClick={() => handleCreateConnection("api")}
+                    size="sm"
+                    disabled={
+                      createLoading || !newName.trim() || !apiBaseUrl.trim()
+                    }
+                    className="bg-brand hover:bg-brand-dark text-white disabled:opacity-50 text-xs"
+                  >
+                    {createLoading ? "Creating..." : "Create"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={resetFormState}
+                    className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">Connection Name</label>
+                <Input
+                  placeholder="my-api"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="bg-gray-900 border-gray-700 text-white"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">Base URL</label>
+                <div className="relative">
+                  <Input
+                    placeholder="https://api.example.com/v1"
+                    value={apiBaseUrl}
+                    onChange={(e) => setApiBaseUrl(e.target.value)}
+                    className="bg-gray-900 border-gray-700 text-white font-mono text-sm pr-10"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <StatusIndicator testStatus={testStatus} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-400">Auth Type</label>
+                  <select
+                    value={apiAuthType}
+                    onChange={(e) => setApiAuthType(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 text-white rounded-md px-3 py-2 text-sm"
+                  >
+                    <option value="bearer">Bearer Token</option>
+                    <option value="header">Custom Header</option>
+                    <option value="query_param">Query Parameter</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-400">Token Env Var</label>
+                  <Input
+                    placeholder="API_KEY"
+                    value={apiTokenEnv}
+                    onChange={(e) => setApiTokenEnv(e.target.value)}
+                    className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">
+                  API Key (stored in .env)
+                </label>
+                <Input
+                  placeholder="sk-..."
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
+                />
+                <p className="text-xs text-gray-500">
+                  Stored securely in .env file, never committed to git.
+                </p>
+              </div>
+
+              {testStatus &&
+                !testStatus.testing &&
+                testStatus.success === false && (
+                  <p className="text-xs text-red-400">{testStatus.message}</p>
+                )}
+              {testStatus &&
+                !testStatus.testing &&
+                testStatus.success === true && (
+                  <p className="text-xs text-green-400">{testStatus.message}</p>
+                )}
+
+              {createError && (
+                <div className="p-3 bg-red-950 border border-red-800 rounded text-red-300 text-sm">
+                  {createError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isInitialized ? (
+            <p className="text-gray-500 text-sm">
+              Connecting to BICP server...
+            </p>
+          ) : apiConnections.length === 0 &&
+            !connectionsLoading &&
+            !showCreateApiForm ? (
+            <div className="text-center py-8">
+              <p className="text-gray-500 text-sm mb-4">
+                No API connections configured yet.
+              </p>
+              <Button
+                onClick={() => {
+                  resetFormState();
+                  setShowCreateApiForm(true);
+                }}
+                className="bg-brand hover:bg-brand-dark text-white"
+              >
+                + Add Your First API Connection
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {apiConnections.map((conn) => (
+                <div key={conn.name}>
+                  {renderConnectionItem(conn)}
+                  {/* Sync button for API connections */}
+                  {editingConnection !== conn.name && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleSyncConnection(conn.name)}
+                        disabled={syncLoading === conn.name}
+                        className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                      >
+                        {syncLoading === conn.name ? "Syncing..." : "Sync Data"}
+                      </Button>
+                      {syncResult && syncLoading === null && (
+                        <span
+                          className={`text-xs ${syncResult.success ? "text-green-400" : "text-red-400"}`}
+                        >
+                          {syncResult.message}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

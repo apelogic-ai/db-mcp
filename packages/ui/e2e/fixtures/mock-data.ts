@@ -86,6 +86,75 @@ export const CONNECTION_SWITCH_SUCCESS = {
   success: true,
 };
 
+export const CONNECTION_SYNC_SUCCESS = {
+  success: true,
+  synced: ["charges", "customers"],
+  rows_fetched: { charges: 150, customers: 42 },
+  errors: [],
+};
+
+export const CONNECTIONS_WITH_API = {
+  connections: [
+    {
+      name: "production",
+      isActive: true,
+      hasSchema: true,
+      hasDomain: true,
+      hasCredentials: true,
+      dialect: "postgresql",
+      onboardingPhase: "complete",
+      connectorType: "sql",
+    },
+    {
+      name: "staging",
+      isActive: false,
+      hasSchema: true,
+      hasDomain: false,
+      hasCredentials: true,
+      dialect: "clickhouse",
+      onboardingPhase: "review",
+      connectorType: "sql",
+    },
+    {
+      name: "stripe-api",
+      isActive: false,
+      hasSchema: false,
+      hasDomain: false,
+      hasCredentials: true,
+      dialect: "duckdb",
+      onboardingPhase: null,
+      connectorType: "api",
+    },
+  ],
+  activeConnection: "production",
+};
+
+export const CONNECTION_GET_API = {
+  success: true,
+  name: "stripe-api",
+  connectorType: "api",
+  baseUrl: "https://api.stripe.com/v1",
+  auth: {
+    type: "bearer",
+    tokenEnv: "STRIPE_API_KEY",
+    headerName: "Authorization",
+    paramName: "api_key",
+  },
+  endpoints: [
+    { name: "charges", path: "/charges", method: "GET" },
+    { name: "customers", path: "/customers", method: "GET" },
+  ],
+  pagination: {
+    type: "cursor",
+    cursorParam: "starting_after",
+    cursorField: "data[-1].id",
+    pageSizeParam: "limit",
+    pageSize: 100,
+    dataField: "data",
+  },
+  rateLimitRps: 25,
+};
+
 // ── Context / Tree ──────────────────────────────────────────
 
 export const CONTEXT_TREE_HAPPY = {

@@ -656,6 +656,26 @@ export async function approveCandidate(
   });
 }
 
+// API Connector types
+export interface ConnectionSyncResult {
+  success: boolean;
+  synced?: string[];
+  rows_fetched?: Record<string, number>;
+  errors?: string[];
+  error?: string;
+}
+
+// API Connector functions
+export async function syncConnection(
+  name: string,
+  endpoint?: string,
+): Promise<ConnectionSyncResult> {
+  return bicpCall<ConnectionSyncResult>("connections/sync", {
+    name,
+    endpoint,
+  });
+}
+
 // React hook for BICP operations
 export interface UseBICPResult {
   isInitialized: boolean;

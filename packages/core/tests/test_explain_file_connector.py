@@ -1,6 +1,6 @@
-"""Tests for SQL validation (EXPLAIN) with file/DuckDB connectors.
+"""Tests for SQL validation (EXPLAIN) and execution with file/DuckDB connectors.
 
-TDD: these tests define the expected behavior for validate_sql
+TDD: these tests define the expected behavior for validate_sql and run_sql
 when used with a FileConnector (DuckDB backend) instead of SQLConnector.
 """
 
@@ -9,6 +9,7 @@ import textwrap
 import pytest
 
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig, FileSourceConfig
+from db_mcp.tools.generation import _execute_query
 from db_mcp.validation.explain import CostTier, explain_sql
 
 
@@ -70,3 +71,57 @@ class TestExplainWithFileConnector:
         monkeypatch.setattr("db_mcp.validation.explain.get_connector", lambda: file_connector)
         result = explain_sql("SELECT COUNT(*), AVG(age) FROM users")
         assert result.valid is True
+
+
+class TestExecuteQueryWithFileConnector:
+    """_execute_query should work with FileConnector/DuckDB, not just SQLConnector."""
+
+    def test_select_all_returns_rows(self, file_connector, monkeypatch):
+        """SELECT * should return all rows from a file connector."""
+        monkeypatch.setattr("db_mcp.tools.generation.get_connector", lambda: file_connector)
+        result = _execute_query("SELECT * FROM users")
+        assert result["rows_returned"] == 3
+        assert "id" in result["columns"]
+        assert "name" in result["columns"]
+        assert len(result["data"]) == 3
+
+    def test_select_with_filter(self, file_connector, monkeypatch):
+        """SELECT with WHERE should filter rows."""
+        monkeypatch.setattr("db_mcp.tools.generation.get_connector", lambda: file_connector)
+        result = _execute_query("SELECT name FROM users WHERE age > 25")
+        assert result["rows_returned"] == 2
+        names = [row["name"] for row in result["data"]]
+        assert "Alice" in names
+        assert "Charlie" in names
+
+    def test_aggregation_query(self, file_connector, monkeypatch):
+        """Aggregation queries should work with file connector."""
+        monkeypatch.setattr("db_mcp.tools.generation.get_connector", lambda: file_connector)
+        result = _execute_query("SELECT COUNT(*) as cnt FROM users")
+        assert result["rows_returned"] == 1
+        assert result["data"][0]["cnt"] == 3
+
+    def test_limit_parameter(self, file_connector, monkeypatch):
+        """Limit parameter should cap the number of returned rows."""
+        monkeypatch.setattr("db_mcp.tools.generation.get_connector", lambda: file_connector)
+        result = _execute_query("SELECT * FROM users", limit=2)
+        assert result["rows_returned"] == 2
+
+    def test_invalid_sql_raises(self, file_connector, monkeypatch):
+        """Invalid SQL should raise an exception."""
+        monkeypatch.setattr("db_mcp.tools.generation.get_connector", lambda: file_connector)
+        with pytest.raises(Exception):
+            _execute_query("SELECT * FROM nonexistent_table")
+
+    def test_returns_columns(self, file_connector, monkeypatch):
+        """Result should include column names."""
+        monkeypatch.setattr("db_mcp.tools.generation.get_connector", lambda: file_connector)
+        result = _execute_query("SELECT id, name FROM users LIMIT 1")
+        assert result["columns"] == ["id", "name"]
+
+    def test_returns_duration(self, file_connector, monkeypatch):
+        """Result should include duration_ms."""
+        monkeypatch.setattr("db_mcp.tools.generation.get_connector", lambda: file_connector)
+        result = _execute_query("SELECT * FROM users")
+        assert "duration_ms" in result
+        assert result["duration_ms"] >= 0

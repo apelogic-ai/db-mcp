@@ -119,6 +119,9 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["metrics/candidates"] = self._handle_metrics_candidates
         self._method_handlers["metrics/approve"] = self._handle_metrics_approve
 
+        # API connector handlers
+        self._method_handlers["connections/sync"] = self._handle_connections_sync
+
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
         self._method_handlers["schema/schemas"] = self._handle_schema_schemas
@@ -292,30 +295,30 @@ class DBMCPAgent(BICPAgent):
 
         try:
             connector = get_connector()
-            assert isinstance(connector, SQLConnector), "SQL execution requires SQLConnector"
-            engine = connector.get_engine()
 
-            with engine.connect() as conn:
-                result = conn.execute(text(sql))
-                column_names = list(result.keys())
+            if isinstance(connector, SQLConnector):
+                engine = connector.get_engine()
+                with engine.connect() as conn:
+                    result = conn.execute(text(sql))
+                    column_names = list(result.keys())
+                    columns = [{"name": name, "dataType": "VARCHAR"} for name in column_names]
+                    rows = []
+                    for i, row in enumerate(result):
+                        if i >= 10000:
+                            break
+                        rows.append(list(row))
+            else:
+                # FileConnector / APIConnector — use execute_sql
+                result_rows = connector.execute_sql(sql)
+                if result_rows:
+                    columns = [{"name": k, "dataType": "VARCHAR"} for k in result_rows[0].keys()]
+                    rows = [list(r.values()) for r in result_rows[:10000]]
+                else:
+                    columns = []
+                    rows = []
 
-                # Build column metadata
-                columns = []
-                for name in column_names:
-                    columns.append({"name": name, "dataType": "VARCHAR"})
-
-                # Fetch rows (with reasonable limit)
-                rows = []
-                for i, row in enumerate(result):
-                    if i >= 10000:  # Safety limit
-                        break
-                    rows.append(list(row))
-
-            # Update query execution time
             query.execution_time_ms = int((time.time() - start_time) * 1000)
-
             logger.info(f"Query executed: {len(rows)} rows in {query.execution_time_ms}ms")
-
             return columns, rows
 
         except Exception as e:
@@ -639,7 +642,7 @@ class DBMCPAgent(BICPAgent):
 
                 # Try to detect dialect
                 dialect = None
-                if connector_type == "file":
+                if connector_type in ("file", "api"):
                     dialect = "duckdb"
                 elif has_credentials:
                     env_file = conn_path / ".env"
@@ -759,7 +762,6 @@ class DBMCPAgent(BICPAgent):
         """
         import re
 
-
         name = params.get("name", "").strip()
         connector_type = params.get("connectorType", "sql")
         set_active = params.get("setActive", True)
@@ -781,6 +783,11 @@ class DBMCPAgent(BICPAgent):
         # Check if connection already exists
         if conn_path.exists():
             return {"success": False, "error": f"Connection '{name}' already exists"}
+
+        if connector_type == "api":
+            return await self._create_api_connection(
+                name, params, conn_path, config_file, set_active
+            )
 
         if connector_type == "file":
             return await self._create_file_connection(
@@ -890,6 +897,147 @@ class DBMCPAgent(BICPAgent):
             "isActive": set_active,
         }
 
+    async def _create_api_connection(
+        self,
+        name: str,
+        params: dict[str, Any],
+        conn_path: Path,
+        config_file: Path,
+        set_active: bool,
+    ) -> dict[str, Any]:
+        """Create an API-type connection."""
+        import yaml
+
+        base_url = params.get("baseUrl", "").strip()
+        if not base_url:
+            return {"success": False, "error": "Base URL is required"}
+
+        auth_type = params.get("authType", "bearer")
+        token_env = params.get("tokenEnv", "").strip()
+        api_key = params.get("apiKey", "").strip()
+
+        # Build connector.yaml data
+        connector_data: dict[str, Any] = {
+            "type": "api",
+            "base_url": base_url,
+            "auth": {
+                "type": auth_type,
+                "token_env": token_env or "API_KEY",
+            },
+            "endpoints": [],
+            "pagination": {"type": "none"},
+            "rate_limit": {"requests_per_second": 10.0},
+        }
+
+        # Create connection directory
+        conn_path.mkdir(parents=True, exist_ok=True)
+
+        # Write connector.yaml
+        connector_yaml = conn_path / "connector.yaml"
+        with open(connector_yaml, "w") as f:
+            yaml.dump(connector_data, f, default_flow_style=False)
+
+        # Write .env with API key if provided
+        env_var_name = token_env or "API_KEY"
+        env_file = conn_path / ".env"
+        with open(env_file, "w") as f:
+            f.write("# API connection credentials\n")
+            f.write("# This file is gitignored - do not commit\n\n")
+            if api_key:
+                f.write(f"{env_var_name}={api_key}\n")
+            else:
+                f.write(f"# {env_var_name}=your_api_key_here\n")
+
+        # Create data directory for JSONL files
+        data_dir = conn_path / "data"
+        data_dir.mkdir(exist_ok=True)
+
+        # Create .gitignore
+        gitignore_file = conn_path / ".gitignore"
+        with open(gitignore_file, "w") as f:
+            f.write("# Ignore credentials\n")
+            f.write(".env\n")
+            f.write("# Ignore local state\n")
+            f.write("state.yaml\n")
+            f.write("# Ignore synced data\n")
+            f.write("data/\n")
+
+        # Set as active if requested
+        if set_active:
+            self._set_active_connection(name, config_file)
+
+        logger.info(f"Created API connection: {name} (base_url: {base_url})")
+
+        return {
+            "success": True,
+            "name": name,
+            "dialect": "duckdb",
+            "isActive": set_active,
+        }
+
+    async def _handle_connections_sync(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Sync data from API endpoints for a connection.
+
+        Args:
+            params: {
+                "name": str - Connection name
+                "endpoint": str | None - Specific endpoint to sync (optional)
+            }
+
+        Returns:
+            {"success": bool, "synced": [...], "rows_fetched": {...}, "errors": [...]}
+        """
+        name = params.get("name")
+        endpoint = params.get("endpoint")
+
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        conn_path = connections_dir / name
+
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' not found"}
+
+        # Load connector config
+        connector_yaml = conn_path / "connector.yaml"
+        if not connector_yaml.exists():
+            return {"success": False, "error": "No connector.yaml found"}
+
+        try:
+            from db_mcp.connectors import ConnectorConfig
+            from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+
+            config = ConnectorConfig.from_yaml(connector_yaml)
+            if not isinstance(config, APIConnectorConfig):
+                return {"success": False, "error": "Connection is not an API connector"}
+
+            data_dir = str(conn_path / "data")
+            connector = APIConnector(config, data_dir)
+
+            # Load .env for auth tokens
+            env_file = conn_path / ".env"
+            if env_file.exists():
+                from dotenv import dotenv_values
+
+                env_vars = dotenv_values(env_file)
+                import os
+
+                for k, v in env_vars.items():
+                    if v is not None:
+                        os.environ[k] = v
+
+            result = connector.sync(endpoint_name=endpoint)
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        except Exception as e:
+            logger.exception(f"API sync failed: {e}")
+            return {"success": False, "error": str(e)}
+
     def _set_active_connection(self, name: str, config_file: Path) -> None:
         """Set a connection as active in config.yaml."""
         import yaml
@@ -919,6 +1067,13 @@ class DBMCPAgent(BICPAgent):
             {"success": bool, "message": str, "error": str | None, "dialect": str | None}
         """
         connector_type = params.get("connectorType", "sql")
+
+        # API connector test
+        if connector_type == "api":
+            base_url = params.get("baseUrl", "").strip()
+            if not base_url:
+                return {"success": False, "error": "Base URL is required"}
+            return await self._test_api_connection(params)
 
         # File connector test
         if connector_type == "file":
@@ -980,6 +1135,46 @@ class DBMCPAgent(BICPAgent):
                 "error": result.get("error", "No supported files found"),
                 "dialect": "duckdb",
             }
+
+    async def _test_api_connection(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Test an API connection by making a lightweight request."""
+        import httpx
+
+        base_url = params.get("baseUrl", "").strip()
+        api_key = params.get("apiKey", "").strip()
+        auth_type = params.get("authType", "bearer")
+
+        try:
+            headers: dict[str, str] = {}
+            if api_key:
+                if auth_type == "bearer":
+                    headers["Authorization"] = f"Bearer {api_key}"
+                elif auth_type == "header":
+                    header_name = params.get("headerName", "Authorization")
+                    headers[header_name] = api_key
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(base_url, headers=headers)
+
+            if resp.status_code < 400:
+                return {
+                    "success": True,
+                    "message": f"API reachable (HTTP {resp.status_code})",
+                    "dialect": "duckdb",
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"API returned HTTP {resp.status_code}",
+                    "dialect": "duckdb",
+                }
+
+        except httpx.ConnectError:
+            return {"success": False, "error": f"Cannot connect to {base_url}"}
+        except httpx.TimeoutException:
+            return {"success": False, "error": "Connection timed out"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     async def _test_database_url(self, database_url: str) -> dict[str, Any]:
         """Test a database URL by attempting to connect.
@@ -1123,6 +1318,40 @@ class DBMCPAgent(BICPAgent):
                     "connectorType": "file",
                     "directory": cdata.get("directory", ""),
                 }
+            if connector_type == "api":
+                auth = cdata.get("auth", {})
+                endpoints = cdata.get("endpoints", [])
+                pagination = cdata.get("pagination", {})
+                rate_limit = cdata.get("rate_limit", {})
+                return {
+                    "success": True,
+                    "name": name,
+                    "connectorType": "api",
+                    "baseUrl": cdata.get("base_url", ""),
+                    "auth": {
+                        "type": auth.get("type", "bearer"),
+                        "tokenEnv": auth.get("token_env", ""),
+                        "headerName": auth.get("header_name", "Authorization"),
+                        "paramName": auth.get("param_name", "api_key"),
+                    },
+                    "endpoints": [
+                        {
+                            "name": ep.get("name", ""),
+                            "path": ep.get("path", ""),
+                            "method": ep.get("method", "GET"),
+                        }
+                        for ep in endpoints
+                    ],
+                    "pagination": {
+                        "type": pagination.get("type", "none"),
+                        "cursorParam": pagination.get("cursor_param", ""),
+                        "cursorField": pagination.get("cursor_field", ""),
+                        "pageSizeParam": pagination.get("page_size_param", "limit"),
+                        "pageSize": pagination.get("page_size", 100),
+                        "dataField": pagination.get("data_field", "data"),
+                    },
+                    "rateLimitRps": rate_limit.get("requests_per_second", 10.0),
+                }
 
         # SQL connection
         env_file = conn_path / ".env"
@@ -1173,6 +1402,53 @@ class DBMCPAgent(BICPAgent):
                 with open(connector_yaml, "w") as f:
                     yaml.dump(cdata, f, default_flow_style=False)
                 logger.info(f"Updated file connection: {name}")
+                return {"success": True, "name": name}
+
+            if cdata.get("type") == "api":
+                # Update API config fields
+                if "baseUrl" in params:
+                    cdata["base_url"] = params["baseUrl"]
+                if "auth" in params:
+                    auth = params["auth"]
+                    cdata["auth"] = {
+                        "type": auth.get("type", "bearer"),
+                        "token_env": auth.get("tokenEnv", ""),
+                        "header_name": auth.get("headerName", "Authorization"),
+                        "param_name": auth.get("paramName", "api_key"),
+                    }
+                if "endpoints" in params:
+                    cdata["endpoints"] = [
+                        {
+                            "name": ep.get("name", ""),
+                            "path": ep.get("path", ""),
+                            "method": ep.get("method", "GET"),
+                        }
+                        for ep in params["endpoints"]
+                    ]
+                if "pagination" in params:
+                    pag = params["pagination"]
+                    cdata["pagination"] = {
+                        "type": pag.get("type", "none"),
+                        "cursor_param": pag.get("cursorParam", ""),
+                        "cursor_field": pag.get("cursorField", ""),
+                        "page_size_param": pag.get("pageSizeParam", "limit"),
+                        "page_size": pag.get("pageSize", 100),
+                        "data_field": pag.get("dataField", "data"),
+                    }
+                if "rateLimitRps" in params:
+                    cdata["rate_limit"] = {"requests_per_second": params["rateLimitRps"]}
+
+                # Update API key in .env if provided
+                api_key = params.get("apiKey", "").strip()
+                if api_key:
+                    token_env = cdata.get("auth", {}).get("token_env", "API_KEY")
+                    env_file = conn_path / ".env"
+                    with open(env_file, "w") as f:
+                        f.write(f"{token_env}={api_key}\n")
+
+                with open(connector_yaml, "w") as f:
+                    yaml.dump(cdata, f, default_flow_style=False)
+                logger.info(f"Updated API connection: {name}")
                 return {"success": True, "name": name}
 
         # SQL connection

@@ -205,29 +205,46 @@ def _execute_query(
         start_time = time.time()
 
         try:
-            # Get database connection
+            # Get connector
             with tracer.start_as_current_span("db_connect") as conn_span:
                 connector = get_connector()
-                assert isinstance(connector, SQLConnector), "SQL execution requires SQLConnector"
-                engine = connector.get_engine()
                 conn_span.set_attribute("db.provider", settings.provider_id)
 
-            # Execute query
-            with tracer.start_as_current_span("db_execute") as exec_span:
-                with engine.connect() as conn:
-                    result = conn.execute(text(sql))
-                    columns = list(result.keys())
+            # Execute query — branch on connector type
+            if isinstance(connector, SQLConnector):
+                # SQLConnector: use SQLAlchemy engine
+                engine = connector.get_engine()
+                with tracer.start_as_current_span("db_execute") as exec_span:
+                    with engine.connect() as conn:
+                        result = conn.execute(text(sql))
+                        columns = list(result.keys())
+                        exec_span.set_attribute("columns.count", len(columns))
+
+                        with tracer.start_as_current_span("fetch_rows") as fetch_span:
+                            rows = []
+                            for i, row in enumerate(result):
+                                if limit and i >= limit:
+                                    fetch_span.set_attribute("limit_reached", True)
+                                    break
+                                rows.append(dict(zip(columns, row)))
+
+                            fetch_span.set_attribute("rows.fetched", len(rows))
+            else:
+                # FileConnector / APIConnector: use execute_sql (DuckDB)
+                with tracer.start_as_current_span("db_execute") as exec_span:
+                    all_rows = connector.execute_sql(sql)
+                    if all_rows:
+                        columns = list(all_rows[0].keys())
+                    else:
+                        columns = []
                     exec_span.set_attribute("columns.count", len(columns))
 
-                    # Fetch rows
                     with tracer.start_as_current_span("fetch_rows") as fetch_span:
-                        rows = []
-                        for i, row in enumerate(result):
-                            if limit and i >= limit:
-                                fetch_span.set_attribute("limit_reached", True)
-                                break
-                            rows.append(dict(zip(columns, row)))
-
+                        if limit and len(all_rows) > limit:
+                            rows = all_rows[:limit]
+                            fetch_span.set_attribute("limit_reached", True)
+                        else:
+                            rows = all_rows
                         fetch_span.set_attribute("rows.fetched", len(rows))
 
             total_duration_ms = (time.time() - start_time) * 1000

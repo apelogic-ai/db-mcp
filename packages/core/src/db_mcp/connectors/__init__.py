@@ -10,6 +10,13 @@ from typing import Any, Protocol, runtime_checkable
 import yaml
 
 from db_mcp.config import get_settings
+from db_mcp.connectors.api import (
+    APIAuthConfig,
+    APIConnector,
+    APIConnectorConfig,
+    APIEndpointConfig,
+    APIPaginationConfig,
+)
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig, FileSourceConfig
 from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
 
@@ -47,6 +54,32 @@ class ConnectorConfig:
             sources = [FileSourceConfig(**s) for s in sources_data]
             directory = data.get("directory", "")
             return FileConnectorConfig(sources=sources, directory=directory)
+        elif connector_type == "api":
+            from db_mcp.connectors.api import APIAuthConfig, APIEndpointConfig, APIPaginationConfig
+
+            auth_data = data.get("auth", {})
+            auth = APIAuthConfig(**auth_data) if auth_data else APIAuthConfig()
+
+            endpoints_data = data.get("endpoints", [])
+            endpoints = [APIEndpointConfig(**e) for e in endpoints_data]
+
+            pagination_data = data.get("pagination", {})
+            pagination = (
+                APIPaginationConfig(**pagination_data)
+                if pagination_data
+                else APIPaginationConfig()
+            )
+
+            rate_limit = data.get("rate_limit", {})
+            rate_limit_rps = rate_limit.get("requests_per_second", 10.0) if rate_limit else 10.0
+
+            return APIConnectorConfig(
+                base_url=data.get("base_url", ""),
+                auth=auth,
+                endpoints=endpoints,
+                pagination=pagination,
+                rate_limit_rps=rate_limit_rps,
+            )
         else:
             raise ValueError(f"Unknown connector type: {connector_type}")
 
@@ -129,10 +162,19 @@ def get_connector(connection_path: str | None = None) -> Connector:
     if isinstance(config, FileConnectorConfig):
         return FileConnector(config)
 
+    if isinstance(config, APIConnectorConfig):
+        data_dir = str(conn_path / "data")
+        return APIConnector(config, data_dir)
+
     raise ValueError(f"Cannot create connector for config type: {config.type}")
 
 
 __all__ = [
+    "APIAuthConfig",
+    "APIConnector",
+    "APIConnectorConfig",
+    "APIEndpointConfig",
+    "APIPaginationConfig",
     "Connector",
     "ConnectorConfig",
     "FileConnector",

@@ -157,4 +157,106 @@ test.describe("Connectors Page", () => {
       page.getByText(/error/i).or(page.getByText(/failed/i)),
     ).toBeVisible({ timeout: 5000 });
   });
+
+  // ── API Connections ─────────────────────────────────────────
+
+  test("displays API connections section", async ({ page, bicpMock }) => {
+    bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
+    await page.goto("/connectors");
+
+    const main = page.locator("main");
+
+    // API connection visible
+    await expect(main.getByText("stripe-api")).toBeVisible();
+
+    // Sync button visible for API connections
+    await expect(main.getByRole("button", { name: "Sync Data" })).toBeVisible();
+  });
+
+  test("API empty state shows add button", async ({ page, bicpMock }) => {
+    bicpMock.on("connections/list", () => mockData.CONNECTIONS_HAPPY);
+    await page.goto("/connectors");
+
+    await expect(
+      page.getByText("No API connections configured yet."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /add your first api/i }),
+    ).toBeVisible();
+  });
+
+  test("create API connection flow", async ({ page, bicpMock }) => {
+    await page.goto("/connectors");
+
+    // Click "+ Add API Connection" from the empty state
+    await page
+      .getByRole("button", { name: /add.*api/i })
+      .first()
+      .click();
+
+    // Fill the form
+    await page.getByPlaceholder("my-api").fill("stripe-test");
+    await page
+      .getByPlaceholder("https://api.example.com/v1")
+      .fill("https://api.stripe.com/v1");
+
+    // Select auth type (bearer is default)
+    await page.getByPlaceholder("API_KEY").fill("STRIPE_API_KEY");
+
+    // Create
+    await page.getByRole("button", { name: "Create" }).click();
+
+    // Verify the create call
+    const calls = bicpMock.getCalls("connections/create");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params).toMatchObject({
+      name: "stripe-test",
+      connectorType: "api",
+      baseUrl: "https://api.stripe.com/v1",
+    });
+  });
+
+  test("edit API connection shows config", async ({ page, bicpMock }) => {
+    bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
+    bicpMock.on("connections/get", (params) => {
+      if (params?.name === "stripe-api") return mockData.CONNECTION_GET_API;
+      return mockData.CONNECTION_GET_PRODUCTION;
+    });
+    await page.goto("/connectors");
+
+    // The stripe-api connection row contains its name; click Edit in that row
+    const stripeRow = page
+      .locator("[class*='rounded-lg border']")
+      .filter({ hasText: "stripe-api" })
+      .first();
+    await stripeRow.getByRole("button", { name: "Edit" }).click();
+
+    // Verify connections/get was called with the right name
+    const getCalls = bicpMock.getCalls("connections/get");
+    expect(getCalls.some((c) => c.params?.name === "stripe-api")).toBe(true);
+
+    // Base URL field should be visible with the configured URL
+    const urlInput = page.getByPlaceholder("https://api.example.com/v1");
+    await expect(urlInput).toBeVisible();
+    const value = await urlInput.inputValue();
+    expect(value).toBe("https://api.stripe.com/v1");
+  });
+
+  test("sync API connection", async ({ page, bicpMock }) => {
+    bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
+    await page.goto("/connectors");
+
+    // Click Sync Data button
+    await page.getByRole("button", { name: "Sync Data" }).click();
+
+    // Verify sync was called
+    const calls = bicpMock.getCalls("connections/sync");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params).toMatchObject({ name: "stripe-api" });
+
+    // Success message should appear
+    await expect(page.getByText(/synced 2 endpoints/i)).toBeVisible({
+      timeout: 5000,
+    });
+  });
 });
