@@ -54,6 +54,7 @@ async def _api_query(
     endpoint: str,
     params: dict[str, str] | None = None,
     max_pages: int = 1,
+    id: str | list[str] | None = None,
 ) -> dict[str, Any]:
     """Query an API endpoint with parameters.
 
@@ -64,14 +65,16 @@ async def _api_query(
         endpoint: Name of the endpoint to query (e.g. "markets", "events").
         params: Query parameters as key-value pairs (e.g. {"active": "true"}).
         max_pages: Maximum pages to fetch. Default 1 (single page, fast).
+        id: Fetch specific record(s) by ID. Hits the detail endpoint /{id}.
+            Pass a single ID string or a list of ID strings.
 
     Returns:
-        {columns: [...], data: [...], rows_returned: int} or {error: "..."}.
+        {data: [...], rows_returned: int} or {error: "..."}.
     """
     connector = get_connector()
     if not isinstance(connector, APIConnector):
         return {"error": "Active connection is not an API connector"}
-    return connector.query_endpoint(endpoint, params, max_pages)
+    return connector.query_endpoint(endpoint, params, max_pages, id=id)
 
 
 async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:

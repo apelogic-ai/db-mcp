@@ -366,6 +366,7 @@ class APIConnector(FileConnector):
         endpoint_name: str,
         params: dict[str, str] | None = None,
         max_pages: int = 1,
+        id: str | list[str] | None = None,
     ) -> dict[str, Any]:
         """Query an API endpoint directly with params, return results.
 
@@ -373,9 +374,11 @@ class APIConnector(FileConnector):
             endpoint_name: Name of the configured endpoint to query.
             params: Query parameters to pass to the endpoint.
             max_pages: Maximum number of pages to fetch (default 1).
+            id: Fetch specific record(s) by ID. Appends /{id} to endpoint path.
+                Pass a single string or a list of strings for multiple records.
 
         Returns:
-            {columns: [...], data: [...], rows_returned: int}
+            {data: [...], rows_returned: int}
             or {error: "..."} on failure.
         """
         # Look up endpoint by name
@@ -396,26 +399,42 @@ class APIConnector(FileConnector):
             if params:
                 merged_params.update(params)
 
-            url = self.api_config.base_url.rstrip("/") + endpoint.path
-            rows = self._fetch_with_pagination(url, headers, merged_params, max_pages)
-            flat_rows = self._flatten_rows(rows)
+            base_url = self.api_config.base_url.rstrip("/") + endpoint.path
 
-            # Extract column names from all rows
-            columns: list[str] = []
-            seen: set[str] = set()
-            for row in flat_rows:
-                for key in row:
-                    if key not in seen:
-                        columns.append(key)
-                        seen.add(key)
+            # Detail endpoint: fetch by ID(s)
+            if id is not None:
+                ids = [id] if isinstance(id, str) else id
+                rows = self._fetch_by_ids(base_url, headers, merged_params, ids)
+            else:
+                rows = self._fetch_with_pagination(base_url, headers, merged_params, max_pages)
 
             return {
-                "columns": columns,
-                "data": flat_rows,
-                "rows_returned": len(flat_rows),
+                "data": rows,
+                "rows_returned": len(rows),
             }
         except Exception as exc:
             return {"error": str(exc)}
+
+    def _fetch_by_ids(
+        self,
+        base_url: str,
+        headers: dict[str, str],
+        params: dict[str, str],
+        ids: list[str],
+    ) -> list[dict]:
+        """Fetch individual records by ID from detail endpoints."""
+        rows: list[dict] = []
+        for record_id in ids:
+            self._rate_limit()
+            url = base_url.rstrip("/") + "/" + str(record_id)
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            resp.raise_for_status()
+            body = resp.json()
+            if isinstance(body, dict):
+                rows.append(body)
+            elif isinstance(body, list):
+                rows.extend(body)
+        return rows
 
     def _fetch_with_pagination(
         self,
@@ -510,32 +529,6 @@ class APIConnector(FileConnector):
                 break
 
         return all_rows
-
-    @staticmethod
-    def _flatten_rows(rows: list[dict]) -> list[dict]:
-        """Flatten nested dicts with _ separator.
-
-        {"user": {"name": "Alice"}} → {"user_name": "Alice"}
-        Nested arrays become JSON strings.
-        """
-        flat_rows: list[dict] = []
-        for row in rows:
-            flat: dict[str, Any] = {}
-            APIConnector._flatten_obj(row, "", flat)
-            flat_rows.append(flat)
-        return flat_rows
-
-    @staticmethod
-    def _flatten_obj(obj: dict, prefix: str, out: dict[str, Any]) -> None:
-        """Recursively flatten a dict into out with _ separator."""
-        for key, value in obj.items():
-            full_key = f"{prefix}_{key}" if prefix else key
-            if isinstance(value, dict):
-                APIConnector._flatten_obj(value, full_key, out)
-            elif isinstance(value, list):
-                out[full_key] = json.dumps(value, default=str)
-            else:
-                out[full_key] = value
 
     # -- Discovery ----------------------------------------------------------
 

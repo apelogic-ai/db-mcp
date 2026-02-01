@@ -423,8 +423,8 @@ class TestAPIConnectorPagination:
 class TestAPIConnectorAdHocQuery:
     """Tests for direct ad-hoc API querying via query_endpoint()."""
 
-    def test_query_endpoint_returns_columns_and_data(self, data_dir, env_file):
-        """query_endpoint should return {columns, data, rows_returned} shape."""
+    def test_query_endpoint_returns_data(self, data_dir, env_file):
+        """query_endpoint should return {data, rows_returned} shape with raw data."""
         from db_mcp.connectors.api import (
             APIAuthConfig,
             APIConnector,
@@ -449,12 +449,11 @@ class TestAPIConnectorAdHocQuery:
         with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
             result = conn.query_endpoint("users")
 
-        assert "columns" in result
         assert "data" in result
         assert "rows_returned" in result
-        assert set(result["columns"]) == {"id", "name"}
         assert result["rows_returned"] == 2
         assert len(result["data"]) == 2
+        assert result["data"][0]["name"] == "Alice"
 
     def test_query_endpoint_passes_user_params(self, data_dir, env_file):
         """User params should appear in the HTTP request."""
@@ -516,8 +515,8 @@ class TestAPIConnectorAdHocQuery:
         result = api_connector.query_endpoint("nonexistent")
         assert "error" in result
 
-    def test_query_endpoint_flattens_nested_json(self, data_dir, env_file):
-        """Nested JSON should be flattened with parent_child column naming."""
+    def test_query_endpoint_preserves_nested_data(self, data_dir, env_file):
+        """Nested JSON should be returned as-is without flattening."""
         from db_mcp.connectors.api import (
             APIAuthConfig,
             APIConnector,
@@ -535,15 +534,79 @@ class TestAPIConnectorAdHocQuery:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = [
-            {"id": 1, "address": {"city": "NYC", "zip": "10001"}},
+            {"id": 1, "address": {"city": "NYC", "zip": "10001"}, "tags": ["admin", "active"]},
         ]
 
         with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
             result = conn.query_endpoint("users")
 
-        assert "address_city" in result["columns"]
-        assert "address_zip" in result["columns"]
-        assert result["data"][0]["address_city"] == "NYC"
+        row = result["data"][0]
+        # Nested dict preserved
+        assert row["address"] == {"city": "NYC", "zip": "10001"}
+        # Nested list preserved
+        assert row["tags"] == ["admin", "active"]
+
+    def test_query_endpoint_fetch_by_single_id(self, data_dir, env_file):
+        """Fetching by a single ID should call /{id} and return that record."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="events", path="/events")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"id": "42", "title": "Event 42", "details": {"foo": 1}}
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+            result = conn.query_endpoint("events", id="42")
+
+        # Should call /events/42
+        called_url = mock_get.call_args.args[0]
+        assert called_url.endswith("/events/42")
+        assert result["rows_returned"] == 1
+        assert result["data"][0]["title"] == "Event 42"
+        # Nested data preserved
+        assert result["data"][0]["details"] == {"foo": 1}
+
+    def test_query_endpoint_fetch_by_multiple_ids(self, data_dir, env_file):
+        """Fetching by multiple IDs should call /{id} for each and collect results."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="events", path="/events")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        resp1 = MagicMock()
+        resp1.status_code = 200
+        resp1.json.return_value = {"id": "1", "title": "First"}
+        resp2 = MagicMock()
+        resp2.status_code = 200
+        resp2.json.return_value = {"id": "2", "title": "Second"}
+
+        with patch("db_mcp.connectors.api.requests.get", side_effect=[resp1, resp2]) as mock_get:
+            result = conn.query_endpoint("events", id=["1", "2"])
+
+        assert mock_get.call_count == 2
+        assert result["rows_returned"] == 2
+        assert result["data"][0]["title"] == "First"
+        assert result["data"][1]["title"] == "Second"
 
     def test_query_endpoint_single_page_default(self, data_dir, env_file):
         """With max_pages=1 (default), only one HTTP call should be made."""
