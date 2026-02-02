@@ -190,6 +190,7 @@ export default function ConnectorsPage() {
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiAuthType, setApiAuthType] = useState("bearer");
   const [apiTokenEnv, setApiTokenEnv] = useState("");
+  const [apiHeaderName, setApiHeaderName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [syncLoading, setSyncLoading] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<{
@@ -240,6 +241,7 @@ export default function ConnectorsPage() {
     setApiBaseUrl("");
     setApiAuthType("bearer");
     setApiTokenEnv("");
+    setApiHeaderName("");
     setApiKey("");
     setSyncResult(null);
   };
@@ -292,6 +294,8 @@ export default function ConnectorsPage() {
             baseUrl: baseUrlToTest,
             apiKey: apiKey || undefined,
             authType: apiAuthType,
+            headerName:
+              apiAuthType === "header" ? apiHeaderName || undefined : undefined,
           });
           setTestStatus({
             testing: false,
@@ -445,6 +449,10 @@ export default function ConnectorsPage() {
         params.baseUrl = apiBaseUrl.trim();
         params.authType = apiAuthType;
         params.tokenEnv = apiTokenEnv.trim() || undefined;
+        params.headerName =
+          apiAuthType === "header"
+            ? apiHeaderName.trim() || undefined
+            : undefined;
         params.apiKey = apiKey.trim() || undefined;
       } else if (type === "file") {
         params.directory = directoryPath.trim();
@@ -501,6 +509,7 @@ export default function ConnectorsPage() {
           setApiBaseUrl(result.baseUrl || "");
           setApiAuthType(result.auth?.type || "bearer");
           setApiTokenEnv(result.auth?.tokenEnv || "");
+          setApiHeaderName(result.auth?.headerName || "");
         } else if (type === "file") {
           setDirectoryPath(result.directory || "");
         } else {
@@ -553,6 +562,8 @@ export default function ConnectorsPage() {
         params.auth = {
           type: apiAuthType,
           tokenEnv: apiTokenEnv.trim(),
+          headerName:
+            apiAuthType === "header" ? apiHeaderName.trim() : undefined,
         };
         if (apiKey.trim()) {
           params.apiKey = apiKey.trim();
@@ -818,9 +829,15 @@ export default function ConnectorsPage() {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm text-gray-400">Token Env Var</label>
+                  <label className="text-sm text-gray-400">
+                    {apiAuthType === "query_param"
+                      ? "Query Param Name"
+                      : "Env Var Name"}
+                  </label>
                   <Input
-                    placeholder="API_KEY"
+                    placeholder={
+                      apiAuthType === "query_param" ? "api_key" : "API_KEY"
+                    }
                     value={apiTokenEnv}
                     onChange={(e) => {
                       setApiTokenEnv(e.target.value);
@@ -830,6 +847,20 @@ export default function ConnectorsPage() {
                   />
                 </div>
               </div>
+              {apiAuthType === "header" && (
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-400">Header Name</label>
+                  <Input
+                    placeholder="X-Api-Key"
+                    value={apiHeaderName}
+                    onChange={(e) => {
+                      setApiHeaderName(e.target.value);
+                      setUrlModified(true);
+                    }}
+                    className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <label className="text-sm text-gray-400">
                   API Key (optional, updates .env)
@@ -1487,15 +1518,33 @@ export default function ConnectorsPage() {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm text-gray-400">Token Env Var</label>
+                  <label className="text-sm text-gray-400">
+                    {apiAuthType === "query_param"
+                      ? "Query Param Name"
+                      : "Env Var Name"}
+                  </label>
                   <Input
-                    placeholder="API_KEY"
+                    placeholder={
+                      apiAuthType === "query_param" ? "api_key" : "API_KEY"
+                    }
                     value={apiTokenEnv}
                     onChange={(e) => setApiTokenEnv(e.target.value)}
                     className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
                   />
                 </div>
               </div>
+
+              {apiAuthType === "header" && (
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-400">Header Name</label>
+                  <Input
+                    placeholder="X-Api-Key"
+                    value={apiHeaderName}
+                    onChange={(e) => setApiHeaderName(e.target.value)}
+                    className="bg-gray-900 border-gray-700 text-white font-mono text-sm"
+                  />
+                </div>
+              )}
 
               <div className="space-y-2">
                 <label className="text-sm text-gray-400">

@@ -917,14 +917,20 @@ class DBMCPAgent(BICPAgent):
         token_env = params.get("tokenEnv", "").strip()
         api_key = params.get("apiKey", "").strip()
 
+        header_name = params.get("headerName", "").strip()
+
         # Build connector.yaml data
+        auth_data: dict[str, Any] = {
+            "type": auth_type,
+            "token_env": token_env or "API_KEY",
+        }
+        if auth_type == "header" and header_name:
+            auth_data["header_name"] = header_name
+
         connector_data: dict[str, Any] = {
             "type": "api",
             "base_url": base_url,
-            "auth": {
-                "type": auth_type,
-                "token_env": token_env or "API_KEY",
-            },
+            "auth": auth_data,
             "endpoints": [],
             "pagination": {"type": "none"},
             "rate_limit": {"requests_per_second": 10.0},
