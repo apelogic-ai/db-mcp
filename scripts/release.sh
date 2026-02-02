@@ -30,13 +30,28 @@ echo -e "${BLUE}Current version: ${current_version}${NC}"
 if [[ -n "$1" ]]; then
     new_version="$1"
 else
-    echo -n "Enter new version: "
+    echo -n "Enter new version (or 'patch'/'minor'/'major'): "
     read new_version
 fi
 
 if [[ -z "$new_version" ]]; then
     echo -e "${RED}Version is required${NC}"
     exit 1
+fi
+
+# Allow convenience bumps: patch/minor/major
+if [[ "$new_version" == "patch" || "$new_version" == "minor" || "$new_version" == "major" ]]; then
+    IFS='.' read -r major minor patch <<< "$current_version"
+    if [[ -z "$major" || -z "$minor" || -z "$patch" ]]; then
+        echo -e "${RED}Failed to parse current version '${current_version}'${NC}"
+        exit 1
+    fi
+    case "$new_version" in
+      patch) patch=$((patch+1)) ;;
+      minor) minor=$((minor+1)); patch=0 ;;
+      major) major=$((major+1)); minor=0; patch=0 ;;
+    esac
+    new_version="${major}.${minor}.${patch}"
 fi
 
 # Validate semver format
@@ -61,6 +76,11 @@ if [[ -n $(git status --porcelain) ]]; then
     fi
 fi
 
+# Prepare release notes + changelog
+# (Creates releases/vX.Y.Z.md if missing; will exit so you can fill it.)
+echo -e "${BLUE}Preparing release notes...${NC}"
+python3 "$REPO_ROOT/scripts/release_notes.py" prepare "$new_version"
+
 # Update version in packages/core/pyproject.toml
 echo -e "${BLUE}Updating packages/core/pyproject.toml...${NC}"
 sed -i '' "s/^version = \".*\"/version = \"${new_version}\"/" "$CORE_DIR/pyproject.toml"
@@ -69,10 +89,10 @@ sed -i '' "s/^version = \".*\"/version = \"${new_version}\"/" "$CORE_DIR/pyproje
 echo -e "${BLUE}Updating cli.py...${NC}"
 sed -i '' "s/@click.version_option(version=\".*\"/@click.version_option(version=\"${new_version}\"/" "$CORE_DIR/src/db_mcp/cli.py"
 
-# Commit changes
-echo -e "${BLUE}Committing version bump...${NC}"
-git add "$CORE_DIR/pyproject.toml" "$CORE_DIR/src/db_mcp/cli.py"
-git commit -m "chore: bump db-mcp version to ${new_version}"
+# Commit changes (version bump + changelog/release notes)
+echo -e "${BLUE}Committing release prep...${NC}"
+git add "$CORE_DIR/pyproject.toml" "$CORE_DIR/src/db_mcp/cli.py" "$REPO_ROOT/CHANGELOG.md" "$REPO_ROOT/releases/v${new_version}.md"
+git commit -m "chore: release v${new_version}"
 
 # Create tag
 tag_name="v${new_version}"
