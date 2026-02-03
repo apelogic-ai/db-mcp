@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.39] - 2026-02-02
+
+## Highlights
+- CI: stabilize Playwright E2E workflows (use Bun, avoid `npm ci` lock mismatch)
+- E2E: make the `/bicp` dev-server proxy disable-able so mocked tests don’t depend on a local backend
+
+## Breaking changes
+- None
+
+## Features
+- UI: configurable BICP proxy target via `BICP_PROXY_TARGET` (defaults to `http://localhost:8080`)
+
+## Fixes
+- CI: `e2e-real-connectors` workflow now uses Bun (`bun install`, `bunx playwright ...`)
+- CI/E2E: disable Next rewrites in mocked E2E via `DISABLE_BICP_PROXY=1` to prevent `ECONNREFUSED` during Playwright route mocking
+
+## Security
+- None
+
+## Upgrade notes
+- If you run the UI dev server with a non-default BICP backend, set `BICP_PROXY_TARGET`.
+- For mocked Playwright E2E runs, set `DISABLE_BICP_PROXY=1`.
+
+## Known issues
+- None
+
+
 ## [0.4.38] - 2026-02-02
 
 ## Highlights
