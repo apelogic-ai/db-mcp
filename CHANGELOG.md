@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.40] - 2026-02-02
+
+## Highlights
+- API connectors: treat SQL-like endpoints correctly (stops misclassifying certain API endpoints as SQL)
+
+## Breaking changes
+- None
+
+## Features
+- None
+
+## Fixes
+- Core: improve SQL detection/handling for API connectors (fixes edge cases around “SQL-like” endpoints)
+
+## Security
+- None
+
+## Upgrade notes
+- None
+
+## Known issues
+- None
+
+
 ## [0.4.39] - 2026-02-02
 
 ## Highlights
