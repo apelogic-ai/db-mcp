@@ -158,7 +158,11 @@ Key tools:
   `{columns, data, rows_returned}`. Default: single page. Use `max_pages` for more.
 - `api_discover` — Auto-discover endpoints from OpenAPI spec or probing
 
-**Do NOT use `run_sql` for API connections** — use `api_query` instead.
+**SQL-like API connections (optional):**
+If `connector.yaml` has `capabilities.supports_sql: true`, you may use `run_sql(sql=...)`.
+If `capabilities.supports_validate_sql: false`, skip `validate_sql` and call `run_sql` directly.
+
+If `capabilities.supports_sql` is not set or false, use `api_query` only.
 
 ### File Connections (`type: file`)
 Local file connections (CSV, Parquet, JSON, JSONL) queried via DuckDB.

@@ -77,6 +77,13 @@ Today's implementation. No changes needed.
 └── ...
 ```
 
+**Endpoint config fields (connector.yaml):**
+
+- `path` supports path params like `/query/{query_id}/results` which are filled from `params`.
+- `method` supports `GET` (default) and `POST`.
+- `body_mode` (for POST): `json` to send params in JSON body, `query` to send as query params.
+- `response_mode`: `data` (default) extracts rows from `data_field`/`results`, `raw` returns full JSON.
+
 **Nested data handling**: API responses with nested objects get flattened with dot notation. `customer.address.city` becomes column `address_city`. Arrays become separate virtual "tables" with parent ID references: `customer.subscriptions` becomes a `customer_subscriptions` table joinable on `customer_id`.
 
 ### File Sources (New)

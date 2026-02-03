@@ -773,6 +773,41 @@ class TestAPIConnectorPostBody:
         assert called_params == {}
 
 
+class TestAPIConnectorResponseMode:
+    def test_query_endpoint_raw_response_mode(self, data_dir, env_file):
+        """response_mode=raw should return the full JSON body."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/sql/execute",
+                    method="POST",
+                    body_mode="json",
+                    response_mode="raw",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"execution_id": "abc", "state": "PENDING"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=mock_resp):
+            result = conn.query_endpoint("execute_sql", params={"query": "SELECT 1"})
+
+        assert result["data"] == {"execution_id": "abc", "state": "PENDING"}
+
+
 # ---------------------------------------------------------------------------
 # YAML round-trip (query_params persistence)
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ class APIEndpointConfig:
     method: str = "GET"
     query_params: list[APIQueryParamConfig] = field(default_factory=list)
     body_mode: str = "query"  # query | json
+    response_mode: str = "data"  # data | raw
 
 
 @dataclass
@@ -449,16 +450,30 @@ class APIConnector(FileConnector):
         endpoint: APIEndpointConfig,
     ) -> list[dict]:
         """Execute non-GET requests and return rows."""
+        if endpoint.response_mode == "raw":
+            body = self._send_non_get(url, headers, params, endpoint)
+            return body
+
+        body = self._send_non_get(url, headers, params, endpoint)
+        if isinstance(body, list):
+            return body
+        data_field = self.api_config.pagination.data_field
+        return body.get(data_field, body.get("results", []))
+
+    def _send_non_get(
+        self,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, str],
+        endpoint: APIEndpointConfig,
+    ) -> Any:
+        """Send a non-GET request and return the raw JSON body."""
         if endpoint.body_mode == "json":
             resp = requests.post(url, headers=headers, json=params, params={}, timeout=30)
         else:
             resp = requests.post(url, headers=headers, params=params, timeout=30)
         resp.raise_for_status()
-        body = resp.json()
-        if isinstance(body, list):
-            return body
-        data_field = self.api_config.pagination.data_field
-        return body.get(data_field, body.get("results", []))
+        return resp.json()
 
     def _fetch_by_ids(
         self,
@@ -672,6 +687,7 @@ class APIConnector(FileConnector):
                     "path": ep.path,
                     "method": ep.method,
                     "body_mode": ep.body_mode,
+                    "response_mode": ep.response_mode,
                     **(
                         {
                             "query_params": [
