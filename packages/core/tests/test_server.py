@@ -73,6 +73,39 @@ class TestConnectorTypeToolGating:
         assert "describe_table" not in tools
         assert "detect_dialect" not in tools
 
+    def test_api_connector_with_sql_capabilities_exposes_run_sql(self, tmp_path):
+        """SQL-like API connector should expose run_sql but hide validate_sql if unsupported."""
+        connector_yaml = tmp_path / "connector.yaml"
+        connector_yaml.write_text(
+            yaml.dump(
+                {
+                    "type": "api",
+                    "base_url": "https://example.com",
+                    "capabilities": {
+                        "supports_sql": True,
+                        "supports_validate_sql": False,
+                        "supports_async_jobs": False,
+                    },
+                }
+            )
+        )
+
+        with patch("db_mcp.server.get_settings") as mock_settings:
+            mock_settings.return_value.tool_mode = "detailed"
+            mock_settings.return_value.get_effective_connection_path.return_value = tmp_path
+            mock_settings.return_value.connection_name = "test"
+            mock_settings.return_value.database_url = ""
+            mock_settings.return_value.auth0_enabled = False
+            mock_settings.return_value.auth0_domain = ""
+            server = _create_server()
+
+        tools = _get_tool_names(server)
+        assert "run_sql" in tools
+        assert "validate_sql" not in tools
+        assert "get_result" not in tools
+        assert "list_tables" in tools
+        assert "describe_table" in tools
+
     def test_api_connector_exposes_api_tools(self, tmp_path):
         """API connector should expose api_query, api_describe_endpoint, api_discover."""
         connector_yaml = tmp_path / "connector.yaml"

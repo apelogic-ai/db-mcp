@@ -272,7 +272,7 @@ def _create_server() -> FastMCP:
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
 
-    # Detect connector type from connector.yaml
+    # Detect connector type + capabilities from connector.yaml
     try:
         from db_mcp.connectors import ConnectorConfig
 
@@ -280,10 +280,15 @@ def _create_server() -> FastMCP:
         yaml_path = conn_path / "connector.yaml"
         _connector_config = ConnectorConfig.from_yaml(yaml_path)
         connector_type = getattr(_connector_config, "type", "sql")
+        connector_caps = getattr(_connector_config, "capabilities", {}) or {}
     except Exception:
         connector_type = "sql"
+        connector_caps = {}
 
     is_api = connector_type == "api"
+    supports_sql = connector_type != "api" or connector_caps.get("supports_sql") is True
+    supports_validate = connector_caps.get("supports_validate_sql", True)
+    supports_async_jobs = connector_caps.get("supports_async_jobs", connector_type != "api")
 
     instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
 
@@ -386,13 +391,15 @@ def _create_server() -> FastMCP:
     server.tool(name="protocol")(_protocol)
 
     # =========================================================================
-    # SQL execution tools - SQL and File connectors only
+    # SQL execution tools - SQL, File, and SQL-like API connectors
     # =========================================================================
 
-    if not is_api:
-        server.tool(name="validate_sql")(_validate_sql)
+    if supports_sql:
+        if supports_validate:
+            server.tool(name="validate_sql")(_validate_sql)
         server.tool(name="run_sql")(_run_sql)
-        server.tool(name="get_result")(_get_result)
+        if supports_async_jobs:
+            server.tool(name="get_result")(_get_result)
         server.tool(name="export_results")(_export_results)
 
     # =========================================================================
@@ -435,7 +442,7 @@ def _create_server() -> FastMCP:
     # Detailed mode ONLY - schema discovery and query helper tools
     # =========================================================================
 
-    if not is_shell_mode and not is_api:
+    if not is_shell_mode and supports_sql:
         # Database introspection tools
         server.tool(name="test_connection")(_test_connection)
         server.tool(name="detect_dialect")(_detect_dialect)

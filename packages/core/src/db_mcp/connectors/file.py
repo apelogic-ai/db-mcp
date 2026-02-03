@@ -31,6 +31,7 @@ class FileConnectorConfig:
     type: str = field(default="file", init=False)
     sources: list[FileSourceConfig] = field(default_factory=list)
     directory: str = ""
+    capabilities: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

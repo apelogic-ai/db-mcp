@@ -705,6 +705,74 @@ class TestAPIConnectorAdHocQuery:
         assert result["data"][0]["id"] == 1
 
 
+class TestAPIConnectorPathParams:
+    def test_query_endpoint_path_param_substitution(self, data_dir, env_file):
+        """query_endpoint should substitute {param} in endpoint path."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="query_results", path="/query/{query_id}/results")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+            conn.query_endpoint("query_results", params={"query_id": "123", "limit": "1"})
+
+        called_url = mock_get.call_args.args[0]
+        called_params = mock_get.call_args.kwargs["params"]
+        assert called_url.endswith("/query/123/results")
+        assert "query_id" not in called_params
+        assert called_params["limit"] == "1"
+
+
+class TestAPIConnectorPostBody:
+    def test_query_endpoint_post_json_body(self, data_dir, env_file):
+        """POST endpoint with body_mode=json sends params as JSON body."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/sql/execute",
+                    method="POST",
+                    body_mode="json",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=mock_resp) as mock_post:
+            conn.query_endpoint("execute_sql", params={"query": "SELECT 1", "limit": "1"})
+
+        called_json = mock_post.call_args.kwargs["json"]
+        called_params = mock_post.call_args.kwargs["params"]
+        assert called_json == {"query": "SELECT 1", "limit": "1"}
+        assert called_params == {}
+
+
 # ---------------------------------------------------------------------------
 # YAML round-trip (query_params persistence)
 # ---------------------------------------------------------------------------

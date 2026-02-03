@@ -599,11 +599,12 @@ Generate the SQL query that implements this plan.
 
 
 async def _run_sql(
-    query_id: str,
+    query_id: str | None = None,
+    sql: str | None = None,
     confirmed: bool = False,
     ctx: Context | None = None,
 ) -> dict:
-    """Execute a previously validated SQL query.
+    """Execute a previously validated SQL query or direct SQL for SQL-like APIs.
 
     REQUIRES a query_id from validate_sql. This ensures:
     1. All queries are validated before execution
@@ -619,7 +620,8 @@ async def _run_sql(
         See PROTOCOL.md for format.
 
     Args:
-        query_id: Query ID from validate_sql (required)
+        query_id: Query ID from validate_sql (required for SQL engines)
+        sql: Raw SQL (allowed for SQL-like APIs without validate_sql)
         confirmed: Override for high-cost queries (cost_tier='reject')
         ctx: MCP Context for progress reporting (optional)
 
@@ -627,6 +629,97 @@ async def _run_sql(
         Dict with query results or error
     """
     from db_mcp.tasks.store import QueryStatus, get_query_store
+
+    if query_id is None and sql is None:
+        return inject_protocol(
+            {
+                "status": "error",
+                "error": "Provide query_id or sql.",
+                "guidance": {
+                    "next_steps": [
+                        "For SQL databases: call validate_sql(sql=...) then run_sql(query_id=...)",
+                        "For SQL-like APIs: call run_sql(sql=...) directly",
+                    ]
+                },
+            }
+        )
+
+    from db_mcp.connectors import get_connector, get_connector_capabilities
+
+    connector = get_connector()
+    caps = get_connector_capabilities(connector)
+
+    if query_id is None and sql is not None:
+        if not caps.get("supports_sql"):
+            return inject_protocol(
+                {
+                    "status": "error",
+                    "error": "Active connector does not support SQL execution.",
+                }
+            )
+
+        if caps.get("supports_validate_sql", True):
+            return inject_protocol(
+                {
+                    "status": "error",
+                    "error": "Validation required. Use validate_sql first.",
+                    "guidance": {
+                        "next_steps": [
+                            "Call validate_sql(sql=...) to get a query_id",
+                            "Then call run_sql(query_id=...)",
+                        ]
+                    },
+                }
+            )
+
+        sql_mode = caps.get("sql_mode")
+        if sql_mode == "api_sync":
+            try:
+                rows = connector.execute_sql(sql)
+                columns = list(rows[0].keys()) if rows else []
+                return inject_protocol(
+                    {
+                        "status": "success",
+                        "mode": "sync",
+                        "query_id": _generate_query_uuid(sql),
+                        "sql": sql,
+                        "data": rows,
+                        "columns": columns,
+                        "rows_returned": len(rows),
+                        "duration_ms": None,
+                        "provider_id": None,
+                        "cost_tier": "unknown",
+                    }
+                )
+            except Exception as exc:
+                return inject_protocol(
+                    {
+                        "status": "error",
+                        "error": f"Execution failed: {exc}",
+                        "sql": sql,
+                    }
+                )
+
+        if sql_mode == "api_async":
+            return inject_protocol(
+                {
+                    "status": "error",
+                    "error": "Async SQL API execution is not implemented for this connector.",
+                    "guidance": {
+                        "next_steps": [
+                            "Use api_query endpoints for this connector",
+                            "Or set sql_mode to api_sync if supported",
+                        ]
+                    },
+                }
+            )
+
+        return inject_protocol(
+            {
+                "status": "error",
+                "error": "Unsupported sql_mode for direct SQL execution.",
+            }
+        )
 
     store = get_query_store()
     await _report_progress(ctx, 0, 100)  # 0% - Starting
@@ -815,7 +908,26 @@ async def _validate_sql(sql: str) -> dict:
     Returns:
         Dict with validation results and query_id (if valid)
     """
+    from db_mcp.connectors import get_connector, get_connector_capabilities
     from db_mcp.tasks.store import get_query_store
+
+    connector = get_connector()
+    caps = get_connector_capabilities(connector)
+    if not caps.get("supports_validate_sql", True):
+        return inject_protocol(
+            {
+                "valid": False,
+                "error": "Validation is not supported for this connector.",
+                "sql": sql,
+                "query_id": None,
+                "guidance": {
+                    "next_steps": [
+                        "Call run_sql(sql=...) directly",
+                        "Or use api_query for connector-specific endpoints",
+                    ]
+                },
+            }
+        )
 
     # Check read-only
     is_read_only, error = validate_read_only(sql)

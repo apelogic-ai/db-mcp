@@ -9,6 +9,8 @@ from db_mcp.connectors import (
     ConnectorConfig,
     FileConnector,
     FileConnectorConfig,
+    MetabaseConnector,
+    MetabaseConnectorConfig,
     SQLConnector,
     SQLConnectorConfig,
 )
@@ -85,6 +87,23 @@ class TestConnectorConfig:
         yaml_file = tmp_path / "connector.yaml"
         config = ConnectorConfig.from_yaml(yaml_file)
         assert config.type == "sql"
+
+    def test_connector_config_from_yaml_metabase(self, tmp_path):
+        """ConnectorConfig.from_yaml loads metabase config."""
+        yaml_file = tmp_path / "connector.yaml"
+        yaml_file.write_text(
+            "type: metabase\n"
+            "base_url: https://metabase.example.com\n"
+            "database_id: 12\n"
+            "database_name: analytics\n"
+        )
+
+        config = ConnectorConfig.from_yaml(yaml_file)
+        assert isinstance(config, MetabaseConnectorConfig)
+        assert config.type == "metabase"
+        assert config.base_url == "https://metabase.example.com"
+        assert config.database_id == 12
+        assert config.database_name == "analytics"
 
 
 class TestSQLConnector:
@@ -228,6 +247,27 @@ class TestGetConnector:
 
             connector = get_connector()
             assert isinstance(connector, SQLConnector)
+
+    def test_get_connector_metabase(self, tmp_path):
+        """get_connector returns MetabaseConnector for type: metabase."""
+        from db_mcp.connectors import get_connector
+
+        yaml_file = tmp_path / "connector.yaml"
+        yaml_file.write_text(
+            "type: metabase\n"
+            "base_url: https://metabase.example.com\n"
+            "database_id: 12\n"
+            "database_name: analytics\n"
+        )
+        env_file = tmp_path / ".env"
+        env_file.write_text("MB_USERNAME=demo@example.com\nMB_PASSWORD=supersecret\n")
+
+        with patch("db_mcp.connectors.get_settings") as mock_settings:
+            mock_settings.return_value.database_url = "postgresql://host/db"
+            mock_settings.return_value.get_effective_connection_path.return_value = str(tmp_path)
+
+            connector = get_connector()
+            assert isinstance(connector, MetabaseConnector)
 
 
 class TestFileConnectorFactory:

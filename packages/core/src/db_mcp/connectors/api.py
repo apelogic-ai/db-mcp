@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,7 @@ class APIEndpointConfig:
     path: str
     method: str = "GET"
     query_params: list[APIQueryParamConfig] = field(default_factory=list)
+    body_mode: str = "query"  # query | json
 
 
 @dataclass
@@ -72,6 +74,7 @@ class APIConnectorConfig:
     endpoints: list[APIEndpointConfig] = field(default_factory=list)
     pagination: APIPaginationConfig = field(default_factory=APIPaginationConfig)
     rate_limit_rps: float = 10.0
+    capabilities: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +235,8 @@ class APIConnector(FileConnector):
 
     def _fetch_endpoint(self, endpoint: APIEndpointConfig) -> list[dict]:
         """Fetch all data from an endpoint, handling pagination."""
+        if endpoint.method.upper() != "GET":
+            raise ValueError("sync only supports GET endpoints")
         headers = self._resolve_auth_headers()
         base_params = self._resolve_auth_params()
         url = self.api_config.base_url.rstrip("/") + endpoint.path
@@ -399,14 +404,21 @@ class APIConnector(FileConnector):
             if params:
                 merged_params.update(params)
 
-            base_url = self.api_config.base_url.rstrip("/") + endpoint.path
+            rendered_path, merged_params = self._render_path(endpoint.path, merged_params)
+            base_url = self.api_config.base_url.rstrip("/") + rendered_path
+
+            method = endpoint.method.upper()
 
             # Detail endpoint: fetch by ID(s)
             if id is not None:
+                if method != "GET":
+                    return {"error": "id lookup only supported for GET endpoints"}
                 ids = [id] if isinstance(id, str) else id
                 rows = self._fetch_by_ids(base_url, headers, merged_params, ids)
-            else:
+            elif method == "GET":
                 rows = self._fetch_with_pagination(base_url, headers, merged_params, max_pages)
+            else:
+                rows = self._fetch_non_get(base_url, headers, merged_params, endpoint)
 
             return {
                 "data": rows,
@@ -414,6 +426,39 @@ class APIConnector(FileConnector):
             }
         except Exception as exc:
             return {"error": str(exc)}
+
+    @staticmethod
+    def _render_path(path: str, params: dict[str, str]) -> tuple[str, dict[str, str]]:
+        """Substitute {param} placeholders in a path using params."""
+        remaining = dict(params)
+
+        def repl(match: re.Match[str]) -> str:
+            key = match.group(1)
+            if key not in remaining:
+                raise ValueError(f"Missing path param: {key}")
+            return str(remaining.pop(key))
+
+        rendered = re.sub(r"\{(\w+)\}", repl, path)
+        return rendered, remaining
+
+    def _fetch_non_get(
+        self,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, str],
+        endpoint: APIEndpointConfig,
+    ) -> list[dict]:
+        """Execute non-GET requests and return rows."""
+        if endpoint.body_mode == "json":
+            resp = requests.post(url, headers=headers, json=params, params={}, timeout=30)
+        else:
+            resp = requests.post(url, headers=headers, params=params, timeout=30)
+        resp.raise_for_status()
+        body = resp.json()
+        if isinstance(body, list):
+            return body
+        data_field = self.api_config.pagination.data_field
+        return body.get(data_field, body.get("results", []))
 
     def _fetch_by_ids(
         self,
@@ -626,6 +671,7 @@ class APIConnector(FileConnector):
                     "name": ep.name,
                     "path": ep.path,
                     "method": ep.method,
+                    "body_mode": ep.body_mode,
                     **(
                         {
                             "query_params": [
@@ -662,6 +708,9 @@ class APIConnector(FileConnector):
                 "requests_per_second": self.api_config.rate_limit_rps,
             },
         }
+
+        if self.api_config.capabilities:
+            data["capabilities"] = self.api_config.capabilities
 
         path = Path(yaml_path)
         with open(path, "w") as f:

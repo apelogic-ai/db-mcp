@@ -1,0 +1,65 @@
+"""Tests for run_sql behavior with sql-like API connectors."""
+
+from unittest.mock import patch
+
+import pytest
+
+from db_mcp.tools.generation import _run_sql, _validate_sql
+
+
+class _FakeSQLConnector:
+    def execute_sql(self, sql: str):
+        return [{"id": 1, "name": "Alice"}]
+
+
+@pytest.mark.asyncio
+async def test_run_sql_requires_validate_when_supported():
+    with (
+        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.connectors.get_connector_capabilities",
+            return_value={"supports_sql": True, "supports_validate_sql": True},
+        ),
+    ):
+        result = await _run_sql(sql="SELECT 1")
+
+    payload = result.structuredContent
+    assert payload["status"] == "error"
+    assert "validate" in payload["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_sql_allows_direct_sql_for_api_sync():
+    with (
+        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.connectors.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "sql_mode": "api_sync",
+            },
+        ),
+    ):
+        result = await _run_sql(sql="SELECT 1")
+
+    payload = result.structuredContent
+    assert payload["status"] == "success"
+    assert payload["rows_returned"] == 1
+    assert payload["data"][0]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_validate_sql_reports_unsupported_for_api_connector():
+    with (
+        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.connectors.get_connector_capabilities",
+            return_value={"supports_validate_sql": False},
+        ),
+    ):
+        result = await _validate_sql("SELECT 1")
+
+    payload = result.structuredContent
+    assert payload["valid"] is False
+    assert "not supported" in payload["error"].lower()
