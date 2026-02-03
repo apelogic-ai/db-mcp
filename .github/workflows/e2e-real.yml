@@ -26,14 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: "npm"
-          cache-dependency-path: |
-            packages/ui/package-lock.json
-            package-lock.json
+          bun-version: latest
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -48,12 +44,12 @@ jobs:
 
       - name: Install UI deps
         working-directory: packages/ui
-        run: npm ci
+        run: bun install
 
-      - name: Install Playwright browsers
+      - name: Install Playwright Chromium
         working-directory: packages/ui
-        run: npx playwright install --with-deps chromium
+        run: bunx playwright install chromium --with-deps
 
       - name: Run real E2E (db-mcp UI server + connectors)
         working-directory: packages/ui
-        run: npm run test:e2e:real
+        run: bun run test:e2e:real

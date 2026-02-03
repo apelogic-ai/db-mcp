@@ -4,18 +4,24 @@ const nextConfig = {
   output: "export", // Static export for embedding in backend
   trailingSlash: true, // Ensures /connectors/ works as /connectors/index.html
   async rewrites() {
+    // In CI/playwright mocked e2e, we intercept /bicp in the browser.
+    // If Next proxies /bicp to localhost:8080, tests fail with ECONNREFUSED.
+    if (process.env.DISABLE_BICP_PROXY === "1") return [];
+
+    const target = process.env.BICP_PROXY_TARGET || "http://localhost:8080";
+
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:8080/api/:path*",
+        destination: `${target}/api/:path*`,
       },
       {
         source: "/bicp",
-        destination: "http://localhost:8080/bicp",
+        destination: `${target}/bicp`,
       },
       {
         source: "/bicp/:path*",
-        destination: "http://localhost:8080/bicp/:path*",
+        destination: `${target}/bicp/:path*`,
       },
     ];
   },
