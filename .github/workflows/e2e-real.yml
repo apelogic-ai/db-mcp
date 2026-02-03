@@ -40,7 +40,8 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Install Python deps (uv)
-        run: uv sync
+        # Install workspace members (db-mcp + models) so runtime deps like `click` exist.
+        run: uv sync --all-packages
 
       - name: Install UI deps
         working-directory: packages/ui
