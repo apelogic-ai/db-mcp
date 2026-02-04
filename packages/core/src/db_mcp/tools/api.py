@@ -56,7 +56,10 @@ async def _api_query(
     max_pages: int = 1,
     id: str | list[str] | None = None,
 ) -> dict[str, Any]:
-    """Query an API endpoint with parameters.
+    """Query a REST API endpoint with parameters.
+
+    NOTE: This is for REST endpoints only, NOT for SQL execution.
+    For SQL-like APIs (Dune, etc.) with supports_sql=true, use run_sql(sql="...") instead.
 
     Returns rows from the API endpoint matching the given parameters.
     Use api_describe_endpoint to see available parameters first.

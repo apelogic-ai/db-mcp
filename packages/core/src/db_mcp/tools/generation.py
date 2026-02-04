@@ -606,10 +606,15 @@ async def _run_sql(
 ) -> dict:
     """Execute a previously validated SQL query or direct SQL for SQL-like APIs.
 
-    REQUIRES a query_id from validate_sql. This ensures:
-    1. All queries are validated before execution
-    2. User/agent has seen the query plan
-    3. Query can't be modified between validation and execution
+    FOR SQL-LIKE APIs (Dune, etc.) with supports_sql=true and supports_validate_sql=false:
+        Call run_sql(sql="SELECT ...") directly. The SQL will be sent to the API's
+        execute_sql endpoint, and results will be returned after polling completes.
+
+    FOR REGULAR SQL DATABASES:
+        REQUIRES a query_id from validate_sql. This ensures:
+        1. All queries are validated before execution
+        2. User/agent has seen the query plan
+        3. Query can't be modified between validation and execution
 
     BEFORE generating SQL:
         1. Search existing examples: shell(command='grep -ri "keyword" examples/')

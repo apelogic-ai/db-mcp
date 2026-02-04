@@ -248,6 +248,13 @@ This tells you exactly how to:
 - query_approve / query_feedback - Save examples and feedback
 - mcp_setup_* / mcp_domain_* - Admin setup (not for regular queries)
 
+## SQL-LIKE APIs (Dune, etc.)
+
+For API connectors with `supports_sql: true` and `supports_validate_sql: false`:
+- Use `run_sql(sql="SELECT ...")` directly - NO validation step needed
+- Do NOT use api_query for SQL execution - that's for REST endpoints only
+- The SQL is sent to the API's execute_sql endpoint and results are polled automatically
+
 ## IMPORTANT: Business Rules and Knowledge Gaps
 
 Before generating SQL, always check business rules:
