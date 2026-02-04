@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.45] - 2026-02-03
+
+## Highlights
+- New `api_execute_sql` tool for SQL-like APIs (Dune Analytics, etc.)
+
+## Breaking changes
+- None
+
+## Features
+- Added `api_execute_sql(sql="...")` tool specifically for SQL-like API connectors
+- Keeps SQL execution separate from REST endpoint queries (`api_query`) and true SQL databases (`run_sql`)
+
+## Fixes
+- Fixed async polling to handle Dune's `QUERY_STATE_COMPLETED` status format
+- Added support for `is_execution_finished` flag in status responses
+
+## Security
+- None
+
+## Upgrade notes
+For Dune Analytics and similar SQL-like APIs, use `api_execute_sql`:
+```
+api_execute_sql(sql="SELECT * FROM dex_solana.trades LIMIT 10")
+```
+
+## Known issues
+- None
+
+
 ## [0.4.44] - 2026-02-03
 
 ## Highlights
