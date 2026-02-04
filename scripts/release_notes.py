@@ -139,6 +139,12 @@ def basic_validate_notes(notes_md: str) -> None:
         die("Release notes should start with a '# ' header")
     if "## Highlights" not in notes_md:
         die("Release notes must include a '## Highlights' section")
+    # Prohibit emojis in release notes
+    import unicodedata
+
+    for char in notes_md:
+        if unicodedata.category(char) in ("So", "Sk"):  # Symbol, other or Symbol, modifier
+            die(f"Emojis are not allowed in release notes. Found: {char}")
 
 
 def cmd_prepare(ver: str) -> None:
