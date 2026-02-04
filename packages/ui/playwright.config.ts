@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const port = process.env.PW_PORT ? parseInt(process.env.PW_PORT) : 3000;
+const port = process.env.PW_PORT ? parseInt(process.env.PW_PORT) : 3177;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -31,6 +31,6 @@ export default defineConfig({
   webServer: {
     command: `bun run dev --port ${port}`,
     url: `http://localhost:${port}`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
   },
 });

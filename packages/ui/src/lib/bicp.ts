@@ -428,6 +428,9 @@ export interface InsightsAnalysis {
     error: string;
     error_type?: "hard" | "soft";
     timestamp: number;
+    sql?: string; // SQL that caused the error, for save-as-learning
+    is_saved?: boolean; // Whether this error's SQL was already saved as a learning
+    example_id?: string;
   }>;
   errorCount: number;
   validationFailures: Array<{

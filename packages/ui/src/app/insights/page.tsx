@@ -651,183 +651,257 @@ function ToolUsageCard({ usage }: { usage: Record<string, number> }) {
   );
 }
 
-function RepeatedQueriesCard({
-  queries,
+/** Extract a suggested learning note from an error message. */
+function suggestLearningNote(error: string): string {
+  const tableMatch = error.match(/Table '([^']+)' does not exist/i);
+  if (tableMatch)
+    return `Table '${tableMatch[1]}' does not exist \u2014 use correct table name`;
+
+  const schemaMatch = error.match(/Schema '([^']+)' does not exist/i);
+  if (schemaMatch)
+    return `Schema '${schemaMatch[1]}' does not exist \u2014 use correct schema`;
+
+  const colMatch = error.match(/Column '([^']+)' cannot be resolved/i);
+  if (colMatch)
+    return `Column '${colMatch[1]}' does not exist \u2014 check column names`;
+
+  const lineMatch = error.match(/line \d+:\d+: (.+?)(?:\[|$)/);
+  if (lineMatch) return lineMatch[1].trim();
+
+  return "";
+}
+
+/** Expandable SQL row used by both repeated queries and auto-corrected errors. */
+function SqlPatternRow({
+  borderColor,
+  label,
+  badges,
+  sqlPreview,
+  fullSql,
+  meta,
+  error,
+  isSaved,
+  actionLabel,
+  suggestedNote,
+  placeholder,
+  onSave,
+  saving,
 }: {
-  queries: InsightsAnalysis["repeatedQueries"];
+  borderColor: string;
+  label?: string;
+  badges: Array<{ text: string; className: string }>;
+  sqlPreview: string;
+  fullSql: string;
+  meta: string;
+  error?: string;
+  isSaved: boolean;
+  actionLabel: string;
+  suggestedNote: string;
+  placeholder: string;
+  onSave: (note: string) => Promise<void>;
+  saving: boolean;
 }) {
-  const [savingIdx, setSavingIdx] = useState<number | null>(null);
-  const [intentIdx, setIntentIdx] = useState<number | null>(null);
-  const [intentText, setIntentText] = useState("");
-  const [savedIdxs, setSavedIdxs] = useState<Set<number>>(new Set());
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [noteText, setNoteText] = useState(suggestedNote);
+  const [editing, setEditing] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  if (queries.length === 0) return null;
-
-  const handleSave = async (idx: number) => {
-    const q = queries[idx];
-    const sql = q.full_sql || q.sql_preview;
-    if (!intentText.trim()) return;
-
-    setSavingIdx(idx);
-    setSaveError(null);
+  const handleSave = async () => {
+    if (!noteText.trim()) return;
+    setLocalError(null);
     try {
-      const connResult = await bicpCall<{
-        connections: Array<{ name: string; isActive: boolean }>;
-        activeConnection: string | null;
-      }>("connections/list", {});
-      const conn = connResult.activeConnection;
-      if (!conn) {
-        setSaveError("No active connection");
-        return;
-      }
-      const result = await saveExample(conn, sql, intentText.trim());
-      if (result.success) {
-        setSavedIdxs((prev) => new Set(prev).add(idx));
-        setIntentIdx(null);
-        setIntentText("");
-      } else {
-        setSaveError(result.error || "Failed to save");
-      }
+      await onSave(noteText.trim());
+      setEditing(false);
+      setExpanded(false);
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "Failed to save");
-    } finally {
-      setSavingIdx(null);
+      setLocalError(e instanceof Error ? e.message : "Failed to save");
     }
   };
 
-  const exampleCount = queries.filter(
-    (q, i) => q.is_example || savedIdxs.has(i),
-  ).length;
-
   return (
-    <Card className="bg-gray-900 border-gray-800">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-white text-sm flex items-center gap-2">
-          Repeated Queries
-          <Badge
-            variant="secondary"
-            className="bg-yellow-900/50 text-yellow-400"
-          >
-            {queries.length}
-          </Badge>
-          {exampleCount > 0 && (
-            <Badge
-              variant="secondary"
-              className="bg-green-900/50 text-green-400 text-[10px]"
-            >
-              {exampleCount} saved
-            </Badge>
+    <div className={`border border-${borderColor} rounded text-xs`}>
+      {/* Clickable header */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left p-2 hover:bg-gray-800/30 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600 text-[10px] shrink-0">
+            {expanded ? "\u25BE" : "\u25B8"}
+          </span>
+          {label && (
+            <span className="text-amber-400 font-mono shrink-0">{label}</span>
           )}
-        </CardTitle>
-        <CardDescription className="text-gray-500 text-xs">
-          Same SQL executed multiple times — consider saving as training
-          examples
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {queries.map((q, i) => {
-          const isSaved = q.is_example || savedIdxs.has(i);
-          return (
-            <div key={i} className="border border-gray-800 rounded p-2">
-              <code className="text-xs text-gray-300 font-mono block truncate">
-                {q.sql_preview}
-              </code>
-              <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                <span>{q.count}x executed</span>
-                <span>First: {formatTimestamp(q.first_seen)}</span>
-                <span>Last: {formatTimestamp(q.last_seen)}</span>
-                <span className="ml-auto">
-                  {isSaved ? (
-                    <span className="text-green-500">✓ Saved</span>
-                  ) : intentIdx === i ? null : (
-                    <button
-                      onClick={() => {
-                        setIntentIdx(i);
-                        setIntentText("");
-                        setSaveError(null);
-                      }}
-                      className="text-blue-400 hover:text-blue-300 transition-colors"
-                    >
-                      Save as Example
-                    </button>
-                  )}
-                </span>
-              </div>
-              {intentIdx === i && !isSaved && (
-                <div className="mt-2 flex gap-2">
-                  <input
-                    type="text"
-                    value={intentText}
-                    onChange={(e) => setIntentText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSave(i);
-                      if (e.key === "Escape") {
-                        setIntentIdx(null);
-                        setIntentText("");
-                      }
-                    }}
-                    placeholder={
-                      q.suggested_intent
-                        ? `e.g. ${q.suggested_intent}`
-                        : "Describe the intent (e.g. Show top users by session count)"
-                    }
-                    className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500"
-                    autoFocus
-                  />
-                  <button
-                    onClick={() => handleSave(i)}
-                    disabled={savingIdx === i || !intentText.trim()}
-                    className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded transition-colors"
-                  >
-                    {savingIdx === i ? "..." : "Save"}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIntentIdx(null);
-                      setIntentText("");
-                    }}
-                    className="text-xs px-2 py-1 text-gray-400 hover:text-gray-300 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-              {saveError && intentIdx === i && (
-                <p className="text-red-400 text-xs mt-1">{saveError}</p>
-              )}
+          {badges.map((b, bi) => (
+            <Badge
+              key={bi}
+              variant="secondary"
+              className={`${b.className} text-[10px] shrink-0`}
+            >
+              {b.text}
+            </Badge>
+          ))}
+          <span className="text-gray-600 text-[10px] ml-auto shrink-0">
+            {meta}
+          </span>
+          <span
+            className="shrink-0 ml-2"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            {isSaved ? (
+              <span className="text-green-500">{"\u2713"} Saved</span>
+            ) : !editing ? (
+              <button
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  setEditing(true);
+                  setExpanded(true);
+                  setNoteText(suggestedNote);
+                }}
+                className="text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                {actionLabel}
+              </button>
+            ) : null}
+          </span>
+        </div>
+        {!expanded && (
+          <code className="text-gray-400 font-mono block truncate mt-1 pl-4">
+            {sqlPreview}
+          </code>
+        )}
+        {!expanded && error && (
+          <p className="text-gray-500 mt-0.5 truncate pl-4">{error}</p>
+        )}
+      </button>
+
+      {/* Expanded content */}
+      {expanded && (
+        <div className="px-2 pb-2 space-y-2">
+          <pre className="bg-gray-950 border border-gray-800 rounded p-2 text-gray-300 font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap">
+            {fullSql}
+          </pre>
+          {error && (
+            <p className="text-amber-400/80 text-[11px] truncate">{error}</p>
+          )}
+          {editing && !isSaved && (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={noteText}
+                onChange={(ev) => setNoteText(ev.target.value)}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") handleSave();
+                  if (ev.key === "Escape") {
+                    setEditing(false);
+                    setNoteText(suggestedNote);
+                  }
+                }}
+                placeholder={placeholder}
+                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                autoFocus
+              />
+              <button
+                onClick={handleSave}
+                disabled={saving || !noteText.trim()}
+                className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded transition-colors"
+              >
+                {saving ? "..." : "Save"}
+              </button>
+              <button
+                onClick={() => {
+                  setEditing(false);
+                  setNoteText(suggestedNote);
+                }}
+                className="text-xs px-2 py-1 text-gray-400 hover:text-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
             </div>
-          );
-        })}
-      </CardContent>
-    </Card>
+          )}
+          {localError && <p className="text-red-400 text-xs">{localError}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 
-function ErrorsCard({
+function SqlPatternsCard({
+  repeatedQueries,
   errors,
   errorCount,
   validationFailures,
   validationFailureCount,
 }: {
+  repeatedQueries: InsightsAnalysis["repeatedQueries"];
   errors: InsightsAnalysis["errors"];
   errorCount: number;
   validationFailures: InsightsAnalysis["validationFailures"];
   validationFailureCount: number;
 }) {
-  if (errorCount === 0 && validationFailureCount === 0) return null;
+  const [savedIdxs, setSavedIdxs] = useState<Set<string>>(new Set());
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
   const hardErrors = errors.filter((e) => e.error_type !== "soft");
   const softErrors = errors.filter((e) => e.error_type === "soft");
 
+  const hasContent =
+    repeatedQueries.length > 0 || errorCount > 0 || validationFailureCount > 0;
+
+  if (!hasContent) return null;
+
+  const getActiveConnection = async () => {
+    const connResult = await bicpCall<{
+      connections: Array<{ name: string; isActive: boolean }>;
+      activeConnection: string | null;
+    }>("connections/list", {});
+    return connResult.activeConnection;
+  };
+
+  const handleSaveExample = async (key: string, sql: string, note: string) => {
+    setSavingKey(key);
+    try {
+      const conn = await getActiveConnection();
+      if (!conn) throw new Error("No active connection");
+      const result = await saveExample(conn, sql, note);
+      if (result.success) {
+        setSavedIdxs((prev) => new Set(prev).add(key));
+      } else {
+        throw new Error(result.error || "Failed to save");
+      }
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const handleSaveLearning = async (key: string, sql: string, note: string) => {
+    setSavingKey(key);
+    try {
+      const conn = await getActiveConnection();
+      if (!conn) throw new Error("No active connection");
+      const result = await saveExample(conn, sql, `[ERROR PATTERN] ${note}`);
+      if (result.success) {
+        setSavedIdxs((prev) => new Set(prev).add(key));
+      } else {
+        throw new Error(result.error || "Failed to save");
+      }
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
   return (
-    <Card className="bg-gray-900 border-gray-800">
+    <Card className="bg-gray-900 border-gray-800 col-span-2">
       <CardHeader className="pb-3">
         <CardTitle className="text-white text-sm flex items-center gap-2">
-          Errors &amp; Failures
-          {hardErrors.length > 0 && (
-            <Badge variant="secondary" className="bg-red-900/50 text-red-400">
-              {hardErrors.length} error{hardErrors.length !== 1 ? "s" : ""}
+          SQL Patterns
+          {repeatedQueries.length > 0 && (
+            <Badge
+              variant="secondary"
+              className="bg-yellow-900/50 text-yellow-400"
+            >
+              {repeatedQueries.length} repeated
             </Badge>
           )}
           {softErrors.length > 0 && (
@@ -838,78 +912,182 @@ function ErrorsCard({
               {softErrors.length} auto-corrected
             </Badge>
           )}
-          {validationFailureCount > 0 && (
-            <Badge
-              variant="secondary"
-              className="bg-yellow-900/50 text-yellow-400"
-            >
-              {validationFailureCount} validation
+          {hardErrors.length > 0 && (
+            <Badge variant="secondary" className="bg-red-900/50 text-red-400">
+              {hardErrors.length} error{hardErrors.length !== 1 ? "s" : ""}
             </Badge>
           )}
         </CardTitle>
         <CardDescription className="text-gray-500 text-xs">
-          Tool failures, auto-corrected errors, and SQL validation issues
+          Repeated queries and auto-corrected errors &mdash; expand to see full
+          SQL and save as knowledge
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
-        {hardErrors.slice(0, 5).map((e, i) => (
-          <div
-            key={`err-${i}`}
-            className="border border-red-900/30 rounded p-2 text-xs"
-          >
-            <span className="text-red-400 font-mono">
-              {e.tool || e.span_name}
-            </span>
-            {e.error && (
-              <p className="text-gray-500 mt-0.5 truncate">{e.error}</p>
+        {/* Repeated queries */}
+        {repeatedQueries.length > 0 && (
+          <>
+            {(softErrors.length > 0 || hardErrors.length > 0) && (
+              <p className="text-gray-600 text-[10px] uppercase tracking-wider pt-1">
+                Repeated Queries
+              </p>
             )}
-            <span className="text-gray-600 text-[10px]">
-              {formatTimestamp(e.timestamp)}
-            </span>
-          </div>
-        ))}
-        {softErrors.slice(0, 5).map((e, i) => (
-          <div
-            key={`soft-${i}`}
-            className="border border-amber-900/30 rounded p-2 text-xs"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-amber-400 font-mono">
-                {e.tool || e.span_name}
-              </span>
-              <Badge
-                variant="secondary"
-                className="bg-amber-900/30 text-amber-500 text-[10px]"
+            {repeatedQueries.map((q, i) => {
+              const key = `rq-${i}`;
+              const isSaved = q.is_example || savedIdxs.has(key);
+              return (
+                <SqlPatternRow
+                  key={key}
+                  borderColor="gray-800"
+                  badges={[
+                    {
+                      text: `${q.count}x`,
+                      className: "bg-yellow-900/50 text-yellow-400",
+                    },
+                  ]}
+                  sqlPreview={q.sql_preview}
+                  fullSql={q.full_sql || q.sql_preview}
+                  meta={`First: ${formatTimestamp(q.first_seen)}  Last: ${formatTimestamp(q.last_seen)}`}
+                  isSaved={isSaved}
+                  actionLabel="Save as Example"
+                  suggestedNote={q.suggested_intent || ""}
+                  placeholder={
+                    q.suggested_intent
+                      ? `e.g. ${q.suggested_intent}`
+                      : "Describe the intent (e.g. Show top users by session count)"
+                  }
+                  onSave={(note) =>
+                    handleSaveExample(key, q.full_sql || q.sql_preview, note)
+                  }
+                  saving={savingKey === key}
+                />
+              );
+            })}
+          </>
+        )}
+
+        {/* Auto-corrected errors */}
+        {softErrors.length > 0 && (
+          <>
+            {repeatedQueries.length > 0 && (
+              <p className="text-gray-600 text-[10px] uppercase tracking-wider pt-2">
+                Auto-corrected Errors
+              </p>
+            )}
+            {softErrors.slice(0, 10).map((e, i) => {
+              const key = `soft-${i}`;
+              const isSaved = e.is_saved || savedIdxs.has(key);
+              const hasSql = !!e.sql;
+              if (!hasSql) {
+                return (
+                  <div
+                    key={key}
+                    className="border border-amber-900/30 rounded p-2 text-xs"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-amber-400 font-mono">
+                        {e.tool || e.span_name}
+                      </span>
+                      <Badge
+                        variant="secondary"
+                        className="bg-amber-900/30 text-amber-500 text-[10px]"
+                      >
+                        auto-corrected
+                      </Badge>
+                      <span className="text-gray-600 text-[10px] ml-auto">
+                        {formatTimestamp(e.timestamp)}
+                      </span>
+                    </div>
+                    {e.error && (
+                      <p className="text-gray-500 mt-0.5 truncate">{e.error}</p>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <SqlPatternRow
+                  key={key}
+                  borderColor="amber-900/30"
+                  label={e.tool || e.span_name}
+                  badges={[
+                    {
+                      text: "auto-corrected",
+                      className: "bg-amber-900/30 text-amber-500",
+                    },
+                  ]}
+                  sqlPreview={e.sql!.split("\n")[0].slice(0, 100)}
+                  fullSql={e.sql!}
+                  meta={formatTimestamp(e.timestamp)}
+                  error={e.error}
+                  isSaved={isSaved}
+                  actionLabel="Save as Learning"
+                  suggestedNote={suggestLearningNote(e.error || "")}
+                  placeholder="What should the agent avoid? (e.g. Don't use schema X)"
+                  onSave={(note) => handleSaveLearning(key, e.sql!, note)}
+                  saving={savingKey === key}
+                />
+              );
+            })}
+          </>
+        )}
+
+        {/* Hard errors (no SQL, non-expandable) */}
+        {hardErrors.length > 0 && (
+          <>
+            {(repeatedQueries.length > 0 || softErrors.length > 0) && (
+              <p className="text-gray-600 text-[10px] uppercase tracking-wider pt-2">
+                Hard Errors
+              </p>
+            )}
+            {hardErrors.slice(0, 5).map((e, i) => (
+              <div
+                key={`err-${i}`}
+                className="border border-red-900/30 rounded p-2 text-xs"
               >
-                auto-corrected
-              </Badge>
-            </div>
-            {e.error && (
-              <p className="text-gray-500 mt-0.5 truncate">{e.error}</p>
-            )}
-            <span className="text-gray-600 text-[10px]">
-              {formatTimestamp(e.timestamp)}
-            </span>
-          </div>
-        ))}
-        {validationFailures.slice(0, 5).map((v, i) => (
-          <div
-            key={`val-${i}`}
-            className="border border-yellow-900/30 rounded p-2 text-xs"
-          >
-            <code className="text-yellow-400 font-mono block truncate">
-              {v.sql_preview || "SQL validation failed"}
-            </code>
-            {v.error_message && (
-              <p className="text-gray-500 mt-0.5 truncate">{v.error_message}</p>
-            )}
-            {v.rejected_keyword && (
-              <span className="text-yellow-600">
-                Rejected: {v.rejected_keyword}
-              </span>
-            )}
-          </div>
-        ))}
+                <div className="flex items-center gap-2">
+                  <span className="text-red-400 font-mono">
+                    {e.tool || e.span_name}
+                  </span>
+                  <span className="text-gray-600 text-[10px] ml-auto">
+                    {formatTimestamp(e.timestamp)}
+                  </span>
+                </div>
+                {e.error && (
+                  <p className="text-gray-500 mt-0.5 truncate">{e.error}</p>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* Validation failures (non-expandable) */}
+        {validationFailureCount > 0 && (
+          <>
+            <p className="text-gray-600 text-[10px] uppercase tracking-wider pt-2">
+              Validation Failures
+            </p>
+            {validationFailures.slice(0, 5).map((v, i) => (
+              <div
+                key={`val-${i}`}
+                className="border border-yellow-900/30 rounded p-2 text-xs"
+              >
+                <code className="text-yellow-400 font-mono block truncate">
+                  {v.sql_preview || "SQL validation failed"}
+                </code>
+                {v.error_message && (
+                  <p className="text-gray-500 mt-0.5 truncate">
+                    {v.error_message}
+                  </p>
+                )}
+                {v.rejected_keyword && (
+                  <span className="text-yellow-600">
+                    Rejected: {v.rejected_keyword}
+                  </span>
+                )}
+              </div>
+            ))}
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -924,9 +1102,16 @@ function KnowledgeCaptureCard({
   count: number;
   traceCount: number;
 }) {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const captureRate =
     traceCount > 0 ? ((count / traceCount) * 100).toFixed(0) : "0";
+
+  // Classify events
+  const errorPatterns = events.filter(
+    (e) => e.intent && e.intent.startsWith("[ERROR PATTERN]"),
+  );
+  const examples = events.filter(
+    (e) => !e.intent || !e.intent.startsWith("[ERROR PATTERN]"),
+  );
 
   return (
     <Card className="bg-gray-900 border-gray-800">
@@ -951,56 +1136,45 @@ function KnowledgeCaptureCard({
         </CardDescription>
       </CardHeader>
       {events.length > 0 && (
-        <CardContent className="space-y-1">
-          {events.slice(0, 8).map((e, i) => {
-            const hasDetails = !!(e.intent || e.filename);
-            const showBadge = e.feedback_type && e.feedback_type !== e.tool;
-            return (
-              <div key={i}>
-                <button
-                  onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
-                  className="flex items-center gap-2 text-xs w-full text-left hover:bg-gray-800/50 rounded px-1 py-0.5 transition-colors"
-                >
-                  <span className="text-green-500">✓</span>
-                  <span className="text-gray-300 font-mono">{e.tool}</span>
-                  {showBadge && (
-                    <Badge
-                      variant="secondary"
-                      className="bg-gray-800 text-gray-400 text-[10px]"
-                    >
-                      {e.feedback_type}
-                    </Badge>
-                  )}
-                  <span className="text-gray-600 ml-auto">
-                    {formatTimestamp(e.timestamp)}
-                  </span>
-                  <span className="text-gray-600 text-[10px]">
-                    {expandedIdx === i ? "▾" : "▸"}
-                  </span>
-                </button>
-                {expandedIdx === i && (
-                  <div className="ml-5 mt-1 mb-1 pl-2 border-l border-gray-700 text-xs space-y-0.5">
-                    {e.intent && (
-                      <p className="text-gray-400">
-                        <span className="text-gray-500">Intent:</span>{" "}
-                        {e.intent}
-                      </p>
-                    )}
-                    {e.filename && (
-                      <p className="text-gray-500 font-mono text-[10px]">
-                        {e.filename}
-                      </p>
-                    )}
-                    {!hasDetails && (
-                      <p className="text-gray-600 italic">
-                        No additional details available
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <CardContent className="space-y-1.5">
+          {errorPatterns.length > 0 && examples.length > 0 && (
+            <p className="text-gray-600 text-[10px] uppercase tracking-wider">
+              Error Patterns Learned
+            </p>
+          )}
+          {errorPatterns.slice(0, 8).map((e, i) => (
+            <div
+              key={`ep-${i}`}
+              className="flex items-start gap-2 text-xs px-1 py-0.5"
+            >
+              <span className="text-amber-500 shrink-0 mt-0.5">!</span>
+              <span className="text-gray-400 truncate flex-1">
+                {e.intent!.replace("[ERROR PATTERN] ", "")}
+              </span>
+              <span className="text-gray-600 shrink-0">
+                {formatTimestamp(e.timestamp)}
+              </span>
+            </div>
+          ))}
+          {examples.length > 0 && errorPatterns.length > 0 && (
+            <p className="text-gray-600 text-[10px] uppercase tracking-wider pt-1">
+              Examples Saved
+            </p>
+          )}
+          {examples.slice(0, 8).map((e, i) => (
+            <div
+              key={`ex-${i}`}
+              className="flex items-start gap-2 text-xs px-1 py-0.5"
+            >
+              <span className="text-green-500 shrink-0 mt-0.5">{"\u2713"}</span>
+              <span className="text-gray-400 truncate flex-1">
+                {e.intent || e.tool}
+              </span>
+              <span className="text-gray-600 shrink-0">
+                {formatTimestamp(e.timestamp)}
+              </span>
+            </div>
+          ))}
         </CardContent>
       )}
     </Card>
@@ -1191,19 +1365,20 @@ export default function InsightsPage() {
             <VocabularyGapsCard gaps={analysis.vocabularyGaps} />
           )}
 
-          {/* Detail grid */}
+          {/* SQL Patterns + Knowledge Capture + Tables */}
+          <SqlPatternsCard
+            repeatedQueries={analysis.repeatedQueries}
+            errors={analysis.errors}
+            errorCount={analysis.errorCount}
+            validationFailures={analysis.validationFailures}
+            validationFailureCount={analysis.validationFailureCount}
+          />
+
           <div className="grid grid-cols-2 gap-4">
-            <RepeatedQueriesCard queries={analysis.repeatedQueries} />
             <KnowledgeCaptureCard
               events={analysis.knowledgeEvents}
               count={analysis.knowledgeCaptureCount}
               traceCount={analysis.traceCount}
-            />
-            <ErrorsCard
-              errors={analysis.errors}
-              errorCount={analysis.errorCount}
-              validationFailures={analysis.validationFailures}
-              validationFailureCount={analysis.validationFailureCount}
             />
             <TablesCard tables={analysis.tablesReferenced} />
           </div>

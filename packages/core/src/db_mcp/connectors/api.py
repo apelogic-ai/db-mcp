@@ -77,6 +77,8 @@ class APIConnectorConfig:
     pagination: APIPaginationConfig = field(default_factory=APIPaginationConfig)
     rate_limit_rps: float = 10.0
     capabilities: dict[str, Any] = field(default_factory=dict)
+    api_title: str = ""  # Display name from discovery (e.g., "Dune Analytics API")
+    api_description: str = ""  # Description from API spec
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +167,7 @@ class APIConnector(FileConnector):
         if not self.api_config.base_url:
             return {
                 "connected": False,
-                "dialect": "duckdb",
+                "dialect": self.api_config.api_title or "duckdb",
                 "error": "No base_url configured",
             }
 
@@ -188,14 +190,22 @@ class APIConnector(FileConnector):
 
             return {
                 "connected": True,
-                "dialect": "duckdb",
+                "dialect": self.api_config.api_title or "duckdb",
                 "endpoints": len(self.api_config.endpoints),
                 "error": None,
             }
         except ValueError as exc:
-            return {"connected": False, "dialect": "duckdb", "error": str(exc)}
+            return {
+                "connected": False,
+                "dialect": self.api_config.api_title or "duckdb",
+                "error": str(exc),
+            }
         except Exception as exc:
-            return {"connected": False, "dialect": "duckdb", "error": str(exc)}
+            return {
+                "connected": False,
+                "dialect": self.api_config.api_title or "duckdb",
+                "error": str(exc),
+            }
 
     # -- Sync ---------------------------------------------------------------
 
@@ -555,10 +565,7 @@ class APIConnector(FileConnector):
 
                 # Check for completion - handle various formats like "QUERY_STATE_COMPLETED"
                 is_complete = (
-                    is_finished
-                    or "complete" in state
-                    or "success" in state
-                    or "finished" in state
+                    is_finished or "complete" in state or "success" in state or "finished" in state
                 )
                 if not is_complete:
                     time.sleep(poll_interval)
@@ -846,6 +853,12 @@ class APIConnector(FileConnector):
                 data_field=result.pagination.data_field or "data",
             )
 
+        # Store API title and description
+        if result.api_title:
+            self.api_config.api_title = result.api_title
+        if result.api_description:
+            self.api_config.api_description = result.api_description
+
         return {
             "strategy": result.strategy,
             "spec_url": result.spec_url,
@@ -872,56 +885,67 @@ class APIConnector(FileConnector):
         data: dict[str, Any] = {
             "type": "api",
             "base_url": self.api_config.base_url,
-            "auth": {
-                "type": self.api_config.auth.type,
-                "token_env": self.api_config.auth.token_env,
-                "header_name": self.api_config.auth.header_name,
-                "param_name": self.api_config.auth.param_name,
-            },
-            "endpoints": [
-                {
-                    "name": ep.name,
-                    "path": ep.path,
-                    "method": ep.method,
-                    "body_mode": ep.body_mode,
-                    "response_mode": ep.response_mode,
-                    **({"sql_field": ep.sql_field} if ep.sql_field != "sql" else {}),
-                    **(
-                        {
-                            "query_params": [
-                                {
-                                    k: v
-                                    for k, v in {
-                                        "name": qp.name,
-                                        "type": qp.type,
-                                        "description": qp.description,
-                                        "required": qp.required or None,
-                                        "enum": qp.enum,
-                                        "default": qp.default,
-                                    }.items()
-                                    if v
-                                }
-                                for qp in ep.query_params
-                            ]
-                        }
-                        if ep.query_params
-                        else {}
-                    ),
-                }
-                for ep in self.api_config.endpoints
-            ],
-            "pagination": {
-                "type": self.api_config.pagination.type,
-                "cursor_param": self.api_config.pagination.cursor_param,
-                "cursor_field": self.api_config.pagination.cursor_field,
-                "page_size_param": self.api_config.pagination.page_size_param,
-                "page_size": self.api_config.pagination.page_size,
-                "data_field": self.api_config.pagination.data_field,
-            },
-            "rate_limit": {
-                "requests_per_second": self.api_config.rate_limit_rps,
-            },
         }
+
+        # Add optional API metadata
+        if self.api_config.api_title:
+            data["api_title"] = self.api_config.api_title
+        if self.api_config.api_description:
+            data["api_description"] = self.api_config.api_description
+
+        data.update(
+            {
+                "auth": {
+                    "type": self.api_config.auth.type,
+                    "token_env": self.api_config.auth.token_env,
+                    "header_name": self.api_config.auth.header_name,
+                    "param_name": self.api_config.auth.param_name,
+                },
+                "endpoints": [
+                    {
+                        "name": ep.name,
+                        "path": ep.path,
+                        "method": ep.method,
+                        "body_mode": ep.body_mode,
+                        "response_mode": ep.response_mode,
+                        **({"sql_field": ep.sql_field} if ep.sql_field != "sql" else {}),
+                        **(
+                            {
+                                "query_params": [
+                                    {
+                                        k: v
+                                        for k, v in {
+                                            "name": qp.name,
+                                            "type": qp.type,
+                                            "description": qp.description,
+                                            "required": qp.required or None,
+                                            "enum": qp.enum,
+                                            "default": qp.default,
+                                        }.items()
+                                        if v
+                                    }
+                                    for qp in ep.query_params
+                                ]
+                            }
+                            if ep.query_params
+                            else {}
+                        ),
+                    }
+                    for ep in self.api_config.endpoints
+                ],
+                "pagination": {
+                    "type": self.api_config.pagination.type,
+                    "cursor_param": self.api_config.pagination.cursor_param,
+                    "cursor_field": self.api_config.pagination.cursor_field,
+                    "page_size_param": self.api_config.pagination.page_size_param,
+                    "page_size": self.api_config.pagination.page_size,
+                    "data_field": self.api_config.pagination.data_field,
+                },
+                "rate_limit": {
+                    "requests_per_second": self.api_config.rate_limit_rps,
+                },
+            }
+        )
 
         if self.api_config.capabilities:
             data["capabilities"] = self.api_config.capabilities

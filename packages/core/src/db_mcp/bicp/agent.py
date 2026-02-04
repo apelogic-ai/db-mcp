@@ -630,6 +630,8 @@ class DBMCPAgent(BICPAgent):
 
                 # Detect connector type from connector.yaml
                 connector_type = "sql"
+                api_title = None
+                base_url = None
                 connector_yaml = conn_path / "connector.yaml"
                 if connector_yaml.exists():
                     try:
@@ -638,12 +640,42 @@ class DBMCPAgent(BICPAgent):
                         with open(connector_yaml) as f:
                             cdata = _yaml.safe_load(f) or {}
                             connector_type = cdata.get("type", "sql")
+                            # For API connectors, use api_title if available
+                            if connector_type == "api":
+                                api_title = cdata.get("api_title")
+                                base_url = cdata.get("base_url", "")
                     except Exception:
                         pass
 
                 # Try to detect dialect
                 dialect = None
-                if connector_type in ("file", "api"):
+                if connector_type == "api":
+                    # Use API title if available, derive from base_url, or use connection name
+                    if api_title:
+                        dialect = api_title
+                    elif base_url:
+                        # Extract domain name as display name (e.g., "api.dune.com" -> "Dune API")
+                        try:
+                            from urllib.parse import urlparse
+
+                            parsed = urlparse(base_url)
+                            domain = parsed.netloc or parsed.path
+                            # Extract main domain part (e.g., "dune" from "api.dune.com")
+                            parts = domain.replace("www.", "").split(".")
+                            if len(parts) >= 2:
+                                main_part = (
+                                    parts[-2]
+                                    if parts[-1] in ("com", "io", "ai", "co", "org", "net")
+                                    else parts[0]
+                                )  # noqa: E501
+                            else:
+                                main_part = parts[0]
+                            dialect = f"{main_part.capitalize()} API"
+                        except Exception:
+                            dialect = f"{name} API"
+                    else:
+                        dialect = f"{name} API"
+                elif connector_type == "file":
                     dialect = "duckdb"
                 elif has_credentials:
                     env_file = conn_path / ".env"
@@ -1200,44 +1232,57 @@ class DBMCPAgent(BICPAgent):
             }
 
     async def _test_api_connection(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Test an API connection by making a lightweight request."""
-        import httpx
+        """Test an API connection by creating a temporary connector and testing it."""
+        from db_mcp.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
 
         base_url = params.get("baseUrl", "").strip()
         api_key = params.get("apiKey", "").strip()
         auth_type = params.get("authType", "bearer")
+        header_name = params.get("headerName", "Authorization")
+        token_env = params.get("tokenEnv", "API_KEY")
 
-        try:
-            headers: dict[str, str] = {}
+        # Build auth config
+        auth = APIAuthConfig(
+            type=auth_type,
+            token_env=token_env,
+            header_name=header_name,
+        )
+
+        # Build minimal API config
+        config = APIConnectorConfig(
+            base_url=base_url,
+            auth=auth,
+        )
+
+        # Create temporary connector with in-memory data dir
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create temporary .env file if API key provided
+            env_path = None
             if api_key:
-                if auth_type == "bearer":
-                    headers["Authorization"] = f"Bearer {api_key}"
-                elif auth_type == "header":
-                    header_name = params.get("headerName", "Authorization")
-                    headers[header_name] = api_key
+                import os
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(base_url, headers=headers)
+                env_path = os.path.join(temp_dir, ".env")
+                with open(env_path, "w") as f:
+                    f.write(f"{token_env}={api_key}\n")
 
-            if resp.status_code < 400:
+            connector = APIConnector(config, temp_dir, env_path=env_path)
+            result = connector.test_connection()
+
+            if result["connected"]:
+                endpoint_count = result.get("endpoints", 0)
                 return {
                     "success": True,
-                    "message": f"API reachable (HTTP {resp.status_code})",
-                    "dialect": "duckdb",
+                    "message": f"API reachable ({endpoint_count} endpoints configured)",
+                    "dialect": result.get("dialect", "duckdb"),
                 }
             else:
                 return {
                     "success": False,
-                    "error": f"API returned HTTP {resp.status_code}",
-                    "dialect": "duckdb",
+                    "error": result.get("error", "Connection failed"),
+                    "dialect": result.get("dialect", "duckdb"),
                 }
-
-        except httpx.ConnectError:
-            return {"success": False, "error": f"Cannot connect to {base_url}"}
-        except httpx.TimeoutException:
-            return {"success": False, "error": "Connection timed out"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
 
     async def _test_database_url(self, database_url: str) -> dict[str, Any]:
         """Test a database URL by attempting to connect.

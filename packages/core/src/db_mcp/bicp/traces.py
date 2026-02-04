@@ -147,9 +147,30 @@ def _is_protocol_noise(trace: dict) -> bool:
 
 
 def _extract_sql(span: dict) -> str | None:
-    """Extract SQL text from a span's attributes."""
+    """Extract SQL text from a span's attributes.
+
+    Checks multiple attribute keys where SQL may be stored:
+    - attrs.sql / attrs.sql.preview (standard instrumentation)
+    - attrs.args (JSON-encoded tool arguments, e.g. {"sql": "SELECT ..."})
+    """
     attrs = span.get("attributes", {})
-    return attrs.get("sql") or attrs.get("sql.preview") or None
+    sql = attrs.get("sql") or attrs.get("sql.preview")
+    if sql:
+        return sql
+
+    # Try extracting from args JSON (e.g. api_execute_sql stores SQL in args)
+    args_str = attrs.get("args")
+    if args_str and isinstance(args_str, str):
+        try:
+            args_data = json.loads(args_str)
+            if isinstance(args_data, dict):
+                sql = args_data.get("sql")
+                if sql:
+                    return sql
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return None
 
 
 def _normalize_sql(sql: str) -> str:
@@ -708,6 +729,8 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
                 or str(attrs.get("tool.soft_failure", "")).lower() == "true"
             )
             if is_error or is_soft_failure:
+                # Extract SQL if available for this error
+                error_sql = _extract_sql(span)
                 error_traces.append(
                     {
                         "trace_id": trace.get("trace_id", ""),
@@ -718,6 +741,7 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
                         or attrs.get("error.message", ""),
                         "error_type": "hard" if is_error else "soft",
                         "timestamp": span.get("start_time", 0),
+                        "sql": error_sql,  # Include SQL for save-as-learning feature
                     }
                 )
 
@@ -848,8 +872,8 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
             )
     repeated_queries.sort(key=lambda r: r["count"], reverse=True)
 
-    # Check which repeated queries are already saved as training examples
-    if connection_path and repeated_queries:
+    # Check which repeated queries / errors are already saved as training examples
+    if connection_path and (repeated_queries or error_traces):
         try:
             from db_mcp.training.store import load_examples
 
@@ -863,6 +887,12 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
                 if ex_id:
                     rq["is_example"] = True
                     rq["example_id"] = ex_id
+            for et in error_traces:
+                if et.get("sql"):
+                    ex_id = example_sqls.get(_normalize_sql(et["sql"]))
+                    if ex_id:
+                        et["is_saved"] = True
+                        et["example_id"] = ex_id
         except Exception:
             pass
 

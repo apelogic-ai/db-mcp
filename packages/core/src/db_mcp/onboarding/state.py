@@ -25,15 +25,17 @@ def get_connection_path() -> Path:
 def get_provider_dir(provider_id: str | None = None) -> Path:
     """Get the directory for connection artifacts.
 
-    DEPRECATED: Use get_connection_path() instead.
-
     Args:
-        provider_id: Ignored in v2 (kept for backward compatibility)
+        provider_id: If provided, returns the path to that specific connection.
+                     If None, returns the active connection path.
 
     Returns:
         Path to connection directory
     """
-    # In v2, we ignore provider_id and use the connection path
+    if provider_id:
+        # Return path to specific connection
+        return Path.home() / ".db-mcp" / "connections" / provider_id
+    # Fall back to active connection
     return get_connection_path()
 
 

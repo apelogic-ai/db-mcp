@@ -1,6 +1,7 @@
 """Tests for trace-related utilities.
 
-Tests the JSONL reader, date listing, and active connection path resolution.
+Tests the JSONL reader, date listing, active connection path resolution,
+and SQL extraction from span attributes.
 """
 
 import json
@@ -8,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 
-from db_mcp.bicp.traces import list_trace_dates, read_traces_from_jsonl
+from db_mcp.bicp.traces import (
+    _extract_sql,
+    analyze_traces,
+    list_trace_dates,
+    read_traces_from_jsonl,
+)
 
 # ========== list_trace_dates ==========
 
@@ -277,3 +283,170 @@ class TestGetActiveConnectionPath:
         config = yaml.safe_load(config_file.read_text()) or {}
         active = config.get("active_connection")
         assert active is None
+
+
+# ========== _extract_sql ==========
+
+
+class TestExtractSql:
+    def test_returns_sql_from_sql_attr(self):
+        span = {"attributes": {"sql": "SELECT 1"}}
+        assert _extract_sql(span) == "SELECT 1"
+
+    def test_returns_sql_from_sql_preview_attr(self):
+        span = {"attributes": {"sql.preview": "SELECT count(*) FROM users"}}
+        assert _extract_sql(span) == "SELECT count(*) FROM users"
+
+    def test_prefers_sql_over_sql_preview(self):
+        span = {"attributes": {"sql": "SELECT 1", "sql.preview": "SELECT 2"}}
+        assert _extract_sql(span) == "SELECT 1"
+
+    def test_returns_sql_from_args_json(self):
+        span = {
+            "attributes": {
+                "args": '{"sql": "SELECT * FROM dex_solana.trades LIMIT 10"}',
+            }
+        }
+        assert _extract_sql(span) == "SELECT * FROM dex_solana.trades LIMIT 10"
+
+    def test_prefers_sql_attr_over_args(self):
+        span = {
+            "attributes": {
+                "sql": "SELECT 1",
+                "args": '{"sql": "SELECT 2"}',
+            }
+        }
+        assert _extract_sql(span) == "SELECT 1"
+
+    def test_returns_none_when_no_sql(self):
+        span = {"attributes": {"tool.name": "shell", "command": "ls"}}
+        assert _extract_sql(span) is None
+
+    def test_returns_none_for_invalid_args_json(self):
+        span = {"attributes": {"args": "not valid json"}}
+        assert _extract_sql(span) is None
+
+    def test_returns_none_for_args_without_sql_key(self):
+        span = {"attributes": {"args": '{"command": "ls"}'}}
+        assert _extract_sql(span) is None
+
+    def test_returns_none_for_empty_attributes(self):
+        span = {"attributes": {}}
+        assert _extract_sql(span) is None
+
+    def test_returns_none_for_missing_attributes(self):
+        span = {}
+        assert _extract_sql(span) is None
+
+
+# ========== analyze_traces: is_saved for errors ==========
+
+
+def _make_trace(trace_id, span_name, attrs, status="ok"):
+    """Helper to build a minimal trace dict for analyze_traces."""
+    import time
+
+    now = time.time()
+    return {
+        "trace_id": trace_id,
+        "start_time": now,
+        "end_time": now + 1,
+        "duration_ms": 1000,
+        "span_count": 1,
+        "root_span": span_name,
+        "spans": [
+            {
+                "trace_id": trace_id,
+                "span_id": f"s-{trace_id}",
+                "parent_span_id": None,
+                "name": span_name,
+                "start_time": now,
+                "end_time": now + 1,
+                "duration_ms": 1000,
+                "status": status,
+                "attributes": attrs,
+            }
+        ],
+    }
+
+
+class TestAnalyzeTracesIsSaved:
+    """Tests that analyze_traces marks errors as is_saved when their SQL
+    matches a saved training example."""
+
+    def _mock_load_examples(self, examples_list):
+        """Create a mock load_examples that returns a QueryExamples-like object."""
+        from unittest.mock import MagicMock
+
+        mock_examples = MagicMock()
+        mock_examples.examples = examples_list
+        mock_examples.count.return_value = len(examples_list)
+        return lambda provider_id: mock_examples
+
+    def _make_example(self, ex_id, sql, intent="test"):
+        """Create a mock QueryExample-like object."""
+        from unittest.mock import MagicMock
+
+        ex = MagicMock()
+        ex.id = ex_id
+        ex.sql = sql
+        ex.natural_language = intent
+        return ex
+
+    def test_soft_error_marked_is_saved_when_example_exists(self, tmp_path):
+        """An error whose SQL matches a saved example gets is_saved=True."""
+        conn_path = tmp_path / "test-conn"
+        conn_path.mkdir(parents=True)
+
+        example = self._make_example("ex-001", "SELECT * FROM bad_table")
+        mock_loader = self._mock_load_examples([example])
+
+        traces = [
+            _make_trace(
+                "t-err-1",
+                "api_execute_sql",
+                {
+                    "tool.name": "api_execute_sql",
+                    "tool.soft_failure": "true",
+                    "tool.error": "Table bad_table not found",
+                    "args": json.dumps({"sql": "SELECT * FROM bad_table"}),
+                },
+            ),
+        ]
+
+        with patch("db_mcp.training.store.load_examples", mock_loader):
+            result = analyze_traces(traces, connection_path=conn_path)
+
+        errors = result["errors"]
+        soft_errors = [e for e in errors if e["error_type"] == "soft"]
+        assert len(soft_errors) == 1
+        assert soft_errors[0]["is_saved"] is True
+        assert soft_errors[0]["example_id"] == "ex-001"
+
+    def test_soft_error_not_marked_when_no_example(self, tmp_path):
+        """An error whose SQL is not saved stays without is_saved."""
+        conn_path = tmp_path / "test-conn"
+        conn_path.mkdir(parents=True)
+
+        mock_loader = self._mock_load_examples([])
+
+        traces = [
+            _make_trace(
+                "t-err-2",
+                "api_execute_sql",
+                {
+                    "tool.name": "api_execute_sql",
+                    "tool.soft_failure": "true",
+                    "tool.error": "Column xyz not found",
+                    "args": json.dumps({"sql": "SELECT xyz FROM some_table"}),
+                },
+            ),
+        ]
+
+        with patch("db_mcp.training.store.load_examples", mock_loader):
+            result = analyze_traces(traces, connection_path=conn_path)
+
+        errors = result["errors"]
+        soft_errors = [e for e in errors if e["error_type"] == "soft"]
+        assert len(soft_errors) == 1
+        assert soft_errors[0].get("is_saved") is not True

@@ -256,32 +256,116 @@ test.describe("Insights Page", () => {
     await expect(main.getByText("Unmapped Terms")).not.toBeVisible();
   });
 
-  test("repeated queries shows saved state and save-as-example flow", async ({
+  test("SQL Patterns card shows repeated queries with save flow", async ({
     page,
   }) => {
     await page.goto("/insights");
     const main = page.locator("main");
 
-    // Wait for card to load
-    await expect(main.getByText("Repeated Queries")).toBeVisible();
+    // Wait for unified card to load
+    await expect(main.getByText("SQL Patterns").first()).toBeVisible();
 
     // Already-saved query shows checkmark
-    await expect(main.getByText("✓ Saved")).toBeVisible();
+    await expect(main.getByText(/Saved/).first()).toBeVisible();
 
     // Unsaved query shows Save as Example button
-    const saveBtn = main.getByText("Save as Example");
+    const saveBtn = main.getByText("Save as Example").first();
     await expect(saveBtn).toBeVisible();
 
-    // Click Save as Example — intent input appears
+    // Click Save as Example — expands row and shows intent input
     await saveBtn.click();
     const input = main.getByPlaceholder(/Describe the intent/);
     await expect(input).toBeVisible();
 
     // Type intent and submit
     await input.fill("Count all users");
-    await main.getByRole("button", { name: "Save" }).click();
+    await main.getByRole("button", { name: "Save", exact: true }).click();
 
-    // After save, shows checkmark instead of button
-    await expect(main.getByText("✓ Saved").first()).toBeVisible();
+    // After save, row collapses — input disappears and Save as Example is gone
+    await expect(input).not.toBeVisible();
+    await expect(main.getByText("Save as Example")).not.toBeVisible();
+  });
+
+  test("SQL Patterns card shows auto-corrected errors with save-as-learning", async ({
+    page,
+    bicpMock,
+  }) => {
+    // Override insights to include errors with SQL
+    const insightsWithErrors = JSON.parse(
+      JSON.stringify(mockData.INSIGHTS_HAPPY),
+    );
+    insightsWithErrors.analysis.errors = [
+      {
+        trace_id: "t-err-1",
+        span_name: "api_execute_sql",
+        tool: "api_execute_sql",
+        error: "SQL execution failed: Table 'lending.deposits' does not exist",
+        error_type: "soft",
+        timestamp: Math.floor(Date.now() / 1000) - 600,
+        sql: "SELECT * FROM lending.deposits WHERE block_date = '2026-01-31'",
+      },
+    ];
+    insightsWithErrors.analysis.errorCount = 1;
+    bicpMock.on("insights/analyze", () => insightsWithErrors);
+
+    await page.goto("/insights");
+    const main = page.locator("main");
+
+    // Wait for card
+    await expect(main.getByText("SQL Patterns").first()).toBeVisible();
+    await expect(main.getByText("1 auto-corrected").first()).toBeVisible();
+
+    // Save as Learning button visible
+    const learnBtn = main.getByText("Save as Learning").first();
+    await expect(learnBtn).toBeVisible();
+
+    // Click — expands and shows pre-filled input
+    await learnBtn.click();
+    const input = main.locator(
+      'input[placeholder*="What should the agent avoid"]',
+    );
+    await expect(input).toBeVisible();
+
+    // Input should be pre-filled with suggestion from error
+    await expect(input).toHaveValue(/does not exist/);
+  });
+
+  test("saved learning persists after auto-refresh via is_saved", async ({
+    page,
+    bicpMock,
+  }) => {
+    // Start with an unsaved error
+    const unsavedErrors = JSON.parse(JSON.stringify(mockData.INSIGHTS_HAPPY));
+    unsavedErrors.analysis.errors = [
+      {
+        trace_id: "t-err-1",
+        span_name: "api_execute_sql",
+        tool: "api_execute_sql",
+        error: "Table 'lending.deposits' does not exist",
+        error_type: "soft",
+        timestamp: Math.floor(Date.now() / 1000) - 600,
+        sql: "SELECT * FROM lending.deposits",
+      },
+    ];
+    unsavedErrors.analysis.errorCount = 1;
+    bicpMock.on("insights/analyze", () => unsavedErrors);
+
+    await page.goto("/insights");
+    const main = page.locator("main");
+
+    await expect(main.getByText("Save as Learning").first()).toBeVisible();
+
+    // After "saving", switch the mock to return is_saved: true (simulating backend)
+    const savedErrors = JSON.parse(JSON.stringify(unsavedErrors));
+    savedErrors.analysis.errors[0].is_saved = true;
+    bicpMock.on("insights/analyze", () => savedErrors);
+
+    // Trigger a refresh by changing period
+    await main.locator("select").selectOption("30");
+    await page.waitForTimeout(1000);
+
+    // Now the error should show as saved, not "Save as Learning"
+    await expect(main.getByText("Save as Learning")).not.toBeVisible();
+    await expect(main.getByText(/Saved/).first()).toBeVisible();
   });
 });

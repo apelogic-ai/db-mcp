@@ -178,6 +178,8 @@ def _load_api_config(data: dict[str, Any]) -> APIConnectorConfig:
         pagination=pagination,
         rate_limit_rps=rate_limit_rps,
         capabilities=data.get("capabilities", {}) or {},
+        api_title=data.get("api_title", ""),
+        api_description=data.get("api_description", ""),
     )
 
 
