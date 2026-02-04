@@ -42,6 +42,12 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from db_mcp.agents import (
+    AGENTS,
+    configure_multiple_agents,
+    detect_installed_agents,
+)
+
 console = Console()
 
 
@@ -585,8 +591,8 @@ def _init_brownfield(name: str, git_url: str):
     # Recover onboarding state from cloned files
     _recover_onboarding_state(name, connection_path)
 
-    # Configure Claude Desktop
-    _configure_claude_desktop(name)
+    # Configure MCP agents
+    _configure_agents()
 
     console.print()
     console.print(
@@ -670,8 +676,8 @@ def _init_greenfield(name: str):
     connection_path.mkdir(parents=True, exist_ok=True)
     console.print(f"[green]✓ Connection directory created: {connection_path}[/green]")
 
-    # Configure Claude Desktop
-    _configure_claude_desktop(name)
+    # Configure MCP agents
+    _configure_agents()
 
     # Run migration if legacy data exists
     if LEGACY_VAULT_DIR.exists() or LEGACY_PROVIDERS_DIR.exists():
@@ -786,38 +792,84 @@ def _prompt_and_save_database_url(name: str, existing_url: str | None = None) ->
     return database_url
 
 
-def _configure_claude_desktop(name: str):
-    """Configure Claude Desktop for db-mcp."""
-    claude_config, claude_config_path = load_claude_desktop_config()
-    mcp_servers = claude_config.get("mcpServers", {})
-    has_legacy = "dbmeta" in mcp_servers
+def _configure_agents_interactive(preselect_installed: bool = True) -> list[str]:
+    """Interactive agent selection.
 
-    # Update Claude Desktop config
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
+    Args:
+        preselect_installed: If True, pre-select detected agents
+
+    Returns:
+        List of agent IDs to configure
+    """
+    # Detect installed agents
+    installed = detect_installed_agents()
+
+    if not installed:
+        console.print("[yellow]No MCP agents detected on this system.[/yellow]")
+        console.print("[dim]Skipping agent configuration.[/dim]")
+        return []
+
+    # Show detected agents
+    console.print("\n[bold]Detected MCP-compatible agents:[/bold]")
+    for i, agent_id in enumerate(installed, 1):
+        agent = AGENTS[agent_id]
+        console.print(f"  [{i}] {agent.name}")
+
+    # Prompt for selection
+    console.print("\n[dim]Configure db-mcp for which agents?[/dim]")
+    console.print("[1] All detected agents")
+    console.print("[2] Select specific agents")
+    console.print("[3] Skip agent configuration")
+
+    choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
+
+    if choice == "3":
+        return []
+    elif choice == "1":
+        return installed
+    else:
+        # Individual selection
+        selected = []
+        for agent_id in installed:
+            agent = AGENTS[agent_id]
+            if Confirm.ask(f"Configure {agent.name}?", default=preselect_installed):
+                selected.append(agent_id)
+        return selected
+
+
+def _configure_agents(agent_ids: list[str] | None = None) -> None:
+    """Configure MCP agents for db-mcp.
+
+    Args:
+        agent_ids: List of agent IDs to configure. If None, uses interactive selection.
+    """
+    if agent_ids is None:
+        agent_ids = _configure_agents_interactive()
+
+    if not agent_ids:
+        console.print("[dim]No agents selected for configuration.[/dim]")
+        return
 
     # Get binary path
     binary_path = get_db_mcp_binary_path()
 
-    # Add/update db-mcp entry
-    claude_config["mcpServers"]["db-mcp"] = {
-        "command": binary_path,
-        "args": ["start"],
-    }
+    # Configure each agent
+    results = configure_multiple_agents(agent_ids, binary_path)
 
-    # Remove legacy dbmeta entry if exists
-    if has_legacy:
-        del claude_config["mcpServers"]["dbmeta"]
-        console.print("[dim]Removed legacy 'dbmeta' entry.[/dim]")
+    # Show summary
+    success_count = sum(1 for success in results.values() if success)
+    console.print(f"\n[green]✓ Configured {success_count}/{len(agent_ids)} agent(s)[/green]")
 
-    # Save Claude Desktop config
-    save_claude_desktop_config(claude_config, claude_config_path)
-    console.print(f"[green]✓ Claude Desktop configured at {claude_config_path}[/green]")
 
-    # Show other MCP servers (kept intact)
-    other_servers = [k for k in claude_config["mcpServers"].keys() if k != "db-mcp"]
-    if other_servers:
-        console.print(f"[dim]Other MCP servers (unchanged): {', '.join(other_servers)}[/dim]")
+def _configure_claude_desktop(name: str):
+    """Configure Claude Desktop for db-mcp (legacy wrapper).
+
+    Deprecated: Use _configure_agents instead.
+    """
+    binary_path = get_db_mcp_binary_path()
+    from db_mcp.agents import configure_agent_for_dbmcp
+
+    configure_agent_for_dbmcp("claude-desktop", binary_path)
 
 
 def _recover_onboarding_state(name: str, connection_path: Path):
@@ -1547,6 +1599,75 @@ def all(command: str):
 
 
 # =============================================================================
+# Agents command
+# =============================================================================
+
+
+@main.command()
+@click.option("--list", "-l", "list_only", is_flag=True, help="List detected agents")
+@click.option("--all", "-a", is_flag=True, help="Configure all detected agents")
+@click.option(
+    "--agent",
+    "-A",
+    multiple=True,
+    help="Configure specific agent(s) by ID (e.g., claude-desktop, claude-code, codex)",
+)
+def agents(list_only: bool, all: bool, agent: tuple[str, ...]):
+    """Configure MCP agents for db-mcp.
+
+    Detects installed MCP-compatible agents (Claude Desktop, Claude Code, OpenAI Codex)
+    and configures them to use db-mcp as an MCP server.
+
+    Examples:
+        db-mcp agents                    # Interactive selection
+        db-mcp agents --list             # Show detected agents
+        db-mcp agents --all              # Configure all detected
+        db-mcp agents -A claude-desktop  # Configure only Claude Desktop
+        db-mcp agents -A claude-code -A codex  # Configure multiple specific agents
+    """
+    # List mode
+    if list_only:
+        installed = detect_installed_agents()
+        if not installed:
+            console.print("[yellow]No MCP agents detected on this system.[/yellow]")
+            console.print("\n[dim]Supported agents:[/dim]")
+            for agent_id, agent_info in AGENTS.items():
+                console.print(f"  • {agent_info.name} ({agent_id})")
+            return
+
+        console.print("[bold]Detected MCP agents:[/bold]")
+        for agent_id in installed:
+            agent_info = AGENTS[agent_id]
+            console.print(f"  ✓ {agent_info.name}")
+            console.print(f"    [dim]Config: {agent_info.config_path}[/dim]")
+
+        console.print("\n[dim]Run 'db-mcp agents' to configure them.[/dim]")
+        return
+
+    # Determine which agents to configure
+    if agent:
+        # Specific agents requested
+        agent_ids = list(agent)
+        # Validate agent IDs
+        invalid = [a for a in agent_ids if a not in AGENTS]
+        if invalid:
+            console.print(f"[red]Unknown agent(s): {', '.join(invalid)}[/red]")
+            console.print(f"\n[dim]Valid agent IDs: {', '.join(AGENTS.keys())}[/dim]")
+            return
+        _configure_agents(agent_ids)
+    elif all:
+        # Configure all detected
+        installed = detect_installed_agents()
+        if not installed:
+            console.print("[yellow]No MCP agents detected on this system.[/yellow]")
+            return
+        _configure_agents(installed)
+    else:
+        # Interactive mode
+        _configure_agents()
+
+
+# =============================================================================
 # Migration command
 # =============================================================================
 
@@ -1656,7 +1777,7 @@ def migrate(verbose: bool):
             # Get active connection for configuration
             active = get_active_connection()
             if active:
-                _configure_claude_desktop(active)
+                _configure_agents()
             else:
                 console.print(
                     "  [yellow]No active connection - run 'db-mcp init' to configure[/yellow]"

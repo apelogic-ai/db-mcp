@@ -1,0 +1,302 @@
+"""Tests for agent registry and configuration."""
+
+import json
+import tempfile
+import tomllib
+from pathlib import Path
+from unittest.mock import patch
+
+from db_mcp.agents import (
+    AGENTS,
+    _dict_to_toml,
+    configure_agent_for_dbmcp,
+    configure_multiple_agents,
+    detect_claude_code,
+    detect_claude_desktop,
+    detect_codex,
+    detect_installed_agents,
+    load_agent_config,
+    save_agent_config,
+)
+
+
+class TestAgentDetection:
+    """Test agent detection functions."""
+
+    def test_detect_claude_desktop_by_config(self):
+        """Test detecting Claude Desktop by config file."""
+        with patch("db_mcp.agents.get_claude_desktop_config_path") as mock_path:
+            mock_path.return_value = Path("/fake/config.json")
+            with patch("pathlib.Path.exists", return_value=True):
+                assert detect_claude_desktop() is True
+
+    def test_detect_claude_desktop_by_app_macos(self):
+        """Test detecting Claude Desktop by app on macOS."""
+        with patch("db_mcp.agents.get_claude_desktop_config_path") as mock_path:
+            mock_path.return_value = Path("/fake/config.json")
+            with patch("pathlib.Path.exists", side_effect=[False, True]):
+                with patch("platform.system", return_value="Darwin"):
+                    assert detect_claude_desktop() is True
+
+    def test_detect_claude_desktop_not_found(self):
+        """Test when Claude Desktop is not installed."""
+        with patch("db_mcp.agents.get_claude_desktop_config_path") as mock_path:
+            mock_path.return_value = Path("/fake/config.json")
+            with patch("pathlib.Path.exists", return_value=False):
+                with patch("platform.system", return_value="Linux"):
+                    assert detect_claude_desktop() is False
+
+    def test_detect_claude_code_by_config(self):
+        """Test detecting Claude Code by config file."""
+        with patch("db_mcp.agents.get_claude_code_config_path") as mock_path:
+            mock_path.return_value = Path("/fake/.claude.json")
+            with patch("pathlib.Path.exists", return_value=True):
+                assert detect_claude_code() is True
+
+    def test_detect_claude_code_by_cli(self):
+        """Test detecting Claude Code by CLI."""
+        with patch("db_mcp.agents.get_claude_code_config_path") as mock_path:
+            mock_path.return_value = Path("/fake/.claude.json")
+            with patch("pathlib.Path.exists", return_value=False):
+                with patch("shutil.which", return_value="/usr/local/bin/claude"):
+                    assert detect_claude_code() is True
+
+    def test_detect_claude_code_not_found(self):
+        """Test when Claude Code is not installed."""
+        with patch("db_mcp.agents.get_claude_code_config_path") as mock_path:
+            mock_path.return_value = Path("/fake/.claude.json")
+            with patch("pathlib.Path.exists", return_value=False):
+                with patch("shutil.which", return_value=None):
+                    assert detect_claude_code() is False
+
+    def test_detect_codex_by_config(self):
+        """Test detecting Codex by config directory."""
+        with patch("db_mcp.agents.get_codex_config_path") as mock_path:
+            config_path = Path("/fake/.codex/config.toml")
+            mock_path.return_value = config_path
+            with patch.object(Path, "exists") as mock_exists:
+                # parent.exists() should return True
+                mock_exists.return_value = True
+                assert detect_codex() is True
+
+    def test_detect_codex_by_cli(self):
+        """Test detecting Codex by CLI."""
+        with patch("db_mcp.agents.get_codex_config_path") as mock_path:
+            config_path = Path("/fake/.codex/config.toml")
+            mock_path.return_value = config_path
+            with patch.object(Path, "exists", return_value=False):
+                with patch("shutil.which", return_value="/usr/local/bin/codex"):
+                    assert detect_codex() is True
+
+    def test_detect_codex_not_found(self):
+        """Test when Codex is not installed."""
+        with patch("db_mcp.agents.get_codex_config_path") as mock_path:
+            config_path = Path("/fake/.codex/config.toml")
+            mock_path.return_value = config_path
+            with patch.object(Path, "exists", return_value=False):
+                with patch("shutil.which", return_value=None):
+                    assert detect_codex() is False
+
+    def test_detect_installed_agents(self):
+        """Test detecting all installed agents."""
+        # We need to patch the detect functions in the AGENTS dict
+        with patch.object(AGENTS["claude-desktop"], "detect_fn", return_value=True):
+            with patch.object(AGENTS["claude-code"], "detect_fn", return_value=False):
+                with patch.object(AGENTS["codex"], "detect_fn", return_value=True):
+                    installed = detect_installed_agents()
+                    assert "claude-desktop" in installed
+                    assert "claude-code" not in installed
+                    assert "codex" in installed
+
+
+class TestAgentConfig:
+    """Test agent configuration loading/saving."""
+
+    def test_load_agent_config_json(self):
+        """Test loading JSON config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            test_config = {"mcpServers": {"test": {"command": "test"}}}
+
+            with open(config_path, "w") as f:
+                json.dump(test_config, f)
+
+            agent = AGENTS["claude-desktop"]
+            agent.config_path = config_path
+
+            config = load_agent_config(agent)
+            assert config == test_config
+
+    def test_load_agent_config_toml(self):
+        """Test loading TOML config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            test_config = {"mcp_servers": {"test": {"command": "test"}}}
+
+            # Write TOML manually
+            with open(config_path, "w") as f:
+                f.write(_dict_to_toml(test_config))
+
+            agent = AGENTS["codex"]
+            agent.config_path = config_path
+
+            config = load_agent_config(agent)
+            assert config == test_config
+
+    def test_load_agent_config_missing(self):
+        """Test loading non-existent config."""
+        agent = AGENTS["claude-desktop"]
+        agent.config_path = Path("/nonexistent/config.json")
+
+        config = load_agent_config(agent)
+        assert config == {}
+
+    def test_save_agent_config_json(self):
+        """Test saving JSON config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            test_config = {"mcpServers": {"test": {"command": "test"}}}
+
+            agent = AGENTS["claude-desktop"]
+            agent.config_path = config_path
+
+            save_agent_config(agent, test_config)
+
+            with open(config_path) as f:
+                saved = json.load(f)
+
+            assert saved == test_config
+
+    def test_save_agent_config_toml(self):
+        """Test saving TOML config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            test_config = {"mcp_servers": {"test": {"command": "test"}}}
+
+            agent = AGENTS["codex"]
+            agent.config_path = config_path
+
+            save_agent_config(agent, test_config)
+
+            with open(config_path, "rb") as f:
+                saved = tomllib.load(f)
+
+            assert saved == test_config
+
+
+class TestAgentConfiguration:
+    """Test agent configuration for db-mcp."""
+
+    def test_configure_claude_desktop(self):
+        """Test configuring Claude Desktop."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+
+            agent = AGENTS["claude-desktop"]
+            agent.config_path = config_path
+
+            result = configure_agent_for_dbmcp("claude-desktop", "/usr/local/bin/db-mcp")
+
+            assert result is True
+            assert config_path.exists()
+
+            with open(config_path) as f:
+                config = json.load(f)
+
+            assert "mcpServers" in config
+            assert "db-mcp" in config["mcpServers"]
+            assert config["mcpServers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
+            assert config["mcpServers"]["db-mcp"]["args"] == ["start"]
+
+    def test_configure_codex(self):
+        """Test configuring Codex."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+
+            agent = AGENTS["codex"]
+            agent.config_path = config_path
+
+            result = configure_agent_for_dbmcp("codex", "/usr/local/bin/db-mcp")
+
+            assert result is True
+            assert config_path.exists()
+
+            with open(config_path, "rb") as f:
+                config = tomllib.load(f)
+
+            assert "mcp_servers" in config
+            assert "db-mcp" in config["mcp_servers"]
+            assert config["mcp_servers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
+            assert config["mcp_servers"]["db-mcp"]["args"] == ["start"]
+
+    def test_configure_preserves_existing_servers(self):
+        """Test that configuring db-mcp preserves other MCP servers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+
+            # Create existing config with another server
+            existing_config = {
+                "mcpServers": {"github": {"command": "npx", "args": ["@github/mcp"]}}
+            }
+
+            with open(config_path, "w") as f:
+                json.dump(existing_config, f)
+
+            agent = AGENTS["claude-desktop"]
+            agent.config_path = config_path
+
+            configure_agent_for_dbmcp("claude-desktop", "/usr/local/bin/db-mcp")
+
+            with open(config_path) as f:
+                config = json.load(f)
+
+            assert "github" in config["mcpServers"]
+            assert "db-mcp" in config["mcpServers"]
+
+    def test_configure_removes_legacy_dbmeta(self):
+        """Test that configuring db-mcp removes legacy dbmeta entry."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+
+            # Create config with legacy dbmeta
+            existing_config = {
+                "mcpServers": {"dbmeta": {"command": "old-dbmeta", "args": ["start"]}}
+            }
+
+            with open(config_path, "w") as f:
+                json.dump(existing_config, f)
+
+            agent = AGENTS["claude-desktop"]
+            agent.config_path = config_path
+
+            configure_agent_for_dbmcp("claude-desktop", "/usr/local/bin/db-mcp")
+
+            with open(config_path) as f:
+                config = json.load(f)
+
+            assert "dbmeta" not in config["mcpServers"]
+            assert "db-mcp" in config["mcpServers"]
+
+    def test_configure_invalid_agent(self):
+        """Test configuring invalid agent ID."""
+        result = configure_agent_for_dbmcp("invalid-agent", "/usr/local/bin/db-mcp")
+        assert result is False
+
+    def test_configure_multiple_agents(self):
+        """Test configuring multiple agents."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set up paths for both agents
+            claude_path = Path(tmpdir) / "claude.json"
+            codex_path = Path(tmpdir) / "codex.toml"
+
+            AGENTS["claude-desktop"].config_path = claude_path
+            AGENTS["codex"].config_path = codex_path
+
+            results = configure_multiple_agents(
+                ["claude-desktop", "codex"], "/usr/local/bin/db-mcp"
+            )
+
+            assert results["claude-desktop"] is True
+            assert results["codex"] is True
+            assert claude_path.exists()
+            assert codex_path.exists()

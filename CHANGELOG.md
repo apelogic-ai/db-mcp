@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.46] - 2026-02-04
+
+## Highlights
+- Multi-agent configuration support - automatically configure db-mcp for Claude Desktop, Claude Code, and OpenAI Codex
+
+## Breaking changes
+- None
+
+## Features
+- **New `db-mcp agents` command** - Interactive configuration for multiple MCP-compatible agents
+  - `db-mcp agents` - Interactive selection of detected agents
+  - `db-mcp agents --list` - Show all detected agents on your system
+  - `db-mcp agents --all` - Configure all detected agents at once
+  - `db-mcp agents -A claude-desktop -A codex` - Configure specific agents
+- **Auto-detection of installed agents** - Detects Claude Desktop, Claude Code, and OpenAI Codex
+- **Integrated into `db-mcp init`** - Automatically prompts to configure detected agents during setup
+- **Support for multiple config formats**:
+  - JSON for Claude Desktop and Claude Code (`mcpServers`)
+  - TOML for OpenAI Codex (`mcp_servers`)
+- **Preserves existing MCP servers** - Only adds/updates db-mcp entry, keeps other servers intact
+- **Legacy cleanup** - Automatically removes old `dbmeta` entries when configuring
+
+## Fixes
+- None
+
+## Security
+- None
+
+## Upgrade notes
+After upgrading, you can reconfigure agents at any time with:
+```bash
+db-mcp agents --all  # Configure all detected agents
+```
+
+Supported agents:
+- **Claude Desktop** (`~/.../Claude/claude_desktop_config.json`)
+- **Claude Code** (`~/.claude.json`)
+- **OpenAI Codex** (`~/.codex/config.toml`)
+
+Note: ChatGPT Desktop uses UI-only configuration and is not supported for auto-configuration.
+
+## Known issues
+- None
+
 ## [0.4.45] - 2026-02-03
 
 ## Highlights
