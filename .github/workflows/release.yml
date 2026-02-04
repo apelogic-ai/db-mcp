@@ -127,7 +127,7 @@ jobs:
             {
               echo 'body<<EOF'
               cat "$NOTES_FILE"
-              echo EOF
+              echo 'EOF'
             } >> $GITHUB_OUTPUT
           else
             echo "No release notes found at $NOTES_FILE, using default"
@@ -135,31 +135,31 @@ jobs:
             {
               echo 'body<<EOF'
               cat << 'NOTES'
-            ## db-mcp v${{ steps.version.outputs.version }}
+## db-mcp v${{ steps.version.outputs.version }}
 
-            Database MCP server for Claude Desktop.
+Database MCP server for Claude Desktop.
 
-            ### Installation
+### Installation
 
-            ```bash
-            curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh
-            ```
+```bash
+curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh
+```
 
-            ### Manual Download
+### Manual Download
 
-            - macOS (Apple Silicon): `db-mcp-macos-arm64`
-            - macOS (Intel): `db-mcp-macos-x64`
-            - Linux: `db-mcp-linux-x64`
-            - Windows: `db-mcp-windows-x64.exe`
+- macOS (Apple Silicon): `db-mcp-macos-arm64`
+- macOS (Intel): `db-mcp-macos-x64`
+- Linux: `db-mcp-linux-x64`
+- Windows: `db-mcp-windows-x64.exe`
 
-            ### Quick Start
+### Quick Start
 
-            ```bash
-            db-mcp init
-            db-mcp status
-            ```
-            NOTES
-              echo EOF
+```bash
+db-mcp init
+db-mcp status
+```
+NOTES
+              echo 'EOF'
             } >> $GITHUB_OUTPUT
           fi
 
