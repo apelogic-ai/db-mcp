@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.48] - 2026-02-04
+
+**Release Date:** February 4, 2026
+
+## Overview
+
+This release overhauls the Insights page with a unified **SQL Patterns** card, a new **Save as Learning** flow for auto-corrected errors, and several fixes for API connectors and the training pipeline.
+
+## Highlights
+
+### Unified SQL Patterns Card
+
+The separate "Repeated Queries" and "Errors & Failures" cards have been merged into a single **SQL Patterns** card with expandable accordion rows. Each row shows:
+
+- Tool label and badges (e.g. `4x`, `auto-corrected`)
+- Truncated SQL preview (click to expand full multiline SQL)
+- Timestamps (first/last seen)
+- Save action (`Save as Example` or `Save as Learning`)
+
+Sections within the card: Repeated Queries, Auto-corrected Errors, Hard Errors, Validation Failures.
+
+### Save as Learning for Auto-corrected Errors
+
+Auto-corrected SQL errors (soft failures) now show the failing SQL and a **Save as Learning** button. Clicking it expands the row to reveal:
+
+- Full multiline SQL in a scrollable `<pre>` block
+- Pre-filled description extracted from the error message (e.g. "Table 'lending.deposits' does not exist -- use correct table name")
+- Save/Cancel buttons
+
+Saved learnings are stored as training examples with an `[ERROR PATTERN]` prefix, helping the agent avoid the same mistakes in future sessions.
+
+### Saved State Persists Across Refresh
+
+Previously, saving an example or learning showed a brief "Saved" state that reverted on the next 5-second auto-refresh. Now the backend's `insights/analyze` response includes `is_saved` for errors whose SQL matches a saved training example, so the saved state persists correctly.
+
+### Improved Knowledge Capture Card
+
+The Knowledge Capture card now shows intent descriptions inline instead of hiding them behind click-to-expand. Error patterns and regular examples are displayed in separate labeled sections with distinct icons.
+
+## Bug Fixes
+
+### API Connector: Correct Dialect Display
+
+API connectors (e.g. Dune Analytics) previously showed "duckdb" as the dialect in the connectors list. Now they display the API title from discovery (e.g. "Dune Analytics API") or derive a name from the base URL.
+
+### `get_provider_dir` Fixed for Named Connections
+
+`get_provider_dir(provider_id)` was ignoring the provider_id argument and always returning the active connection path. This caused `is_example` checks and save operations to fail when the provider_id didn't match the active connection. Fixed to return `~/.db-mcp/connections/{provider_id}` when a provider_id is given.
+
+### SQL Extraction from `api_execute_sql` Spans
+
+`_extract_sql()` now parses SQL from the `attrs.args` JSON field (where `api_execute_sql` stores its arguments), in addition to the existing `attrs.sql` and `attrs.sql.preview` paths. This enables the Save as Learning feature for SQL-like API connectors.
+
+### Playwright E2E Port Conflict
+
+Fixed E2E tests failing when port 3000 was occupied by another application. Changed default dev server port to 3177 and set `reuseExistingServer: false`.
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/ui/src/app/insights/page.tsx` | Unified SQL Patterns card, Save as Learning flow, improved Knowledge Capture card |
+| `packages/ui/src/lib/bicp.ts` | Added `sql`, `is_saved`, `example_id` fields to error type |
+| `packages/ui/e2e/insights.spec.ts` | 4 new E2E tests for SQL Patterns and save flows |
+| `packages/ui/playwright.config.ts` | Port fix (3177), `reuseExistingServer: false` |
+| `packages/core/src/db_mcp/bicp/traces.py` | SQL extraction from args JSON, `is_saved` for errors, SQL attached to error traces |
+| `packages/core/src/db_mcp/bicp/agent.py` | API title display for connectors, API connection test improvements |
+| `packages/core/src/db_mcp/connectors/api.py` | Store `api_title` from discovery, use it as dialect |
+| `packages/core/src/db_mcp/onboarding/state.py` | Fix `get_provider_dir` to respect provider_id |
+| `packages/core/tests/test_traces.py` | 13 new tests for SQL extraction and `is_saved` behavior |
+
+## Testing
+
+- **362 Python tests** passing (13 new)
+- **69 E2E tests** passing (4 new)
+- Lint clean (ruff, ESLint, TypeScript)
+
+
 ## [0.4.47] - 2026-02-04
 
 **Release Date:** February 4, 2026
