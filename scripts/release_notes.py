@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-REL_DIR = REPO / "releases"
+REL_DIR = REPO / "docs" / "releases"
 CHANGELOG = REPO / "CHANGELOG.md"
 
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
@@ -28,16 +28,16 @@ SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 TEMPLATE = """# db-mcp v{ver}
 
 ## Highlights
-- 
+-
 
 ## Breaking changes
 - None
 
 ## Features
-- 
+-
 
 ## Fixes
-- 
+-
 
 ## Security
 - None
@@ -155,8 +155,7 @@ def cmd_prepare(ver: str) -> None:
 def main(argv: list[str]) -> None:
     if len(argv) < 2 or argv[1] in {"-h", "--help"}:
         die(
-            "Usage:\n"
-            "  scripts/release_notes.py prepare <version>\n",
+            "Usage:\n  scripts/release_notes.py prepare <version>\n",
             0,
         )
 

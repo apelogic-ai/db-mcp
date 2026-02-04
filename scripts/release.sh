@@ -91,7 +91,7 @@ sed -i '' "s/@click.version_option(version=\".*\"/@click.version_option(version=
 
 # Commit changes (version bump + changelog/release notes)
 echo -e "${BLUE}Committing release prep...${NC}"
-git add "$CORE_DIR/pyproject.toml" "$CORE_DIR/src/db_mcp/cli.py" "$REPO_ROOT/CHANGELOG.md" "$REPO_ROOT/releases/v${new_version}.md"
+git add "$CORE_DIR/pyproject.toml" "$CORE_DIR/src/db_mcp/cli.py" "$REPO_ROOT/CHANGELOG.md" "$REPO_ROOT/docs/releases/v${new_version}.md"
 git commit -m "chore: release v${new_version}"
 
 # Create tag
