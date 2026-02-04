@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.41] - 2026-02-03
+
+## Highlights
+- Fixed macOS binary being killed on launch due to corrupted code signature
+
+## Breaking changes
+- None
+
+## Features
+- None
+
+## Fixes
+- Fixed macOS binaries failing to launch with "Killed: 9" error. The GitHub Actions runner's PyInstaller was producing binaries with invalid adhoc signatures. Added explicit `codesign --force --sign -` step after build to ensure valid signatures.
+
+## Security
+- None
+
+## Upgrade notes
+- If you previously installed 0.4.40 and it wouldn't run, simply re-install: `curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh`
+
+## Known issues
+- None
+
+
 ## [0.4.40] - 2026-02-02
 
 ## Highlights
