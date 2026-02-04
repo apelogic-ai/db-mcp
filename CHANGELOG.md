@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.43] - 2026-02-03
+
+## Highlights
+- Fixed Dune Analytics async polling to correctly detect query completion
+
+## Breaking changes
+- None
+
+## Features
+- None
+
+## Fixes
+- Fixed async polling to handle Dune's `QUERY_STATE_COMPLETED` status format (was only checking lowercase `complete`)
+- Added support for `is_execution_finished` flag in status responses
+
+## Security
+- None
+
+## Upgrade notes
+- None
+
+## Known issues
+- None
+
+
 ## [0.4.42] - 2026-02-03
 
 ## Highlights
