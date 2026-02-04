@@ -64,6 +64,15 @@ jobs:
         working-directory: packages/core
         run: uv run pyinstaller --clean --noconfirm db-mcp.spec
 
+      - name: Sign macOS binary
+        if: startsWith(matrix.platform, 'macos')
+        working-directory: packages/core
+        run: |
+          # Re-sign with adhoc signature to fix PyInstaller signing issues
+          codesign --force --sign - dist/db-mcp
+          # Verify signature is valid
+          codesign --verify --verbose dist/db-mcp
+
       - name: Rename binary
         working-directory: packages/core
         shell: bash
