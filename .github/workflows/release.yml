@@ -115,15 +115,26 @@ jobs:
             echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: db-mcp v${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: false
-          files: artifacts/db-mcp-*
-          body: |
+      - name: Prepare release notes
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NOTES_FILE="docs/releases/v${VERSION}.md"
+
+          if [[ -f "$NOTES_FILE" ]]; then
+            echo "Using existing release notes from $NOTES_FILE"
+            # Use the file content as release body
+            {
+              echo 'body<<EOF'
+              cat "$NOTES_FILE"
+              echo EOF
+            } >> $GITHUB_OUTPUT
+          else
+            echo "No release notes found at $NOTES_FILE, using default"
+            # Fallback to default release notes
+            {
+              echo 'body<<EOF'
+              cat << 'NOTES'
             ## db-mcp v${{ steps.version.outputs.version }}
 
             Database MCP server for Claude Desktop.
@@ -147,3 +158,17 @@ jobs:
             db-mcp init
             db-mcp status
             ```
+            NOTES
+              echo EOF
+            } >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: db-mcp v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: artifacts/db-mcp-*
+          body: ${{ steps.notes.outputs.body }}
