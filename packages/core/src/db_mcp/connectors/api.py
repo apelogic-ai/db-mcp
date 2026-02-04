@@ -546,11 +546,21 @@ class APIConnector(FileConnector):
                 status_data = status_resp.json()
 
                 state = status_data.get("state", "").lower()
-                if state in ("failed", "error", "cancelled"):
+                # Also check is_execution_finished for APIs like Dune
+                is_finished = status_data.get("is_execution_finished", False)
+
+                if "failed" in state or "error" in state or "cancelled" in state:
                     error_msg = status_data.get("error", "Execution failed")
                     raise ValueError(f"SQL execution failed: {error_msg}")
 
-                if state not in ("complete", "completed", "success", "finished"):
+                # Check for completion - handle various formats like "QUERY_STATE_COMPLETED"
+                is_complete = (
+                    is_finished
+                    or "complete" in state
+                    or "success" in state
+                    or "finished" in state
+                )
+                if not is_complete:
                     time.sleep(poll_interval)
                     continue
 
