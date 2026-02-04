@@ -131,34 +131,32 @@ jobs:
             } >> $GITHUB_OUTPUT
           else
             echo "No release notes found at $NOTES_FILE, using default"
-            # Fallback to default release notes
+            # Fallback to default release notes (simple echo, no heredoc)
             {
               echo 'body<<EOF'
-              cat << 'NOTES'
-## db-mcp v${{ steps.version.outputs.version }}
-
-Database MCP server for Claude Desktop.
-
-### Installation
-
-```bash
-curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh
-```
-
-### Manual Download
-
-- macOS (Apple Silicon): `db-mcp-macos-arm64`
-- macOS (Intel): `db-mcp-macos-x64`
-- Linux: `db-mcp-linux-x64`
-- Windows: `db-mcp-windows-x64.exe`
-
-### Quick Start
-
-```bash
-db-mcp init
-db-mcp status
-```
-NOTES
+              echo "## db-mcp v${VERSION}"
+              echo ""
+              echo "Database MCP server for Claude Desktop."
+              echo ""
+              echo "### Installation"
+              echo ""
+              echo '```bash'
+              echo "curl -fsSL https://download.apelogic.ai/db-mcp/install.sh | sh"
+              echo '```'
+              echo ""
+              echo "### Manual Download"
+              echo ""
+              echo "- macOS (Apple Silicon): \`db-mcp-macos-arm64\`"
+              echo "- macOS (Intel): \`db-mcp-macos-x64\`"
+              echo "- Linux: \`db-mcp-linux-x64\`"
+              echo "- Windows: \`db-mcp-windows-x64.exe\`"
+              echo ""
+              echo "### Quick Start"
+              echo ""
+              echo '```bash'
+              echo "db-mcp init"
+              echo "db-mcp status"
+              echo '```'
               echo 'EOF'
             } >> $GITHUB_OUTPUT
           fi
