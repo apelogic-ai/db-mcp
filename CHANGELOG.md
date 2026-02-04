@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.42] - 2026-02-03
+
+## Highlights
+- SQL-like API connectors (Dune Analytics, etc.) now fully supported with direct SQL execution
+
+## Breaking changes
+- None
+
+## Features
+- Added `execute_sql()` support for API connectors with `supports_sql: true` capability
+- Automatic handling of async SQL APIs that return execution IDs and require polling
+- Configurable `sql_field` per endpoint (defaults to `sql` for Dune compatibility)
+- Response extraction handles multiple formats: Dune (`result.rows`), standard REST (`data`, `rows`, `results`), and columnar (`columns` + `rows` arrays)
+
+## Fixes
+- None
+
+## Security
+- None
+
+## Upgrade notes
+To use with Dune Analytics, configure your `connector.yaml`:
+
+```yaml
+type: api
+base_url: https://api.dune.com/api/v1
+auth:
+  type: header
+  header_name: X-DUNE-API-KEY
+  token_env: API_KEY
+capabilities:
+  supports_sql: true
+  sql_mode: api_sync
+
+endpoints:
+  - name: execute_sql
+    path: /sql/execute
+    method: POST
+    body_mode: json
+  - name: execution_status
+    path: /execution/{execution_id}/status
+  - name: execution_results
+    path: /execution/{execution_id}/results
+```
+
+## Known issues
+- None
+
+
 ## [0.4.41] - 2026-02-03
 
 ## Highlights
