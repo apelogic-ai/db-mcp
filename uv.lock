@@ -620,7 +620,7 @@ wheels = [
 
 [[package]]
 name = "db-mcp"
-version = "0.4.40"
+version = "0.4.41"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "bicp-agent" },
@@ -659,6 +659,7 @@ dev = [
 dev = [
     { name = "pyinstaller" },
     { name = "pytest-cov" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -696,6 +697,7 @@ provides-extras = ["dev"]
 dev = [
     { name = "pyinstaller", specifier = ">=6.18.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "ruff", specifier = ">=0.14.13" },
 ]
 
 [[package]]

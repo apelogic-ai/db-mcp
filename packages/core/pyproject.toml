@@ -51,6 +51,7 @@ build-backend = "hatchling.build"
 dev = [
     "pyinstaller>=6.18.0",
     "pytest-cov>=7.0.0",
+    "ruff>=0.14.13",
 ]
 
 [tool.ruff]

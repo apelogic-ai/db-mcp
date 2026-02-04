@@ -884,3 +884,194 @@ class TestAPIConnectorYAMLRoundTrip:
         loaded = ConnectorConfig.from_yaml(yaml_path)
         assert isinstance(loaded, APIConnectorConfig)
         assert loaded.endpoints[0].query_params == []
+
+
+# ---------------------------------------------------------------------------
+# SQL-like API execution (supports_sql=true, sql_mode=api_sync)
+# ---------------------------------------------------------------------------
+
+
+class TestAPIConnectorSQLExecution:
+    """Tests for execute_sql with SQL-like APIs (Dune, etc.)."""
+
+    def test_execute_sql_without_supports_sql_falls_back_to_duckdb(self, api_connector, data_dir):
+        """Without supports_sql, execute_sql falls back to DuckDB on local files."""
+        # Sync some data first
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": [{"id": 1, "name": "Alice"}]}
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+            api_connector.sync("users")
+
+        # Now execute_sql should use DuckDB on the JSONL
+        result = api_connector.execute_sql("SELECT * FROM users")
+        assert len(result) == 1
+        assert result[0]["name"] == "Alice"
+
+    def test_execute_sql_with_supports_sql_calls_api(self, data_dir, env_file):
+        """With supports_sql=true, execute_sql POSTs to the execute_sql endpoint."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.dune.com/api/v1",
+            auth=APIAuthConfig(
+                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+            ),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/sql/execute",
+                    method="POST",
+                    body_mode="json",
+                )
+            ],
+            capabilities={"supports_sql": True, "sql_mode": "api_sync"},
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        # Mock sync response (returns rows directly)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"result": {"rows": [{"token": "SOL", "volume": 1000000}]}}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=mock_resp) as mock_post:
+            result = conn.execute_sql("SELECT token, volume FROM dex_solana.trades LIMIT 1")
+
+        # Verify the API was called correctly
+        mock_post.assert_called_once()
+        called_url = mock_post.call_args.args[0]
+        called_json = mock_post.call_args.kwargs["json"]
+        assert "/sql/execute" in called_url
+        # Default sql_field is "sql" (matching Dune's API)
+        assert called_json["sql"] == "SELECT token, volume FROM dex_solana.trades LIMIT 1"
+
+        # Verify results extracted correctly
+        assert len(result) == 1
+        assert result[0]["token"] == "SOL"
+        assert result[0]["volume"] == 1000000
+
+    def test_execute_sql_async_polls_for_results(self, data_dir, env_file):
+        """Async SQL API: polls execution_status then fetches execution_results."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.dune.com/api/v1",
+            auth=APIAuthConfig(
+                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+            ),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql", path="/sql/execute", method="POST", body_mode="json"
+                ),
+                APIEndpointConfig(
+                    name="execution_status", path="/execution/{execution_id}/status", method="GET"
+                ),
+                APIEndpointConfig(
+                    name="execution_results",
+                    path="/execution/{execution_id}/results",
+                    method="GET",
+                ),
+            ],
+            capabilities={"supports_sql": True, "sql_mode": "api_sync"},
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        # Mock responses
+        execute_resp = MagicMock()
+        execute_resp.status_code = 200
+        execute_resp.json.return_value = {"execution_id": "exec-123"}
+
+        status_pending = MagicMock()
+        status_pending.status_code = 200
+        status_pending.json.return_value = {"state": "PENDING"}
+
+        status_complete = MagicMock()
+        status_complete.status_code = 200
+        status_complete.json.return_value = {"state": "COMPLETE"}
+
+        results_resp = MagicMock()
+        results_resp.status_code = 200
+        results_resp.json.return_value = {"result": {"rows": [{"id": 1, "value": "test"}]}}
+
+        call_count = {"status": 0}
+
+        def mock_get(url, **kwargs):
+            if "status" in url:
+                call_count["status"] += 1
+                if call_count["status"] == 1:
+                    return status_pending
+                return status_complete
+            elif "results" in url:
+                return results_resp
+            raise ValueError(f"Unexpected URL: {url}")
+
+        with (
+            patch("db_mcp.connectors.api.requests.post", return_value=execute_resp),
+            patch("db_mcp.connectors.api.requests.get", side_effect=mock_get),
+            patch("time.sleep"),  # Skip actual sleeping
+        ):
+            result = conn.execute_sql("SELECT * FROM test")
+
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+        assert call_count["status"] == 2  # Called twice: pending, then complete
+
+    def test_execute_sql_missing_endpoint_raises(self, data_dir, env_file):
+        """Missing execute_sql endpoint should raise ValueError."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[],  # No execute_sql endpoint
+            capabilities={"supports_sql": True},
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        with pytest.raises(ValueError, match="No 'execute_sql' endpoint configured"):
+            conn.execute_sql("SELECT 1")
+
+    def test_extract_rows_handles_various_formats(self, data_dir, env_file):
+        """_extract_rows_from_response handles multiple response formats."""
+        from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+
+        config = APIConnectorConfig(base_url="https://api.example.com")
+        conn = APIConnector(config, data_dir=str(data_dir))
+
+        # Format: {result: {rows: [...]}} (Dune)
+        assert conn._extract_rows_from_response({"result": {"rows": [{"a": 1}]}}) == [{"a": 1}]
+
+        # Format: {data: [...]}
+        assert conn._extract_rows_from_response({"data": [{"b": 2}]}) == [{"b": 2}]
+
+        # Format: {rows: [...]}
+        assert conn._extract_rows_from_response({"rows": [{"c": 3}]}) == [{"c": 3}]
+
+        # Format: {results: [...]}
+        assert conn._extract_rows_from_response({"results": [{"d": 4}]}) == [{"d": 4}]
+
+        # Format: direct list
+        assert conn._extract_rows_from_response([{"e": 5}]) == [{"e": 5}]
+
+        # Format: columns + rows as arrays
+        assert conn._extract_rows_from_response(
+            {"columns": ["x", "y"], "rows": [[1, 2], [3, 4]]}
+        ) == [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
+
+        # Empty/unknown format
+        assert conn._extract_rows_from_response({"unknown": "format"}) == []

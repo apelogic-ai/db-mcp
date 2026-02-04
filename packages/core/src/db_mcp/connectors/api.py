@@ -41,6 +41,7 @@ class APIEndpointConfig:
     query_params: list[APIQueryParamConfig] = field(default_factory=list)
     body_mode: str = "query"  # query | json
     response_mode: str = "data"  # data | raw
+    sql_field: str = "sql"  # Field name for SQL in execute_sql endpoints
 
 
 @dataclass
@@ -428,6 +429,192 @@ class APIConnector(FileConnector):
         except Exception as exc:
             return {"error": str(exc)}
 
+    # -- SQL-like API execution ---------------------------------------------
+
+    def execute_sql(self, sql: str, params: dict | None = None) -> list[dict[str, Any]]:
+        """Execute SQL via API for SQL-like connectors.
+
+        For connectors with supports_sql=true and sql_mode=api_sync, this method
+        sends SQL to the configured execute_sql endpoint and returns results.
+
+        Supports both sync and async APIs:
+        - Sync: POST SQL, get results directly
+        - Async: POST SQL, get execution_id, poll for results
+
+        Args:
+            sql: SQL query to execute
+            params: Optional parameters (unused for most SQL APIs)
+
+        Returns:
+            List of row dicts
+
+        Raises:
+            ValueError: If SQL execution is not supported or fails
+        """
+        caps = self.api_config.capabilities
+        if not caps.get("supports_sql"):
+            # Fall back to parent's DuckDB-based execute_sql
+            return super().execute_sql(sql, params)
+
+        # Find the execute_sql endpoint
+        execute_endpoint = None
+        for ep in self.api_config.endpoints:
+            if ep.name == "execute_sql":
+                execute_endpoint = ep
+                break
+
+        if execute_endpoint is None:
+            raise ValueError(
+                "No 'execute_sql' endpoint configured. "
+                "Add an endpoint named 'execute_sql' to connector.yaml."
+            )
+
+        headers = self._resolve_auth_headers()
+
+        # Build the request
+        url = self.api_config.base_url.rstrip("/") + execute_endpoint.path
+
+        # Use configured field name for SQL (default: "sql")
+        sql_field = execute_endpoint.sql_field or "sql"
+
+        if execute_endpoint.body_mode == "json":
+            body = {sql_field: sql}
+            resp = requests.post(url, headers=headers, json=body, timeout=60)
+        else:
+            resp = requests.post(url, headers=headers, params={sql_field: sql}, timeout=60)
+
+        resp.raise_for_status()
+        result = resp.json()
+
+        # Check if this is an async API (returns execution_id)
+        execution_id = result.get("execution_id")
+        if execution_id:
+            return self._poll_execution_results(execution_id, headers)
+
+        # Sync API - results are in the response
+        return self._extract_rows_from_response(result)
+
+    def _poll_execution_results(
+        self,
+        execution_id: str,
+        headers: dict[str, str],
+        max_wait_seconds: int = 300,
+        poll_interval: float = 2.0,
+    ) -> list[dict[str, Any]]:
+        """Poll for async SQL execution results.
+
+        Args:
+            execution_id: The execution ID returned by execute_sql
+            headers: Auth headers
+            max_wait_seconds: Maximum time to wait for results
+            poll_interval: Seconds between polls
+
+        Returns:
+            List of row dicts
+
+        Raises:
+            TimeoutError: If execution doesn't complete in time
+            ValueError: If execution fails
+        """
+        # Find status and results endpoints
+        status_endpoint = None
+        results_endpoint = None
+        for ep in self.api_config.endpoints:
+            if ep.name == "execution_status":
+                status_endpoint = ep
+            elif ep.name == "execution_results":
+                results_endpoint = ep
+
+        if results_endpoint is None:
+            raise ValueError(
+                "No 'execution_results' endpoint configured for async SQL API. "
+                "Add an endpoint named 'execution_results' to connector.yaml."
+            )
+
+        base_url = self.api_config.base_url.rstrip("/")
+        start_time = time.time()
+
+        while (time.time() - start_time) < max_wait_seconds:
+            self._rate_limit()
+
+            # Check status if endpoint exists
+            if status_endpoint:
+                status_path = status_endpoint.path.replace("{execution_id}", execution_id)
+                status_url = base_url + status_path
+                status_resp = requests.get(status_url, headers=headers, timeout=30)
+                status_resp.raise_for_status()
+                status_data = status_resp.json()
+
+                state = status_data.get("state", "").lower()
+                if state in ("failed", "error", "cancelled"):
+                    error_msg = status_data.get("error", "Execution failed")
+                    raise ValueError(f"SQL execution failed: {error_msg}")
+
+                if state not in ("complete", "completed", "success", "finished"):
+                    time.sleep(poll_interval)
+                    continue
+
+            # Fetch results
+            results_path = results_endpoint.path.replace("{execution_id}", execution_id)
+            results_url = base_url + results_path
+            results_resp = requests.get(results_url, headers=headers, timeout=60)
+            results_resp.raise_for_status()
+            results_data = results_resp.json()
+
+            return self._extract_rows_from_response(results_data)
+
+        raise TimeoutError(f"SQL execution did not complete within {max_wait_seconds} seconds")
+
+    def _extract_rows_from_response(self, response: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract rows from an API response.
+
+        Handles common response formats:
+        - {result: {rows: [...]}} (Dune)
+        - {data: [...]}
+        - {rows: [...]}
+        - {results: [...]}
+        - Direct list
+
+        Args:
+            response: API response dict
+
+        Returns:
+            List of row dicts
+        """
+        if isinstance(response, list):
+            return response
+
+        # Try nested result.rows (Dune format)
+        result = response.get("result", {})
+        if isinstance(result, dict):
+            rows = result.get("rows")
+            if rows is not None:
+                return rows if isinstance(rows, list) else []
+
+        # Check for columns + rows as arrays format first (before generic field check)
+        # This handles APIs that return {columns: [...], rows: [[...], [...]]}
+        columns = response.get("columns") or response.get("column_names")
+        rows_data = response.get("rows") or response.get("data")
+        if (
+            columns
+            and rows_data
+            and isinstance(rows_data, list)
+            and rows_data
+            and isinstance(rows_data[0], list)
+        ):
+            # Rows are arrays, need to zip with column names
+            return [dict(zip(columns, row)) for row in rows_data]
+
+        # Try common top-level fields (rows are already dicts)
+        for field_name in ("rows", "data", "results", "records"):
+            if field_name in response:
+                value = response[field_name]
+                if isinstance(value, list):
+                    return value
+
+        # Last resort: return empty
+        return []
+
     @staticmethod
     def _render_path(path: str, params: dict[str, str]) -> tuple[str, dict[str, str]]:
         """Substitute {param} placeholders in a path using params."""
@@ -688,6 +875,7 @@ class APIConnector(FileConnector):
                     "method": ep.method,
                     "body_mode": ep.body_mode,
                     "response_mode": ep.response_mode,
+                    **({"sql_field": ep.sql_field} if ep.sql_field != "sql" else {}),
                     **(
                         {
                             "query_params": [
