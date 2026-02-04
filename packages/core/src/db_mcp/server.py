@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 from db_mcp.config import get_settings
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
-from db_mcp.tools.api import _api_describe_endpoint, _api_discover, _api_query
+from db_mcp.tools.api import _api_describe_endpoint, _api_discover, _api_execute_sql, _api_query
 from db_mcp.tools.database import (
     _describe_table,
     _detect_dialect,
@@ -250,10 +250,10 @@ This tells you exactly how to:
 
 ## SQL-LIKE APIs (Dune, etc.)
 
-For API connectors with `supports_sql: true` and `supports_validate_sql: false`:
-- Use `run_sql(sql="SELECT ...")` directly - NO validation step needed
+For API connectors with `supports_sql: true`:
+- Use `api_execute_sql(sql="SELECT ...")` to run SQL queries
 - Do NOT use api_query for SQL execution - that's for REST endpoints only
-- The SQL is sent to the API's execute_sql endpoint and results are polled automatically
+- The SQL is sent to the API, polled for completion, and results returned automatically
 
 ## IMPORTANT: Business Rules and Knowledge Gaps
 
@@ -417,6 +417,8 @@ def _create_server() -> FastMCP:
         server.tool(name="api_discover")(_api_discover)
         server.tool(name="api_query")(_api_query)
         server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
+        if supports_sql:
+            server.tool(name="api_execute_sql")(_api_execute_sql)
 
     # =========================================================================
     # Admin/Setup tools - always available (not for casual query use)

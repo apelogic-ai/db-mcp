@@ -3,7 +3,7 @@
 from typing import Any
 
 from db_mcp.config import get_settings
-from db_mcp.connectors import APIConnector, get_connector
+from db_mcp.connectors import APIConnector, get_connector, get_connector_capabilities
 
 
 async def _api_sync(endpoint: str | None = None) -> dict:
@@ -58,8 +58,7 @@ async def _api_query(
 ) -> dict[str, Any]:
     """Query a REST API endpoint with parameters.
 
-    NOTE: This is for REST endpoints only, NOT for SQL execution.
-    For SQL-like APIs (Dune, etc.) with supports_sql=true, use run_sql(sql="...") instead.
+    For SQL execution on SQL-like APIs (Dune, etc.), use api_execute_sql instead.
 
     Returns rows from the API endpoint matching the given parameters.
     Use api_describe_endpoint to see available parameters first.
@@ -78,6 +77,45 @@ async def _api_query(
     if not isinstance(connector, APIConnector):
         return {"error": "Active connection is not an API connector"}
     return connector.query_endpoint(endpoint, params, max_pages, id=id)
+
+
+async def _api_execute_sql(sql: str) -> dict[str, Any]:
+    """Execute SQL on a SQL-like API (Dune, Trino-based services, etc.).
+
+    Use this for API connectors with supports_sql=true. The SQL is sent to the
+    API's execute_sql endpoint, polled for completion, and results returned.
+
+    This is the primary tool for querying SQL-like APIs like Dune Analytics.
+    Do NOT use api_query for SQL - use this instead.
+
+    Args:
+        sql: SQL query to execute (e.g. "SELECT * FROM dex_solana.trades LIMIT 10")
+
+    Returns:
+        {status: "success", data: [...], rows_returned: int} or {status: "error", error: "..."}
+    """
+    connector = get_connector()
+    if not isinstance(connector, APIConnector):
+        return {"status": "error", "error": "Active connection is not an API connector"}
+
+    caps = get_connector_capabilities(connector)
+    if not caps.get("supports_sql"):
+        return {
+            "status": "error",
+            "error": "This API connector does not support SQL execution. Use api_query instead.",
+        }
+
+    try:
+        rows = connector.execute_sql(sql)
+        columns = list(rows[0].keys()) if rows else []
+        return {
+            "status": "success",
+            "data": rows,
+            "columns": columns,
+            "rows_returned": len(rows),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:
