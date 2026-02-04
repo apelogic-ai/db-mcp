@@ -143,7 +143,9 @@ def basic_validate_notes(notes_md: str) -> None:
     import unicodedata
 
     for char in notes_md:
-        if unicodedata.category(char) in ("So", "Sk"):  # Symbol, other or Symbol, modifier
+        cat = unicodedata.category(char)
+        # Symbol categories, but exclude backtick which is Sk
+        if cat in ("So", "Sk") and char != "`":
             die(f"Emojis are not allowed in release notes. Found: {char}")
 
 
