@@ -162,52 +162,58 @@ def load_agent_config(agent: MCPAgent) -> dict:
     return {}
 
 
-def _write_toml_value(value, indent=0):
-    """Helper to write TOML value."""
+def _format_toml_value(value) -> str | None:
+    """Format a scalar or list value for TOML. Returns None for dicts."""
     if isinstance(value, dict):
-        # Don't write inline tables for mcp_servers entries
         return None
     elif isinstance(value, list):
         return json.dumps(value)
     elif isinstance(value, str):
         return json.dumps(value)
-    elif isinstance(value, (int, float, bool)):
-        return str(value).lower() if isinstance(value, bool) else str(value)
+    elif isinstance(value, bool):
+        return str(value).lower()
+    elif isinstance(value, (int, float)):
+        return str(value)
     return json.dumps(value)
 
 
 def _dict_to_toml(data: dict, prefix: str = "") -> str:
     """Convert dict to TOML format string.
 
-    Simple TOML writer for our specific use case.
+    Recursively handles arbitrary nesting depth so that structures like
+    ``mcp_servers.<name>.env`` survive a round-trip.
     """
-    lines = []
+    lines: list[str] = []
 
-    # First pass: write non-dict values
+    # First pass: write scalar / list values at this level
+    for key, value in data.items():
+        formatted = _format_toml_value(value)
+        if formatted is not None:
+            lines.append(f"{key} = {formatted}")
+
+    # Second pass: recurse into dict values as TOML tables
     for key, value in data.items():
         if not isinstance(value, dict):
-            toml_value = _write_toml_value(value)
-            if toml_value is not None:
-                lines.append(f"{key} = {toml_value}")
-
-    # Second pass: write tables
-    for key, value in data.items():
-        if isinstance(value, dict):
-            section = f"{prefix}.{key}" if prefix else key
+            continue
+        section = f"{prefix}.{key}" if prefix else key
+        # Only emit a header if the table has its own scalar keys
+        has_scalars = any(_format_toml_value(v) is not None for v in value.values())
+        if has_scalars:
             lines.append(f"\n[{section}]")
-            # Write table contents
-            for subkey, subvalue in value.items():
-                if isinstance(subvalue, dict):
-                    # Nested table
-                    lines.append(f"\n[{section}.{subkey}]")
-                    for k, v in subvalue.items():
-                        toml_value = _write_toml_value(v)
-                        if toml_value is not None:
-                            lines.append(f"{k} = {toml_value}")
-                else:
-                    toml_value = _write_toml_value(subvalue)
-                    if toml_value is not None:
-                        lines.append(f"{subkey} = {toml_value}")
+            for k, v in value.items():
+                formatted = _format_toml_value(v)
+                if formatted is not None:
+                    lines.append(f"{k} = {formatted}")
+        # Recurse into nested dicts (emits sub-tables)
+        sub = _dict_to_toml(
+            {k: v for k, v in value.items() if isinstance(v, dict)},
+            prefix=section,
+        )
+        if sub:
+            # If we didn't emit a header yet, we still need spacing
+            if not has_scalars:
+                lines.append("")
+            lines.append(sub)
 
     return "\n".join(lines)
 

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from db_mcp.agents import (
     AGENTS,
     _dict_to_toml,
+    _format_toml_value,
     configure_agent_for_dbmcp,
     configure_multiple_agents,
     detect_claude_code,
@@ -184,6 +185,62 @@ class TestAgentConfig:
             assert saved == test_config
 
 
+class TestTomlWriter:
+    """Test TOML serialization helpers."""
+
+    def test_format_toml_value_scalars(self):
+        """Test formatting scalar values."""
+        assert _format_toml_value("hello") == '"hello"'
+        assert _format_toml_value(42) == "42"
+        assert _format_toml_value(3.14) == "3.14"
+        assert _format_toml_value(True) == "true"
+        assert _format_toml_value(False) == "false"
+        assert _format_toml_value(["a", "b"]) == '["a", "b"]'
+        assert _format_toml_value({}) is None
+
+    def test_dict_to_toml_no_spurious_header(self):
+        """Test that intermediate-only tables don't emit empty headers."""
+        config = {"mcp_servers": {"db-mcp": {"command": "/bin/db-mcp", "args": ["start"]}}}
+        output = _dict_to_toml(config)
+        assert "[mcp_servers]" not in output
+        assert "[mcp_servers.db-mcp]" in output
+
+    def test_dict_to_toml_roundtrip_with_env(self):
+        """Test that nested env maps survive a TOML round-trip."""
+        config = {
+            "model": "o3",
+            "mcp_servers": {
+                "my-server": {
+                    "command": "npx",
+                    "args": ["-y", "some-pkg"],
+                    "env": {"API_KEY": "secret", "REGION": "us-east-1"},
+                }
+            },
+        }
+        output = _dict_to_toml(config)
+        reparsed = tomllib.loads(output)
+        assert reparsed == config
+
+    def test_dict_to_toml_roundtrip_multiple_servers(self):
+        """Test round-trip with multiple servers, some with env."""
+        config = {
+            "model": "o3",
+            "approval_mode": "unless-allow-listed",
+            "mcp_servers": {
+                "context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp"]},
+                "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                "with-env": {
+                    "command": "cmd",
+                    "args": ["a"],
+                    "env": {"KEY": "val"},
+                },
+            },
+        }
+        output = _dict_to_toml(config)
+        reparsed = tomllib.loads(output)
+        assert reparsed == config
+
+
 class TestAgentConfiguration:
     """Test agent configuration for db-mcp."""
 
@@ -276,6 +333,38 @@ class TestAgentConfiguration:
 
             assert "dbmeta" not in config["mcpServers"]
             assert "db-mcp" in config["mcpServers"]
+
+    def test_configure_codex_preserves_env_maps(self):
+        """Test that configuring Codex preserves existing env maps."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+
+            # Pre-existing Codex config with env map on another server
+            existing_toml = (
+                'model = "o3"\n\n'
+                "[mcp_servers.other]\n"
+                'command = "npx"\n'
+                'args = ["-y", "other-pkg"]\n\n'
+                "[mcp_servers.other.env]\n"
+                'API_KEY = "secret"\n'
+            )
+            config_path.write_text(existing_toml)
+
+            agent = AGENTS["codex"]
+            agent.config_path = config_path
+
+            result = configure_agent_for_dbmcp("codex", "/usr/local/bin/db-mcp")
+
+            assert result is True
+
+            with open(config_path, "rb") as f:
+                config = tomllib.load(f)
+
+            # db-mcp was added
+            assert "db-mcp" in config["mcp_servers"]
+            assert config["mcp_servers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
+            # other server's env map survived
+            assert config["mcp_servers"]["other"]["env"]["API_KEY"] == "secret"
 
     def test_configure_invalid_agent(self):
         """Test configuring invalid agent ID."""

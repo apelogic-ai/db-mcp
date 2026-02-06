@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.49] - 2026-02-06
+
+### Fixed
+
+- **Codex TOML round-trip**: `_dict_to_toml` now recursively handles arbitrary nesting depth, preserving `env` maps and other nested structures in `~/.codex/config.toml`
+- **Spurious `[mcp_servers]` header**: intermediate-only tables no longer emit empty section headers in generated TOML
+
 ## [0.4.48] - 2026-02-04
 
 **Release Date:** February 4, 2026
