@@ -294,6 +294,19 @@ Binary build artifacts:
 - Build script: `packages/core/scripts/build.py`
 - Output: `~67MB` platform-specific binary
 
+### Release Notes Format
+
+Every release gets a file at `docs/releases/v{VERSION}.md`. Required sections:
+
+1. **`# Release v{VERSION} - {Title}`**
+2. **`## Overview`** - one-paragraph summary
+3. **`## Highlights`** - user-facing summary of what changed (always required, even for bug-fix-only releases)
+4. **`## Bug Fixes`** / **`## New Features`** - as applicable
+5. **`## Files Changed`** - table of files and what changed
+6. **`## Testing`** - test counts and lint status
+
+Also update `CHANGELOG.md` with a `## [{VERSION}]` entry.
+
 ## Ground Rules
 
 - **NEVER switch git branches unless explicitly told to do so by the user**
