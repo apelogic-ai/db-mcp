@@ -255,8 +255,9 @@ GIT_INSTALL_URL = "https://git-scm.com/downloads"
 GITIGNORE_CONTENT = """db-mcp gitignore
 # Ignore all dotfiles (local state, credentials, editor files, etc.)
 .*
-# Exception: keep .gitignore itself
+# Exceptions: keep tracked dotfiles
 !.gitignore
+!.collab.yaml
 
 # Local state (not shared)
 state.yaml
@@ -1787,6 +1788,392 @@ def migrate(verbose: bool):
 
     console.print("\n[green]✓ Migration complete[/green]")
     console.print("\n[dim]Restart Claude Desktop to apply changes.[/dim]")
+
+
+# =============================================================================
+# Collaboration commands
+# =============================================================================
+
+
+@main.group()
+def collab():
+    """Collaborate on a shared knowledge vault via git.
+
+    The master sets up the vault and reviews changes.
+    Collaborators sync examples, learnings, and traces automatically.
+
+    Examples:
+        db-mcp collab init                # Master: set up collaboration
+        db-mcp collab join <repo-url>     # Collaborator: join a shared vault
+        db-mcp collab sync                # Push/pull changes
+        db-mcp collab merge               # Master: merge collaborator changes
+        db-mcp collab status              # Show sync status
+        db-mcp collab members             # List team members
+    """
+    pass
+
+
+@collab.command("init")
+def collab_init():
+    """Set up collaboration on the active connection (master role).
+
+    Ensures git is initialized with a remote, creates .collab.yaml
+    with you as the master, and pushes to the remote.
+    """
+    from db_mcp.collab.manifest import (
+        CollabManifest,
+        add_member,
+        get_user_name_from_config,
+        load_manifest,
+        save_manifest,
+        set_user_name_in_config,
+    )
+    from db_mcp.git_utils import git
+    from db_mcp.traces import generate_user_id, get_user_id_from_config
+
+    name = get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    # Ensure git is set up
+    if not is_git_repo(conn_path):
+        console.print("[yellow]Git not initialized. Run 'db-mcp git-init' first.[/yellow]")
+        sys.exit(1)
+
+    if not git.has_remote(conn_path):
+        console.print("[yellow]No git remote configured. Add one first:[/yellow]")
+        console.print(f"  cd {conn_path}")
+        console.print("  git remote add origin <your-repo-url>")
+        sys.exit(1)
+
+    # Get or prompt for user_name
+    user_name = get_user_name_from_config()
+    if not user_name:
+        user_name = click.prompt("Your name (used for branch names and attribution)")
+        set_user_name_in_config(user_name)
+
+    # Get or generate user_id
+    user_id = get_user_id_from_config()
+    if not user_id:
+        user_id = generate_user_id()
+        config = load_config()
+        config["user_id"] = user_id
+        save_config(config)
+
+    # Check if manifest already exists
+    manifest = load_manifest(conn_path)
+    if manifest:
+        console.print("[yellow]Collaboration already initialized.[/yellow]")
+        console.print("[dim]Use 'db-mcp collab members' to see the team.[/dim]")
+        return
+
+    # Create manifest
+    from datetime import datetime, timezone
+
+    manifest = CollabManifest(created_at=datetime.now(timezone.utc))
+    manifest = add_member(manifest, user_name, user_id, "master")
+    save_manifest(conn_path, manifest)
+
+    # Commit and push
+    git.add(conn_path, [".collab.yaml"])
+    git.commit(conn_path, "Initialize collaboration manifest")
+    try:
+        git.push(conn_path)
+        console.print(f"[green]Collaboration initialized for '{name}'.[/green]")
+        console.print(f"[dim]You are the master. User: {user_name} ({user_id})[/dim]")
+        console.print(
+            "[dim]Share the repo URL with collaborators so they can run "
+            "'db-mcp collab join <url>'.[/dim]"
+        )
+    except Exception as e:
+        console.print(f"[yellow]Manifest saved locally but push failed: {e}[/yellow]")
+        console.print("[dim]Push manually when ready.[/dim]")
+
+
+@collab.command("join")
+@click.argument("repo_url")
+@click.option("-n", "--name", "conn_name", default=None, help="Connection name (default: derived)")
+def collab_join(repo_url: str, conn_name: str | None):
+    """Join a shared knowledge vault as a collaborator.
+
+    REPO_URL is the git repository URL to clone.
+    """
+    from db_mcp.collab.manifest import (
+        add_member,
+        get_user_name_from_config,
+        load_manifest,
+        save_manifest,
+        set_user_name_in_config,
+    )
+    from db_mcp.git_utils import git
+    from db_mcp.traces import generate_user_id, get_user_id_from_config
+
+    # Derive connection name from URL if not provided
+    if not conn_name:
+        conn_name = repo_url.rstrip("/").split("/")[-1]
+        if conn_name.endswith(".git"):
+            conn_name = conn_name[:-4]
+
+    conn_path = get_connection_path(conn_name)
+
+    if conn_path.exists():
+        console.print(f"[yellow]Connection '{conn_name}' already exists.[/yellow]")
+        console.print("[dim]Use 'db-mcp collab sync' to sync changes.[/dim]")
+        sys.exit(1)
+
+    # Clone the repo
+    console.print(f"[dim]Cloning {repo_url}...[/dim]")
+    try:
+        git.clone(repo_url, conn_path)
+    except Exception as e:
+        console.print(f"[red]Clone failed: {e}[/red]")
+        sys.exit(1)
+
+    # Get or prompt for user_name
+    user_name = get_user_name_from_config()
+    if not user_name:
+        user_name = click.prompt("Your name (used for branch names and attribution)")
+        set_user_name_in_config(user_name)
+
+    # Get or generate user_id
+    user_id = get_user_id_from_config()
+    if not user_id:
+        user_id = generate_user_id()
+        config = load_config()
+        config["user_id"] = user_id
+        save_config(config)
+
+    # Prompt for DATABASE_URL
+    db_url = click.prompt("DATABASE_URL (connection string)")
+    env_path = conn_path / ".env"
+    env_path.write_text(f"DATABASE_URL={db_url}\n")
+
+    # Create collaborator branch
+    branch = f"collaborator/{user_name}"
+    git.checkout(conn_path, branch, create=True)
+
+    # Add self to manifest
+    manifest = load_manifest(conn_path)
+    if manifest:
+        manifest = add_member(manifest, user_name, user_id, "collaborator")
+        save_manifest(conn_path, manifest)
+        git.add(conn_path, [".collab.yaml"])
+        git.commit(conn_path, f"Add collaborator: {user_name}")
+        try:
+            git.push_branch(conn_path, branch)
+        except Exception as e:
+            console.print(f"[yellow]Push failed (can retry with 'collab sync'): {e}[/yellow]")
+    else:
+        console.print(
+            "[yellow]No .collab.yaml found in repo. Ask master to run 'collab init'.[/yellow]"
+        )
+
+    # Set as active connection
+    set_active_connection(conn_name)
+    console.print(f"[green]Joined '{conn_name}' as collaborator.[/green]")
+    console.print(f"[dim]Branch: {branch} | User: {user_name} ({user_id})[/dim]")
+    console.print("[dim]Run 'db-mcp collab sync' to push your changes.[/dim]")
+
+
+@collab.command("sync")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def collab_sync(connection: str | None):
+    """Sync local changes with the shared vault.
+
+    Pulls latest from main, commits local changes, and pushes.
+    Additive changes (examples, learnings) auto-merge to main.
+    Shared-state changes (schema, rules) open a PR for master review.
+    """
+    from db_mcp.collab.manifest import (
+        get_user_name_from_config,
+    )
+    from db_mcp.collab.sync import full_sync
+
+    name = connection or get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    if not is_git_repo(conn_path):
+        console.print("[yellow]Not a git repository. Run 'db-mcp git-init' first.[/yellow]")
+        sys.exit(1)
+
+    # Determine user
+    user_name = get_user_name_from_config()
+    if not user_name:
+        console.print(
+            "[yellow]No user_name set. Run 'db-mcp collab join' or set in config.[/yellow]"
+        )
+        sys.exit(1)
+
+    console.print(f"[bold]Syncing '{name}' as {user_name}...[/bold]")
+    result = full_sync(conn_path, user_name)
+
+    if result.error:
+        console.print(f"[yellow]Warning: {result.error}[/yellow]")
+
+    if result.additive_merged:
+        console.print(
+            f"[green]Auto-merged {result.additive_merged} additive file(s) to main.[/green]"
+        )
+
+    if result.shared_state_files:
+        n = len(result.shared_state_files)
+        console.print(f"[yellow]{n} shared-state file(s) need master review:[/yellow]")
+        for f in result.shared_state_files:
+            console.print(f"  [dim]{f}[/dim]")
+
+    if result.pr_opened:
+        console.print(f"[green]PR opened: {result.pr_url}[/green]")
+    elif result.shared_state_files:
+        console.print("[dim]Branch pushed. Open a PR on GitHub for master to review.[/dim]")
+
+    if not result.additive_merged and not result.shared_state_files:
+        console.print("[dim]Nothing to sync.[/dim]")
+
+
+@collab.command("merge")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def collab_merge(connection: str | None):
+    """Merge collaborator changes into main (master only).
+
+    Auto-merges additive changes (examples, learnings, traces).
+    Opens PRs for shared-state changes that need review.
+    """
+    from db_mcp.collab.manifest import get_role
+    from db_mcp.collab.merge import master_merge_all
+    from db_mcp.traces import get_user_id_from_config
+
+    name = connection or get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    # Check role
+    user_id = get_user_id_from_config()
+    role = get_role(conn_path, user_id) if user_id else None
+    if role != "master":
+        console.print("[yellow]Only the master can run merge.[/yellow]")
+        console.print("[dim]Your role: " + (role or "not a member") + "[/dim]")
+        sys.exit(1)
+
+    console.print(f"[bold]Merging collaborator changes for '{name}'...[/bold]")
+    result = master_merge_all(conn_path)
+
+    if not result.collaborators:
+        console.print("[dim]No collaborator branches found.[/dim]")
+        return
+
+    for c in result.collaborators:
+        status_parts = []
+        if c.additive_merged:
+            status_parts.append(f"{c.additive_merged} auto-merged")
+        if c.pr_opened:
+            status_parts.append(f"PR: {c.pr_url}")
+        elif c.shared_state_files:
+            status_parts.append(f"{len(c.shared_state_files)} need review")
+        if c.error:
+            status_parts.append(f"error: {c.error}")
+        status = ", ".join(status_parts) if status_parts else "no changes"
+        console.print(f"  [cyan]{c.user_name}[/cyan]: {status}")
+
+    console.print(
+        f"\n[green]Total: {result.total_additive} file(s) merged, "
+        f"{result.total_prs} PR(s) opened.[/green]"
+    )
+
+
+@collab.command("status")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def collab_status(connection: str | None):
+    """Show collaboration status for the active connection."""
+    from db_mcp.collab.manifest import get_member, load_manifest
+    from db_mcp.git_utils import git
+    from db_mcp.traces import get_user_id_from_config
+
+    name = connection or get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    console.print(f"[bold]Collaboration: {name}[/bold]")
+
+    # Git status
+    if not is_git_repo(conn_path):
+        console.print("  Git: [dim]not initialized[/dim]")
+        return
+
+    branch = git.current_branch(conn_path)
+    console.print(f"  Branch: [cyan]{branch}[/cyan]")
+
+    remote_url = git.remote_get_url(conn_path)
+    if remote_url:
+        console.print(f"  Remote: [dim]{remote_url}[/dim]")
+
+    # Manifest
+    manifest = load_manifest(conn_path)
+    if not manifest:
+        console.print("  Manifest: [dim]not found (.collab.yaml)[/dim]")
+        console.print("[dim]Run 'db-mcp collab init' to set up collaboration.[/dim]")
+        return
+
+    user_id = get_user_id_from_config()
+    member = get_member(manifest, user_id) if user_id else None
+    if member:
+        console.print(f"  Role: [green]{member.role}[/green]")
+        console.print(f"  User: {member.user_name} ({member.user_id})")
+    else:
+        console.print("  Role: [yellow]not a member[/yellow]")
+
+    console.print(f"  Members: {len(manifest.members)}")
+    console.print(
+        f"  Auto-sync: {'enabled' if manifest.sync.auto_sync else 'disabled'} "
+        f"(every {manifest.sync.sync_interval_minutes}m)"
+    )
+
+    # Pending changes
+    changes = git.status(conn_path)
+    if changes:
+        console.print(f"  Pending: [yellow]{len(changes)} uncommitted change(s)[/yellow]")
+    else:
+        console.print("  Pending: [dim]clean[/dim]")
+
+
+@collab.command("members")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def collab_members(connection: str | None):
+    """List team members and their roles."""
+    from db_mcp.collab.manifest import load_manifest
+
+    name = connection or get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+    manifest = load_manifest(conn_path)
+
+    if not manifest:
+        console.print("[dim]No .collab.yaml found. Run 'db-mcp collab init' first.[/dim]")
+        return
+
+    console.print(f"[bold]Team members for '{name}'[/bold]\n")
+    for m in manifest.members:
+        role_color = "green" if m.role == "master" else "cyan"
+        joined = m.joined_at.strftime("%Y-%m-%d")
+        console.print(
+            f"  [{role_color}]{m.role:>12}[/{role_color}]  "
+            f"{m.user_name} ({m.user_id})  [dim]joined {joined}[/dim]"
+        )
 
 
 # =============================================================================

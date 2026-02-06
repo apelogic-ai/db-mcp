@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.50] - 2026-02-06
+
+### Added
+
+- **Collaborative git sync protocol**: master/collaborator model for shared knowledge vaults via git
+- **`.collab.yaml` manifest**: tracks team members, roles, and sync configuration
+- **`db-mcp collab` CLI group**: `init`, `join`, `sync`, `merge`, `status`, `members` subcommands
+- **Smart file classification**: auto-merge additive files (examples, learnings, traces); PR for shared-state (schema, rules, metrics)
+- **Background sync loop**: periodic pull/push in MCP server lifespan (default 60m, configurable)
+- **GitHub PR integration**: auto-opens PRs for shared-state changes via `gh` CLI
+- **Git branch operations**: `checkout`, `fetch`, `merge`, `cherry_pick`, `current_branch`, `branch_exists`, `diff_names`, `push_branch` on `NativeGitBackend`
+- **Migration**: updates existing `.gitignore` to allow `.collab.yaml`
+
 ## [0.4.49] - 2026-02-06
 
 ### Fixed

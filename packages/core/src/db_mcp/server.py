@@ -141,9 +141,38 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
     await task_store.start_cleanup_loop(interval_seconds=300)  # Every 5 minutes
     logger.info("Task store cleanup loop started")
 
+    # Startup: Start collab sync loop if applicable
+    sync_loop = None
+    try:
+        from db_mcp.collab.background import CollabSyncLoop
+        from db_mcp.collab.manifest import get_member, load_manifest
+        from db_mcp.traces import get_user_id_from_config
+
+        settings = get_settings()
+        connection_path = settings.get_effective_connection_path()
+        manifest = load_manifest(connection_path)
+        if manifest and manifest.sync.auto_sync:
+            user_id = get_user_id_from_config()
+            member = get_member(manifest, user_id) if user_id else None
+            if member and member.role == "collaborator":
+                sync_loop = CollabSyncLoop(
+                    connection_path,
+                    member.user_name,
+                    manifest.sync.sync_interval_minutes,
+                )
+                await sync_loop.start()
+                logger.info("Collab sync loop started for %s", member.user_name)
+    except Exception as e:
+        logger.debug("Collab sync not started: %s", e)
+
     try:
         yield
     finally:
+        # Shutdown: Stop collab sync loop
+        if sync_loop:
+            await sync_loop.stop()
+            logger.info("Collab sync loop stopped")
+
         # Shutdown: Stop cleanup loop
         await task_store.stop_cleanup_loop()
         logger.info("Task store cleanup loop stopped")

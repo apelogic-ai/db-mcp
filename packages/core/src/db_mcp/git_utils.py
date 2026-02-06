@@ -121,6 +121,39 @@ class GitBackend(ABC):
         """Check if repository has any remotes."""
         raise NotImplementedError(f"{self.name} backend does not support has_remote")
 
+    # Branch operations - required for collaboration
+    def checkout(self, path: Path, branch: str, create: bool = False) -> None:
+        """Checkout a branch. If create=True, create it first."""
+        raise NotImplementedError(f"{self.name} backend does not support checkout")
+
+    def fetch(self, path: Path, remote: str = "origin") -> None:
+        """Fetch from remote."""
+        raise NotImplementedError(f"{self.name} backend does not support fetch")
+
+    def merge(self, path: Path, branch: str, no_ff: bool = False) -> None:
+        """Merge a branch into current branch."""
+        raise NotImplementedError(f"{self.name} backend does not support merge")
+
+    def cherry_pick(self, path: Path, commit: str) -> None:
+        """Cherry-pick a commit onto current branch."""
+        raise NotImplementedError(f"{self.name} backend does not support cherry_pick")
+
+    def current_branch(self, path: Path) -> str:
+        """Get the name of the current branch."""
+        raise NotImplementedError(f"{self.name} backend does not support current_branch")
+
+    def branch_exists(self, path: Path, branch: str, remote: bool = False) -> bool:
+        """Check if a branch exists (local or remote)."""
+        raise NotImplementedError(f"{self.name} backend does not support branch_exists")
+
+    def diff_names(self, path: Path, base: str, head: str) -> list[str]:
+        """Get list of file paths that differ between two refs."""
+        raise NotImplementedError(f"{self.name} backend does not support diff_names")
+
+    def push_branch(self, path: Path, branch: str, remote: str = "origin") -> None:
+        """Push a specific branch to remote."""
+        raise NotImplementedError(f"{self.name} backend does not support push_branch")
+
 
 class NativeGitBackend(GitBackend):
     """Git backend using native git binary via subprocess."""
@@ -241,6 +274,47 @@ class NativeGitBackend(GitBackend):
     def has_remote(self, path: Path) -> bool:
         result = self._run(["remote"], cwd=path)
         return bool(result.stdout.strip())
+
+    # Branch operations for collaboration
+    def checkout(self, path: Path, branch: str, create: bool = False) -> None:
+        args = ["checkout"]
+        if create:
+            args.append("-b")
+        args.append(branch)
+        self._run(args, cwd=path)
+
+    def fetch(self, path: Path, remote: str = "origin") -> None:
+        self._run(["fetch", remote], cwd=path)
+
+    def merge(self, path: Path, branch: str, no_ff: bool = False) -> None:
+        args = ["merge"]
+        if no_ff:
+            args.append("--no-ff")
+        args.append(branch)
+        self._run(args, cwd=path)
+
+    def cherry_pick(self, path: Path, commit: str) -> None:
+        self._run(["cherry-pick", commit], cwd=path)
+
+    def current_branch(self, path: Path) -> str:
+        result = self._run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=path)
+        return result.stdout.strip()
+
+    def branch_exists(self, path: Path, branch: str, remote: bool = False) -> bool:
+        if remote:
+            result = self._run(["ls-remote", "--heads", "origin", branch], cwd=path, check=False)
+            return bool(result.stdout.strip())
+        result = self._run(["branch", "--list", branch], cwd=path)
+        return bool(result.stdout.strip())
+
+    def diff_names(self, path: Path, base: str, head: str) -> list[str]:
+        result = self._run(["diff", "--name-only", base, head], cwd=path, check=False)
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+        return [f for f in result.stdout.strip().split("\n") if f]
+
+    def push_branch(self, path: Path, branch: str, remote: str = "origin") -> None:
+        self._run(["push", "-u", remote, branch], cwd=path)
 
 
 class DulwichBackend(GitBackend):
