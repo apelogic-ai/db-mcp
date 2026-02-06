@@ -123,6 +123,13 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["connections/sync"] = self._handle_connections_sync
         self._method_handlers["connections/discover"] = self._handle_connections_discover
 
+        # Agent configuration handlers
+        self._method_handlers["agents/list"] = self._handle_agents_list
+        self._method_handlers["agents/configure"] = self._handle_agents_configure
+        self._method_handlers["agents/remove"] = self._handle_agents_remove
+        self._method_handlers["agents/config-snippet"] = self._handle_agents_config_snippet
+        self._method_handlers["agents/config-write"] = self._handle_agents_config_write
+
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
         self._method_handlers["schema/schemas"] = self._handle_schema_schemas
@@ -3506,3 +3513,168 @@ This knowledge helps the AI generate better queries over time.
                 "parsed": parsed,
                 "error": str(e),
             }
+
+    # =========================================================================
+    # Agent configuration handlers
+    # =========================================================================
+
+    async def _handle_agents_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List detected MCP agents and their db-mcp configuration status."""
+        from db_mcp.agents import AGENTS, load_agent_config
+
+        agents_list = []
+        for agent_id, agent in AGENTS.items():
+            installed = bool(agent.detect_fn and agent.detect_fn())
+            config_exists = agent.config_path.exists()
+
+            dbmcp_configured = False
+            binary_path = None
+            if config_exists:
+                config = load_agent_config(agent)
+                mcp_section = config.get(agent.config_key, {})
+                if "db-mcp" in mcp_section:
+                    dbmcp_configured = True
+                    binary_path = mcp_section["db-mcp"].get("command")
+
+            agents_list.append(
+                {
+                    "id": agent_id,
+                    "name": agent.name,
+                    "installed": installed,
+                    "configPath": str(agent.config_path),
+                    "configExists": config_exists,
+                    "configFormat": agent.config_format,
+                    "dbmcpConfigured": dbmcp_configured,
+                    "binaryPath": binary_path,
+                }
+            )
+
+        return {"agents": agents_list}
+
+    async def _handle_agents_configure(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Add db-mcp to an agent's MCP config."""
+        from db_mcp.agents import (
+            AGENTS,
+            configure_agent_for_dbmcp,
+            get_db_mcp_binary_path,
+        )
+
+        agent_id = params.get("agentId", "")
+        if agent_id not in AGENTS:
+            return {"success": False, "error": f"Unknown agent: {agent_id}"}
+
+        binary_path = get_db_mcp_binary_path()
+        try:
+            result = configure_agent_for_dbmcp(agent_id, binary_path)
+            if result:
+                return {
+                    "success": True,
+                    "configPath": str(AGENTS[agent_id].config_path),
+                }
+            return {"success": False, "error": "Configuration failed"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_agents_remove(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Remove db-mcp from an agent's MCP config."""
+        from db_mcp.agents import AGENTS, remove_dbmcp_from_agent
+
+        agent_id = params.get("agentId", "")
+        if agent_id not in AGENTS:
+            return {"success": False, "error": f"Unknown agent: {agent_id}"}
+
+        try:
+            result = remove_dbmcp_from_agent(agent_id)
+            if result:
+                return {"success": True}
+            return {"success": False, "error": "Removal failed"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _handle_agents_config_snippet(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Return the MCP servers config snippet for an agent."""
+        import json as _json
+
+        from db_mcp.agents import AGENTS, _dict_to_toml, load_agent_config
+
+        agent_id = params.get("agentId", "")
+        if agent_id not in AGENTS:
+            return {"success": False, "error": f"Unknown agent: {agent_id}"}
+
+        agent = AGENTS[agent_id]
+        config = load_agent_config(agent)
+        mcp_section = config.get(agent.config_key, {})
+
+        if not mcp_section:
+            return {
+                "success": True,
+                "snippet": "",
+                "format": agent.config_format,
+                "configKey": agent.config_key,
+            }
+
+        if agent.config_format == "json":
+            snippet = _json.dumps(mcp_section, indent=2)
+        else:
+            snippet = _dict_to_toml(mcp_section)
+
+        return {
+            "success": True,
+            "snippet": snippet,
+            "format": agent.config_format,
+            "configKey": agent.config_key,
+        }
+
+    async def _handle_agents_config_write(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Write an edited MCP servers config snippet back to an agent's config file.
+
+        Validates the snippet (JSON/TOML parse + type check) before writing.
+        Only replaces the MCP servers section; other config keys are preserved.
+        """
+        import json as _json
+        import tomllib
+
+        from db_mcp.agents import (
+            AGENTS,
+            _dict_to_toml,
+            load_agent_config,
+        )
+
+        agent_id = params.get("agentId", "")
+        snippet = params.get("snippet", "")
+
+        if agent_id not in AGENTS:
+            return {"success": False, "error": f"Unknown agent: {agent_id}"}
+
+        if not snippet or not snippet.strip():
+            return {"success": False, "error": "Snippet cannot be empty"}
+
+        agent = AGENTS[agent_id]
+
+        # Parse and validate the snippet
+        if agent.config_format == "json":
+            try:
+                parsed = _json.loads(snippet)
+            except _json.JSONDecodeError as e:
+                return {"success": False, "error": f"Invalid JSON: {e}"}
+            if not isinstance(parsed, dict):
+                return {"success": False, "error": "Snippet must be a JSON object"}
+        else:
+            try:
+                parsed = tomllib.loads(snippet)
+            except tomllib.TOMLDecodeError as e:
+                return {"success": False, "error": f"Invalid TOML: {e}"}
+
+        # Load full config, replace just the MCP section, save
+        config = load_agent_config(agent)
+        config[agent.config_key] = parsed
+
+        agent.config_path.parent.mkdir(parents=True, exist_ok=True)
+        if agent.config_format == "json":
+            with open(agent.config_path, "w") as f:
+                _json.dump(config, f, indent=2)
+        else:
+            with open(agent.config_path, "w") as f:
+                f.write(_dict_to_toml(config))
+
+        return {"success": True}

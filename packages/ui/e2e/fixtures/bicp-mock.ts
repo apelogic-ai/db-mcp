@@ -81,6 +81,13 @@ export class BICPMock {
     this.on("gaps/dismiss", () => mockData.DISMISS_GAP_SUCCESS);
     this.on("insights/save-example", () => mockData.SAVE_EXAMPLE_SUCCESS);
 
+    // Agents
+    this.on("agents/list", () => mockData.AGENTS_LIST_HAPPY);
+    this.on("agents/configure", () => mockData.AGENTS_CONFIGURE_SUCCESS);
+    this.on("agents/remove", () => mockData.AGENTS_REMOVE_SUCCESS);
+    this.on("agents/config-snippet", () => mockData.AGENTS_SNIPPET_HAPPY);
+    this.on("agents/config-write", () => mockData.AGENTS_WRITE_SUCCESS);
+
     // Metrics & Dimensions
     this.on("metrics/list", () => mockData.METRICS_LIST_HAPPY);
     this.on("metrics/add", () => mockData.METRICS_ADD_SUCCESS);

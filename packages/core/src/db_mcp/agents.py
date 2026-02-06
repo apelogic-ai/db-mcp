@@ -3,6 +3,7 @@
 import json
 import os
 import platform
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -306,3 +307,45 @@ def configure_multiple_agents(agent_ids: list[str], binary_path: str) -> dict[st
     for agent_id in agent_ids:
         results[agent_id] = configure_agent_for_dbmcp(agent_id, binary_path)
     return results
+
+
+def remove_dbmcp_from_agent(agent_id: str) -> bool:
+    """Remove db-mcp entry from an agent's MCP config.
+
+    Returns True if successful (including when db-mcp was not configured),
+    False if agent_id is invalid.
+    """
+    if agent_id not in AGENTS:
+        return False
+
+    agent = AGENTS[agent_id]
+
+    try:
+        config = load_agent_config(agent)
+        if agent.config_key not in config:
+            return True
+
+        if "db-mcp" in config[agent.config_key]:
+            del config[agent.config_key]["db-mcp"]
+            save_agent_config(agent, config)
+
+        return True
+    except Exception as e:
+        console.print(f"[red]Failed to remove db-mcp from {agent.name}: {e}[/red]")
+        return False
+
+
+def get_db_mcp_binary_path() -> str:
+    """Get the db-mcp binary path (or script command in dev mode)."""
+    if getattr(sys, "frozen", False):
+        # Running as PyInstaller bundle — check for symlink at ~/.local/bin/db-mcp
+        symlink_path = Path.home() / ".local" / "bin" / "db-mcp"
+        if symlink_path.is_symlink():
+            try:
+                resolved = symlink_path.resolve()
+                if resolved == Path(sys.executable).resolve():
+                    return str(symlink_path)
+            except OSError:
+                pass
+        return sys.executable
+    return "db-mcp"

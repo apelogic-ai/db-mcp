@@ -134,22 +134,13 @@ def save_config(config: dict) -> None:
 
 
 def get_db_mcp_binary_path() -> str:
-    """db-mcp binary (or script in dev mode)."""
-    # If running as PyInstaller bundle
-    if getattr(sys, "frozen", False):
-        # Check if there is a symlink at ~/.local/bin/db-mcp pointing to us
-        # If so, use the symlink path so upgrades work automatically
-        symlink_path = Path.home() / ".local" / "bin" / "db-mcp"
-        if symlink_path.is_symlink():
-            try:
-                resolved = symlink_path.resolve()
-                if resolved == Path(sys.executable).resolve():
-                    return str(symlink_path)
-            except OSError:
-                pass
-        return sys.executable
-    # Running as script - return the command that invoked us
-    return "db-mcp"
+    """db-mcp binary (or script in dev mode).
+
+    Re-exported from agents module for backward compatibility.
+    """
+    from db_mcp.agents import get_db_mcp_binary_path as _get_binary_path
+
+    return _get_binary_path()
 
 
 def load_claude_desktop_config() -> tuple[dict, Path]:

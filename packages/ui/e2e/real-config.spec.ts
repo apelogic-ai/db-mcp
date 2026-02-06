@@ -10,13 +10,15 @@ const POSTGRES_URL =
 const POLYMARKET_BASE_URL =
   process.env.E2E_POLYMARKET_BASE_URL || "https://gamma-api.polymarket.com/";
 
-test.describe("E2E: real connectors", () => {
-  test("can create + test DB/API/File connectors", async ({ page }, testInfo) => {
+test.describe("E2E: real config", () => {
+  test("can create + test DB/API/File connectors", async ({
+    page,
+  }, testInfo) => {
     const dbName = `mrna-${Date.now()}`;
     const apiName = `polymarket-${Date.now()}`;
     const fileName = `files-${Date.now()}`;
 
-    await page.goto("/connectors", { waitUntil: "domcontentloaded" });
+    await page.goto("/config", { waitUntil: "domcontentloaded" });
 
     // ── Database connector ───────────────────────────────────────────
     await page.getByRole("button", { name: /add.*database/i }).click();
@@ -42,13 +44,16 @@ test.describe("E2E: real connectors", () => {
     });
 
     // ── API connector (Polymarket) ───────────────────────────────────
-    await page.goto("/connectors", { waitUntil: "domcontentloaded" });
+    await page.goto("/config", { waitUntil: "domcontentloaded" });
 
-    await page.getByRole("button", { name: /add.*api/i }).first().click();
+    await page
+      .getByRole("button", { name: /add.*api/i })
+      .first()
+      .click();
     await page.getByPlaceholder("my-api").fill(apiName);
-    await page.getByPlaceholder("https://api.example.com/v1").fill(
-      POLYMARKET_BASE_URL,
-    );
+    await page
+      .getByPlaceholder("https://api.example.com/v1")
+      .fill(POLYMARKET_BASE_URL);
 
     // Leave default auth (Bearer) but set env var name so it's valid config.
     // For public APIs, auth may not be required.
@@ -84,7 +89,7 @@ test.describe("E2E: real connectors", () => {
       "utf8",
     );
 
-    await page.goto("/connectors", { waitUntil: "domcontentloaded" });
+    await page.goto("/config", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /add.*file/i }).click();
     await page.getByPlaceholder("my-data-files").fill(fileName);
     await page.getByPlaceholder("/path/to/your/data").fill(dir);

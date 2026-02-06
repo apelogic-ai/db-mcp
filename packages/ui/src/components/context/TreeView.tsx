@@ -221,9 +221,7 @@ export function TreeView({
         <div className="p-4 text-gray-500 text-center">
           No connections configured.
           <br />
-          <span className="text-xs">
-            Add a connection in the Connectors page.
-          </span>
+          <span className="text-xs">Add a connection in the Config page.</span>
         </div>
       ) : (
         connections.map((conn) => {

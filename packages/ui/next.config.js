@@ -2,7 +2,7 @@
 const nextConfig = {
   distDir: "dist",
   output: "export", // Static export for embedding in backend
-  trailingSlash: true, // Ensures /connectors/ works as /connectors/index.html
+  trailingSlash: true, // Ensures /config/ works as /config/index.html
   async rewrites() {
     // In CI/playwright mocked e2e, we intercept /bicp in the browser.
     // If Next proxies /bicp to localhost:8080, tests fail with ECONNREFUSED.

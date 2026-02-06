@@ -7,8 +7,8 @@ const port = process.env.PW_PORT ? parseInt(process.env.PW_PORT, 10) : 18080;
 
 export default defineConfig({
   testDir: "./e2e",
-  // Only run the real-connectors spec by default (avoid the mocked suite).
-  testMatch: /real-connectors\.spec\.ts/,
+  // Only run the real-config spec by default (avoid the mocked suite).
+  testMatch: /real-config\.spec\.ts/,
 
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,

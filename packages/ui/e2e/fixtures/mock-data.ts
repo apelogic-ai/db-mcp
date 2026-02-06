@@ -907,3 +907,81 @@ export const METRICS_APPROVE_SUCCESS = {
   name: "count_sessions",
   type: "metric",
 };
+
+// ── Agents ──────────────────────────────────────────────────
+
+export const AGENTS_LIST_HAPPY = {
+  agents: [
+    {
+      id: "claude-desktop",
+      name: "Claude Desktop",
+      installed: true,
+      configPath: "/home/user/.config/Claude/claude_desktop_config.json",
+      configExists: true,
+      configFormat: "json",
+      dbmcpConfigured: true,
+      binaryPath: "/usr/local/bin/db-mcp",
+    },
+    {
+      id: "claude-code",
+      name: "Claude Code",
+      installed: true,
+      configPath: "/home/user/.claude/settings.json",
+      configExists: true,
+      configFormat: "json",
+      dbmcpConfigured: false,
+      binaryPath: null,
+    },
+    {
+      id: "codex",
+      name: "Codex CLI",
+      installed: false,
+      configPath: "/home/user/.codex/config.toml",
+      configExists: false,
+      configFormat: "toml",
+      dbmcpConfigured: false,
+      binaryPath: null,
+    },
+  ],
+};
+
+export const AGENTS_LIST_EMPTY = {
+  agents: [],
+};
+
+export const AGENTS_CONFIGURE_SUCCESS = {
+  success: true,
+  configPath: "/home/user/.config/Claude/claude_desktop_config.json",
+};
+
+export const AGENTS_REMOVE_SUCCESS = {
+  success: true,
+};
+
+export const AGENTS_WRITE_SUCCESS = {
+  success: true,
+};
+
+export const AGENTS_WRITE_INVALID = {
+  success: false,
+  error:
+    "Invalid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+};
+
+export const AGENTS_SNIPPET_HAPPY = {
+  success: true,
+  snippet: JSON.stringify(
+    {
+      mcpServers: {
+        "db-mcp": {
+          command: "/usr/local/bin/db-mcp",
+          args: ["start"],
+        },
+      },
+    },
+    null,
+    2,
+  ),
+  format: "json",
+  configKey: "mcpServers",
+};

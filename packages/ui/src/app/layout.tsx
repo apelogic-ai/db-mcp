@@ -20,7 +20,7 @@ const inconsolata = Inconsolata({
 });
 
 const navItems = [
-  { href: "/connectors", label: "Connectors" },
+  { href: "/config", label: "Config" },
   { href: "/context", label: "Context" },
   { href: "/metrics", label: "Metrics" },
   { href: "/traces", label: "Traces" },

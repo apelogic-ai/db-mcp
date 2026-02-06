@@ -16,7 +16,9 @@ from db_mcp.agents import (
     detect_claude_desktop,
     detect_codex,
     detect_installed_agents,
+    get_db_mcp_binary_path,
     load_agent_config,
+    remove_dbmcp_from_agent,
     save_agent_config,
 )
 
@@ -389,3 +391,100 @@ class TestAgentConfiguration:
             assert results["codex"] is True
             assert claude_path.exists()
             assert codex_path.exists()
+
+
+class TestRemoveAgent:
+    """Test removing db-mcp from agent configs."""
+
+    def test_remove_from_json_agent(self):
+        """Test removing db-mcp from a JSON agent config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            existing = {
+                "mcpServers": {
+                    "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                    "github": {"command": "npx", "args": ["@github/mcp"]},
+                }
+            }
+            with open(config_path, "w") as f:
+                json.dump(existing, f)
+
+            AGENTS["claude-desktop"].config_path = config_path
+            result = remove_dbmcp_from_agent("claude-desktop")
+
+            assert result is True
+            with open(config_path) as f:
+                config = json.load(f)
+            assert "db-mcp" not in config["mcpServers"]
+            assert "github" in config["mcpServers"]
+
+    def test_remove_from_toml_agent(self):
+        """Test removing db-mcp from a TOML agent config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            existing = {
+                "model": "o3",
+                "mcp_servers": {
+                    "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                    "other": {"command": "npx", "args": ["-y", "other"]},
+                },
+            }
+            config_path.write_text(_dict_to_toml(existing))
+
+            AGENTS["codex"].config_path = config_path
+            result = remove_dbmcp_from_agent("codex")
+
+            assert result is True
+            with open(config_path, "rb") as f:
+                config = tomllib.load(f)
+            assert "db-mcp" not in config["mcp_servers"]
+            assert "other" in config["mcp_servers"]
+
+    def test_remove_not_configured_is_noop(self):
+        """Test removing when db-mcp is not configured."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            existing = {"mcpServers": {"github": {"command": "npx"}}}
+            with open(config_path, "w") as f:
+                json.dump(existing, f)
+
+            AGENTS["claude-desktop"].config_path = config_path
+            result = remove_dbmcp_from_agent("claude-desktop")
+
+            assert result is True
+            with open(config_path) as f:
+                config = json.load(f)
+            assert "github" in config["mcpServers"]
+
+    def test_remove_no_config_section_is_noop(self):
+        """Test removing when config has no MCP servers section."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            with open(config_path, "w") as f:
+                json.dump({}, f)
+
+            AGENTS["claude-desktop"].config_path = config_path
+            result = remove_dbmcp_from_agent("claude-desktop")
+            assert result is True
+
+    def test_remove_invalid_agent(self):
+        """Test removing from an invalid agent ID."""
+        result = remove_dbmcp_from_agent("nonexistent-agent")
+        assert result is False
+
+
+class TestGetBinaryPath:
+    """Test get_db_mcp_binary_path."""
+
+    def test_returns_string(self):
+        """Test that it returns a string path."""
+        path = get_db_mcp_binary_path()
+        assert isinstance(path, str)
+        assert len(path) > 0
+
+    def test_dev_mode_returns_db_mcp(self):
+        """In dev mode (not frozen), returns 'db-mcp'."""
+        with patch("db_mcp.agents.getattr", return_value=False):
+            # Not frozen — should return "db-mcp"
+            path = get_db_mcp_binary_path()
+            assert path == "db-mcp"

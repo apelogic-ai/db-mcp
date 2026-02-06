@@ -1,8 +1,8 @@
 import { test, expect, mockData } from "./fixtures";
 
-test.describe("Connectors Page", () => {
+test.describe("Config Page", () => {
   test("displays connection list with badges", async ({ page }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Both connections visible (scoped to main to avoid nav selector match)
     const main = page.locator("main");
@@ -16,7 +16,7 @@ test.describe("Connectors Page", () => {
 
   test("empty state when no connections", async ({ page, bicpMock }) => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_EMPTY);
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     await expect(
       page.getByText("No database connections configured yet."),
@@ -24,7 +24,7 @@ test.describe("Connectors Page", () => {
   });
 
   test("create connection flow", async ({ page, bicpMock }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Click "+ Add Database" button in the Database section
     await page.getByRole("button", { name: /add database/i }).click();
@@ -47,7 +47,7 @@ test.describe("Connectors Page", () => {
   });
 
   test("edit connection shows masked URL", async ({ page }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Click edit on production
     await page.getByRole("button", { name: "Edit" }).first().click();
@@ -67,7 +67,7 @@ test.describe("Connectors Page", () => {
     page,
     bicpMock,
   }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Enter edit mode
     await page.getByRole("button", { name: "Edit" }).first().click();
@@ -82,7 +82,7 @@ test.describe("Connectors Page", () => {
   });
 
   test("test connection success", async ({ page }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
     await page.getByRole("button", { name: "Edit" }).first().click();
 
     // Replace the masked URL with a real one
@@ -106,7 +106,7 @@ test.describe("Connectors Page", () => {
 
   test("test connection failure", async ({ page, bicpMock }) => {
     bicpMock.on("connections/test", () => mockData.CONNECTION_TEST_FAILURE);
-    await page.goto("/connectors");
+    await page.goto("/config");
     await page.getByRole("button", { name: "Edit" }).first().click();
 
     const urlInput = page.getByPlaceholder(
@@ -126,7 +126,7 @@ test.describe("Connectors Page", () => {
   });
 
   test("delete connection with confirmation", async ({ page, bicpMock }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Set up dialog handler BEFORE triggering delete
     page.on("dialog", (dialog) => dialog.accept());
@@ -140,7 +140,7 @@ test.describe("Connectors Page", () => {
   });
 
   test("switch connection", async ({ page, bicpMock }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Staging has a "Switch" button
     await page.getByRole("button", { name: "Switch" }).click();
@@ -151,7 +151,7 @@ test.describe("Connectors Page", () => {
 
   test("server error on connection list", async ({ page, bicpMock }) => {
     bicpMock.onError("connections/list", -32603, "Internal server error");
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     await expect(
       page.getByText(/error/i).or(page.getByText(/failed/i)),
@@ -162,7 +162,7 @@ test.describe("Connectors Page", () => {
 
   test("displays API connections section", async ({ page, bicpMock }) => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     const main = page.locator("main");
 
@@ -175,7 +175,7 @@ test.describe("Connectors Page", () => {
 
   test("API empty state shows add button", async ({ page, bicpMock }) => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_HAPPY);
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     await expect(
       page.getByText("No API connections configured yet."),
@@ -186,7 +186,7 @@ test.describe("Connectors Page", () => {
   });
 
   test("create API connection flow", async ({ page, bicpMock }) => {
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Click "+ Add API Connection" from the empty state
     await page
@@ -222,7 +222,7 @@ test.describe("Connectors Page", () => {
       if (params?.name === "stripe-api") return mockData.CONNECTION_GET_API;
       return mockData.CONNECTION_GET_PRODUCTION;
     });
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // The stripe-api connection row contains its name; click Edit in that row
     const stripeRow = page
@@ -244,7 +244,7 @@ test.describe("Connectors Page", () => {
 
   test("discover API endpoints", async ({ page, bicpMock }) => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Click Discover Endpoints button
     await page.getByRole("button", { name: "Discover Endpoints" }).click();
@@ -262,7 +262,7 @@ test.describe("Connectors Page", () => {
 
   test("sync API connection", async ({ page, bicpMock }) => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
-    await page.goto("/connectors");
+    await page.goto("/config");
 
     // Click Sync Data button
     await page.getByRole("button", { name: "Sync Data" }).click();
@@ -276,5 +276,143 @@ test.describe("Connectors Page", () => {
     await expect(page.getByText(/synced 2 endpoints/i)).toBeVisible({
       timeout: 5000,
     });
+  });
+
+  // ── Agent Configuration ─────────────────────────────────────
+
+  test("displays detected agents with badges", async ({ page }) => {
+    await page.goto("/config");
+
+    // Agent Configuration section title
+    await expect(page.getByText("Agent Configuration")).toBeVisible();
+
+    // All three agents visible
+    await expect(page.getByText("Claude Desktop")).toBeVisible();
+    await expect(page.getByText("Claude Code")).toBeVisible();
+    await expect(page.getByText("Codex CLI")).toBeVisible();
+
+    // Installed badges for Claude Desktop and Claude Code
+    const desktopRow = page.getByTestId("agent-claude-desktop");
+    await expect(desktopRow.getByText("Installed")).toBeVisible();
+    await expect(desktopRow.getByText("Configured")).toBeVisible();
+
+    const codeRow = page.getByTestId("agent-claude-code");
+    await expect(codeRow.getByText("Installed")).toBeVisible();
+
+    // Codex is not installed
+    const codexRow = page.getByTestId("agent-codex");
+    await expect(codexRow.getByText("Not Installed")).toBeVisible();
+  });
+
+  test("add db-mcp to agent", async ({ page, bicpMock }) => {
+    await page.goto("/config");
+
+    // Claude Code has an "Add" button (installed but not configured)
+    const codeRow = page.getByTestId("agent-claude-code");
+    await codeRow.getByRole("button", { name: "Add" }).click();
+
+    // Verify configure was called
+    const calls = bicpMock.getCalls("agents/configure");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params).toMatchObject({ agentId: "claude-code" });
+  });
+
+  test("remove db-mcp from agent", async ({ page, bicpMock }) => {
+    await page.goto("/config");
+
+    // Claude Desktop has a "Remove" button (configured)
+    const desktopRow = page.getByTestId("agent-claude-desktop");
+    await desktopRow.getByRole("button", { name: "Remove" }).click();
+
+    // Verify remove was called
+    const calls = bicpMock.getCalls("agents/remove");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params).toMatchObject({ agentId: "claude-desktop" });
+  });
+
+  test("edit config opens editor directly", async ({ page, bicpMock }) => {
+    await page.goto("/config");
+
+    const desktopRow = page.getByTestId("agent-claude-desktop");
+
+    // Click "Edit Config" — opens textarea immediately
+    await desktopRow.getByRole("button", { name: "Edit Config" }).click();
+
+    const editor = page.getByTestId("snippet-editor-claude-desktop");
+    await expect(editor).toBeVisible();
+    const value = await editor.inputValue();
+    expect(value).toContain("db-mcp");
+
+    // Modify and save
+    await editor.fill(
+      '{\n  "db-mcp": {\n    "command": "/new/path",\n    "args": ["start"]\n  }\n}',
+    );
+    await desktopRow.getByRole("button", { name: "Save" }).click();
+
+    // Verify config-write was called
+    const calls = bicpMock.getCalls("agents/config-write");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params?.agentId).toBe("claude-desktop");
+    expect(calls[0].params?.snippet).toContain("/new/path");
+  });
+
+  test("edit config cancel closes editor", async ({ page }) => {
+    await page.goto("/config");
+
+    const desktopRow = page.getByTestId("agent-claude-desktop");
+    await desktopRow.getByRole("button", { name: "Edit Config" }).click();
+    await expect(
+      page.getByTestId("snippet-editor-claude-desktop"),
+    ).toBeVisible();
+
+    // Cancel closes editor
+    await desktopRow.getByRole("button", { name: "Cancel" }).click();
+    await expect(
+      page.getByTestId("snippet-editor-claude-desktop"),
+    ).not.toBeVisible();
+  });
+
+  test("edit config shows validation error on bad input", async ({
+    page,
+    bicpMock,
+  }) => {
+    bicpMock.on("agents/config-write", () => mockData.AGENTS_WRITE_INVALID);
+    await page.goto("/config");
+
+    const desktopRow = page.getByTestId("agent-claude-desktop");
+    await desktopRow.getByRole("button", { name: "Edit Config" }).click();
+    await page.getByTestId("snippet-editor-claude-desktop").fill("{bad json}");
+    await desktopRow.getByRole("button", { name: "Save" }).click();
+
+    // Error displayed, editor stays open
+    const errorEl = page.getByTestId("save-error-claude-desktop");
+    await expect(errorEl).toBeVisible();
+    await expect(errorEl).toContainText("Invalid JSON");
+    await expect(
+      page.getByTestId("snippet-editor-claude-desktop"),
+    ).toBeVisible();
+  });
+
+  test("empty agents list", async ({ page, bicpMock }) => {
+    bicpMock.on("agents/list", () => mockData.AGENTS_LIST_EMPTY);
+    await page.goto("/config");
+
+    await expect(page.getByText("No agents detected.")).toBeVisible();
+  });
+
+  test("not-installed agents have no action buttons", async ({ page }) => {
+    await page.goto("/config");
+
+    // Codex is not installed — should have no Add/Remove/Edit buttons
+    const codexRow = page.getByTestId("agent-codex");
+    await expect(
+      codexRow.getByRole("button", { name: "Add" }),
+    ).not.toBeVisible();
+    await expect(
+      codexRow.getByRole("button", { name: "Remove" }),
+    ).not.toBeVisible();
+    await expect(
+      codexRow.getByRole("button", { name: "Edit Config" }),
+    ).not.toBeVisible();
   });
 });

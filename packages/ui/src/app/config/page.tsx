@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBICP } from "@/lib/bicp-context";
+import AgentConfig from "@/components/AgentConfig";
 
 interface Connection {
   name: string;
@@ -156,7 +157,7 @@ function StatusIndicator({
   return null;
 }
 
-export default function ConnectorsPage() {
+export default function ConfigPage() {
   const { isInitialized, isLoading, error, serverInfo, initialize, call } =
     useBICP();
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -995,9 +996,9 @@ export default function ConnectorsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Data Connectors</h1>
+        <h1 className="text-2xl font-bold text-white">Configuration</h1>
         <p className="text-gray-400 mt-1">
-          Manage database and API connections
+          Manage connections and agent settings
         </p>
       </div>
 
@@ -1656,6 +1657,9 @@ export default function ConnectorsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Section 4: Agent Configuration */}
+      <AgentConfig />
     </div>
   );
 }
