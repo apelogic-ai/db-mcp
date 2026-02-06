@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.51] - 2026-02-06
+
+### Added
+
+- **Auto-registration on brownfield init**: `db-mcp init <name> <repo-url>` detects `.collab.yaml` and registers collaborator automatically
+- **`db-mcp collab daemon`**: long-running periodic sync command with `--interval` flag
+- **Session mode sync hooks**: `server_lifespan()` pulls on startup, pushes on shutdown via `asyncio.to_thread()`
+
+### Changed
+
+- **Server lifespan**: replaced periodic `CollabSyncLoop` with one-shot pull/push hooks (session mode)
+
+### Removed
+
+- **`db-mcp collab join`**: redundant with existing `db-mcp init <name> <repo-url>` brownfield flow
+
 ## [0.4.50] - 2026-02-06
 
 ### Added

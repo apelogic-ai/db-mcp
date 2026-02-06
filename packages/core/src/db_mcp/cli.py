@@ -592,6 +592,9 @@ def _init_brownfield(name: str, git_url: str):
     # Recover onboarding state from cloned files
     _recover_onboarding_state(name, connection_path)
 
+    # Auto-register as collaborator if manifest exists
+    _auto_register_collaborator(connection_path)
+
     # Configure MCP agents
     _configure_agents()
 
@@ -906,6 +909,69 @@ def _recover_onboarding_state(name: str, connection_path: Path):
             console.print(f"  [dim]Schema: {state.tables_total} tables[/dim]")
         if has_domain:
             console.print("  [dim]Domain model: ready[/dim]")
+
+
+def _auto_register_collaborator(connection_path: Path) -> None:
+    """Auto-register as collaborator when cloning a vault with .collab.yaml.
+
+    Called during brownfield init (db-mcp init <name> <git-url>).
+    If the cloned repo has a collaboration manifest, this:
+    1. Prompts for user_name if not in config
+    2. Gets or generates user_id
+    3. Creates collaborator/{user_name} branch
+    4. Adds self to .collab.yaml and commits+pushes the branch
+    """
+    from db_mcp.collab.manifest import (
+        add_member,
+        get_member,
+        get_user_name_from_config,
+        load_manifest,
+        save_manifest,
+        set_user_name_in_config,
+    )
+    from db_mcp.git_utils import git
+    from db_mcp.traces import generate_user_id, get_user_id_from_config
+
+    manifest = load_manifest(connection_path)
+    if manifest is None:
+        return  # No collab manifest — nothing to do
+
+    # Get or prompt for user_name
+    user_name = get_user_name_from_config()
+    if not user_name:
+        user_name = click.prompt("Your name (used for branch names and attribution)")
+        set_user_name_in_config(user_name)
+
+    # Get or generate user_id
+    user_id = get_user_id_from_config()
+    if not user_id:
+        user_id = generate_user_id()
+        config = load_config()
+        config["user_id"] = user_id
+        save_config(config)
+
+    # Skip if already registered
+    if get_member(manifest, user_id) is not None:
+        console.print(f"[dim]Already registered as collaborator: {user_name}[/dim]")
+        return
+
+    # Create collaborator branch
+    branch = f"collaborator/{user_name}"
+    git.checkout(connection_path, branch, create=True)
+
+    # Add self to manifest
+    manifest = add_member(manifest, user_name, user_id, "collaborator")
+    save_manifest(connection_path, manifest)
+    git.add(connection_path, [".collab.yaml"])
+    git.commit(connection_path, f"Add collaborator: {user_name}")
+    try:
+        git.push_branch(connection_path, branch)
+        console.print(f"[green]Registered as collaborator: {user_name}[/green]")
+        console.print(f"[dim]Branch: {branch} | User ID: {user_id}[/dim]")
+    except Exception as e:
+        console.print(
+            f"[yellow]Registered locally but push failed (retry with 'collab sync'): {e}[/yellow]"
+        )
 
 
 def _offer_git_setup(name: str, connection_path: Path):
@@ -1800,15 +1866,15 @@ def collab():
     """Collaborate on a shared knowledge vault via git.
 
     The master sets up the vault and reviews changes.
-    Collaborators sync examples, learnings, and traces automatically.
+    Collaborators join via 'db-mcp init <name> <repo-url>' and sync automatically.
 
     Examples:
         db-mcp collab init                # Master: set up collaboration
-        db-mcp collab join <repo-url>     # Collaborator: join a shared vault
         db-mcp collab sync                # Push/pull changes
         db-mcp collab merge               # Master: merge collaborator changes
         db-mcp collab status              # Show sync status
         db-mcp collab members             # List team members
+        db-mcp collab daemon              # Run periodic sync in background
     """
     pass
 
@@ -1886,96 +1952,11 @@ def collab_init():
         console.print(f"[dim]You are the master. User: {user_name} ({user_id})[/dim]")
         console.print(
             "[dim]Share the repo URL with collaborators so they can run "
-            "'db-mcp collab join <url>'.[/dim]"
+            "'db-mcp init <name> <url>' to join.[/dim]"
         )
     except Exception as e:
         console.print(f"[yellow]Manifest saved locally but push failed: {e}[/yellow]")
         console.print("[dim]Push manually when ready.[/dim]")
-
-
-@collab.command("join")
-@click.argument("repo_url")
-@click.option("-n", "--name", "conn_name", default=None, help="Connection name (default: derived)")
-def collab_join(repo_url: str, conn_name: str | None):
-    """Join a shared knowledge vault as a collaborator.
-
-    REPO_URL is the git repository URL to clone.
-    """
-    from db_mcp.collab.manifest import (
-        add_member,
-        get_user_name_from_config,
-        load_manifest,
-        save_manifest,
-        set_user_name_in_config,
-    )
-    from db_mcp.git_utils import git
-    from db_mcp.traces import generate_user_id, get_user_id_from_config
-
-    # Derive connection name from URL if not provided
-    if not conn_name:
-        conn_name = repo_url.rstrip("/").split("/")[-1]
-        if conn_name.endswith(".git"):
-            conn_name = conn_name[:-4]
-
-    conn_path = get_connection_path(conn_name)
-
-    if conn_path.exists():
-        console.print(f"[yellow]Connection '{conn_name}' already exists.[/yellow]")
-        console.print("[dim]Use 'db-mcp collab sync' to sync changes.[/dim]")
-        sys.exit(1)
-
-    # Clone the repo
-    console.print(f"[dim]Cloning {repo_url}...[/dim]")
-    try:
-        git.clone(repo_url, conn_path)
-    except Exception as e:
-        console.print(f"[red]Clone failed: {e}[/red]")
-        sys.exit(1)
-
-    # Get or prompt for user_name
-    user_name = get_user_name_from_config()
-    if not user_name:
-        user_name = click.prompt("Your name (used for branch names and attribution)")
-        set_user_name_in_config(user_name)
-
-    # Get or generate user_id
-    user_id = get_user_id_from_config()
-    if not user_id:
-        user_id = generate_user_id()
-        config = load_config()
-        config["user_id"] = user_id
-        save_config(config)
-
-    # Prompt for DATABASE_URL
-    db_url = click.prompt("DATABASE_URL (connection string)")
-    env_path = conn_path / ".env"
-    env_path.write_text(f"DATABASE_URL={db_url}\n")
-
-    # Create collaborator branch
-    branch = f"collaborator/{user_name}"
-    git.checkout(conn_path, branch, create=True)
-
-    # Add self to manifest
-    manifest = load_manifest(conn_path)
-    if manifest:
-        manifest = add_member(manifest, user_name, user_id, "collaborator")
-        save_manifest(conn_path, manifest)
-        git.add(conn_path, [".collab.yaml"])
-        git.commit(conn_path, f"Add collaborator: {user_name}")
-        try:
-            git.push_branch(conn_path, branch)
-        except Exception as e:
-            console.print(f"[yellow]Push failed (can retry with 'collab sync'): {e}[/yellow]")
-    else:
-        console.print(
-            "[yellow]No .collab.yaml found in repo. Ask master to run 'collab init'.[/yellow]"
-        )
-
-    # Set as active connection
-    set_active_connection(conn_name)
-    console.print(f"[green]Joined '{conn_name}' as collaborator.[/green]")
-    console.print(f"[dim]Branch: {branch} | User: {user_name} ({user_id})[/dim]")
-    console.print("[dim]Run 'db-mcp collab sync' to push your changes.[/dim]")
 
 
 @collab.command("sync")
@@ -2006,9 +1987,7 @@ def collab_sync(connection: str | None):
     # Determine user
     user_name = get_user_name_from_config()
     if not user_name:
-        console.print(
-            "[yellow]No user_name set. Run 'db-mcp collab join' or set in config.[/yellow]"
-        )
+        console.print("[yellow]No user_name set. Set user_name in ~/.db-mcp/config.yaml.[/yellow]")
         sys.exit(1)
 
     console.print(f"[bold]Syncing '{name}' as {user_name}...[/bold]")
@@ -2174,6 +2153,94 @@ def collab_members(connection: str | None):
             f"  [{role_color}]{m.role:>12}[/{role_color}]  "
             f"{m.user_name} ({m.user_id})  [dim]joined {joined}[/dim]"
         )
+
+
+@collab.command("daemon")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+@click.option(
+    "--interval",
+    default=None,
+    type=int,
+    help="Sync interval in minutes (default: from manifest or 60)",
+)
+def collab_daemon(connection: str | None, interval: int | None):
+    """Run periodic background sync (long-running process).
+
+    Pulls from main and pushes local changes at a regular interval.
+    Useful for daemon/sidecar mode where db-mcp runs continuously.
+
+    For session mode (Claude wakes up db-mcp then releases), the MCP
+    server automatically pulls on startup and pushes on shutdown.
+    """
+    import asyncio as _asyncio
+
+    from db_mcp.collab.background import CollabSyncLoop
+    from db_mcp.collab.manifest import (
+        get_member,
+        get_user_name_from_config,
+        load_manifest,
+    )
+    from db_mcp.traces import get_user_id_from_config
+
+    name = connection or get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    if not is_git_repo(conn_path):
+        console.print("[yellow]Not a git repository. Run 'db-mcp git-init' first.[/yellow]")
+        sys.exit(1)
+
+    manifest = load_manifest(conn_path)
+    if not manifest:
+        console.print("[yellow]No .collab.yaml found. Run 'db-mcp collab init' first.[/yellow]")
+        sys.exit(1)
+
+    # Determine user
+    user_name = get_user_name_from_config()
+    user_id = get_user_id_from_config()
+    if not user_name or not user_id:
+        console.print(
+            "[yellow]No user_name/user_id set. Set user_name in ~/.db-mcp/config.yaml.[/yellow]"
+        )
+        sys.exit(1)
+
+    member = get_member(manifest, user_id)
+    if not member:
+        console.print("[yellow]You are not a member of this vault.[/yellow]")
+        sys.exit(1)
+
+    sync_interval = interval or manifest.sync.sync_interval_minutes
+
+    console.print(f"[bold]Starting collab daemon for '{name}'[/bold]")
+    console.print(f"  User: {user_name} ({user_id})")
+    console.print(f"  Role: {member.role}")
+    console.print(f"  Interval: {sync_interval}m")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    async def _run_daemon():
+        loop = CollabSyncLoop(conn_path, user_name, sync_interval)
+        await loop.start()
+        # Do an initial sync immediately
+        import asyncio as _aio
+
+        await _aio.to_thread(loop._run_sync)
+        console.print("[green]Initial sync complete. Daemon running...[/green]")
+        try:
+            # Block until interrupted
+            while True:
+                await _aio.sleep(3600)
+        except _aio.CancelledError:
+            pass
+        finally:
+            await loop.stop()
+
+    try:
+        _asyncio.run(_run_daemon())
+    except KeyboardInterrupt:
+        console.print("\n[dim]Daemon stopped.[/dim]")
 
 
 # =============================================================================

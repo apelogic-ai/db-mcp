@@ -1,5 +1,6 @@
 """FastMCP server for db-mcp."""
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -141,11 +142,12 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
     await task_store.start_cleanup_loop(interval_seconds=300)  # Every 5 minutes
     logger.info("Task store cleanup loop started")
 
-    # Startup: Start collab sync loop if applicable
-    sync_loop = None
+    # Startup: Pull latest collab changes (session mode — pull-on-start)
+    collab_user_name = None
+    collab_connection_path = None
     try:
-        from db_mcp.collab.background import CollabSyncLoop
         from db_mcp.collab.manifest import get_member, load_manifest
+        from db_mcp.collab.sync import collaborator_pull
         from db_mcp.traces import get_user_id_from_config
 
         settings = get_settings()
@@ -155,23 +157,32 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
             user_id = get_user_id_from_config()
             member = get_member(manifest, user_id) if user_id else None
             if member and member.role == "collaborator":
-                sync_loop = CollabSyncLoop(
-                    connection_path,
-                    member.user_name,
-                    manifest.sync.sync_interval_minutes,
-                )
-                await sync_loop.start()
-                logger.info("Collab sync loop started for %s", member.user_name)
+                collab_user_name = member.user_name
+                collab_connection_path = connection_path
+                await asyncio.to_thread(collaborator_pull, connection_path, member.user_name)
+                logger.info("Collab pull on startup for %s", member.user_name)
     except Exception as e:
-        logger.debug("Collab sync not started: %s", e)
+        logger.debug("Collab pull on startup skipped: %s", e)
 
     try:
         yield
     finally:
-        # Shutdown: Stop collab sync loop
-        if sync_loop:
-            await sync_loop.stop()
-            logger.info("Collab sync loop stopped")
+        # Shutdown: Push collab changes (session mode — push-on-stop)
+        if collab_user_name and collab_connection_path:
+            try:
+                from db_mcp.collab.sync import collaborator_push
+
+                result = await asyncio.to_thread(
+                    collaborator_push, collab_connection_path, collab_user_name
+                )
+                if result.additive_merged or result.shared_state_files:
+                    logger.info(
+                        "Collab push on shutdown: %d additive, %d shared-state",
+                        result.additive_merged,
+                        len(result.shared_state_files),
+                    )
+            except Exception as e:
+                logger.warning("Collab push on shutdown failed: %s", e)
 
         # Shutdown: Stop cleanup loop
         await task_store.stop_cleanup_loop()
