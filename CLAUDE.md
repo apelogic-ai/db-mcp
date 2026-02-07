@@ -313,6 +313,7 @@ Also update `CHANGELOG.md` with a `## [{VERSION}]` entry.
 - **NEVER commit changes unless explicitly told to do so by the user**
 - **NEVER start dev servers or run dev.sh unless explicitly asked by the user**
 - **NEVER leave failing tests** — if tests fail after your changes, fix them immediately in the same session. Do not move on to other tasks or claim "pre-existing issues" as an excuse. If tests were passing before and fail after, it's your responsibility to fix them before considering the task complete.
+- **NEVER edit existing release notes** — release notes in `docs/releases/` are immutable once created. When asked to prepare a new release, always increment the version and create a new file (e.g. `v0.4.53.md` -> `v0.4.54.md`). Never modify a previous release's notes.
 - Stay on the current branch for the entire session
 - If a task seems to require a different branch, ask the user first
 - If you think changes should be committed, ask the user first

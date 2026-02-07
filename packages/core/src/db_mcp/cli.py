@@ -577,6 +577,16 @@ def _init_brownfield(name: str, git_url: str):
         else:
             console.print(f"  {item.name}")
 
+    # Prompt for user_name early so collaborator registration works smoothly
+    from db_mcp.collab.manifest import (
+        get_user_name_from_config,
+        set_user_name_in_config,
+    )
+
+    if not get_user_name_from_config():
+        user_name = click.prompt("\nYour name (used for branch names and attribution)")
+        set_user_name_in_config(user_name)
+
     # Now prompt for DATABASE_URL (credentials are not in git)
     _prompt_and_save_database_url(name)
 
@@ -1861,6 +1871,7 @@ def collab():
 
     Examples:
         db-mcp collab init                # Master: set up collaboration
+        db-mcp collab join                # Collaborator: register on existing connection
         db-mcp collab sync                # Push/pull changes
         db-mcp collab merge               # Master: merge collaborator changes
         db-mcp collab status              # Show sync status
@@ -1948,6 +1959,40 @@ def collab_init():
     except Exception as e:
         console.print(f"[yellow]Manifest saved locally but push failed: {e}[/yellow]")
         console.print("[dim]Push manually when ready.[/dim]")
+
+
+@collab.command("join")
+def collab_join():
+    """Join an existing collaboration as a collaborator.
+
+    Use this if you already have the connection cloned (via 'db-mcp init <name> <url>')
+    but were not registered as a collaborator, or to re-register.
+
+    Prompts for your name, creates a collaborator branch, and pushes.
+    """
+    name = get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    if not is_git_repo(conn_path):
+        console.print(
+            "[yellow]Not a git repository. Clone with 'db-mcp init <name> <url>' first.[/yellow]"
+        )
+        sys.exit(1)
+
+    from db_mcp.collab.manifest import load_manifest
+
+    manifest = load_manifest(conn_path)
+    if manifest is None:
+        console.print(
+            "[yellow]No .collab.yaml found. Ask the master to run 'db-mcp collab init'.[/yellow]"
+        )
+        sys.exit(1)
+
+    _auto_register_collaborator(conn_path)
 
 
 @collab.command("sync")
