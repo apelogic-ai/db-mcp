@@ -1,4 +1,4 @@
-name: e2e-real-connectors
+name: e2e-real
 
 on:
   workflow_dispatch:
@@ -46,6 +46,15 @@ jobs:
       - name: Install UI deps
         working-directory: packages/ui
         run: bun install
+
+      - name: Build UI static export
+        working-directory: packages/ui
+        run: bunx next build
+
+      - name: Copy UI build to Python static dir
+        run: |
+          rm -rf packages/core/src/db_mcp/static
+          cp -r packages/ui/dist packages/core/src/db_mcp/static
 
       - name: Install Playwright Chromium
         working-directory: packages/ui
