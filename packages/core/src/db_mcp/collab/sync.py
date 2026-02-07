@@ -37,6 +37,18 @@ def _branch_name(user_name: str) -> str:
     return f"collaborator/{user_name}"
 
 
+def _ensure_branch(connection_path: Path, branch: str) -> None:
+    """Switch to the collaborator branch, creating it if it doesn't exist."""
+    current = git.current_branch(connection_path)
+    if current == branch:
+        return
+    try:
+        git.checkout(connection_path, branch)
+    except Exception:
+        # Branch doesn't exist yet — create it
+        git.checkout(connection_path, branch, create=True)
+
+
 def collaborator_pull(connection_path: Path, user_name: str) -> None:
     """Pull latest main into the collaborator branch.
 
@@ -48,10 +60,8 @@ def collaborator_pull(connection_path: Path, user_name: str) -> None:
     # Fetch latest from remote
     git.fetch(connection_path)
 
-    # Ensure we're on our branch
-    current = git.current_branch(connection_path)
-    if current != branch:
-        git.checkout(connection_path, branch)
+    # Ensure we're on our branch (create if needed)
+    _ensure_branch(connection_path, branch)
 
     # Merge origin/main into our branch (brings in shared changes)
     try:
@@ -73,10 +83,8 @@ def collaborator_push(connection_path: Path, user_name: str) -> SyncResult:
     branch = _branch_name(user_name)
     result = SyncResult()
 
-    # Ensure we're on our branch
-    current = git.current_branch(connection_path)
-    if current != branch:
-        git.checkout(connection_path, branch)
+    # Ensure we're on our branch (create if needed)
+    _ensure_branch(connection_path, branch)
 
     # Stage and commit any local changes
     changed_locally = git.status(connection_path)

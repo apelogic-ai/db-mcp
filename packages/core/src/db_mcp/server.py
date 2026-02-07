@@ -157,9 +157,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
             user_id = get_user_id_from_config()
             member = get_member(manifest, user_id) if user_id else None
             if member and member.role == "collaborator":
-                collab_user_name = member.user_name
+                collab_user_name = member.user_name or user_id
                 collab_connection_path = connection_path
-                await asyncio.to_thread(collaborator_pull, connection_path, member.user_name)
+                await asyncio.to_thread(collaborator_pull, connection_path, collab_user_name)
                 logger.info("Collab pull on startup for %s", member.user_name)
     except Exception as e:
         logger.debug("Collab pull on startup skipped: %s", e)

@@ -2023,8 +2023,16 @@ def collab_sync(connection: str | None):
     # Determine user
     user_name = get_user_name_from_config()
     if not user_name:
-        console.print("[yellow]No user_name set. Set user_name in ~/.db-mcp/config.yaml.[/yellow]")
-        sys.exit(1)
+        # Fall back to user_id hash so sync never fails due to missing name
+        from db_mcp.traces import get_user_id_from_config
+
+        user_name = get_user_id_from_config()
+        if not user_name:
+            console.print(
+                "[yellow]No user_name or user_id set. Run 'db-mcp collab join' first.[/yellow]"
+            )
+            sys.exit(1)
+        console.print(f"[dim]No user_name set, using user_id: {user_name}[/dim]")
 
     console.print(f"[bold]Syncing '{name}' as {user_name}...[/bold]")
     result = full_sync(conn_path, user_name)
@@ -2237,11 +2245,12 @@ def collab_daemon(connection: str | None, interval: int | None):
     # Determine user
     user_name = get_user_name_from_config()
     user_id = get_user_id_from_config()
-    if not user_name or not user_id:
-        console.print(
-            "[yellow]No user_name/user_id set. Set user_name in ~/.db-mcp/config.yaml.[/yellow]"
-        )
+    if not user_id:
+        console.print("[yellow]No user_id set. Run 'db-mcp collab join' first.[/yellow]")
         sys.exit(1)
+    if not user_name:
+        user_name = user_id
+        console.print(f"[dim]No user_name set, using user_id: {user_name}[/dim]")
 
     member = get_member(manifest, user_id)
     if not member:
