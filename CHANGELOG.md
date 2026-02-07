@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.54] - 2026-02-06
+
+**Release Date:** February 6, 2026
+
+## Overview
+
+Fixes collaborator sync crashes and makes the onboarding flow more resilient. Sync commands now auto-create missing branches and fall back to the user_id hash when no user_name is configured.
+
+## Highlights
+
+### Crash-Free Collaborator Sync
+
+Collaborator sync no longer crashes when the `collaborator/{name}` branch doesn't exist yet. The new `_ensure_branch()` helper tries checkout first, then falls back to creating the branch automatically. This handles the common case where a collaborator cloned the repo but registration didn't fully complete.
+
+### Graceful Fallback for Missing User Names
+
+All sync paths — `collab sync`, `collab daemon`, and server session hooks — now fall back to the `user_id` hash (e.g. `collaborator/6adf5513`) when no `user_name` is configured, instead of refusing to run.
+
+## Fixes
+
+### Auto-create collaborator branch on sync
+
+`collab sync`, session hooks, and `collab daemon` now automatically create the `collaborator/{name}` branch if it doesn't exist, instead of crashing with a `git checkout` error. This handles the case where a collaborator cloned the repo but registration didn't fully complete.
+
+### Fall back to user_id when user_name is missing
+
+If a collaborator never set their `user_name`, all sync paths (`collab sync`, `collab daemon`, server lifespan hooks) now fall back to the `user_id` hash (e.g. `collaborator/6adf5513`) instead of refusing to run. A dim notice is printed so they know to set a proper name later.
+
+## Changes
+
+### Added
+
+- **`_ensure_branch()`** helper in `collab/sync.py` — tries checkout, falls back to `create=True`
+
+### Changed
+
+- **`collaborator_pull()`** and **`collaborator_push()`** use `_ensure_branch()` instead of bare `git.checkout()`
+- **`collab sync`** CLI falls back to `user_id` if no `user_name` is set
+- **`collab daemon`** CLI falls back to `user_id` if no `user_name` is set
+- **Server lifespan** uses `member.user_name or user_id` for session sync hooks
+
+## Test Coverage
+
+- Python: 481 tests passing
+
+
 ## [0.4.53] - 2026-02-06
 
 **Release Date:** February 6, 2026
