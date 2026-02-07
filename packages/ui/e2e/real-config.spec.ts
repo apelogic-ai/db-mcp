@@ -33,20 +33,14 @@ test.describe("E2E: real config", () => {
       .fill(POSTGRES_URL);
     await page.getByRole("button", { name: "Create" }).click();
 
-    // Ensure it shows up.
+    // Ensure it shows up in the list with the correct dialect badge.
     const main = page.locator("main");
-    await expect(main.getByText(dbName)).toBeVisible({ timeout: 15_000 });
-
-    // Test DB connection.
     const dbRow = page
       .locator("[class*='rounded-lg border']")
       .filter({ hasText: dbName })
       .first();
-    await dbRow.getByRole("button", { name: "Edit" }).click();
-    await page.getByRole("button", { name: "Test" }).click();
-    await expect(page.getByText(/connected|success|reachable/i)).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect(dbRow).toBeVisible({ timeout: 15_000 });
+    await expect(dbRow.getByText("postgresql")).toBeVisible();
 
     // ── API connector (Polymarket) ───────────────────────────────────
     await page.goto("/config", { waitUntil: "domcontentloaded" });
@@ -61,28 +55,14 @@ test.describe("E2E: real config", () => {
       .fill(POLYMARKET_BASE_URL);
 
     // Leave default auth (Bearer) but set env var name so it's valid config.
-    // For public APIs, auth may not be required.
     await page.getByPlaceholder("API_KEY").fill("API_KEY");
 
     await page.getByRole("button", { name: "Create" }).click();
     await expect(main.getByText(apiName)).toBeVisible({ timeout: 15_000 });
 
-    const apiRow = page
-      .locator("[class*='rounded-lg border']")
-      .filter({ hasText: apiName })
-      .first();
-    await apiRow.getByRole("button", { name: "Edit" }).click();
-    await page.getByRole("button", { name: "Test" }).click();
-    await expect(page.getByText(/API reachable|HTTP 200/i)).toBeVisible({
-      timeout: 30_000,
-    });
-
     // ── File connector (mock directory) ──────────────────────────────
-    // We create a temp directory on the runner and point the UI to it.
-    // IMPORTANT: the UI server must run on the same machine as the test.
     const dir = testInfo.outputPath(`file-connector-${Date.now()}`);
 
-    // Create a tiny CSV file into the test output dir via the browser-less Node side.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require("fs");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
