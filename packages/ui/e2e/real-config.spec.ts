@@ -21,7 +21,12 @@ test.describe("E2E: real config", () => {
     await page.goto("/config", { waitUntil: "domcontentloaded" });
 
     // ── Database connector ───────────────────────────────────────────
-    await page.getByRole("button", { name: /add.*database/i }).click();
+    // Use .first() because empty-state shows both "+ Add Database" and
+    // "+ Add Your First Database" buttons.
+    await page
+      .getByRole("button", { name: /add.*database/i })
+      .first()
+      .click();
     await page.getByPlaceholder("my-database").fill(dbName);
     await page
       .getByPlaceholder("postgresql://user:pass@host:5432/database")
@@ -90,7 +95,10 @@ test.describe("E2E: real config", () => {
     );
 
     await page.goto("/config", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: /add.*file/i }).click();
+    await page
+      .getByRole("button", { name: /add.*file/i })
+      .first()
+      .click();
     await page.getByPlaceholder("my-data-files").fill(fileName);
     await page.getByPlaceholder("/path/to/your/data").fill(dir);
     await page.getByRole("button", { name: "Create" }).click();
