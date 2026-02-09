@@ -306,9 +306,15 @@ Returns:
 """
 
 
-async def _shell(command: str) -> dict:
+async def _shell(command: str, connection: str | None = None) -> dict:
     """Run bash command in the connection directory - see SHELL_DESCRIPTION_* for docs."""
-    connection_path = get_connection_path()
+    if connection is not None:
+        from db_mcp.tools.utils import _resolve_connection_path
+
+        resolved = _resolve_connection_path(connection)
+        connection_path = Path(resolved) if resolved else get_connection_path()
+    else:
+        connection_path = get_connection_path()
 
     # Validate command
     validation = validate_command(command)

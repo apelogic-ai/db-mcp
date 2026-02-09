@@ -2,7 +2,26 @@
 
 from db_mcp.connectors import get_connector
 from db_mcp.db.connection import detect_dialect_from_url
+from db_mcp.registry import ConnectionRegistry
 from db_mcp.tools.shell import inject_protocol
+from db_mcp.tools.utils import _resolve_connection_path
+
+
+async def _list_connections() -> dict:
+    """List all available database connections.
+
+    Returns metadata for each configured connection including name, type,
+    dialect, description, and whether it is the default connection.
+
+    Returns:
+        List of connection info dicts
+    """
+    registry = ConnectionRegistry.get_instance()
+    connections = registry.list_connections()
+    return {
+        "connections": connections,
+        "count": len(connections),
+    }
 
 
 async def _test_connection(database_url: str | None = None) -> dict:
@@ -39,17 +58,18 @@ async def _detect_dialect(database_url: str) -> dict:
     }
 
 
-async def _list_catalogs(database_url: str | None = None) -> dict:
+async def _list_catalogs(database_url: str | None = None, connection: str | None = None) -> dict:
     """List all catalogs in the database (Trino 3-level hierarchy).
 
     Args:
         database_url: Optional database URL.
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         List of catalog names
     """
     try:
-        connector = get_connector()
+        connector = get_connector(connection_path=_resolve_connection_path(connection))
         catalogs = connector.get_catalogs()
         # Filter out None values for display
         catalogs_list = [c for c in catalogs if c is not None]
@@ -72,18 +92,23 @@ async def _list_catalogs(database_url: str | None = None) -> dict:
         )
 
 
-async def _list_schemas(catalog: str | None = None, database_url: str | None = None) -> dict:
+async def _list_schemas(
+    catalog: str | None = None,
+    database_url: str | None = None,
+    connection: str | None = None,
+) -> dict:
     """List all schemas in the database (or in a specific catalog for Trino).
 
     Args:
         catalog: Optional catalog name (for Trino 3-level hierarchy).
         database_url: Optional database URL.
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         List of schema names
     """
     try:
-        connector = get_connector()
+        connector = get_connector(connection_path=_resolve_connection_path(connection))
         schemas = connector.get_schemas(catalog=catalog)
         # Filter out None values for display
         schemas_list = [s for s in schemas if s is not None]
@@ -110,6 +135,7 @@ async def _list_tables(
     schema: str | None = None,
     catalog: str | None = None,
     database_url: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """List all tables in a schema (and catalog for Trino).
 
@@ -123,12 +149,13 @@ async def _list_tables(
         schema: Schema name. If None, uses default schema.
         catalog: Catalog name - REQUIRED for Trino databases.
         database_url: Optional database URL.
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         List of table info with fully qualified names
     """
     try:
-        connector = get_connector()
+        connector = get_connector(connection_path=_resolve_connection_path(connection))
         tables = connector.get_tables(schema=schema, catalog=catalog)
         return inject_protocol(
             {
@@ -165,6 +192,7 @@ async def _describe_table(
     schema: str | None = None,
     catalog: str | None = None,
     database_url: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Get detailed information about a table.
 
@@ -178,13 +206,14 @@ async def _describe_table(
         schema: Schema name. If None, uses default schema.
         catalog: Catalog name - REQUIRED for Trino databases.
         database_url: Optional database URL.
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Table info including columns
     """
     full_name = _make_full_name(table_name, schema, catalog)
     try:
-        connector = get_connector()
+        connector = get_connector(connection_path=_resolve_connection_path(connection))
         columns = connector.get_columns(table_name, schema=schema, catalog=catalog)
         return inject_protocol(
             {
@@ -217,6 +246,7 @@ async def _sample_table(
     catalog: str | None = None,
     limit: int = 5,
     database_url: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Get sample rows from a table.
 
@@ -226,6 +256,7 @@ async def _sample_table(
         catalog: Optional catalog name (for Trino 3-level hierarchy).
         limit: Maximum rows to return (default 5, max 100)
         database_url: Optional database URL.
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Sample rows from the table
@@ -235,7 +266,7 @@ async def _sample_table(
     full_name = _make_full_name(table_name, schema, catalog)
 
     try:
-        connector = get_connector()
+        connector = get_connector(connection_path=_resolve_connection_path(connection))
         rows = connector.get_table_sample(
             table_name,
             schema=schema,

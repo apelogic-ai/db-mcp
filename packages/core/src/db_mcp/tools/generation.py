@@ -603,6 +603,7 @@ async def _run_sql(
     sql: str | None = None,
     confirmed: bool = False,
     ctx: Context | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Execute a previously validated SQL query or direct SQL for SQL-like APIs.
 
@@ -650,8 +651,9 @@ async def _run_sql(
         )
 
     from db_mcp.connectors import get_connector, get_connector_capabilities
+    from db_mcp.tools.utils import _resolve_connection_path
 
-    connector = get_connector()
+    connector = get_connector(connection_path=_resolve_connection_path(connection))
     caps = get_connector_capabilities(connector)
 
     if query_id is None and sql is not None:
@@ -896,7 +898,7 @@ async def _run_sql(
         )
 
 
-async def _validate_sql(sql: str) -> dict:
+async def _validate_sql(sql: str, connection: str | None = None) -> dict:
     """Validate SQL and register it for execution.
 
     REQUIRED before run_sql - validates the query and returns a query_id
@@ -909,14 +911,16 @@ async def _validate_sql(sql: str) -> dict:
 
     Args:
         sql: SQL query to validate
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with validation results and query_id (if valid)
     """
     from db_mcp.connectors import get_connector, get_connector_capabilities
     from db_mcp.tasks.store import get_query_store
+    from db_mcp.tools.utils import _resolve_connection_path
 
-    connector = get_connector()
+    connector = get_connector(connection_path=_resolve_connection_path(connection))
     caps = get_connector_capabilities(connector)
     if not caps.get("supports_validate_sql", True):
         return inject_protocol(
@@ -1131,6 +1135,7 @@ async def _export_results(
     sql: str,
     format: str = "csv",
     filename: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Export query results as CSV or other formats.
 
@@ -1142,6 +1147,7 @@ async def _export_results(
         sql: SQL query to execute and export
         format: Export format - 'csv' (default), 'json', or 'markdown'
         filename: Optional filename (without extension)
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with formatted content and file metadata

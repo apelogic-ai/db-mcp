@@ -20,6 +20,7 @@ from db_mcp.tools.database import (
     _describe_table,
     _detect_dialect,
     _list_catalogs,
+    _list_connections,
     _list_schemas,
     _list_tables,
     _sample_table,
@@ -537,6 +538,7 @@ def _create_server() -> FastMCP:
 
     server.tool(name="ping")(_ping)
     server.tool(name="get_config")(_get_config)
+    server.tool(name="list_connections")(_list_connections)
 
     # =========================================================================
     # Shell tool - with mode-specific description
