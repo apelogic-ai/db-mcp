@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.4.56] - 2026-02-09
+
+## Highlights
+
+### Collab Attach / Detach
+New commands for retrofitting existing connections with shared team knowledge:
+
+```
+db-mcp collab attach git@github.com:org/db-knowledge.git
+db-mcp collab detach
+```
+
+**Attach** merges a team's shared knowledge repo into an existing local connection. Your local files are preserved, the team's examples/learnings/schema are merged alongside, and you're automatically registered as a collaborator. Conflicts are detected and reported for manual resolution.
+
+**Detach** cleanly removes the repo link while keeping all local files intact. Re-attachable anytime.
+
+This enables the key onboarding flow: a user sets up db-mcp locally, builds their own knowledge, and later connects to a team repo without losing anything.
+
+## Breaking changes
+- None
+
+## Features
+- `db-mcp collab attach <url>` — merge shared repo into existing connection
+- `db-mcp collab detach` — remove repo link, keep local files
+- `db-mcp init` now suggests `collab attach` when connection already exists (instead of a generic error)
+
+## Fixes
+- None
+
+## Security
+- None
+
+## Upgrade notes
+- None
+
+## Known issues
+- None
+
+
 ## [0.4.55] - 2026-02-09
 
 ## Highlights
