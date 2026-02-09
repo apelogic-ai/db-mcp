@@ -92,7 +92,7 @@ class TestCollaboratorPush:
         assert result.shared_state_files == ["schema/descriptions.yaml"]
         assert result.pr_opened is True
         assert result.pr_url == "https://github.com/org/repo/pull/1"
-        mock_git.push_branch.assert_called_once_with(path, "collaborator/alice")
+        mock_git.push_branch.assert_called_once_with(path, "collaborator/alice", force_with_lease=True)
 
     @patch("db_mcp.collab.sync.gh_available", return_value=False)
     @patch("db_mcp.collab.sync.git")
@@ -108,6 +108,65 @@ class TestCollaboratorPush:
         assert result.shared_state_files == ["domain/model.md"]
         assert result.pr_opened is False
         mock_git.push_branch.assert_called_once()
+
+
+class TestCollaboratorPushConflictFallback:
+    """Test that merge conflicts fall back to PR flow."""
+
+    @patch("db_mcp.collab.sync.gh_available", return_value=True)
+    @patch("db_mcp.collab.sync.open_pr", return_value="https://github.com/org/repo/pull/99")
+    @patch("db_mcp.collab.sync.git")
+    def test_merge_conflict_falls_back_to_pr(self, mock_git, mock_pr, _gh):
+        mock_git.current_branch.return_value = "collaborator/alice"
+        mock_git.status.return_value = ["examples/abc.yaml"]
+        mock_git.commit.return_value = "abc1234"
+        mock_git.diff_names.return_value = ["examples/abc.yaml"]
+        # merge raises an exception (conflict)
+        mock_git.merge.side_effect = Exception("merge conflict")
+        path = Path("/fake/connection")
+
+        result = collaborator_push(path, "alice")
+
+        # Should have tried merge_abort
+        mock_git.merge_abort.assert_called_once_with(path)
+        # Should fall back to PR
+        mock_git.push_branch.assert_called_once_with(path, "collaborator/alice", force_with_lease=True)
+        assert result.pr_opened is True
+
+    @patch("db_mcp.collab.sync.gh_available", return_value=False)
+    @patch("db_mcp.collab.sync.git")
+    def test_merge_conflict_without_gh_pushes_branch(self, mock_git, _gh):
+        mock_git.current_branch.return_value = "collaborator/alice"
+        mock_git.status.return_value = ["examples/abc.yaml"]
+        mock_git.commit.return_value = "abc1234"
+        mock_git.diff_names.return_value = ["examples/abc.yaml"]
+        mock_git.merge.side_effect = Exception("merge conflict")
+        path = Path("/fake/connection")
+
+        result = collaborator_push(path, "alice")
+
+        mock_git.push_branch.assert_called_once()
+        assert result.additive_merged == 0
+
+
+class TestCollaboratorPushCollabYaml:
+    """Test that .collab.yaml-only changes auto-merge."""
+
+    @patch("db_mcp.collab.sync.gh_available", return_value=False)
+    @patch("db_mcp.collab.sync.git")
+    def test_collab_yaml_only_auto_merges(self, mock_git, _gh):
+        mock_git.current_branch.return_value = "collaborator/alice"
+        mock_git.status.return_value = [".collab.yaml"]
+        mock_git.commit.return_value = "abc1234"
+        mock_git.diff_names.return_value = [".collab.yaml"]
+        path = Path("/fake/connection")
+
+        result = collaborator_push(path, "alice")
+
+        # Should auto-merge (checkout main, merge, push)
+        mock_git.checkout.assert_any_call(path, "main")
+        mock_git.merge.assert_called_once_with(path, "collaborator/alice")
+        mock_git.push.assert_called_once_with(path)
 
 
 class TestFullSync:

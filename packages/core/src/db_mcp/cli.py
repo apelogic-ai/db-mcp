@@ -2113,6 +2113,41 @@ def collab_merge(connection: str | None):
     )
 
 
+@collab.command("prune")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def collab_prune(connection: str | None):
+    """Remove collaborator branches that have been fully merged into main.
+
+    Cleans up remote branches to keep the repository tidy.
+    """
+    from db_mcp.collab.merge import prune_merged_branches
+    from db_mcp.git_utils import git
+
+    name = connection or get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    if not is_git_repo(conn_path):
+        console.print("[yellow]Not a git repository.[/yellow]")
+        sys.exit(1)
+
+    # Fetch latest remote state
+    git.fetch(conn_path)
+
+    console.print(f"[bold]Pruning merged branches for '{name}'...[/bold]")
+    pruned = prune_merged_branches(conn_path)
+
+    if pruned:
+        for branch in pruned:
+            console.print(f"  [red]Deleted[/red] {branch}")
+        console.print(f"\n[green]Pruned {len(pruned)} branch(es).[/green]")
+    else:
+        console.print("[dim]No merged branches to prune.[/dim]")
+
+
 @collab.command("status")
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
 def collab_status(connection: str | None):

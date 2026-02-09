@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from db_mcp.collab.classify import classify_files
+from db_mcp.collab.classify import classify_files, is_auto_mergeable_shared
 from db_mcp.collab.github import gh_available, open_pr
 from db_mcp.git_utils import git
 
@@ -93,24 +93,68 @@ def master_merge_all(connection_path: Path) -> MergeResult:
         collab_result = CollaboratorMergeResult(user_name=user_name)
 
         try:
-            # Diff remote branch against main
-            diff_files = git.diff_names(connection_path, "main", remote_branch)
+            # Diff remote branch against main (using merge-base to only see collaborator's changes)
+            try:
+                base_ref = git.merge_base(connection_path, "main", remote_branch)
+            except Exception:
+                base_ref = "main"
+            diff_files = git.diff_names(connection_path, base_ref, remote_branch)
             if not diff_files:
                 continue
 
             additive, shared = classify_files(diff_files)
-            collab_result.additive_merged = len(additive)
             collab_result.shared_state_files = shared
 
-            if not shared:
-                # All additive — safe to merge directly
-                git.merge(connection_path, remote_branch)
-                logger.info(
-                    "Auto-merged %d additive files from %s",
-                    len(additive),
-                    user_name,
-                )
-            else:
+            # Separate auto-mergeable shared from real shared
+            auto_shared = [f for f in shared if f in (".collab.yaml",)]
+            real_shared = [f for f in shared if f not in (".collab.yaml",)]
+            auto_merge_files = additive + auto_shared
+
+            if auto_merge_files:
+                if not real_shared:
+                    # No real shared-state — full branch merge
+                    try:
+                        git.merge(connection_path, remote_branch)
+                        collab_result.additive_merged = len(auto_merge_files)
+                        logger.info(
+                            "Auto-merged %d files from %s",
+                            len(auto_merge_files),
+                            user_name,
+                        )
+                    except Exception as merge_error:
+                        logger.warning(
+                            "Auto-merge failed for %s, falling back to PR: %s",
+                            user_name,
+                            merge_error,
+                        )
+                        try:
+                            git.merge_abort(connection_path)
+                        except Exception:
+                            pass
+                        collab_result.additive_merged = 0
+                        real_shared = shared + additive
+                else:
+                    # Mixed: selectively checkout additive files into main
+                    try:
+                        for f in auto_merge_files:
+                            try:
+                                git.checkout_file(connection_path, remote_branch, f)
+                            except Exception:
+                                logger.warning("Could not checkout %s from %s", f, user_name)
+                                continue
+                        git.add(connection_path, ["."])
+                        git.commit(connection_path, f"Auto-merge additive files from {user_name}")
+                        collab_result.additive_merged = len(auto_merge_files)
+                        logger.info(
+                            "Selectively merged %d additive files from %s",
+                            len(auto_merge_files),
+                            user_name,
+                        )
+                    except Exception as e:
+                        logger.warning("Selective merge failed for %s: %s", user_name, e)
+                        collab_result.additive_merged = 0
+
+            if real_shared:
                 # Shared-state changes — open PR or log
                 local_branch = f"collaborator/{user_name}"
                 if gh_available():
@@ -121,7 +165,7 @@ def master_merge_all(connection_path: Path) -> MergeResult:
                         for f in additive:
                             body_lines.append(f"- `{f}`")
                     body_lines.append("\n### Needs review (shared-state)")
-                    for f in shared:
+                    for f in real_shared:
                         body_lines.append(f"- `{f}`")
                     body = "\n".join(body_lines)
                     pr_url = open_pr(connection_path, local_branch, title, body)
@@ -141,6 +185,14 @@ def master_merge_all(connection_path: Path) -> MergeResult:
 
         result.collaborators.append(collab_result)
 
+    # Prune merged branches
+    try:
+        pruned = prune_merged_branches(connection_path)
+        if pruned:
+            logger.info("Pruned %d merged branch(es): %s", len(pruned), pruned)
+    except Exception as e:
+        logger.warning("Branch pruning failed: %s", e)
+
     # Push main if we merged anything
     if result.total_additive > 0:
         try:
@@ -149,3 +201,27 @@ def master_merge_all(connection_path: Path) -> MergeResult:
             logger.warning("Push main failed: %s", e)
 
     return result
+
+
+def prune_merged_branches(connection_path: Path) -> list[str]:
+    """Delete remote collaborator/* branches that are fully merged into main.
+
+    Returns:
+        List of branch names that were pruned.
+    """
+    merged_branches = git.list_merged_remote_branches(
+        connection_path, target="main", pattern="origin/collaborator/*"
+    )
+
+    pruned: list[str] = []
+    for remote_branch in merged_branches:
+        # remote_branch is like "origin/collaborator/alice"
+        branch_name = remote_branch.replace("origin/", "", 1)
+        try:
+            git.delete_remote_branch(connection_path, branch_name)
+            pruned.append(branch_name)
+            logger.info("Pruned merged branch: %s", branch_name)
+        except Exception as e:
+            logger.warning("Failed to prune branch %s: %s", branch_name, e)
+
+    return pruned

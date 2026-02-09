@@ -146,13 +146,33 @@ class GitBackend(ABC):
         """Check if a branch exists (local or remote)."""
         raise NotImplementedError(f"{self.name} backend does not support branch_exists")
 
+    def merge_base(self, path: Path, ref1: str, ref2: str) -> str:
+        """Find the merge-base (common ancestor) of two refs."""
+        raise NotImplementedError(f"{self.name} backend does not support merge_base")
+
+    def checkout_file(self, path: Path, ref: str, file: str) -> None:
+        """Checkout a specific file from a ref into the working tree."""
+        raise NotImplementedError(f"{self.name} backend does not support checkout_file")
+
     def diff_names(self, path: Path, base: str, head: str) -> list[str]:
         """Get list of file paths that differ between two refs."""
         raise NotImplementedError(f"{self.name} backend does not support diff_names")
 
-    def push_branch(self, path: Path, branch: str, remote: str = "origin") -> None:
+    def push_branch(self, path: Path, branch: str, remote: str = "origin", force_with_lease: bool = False) -> None:
         """Push a specific branch to remote."""
         raise NotImplementedError(f"{self.name} backend does not support push_branch")
+
+    def merge_abort(self, path: Path) -> None:
+        """Abort an in-progress merge."""
+        raise NotImplementedError(f"{self.name} backend does not support merge_abort")
+
+    def delete_remote_branch(self, path: Path, branch: str, remote: str = "origin") -> None:
+        """Delete a branch on the remote."""
+        raise NotImplementedError(f"{self.name} backend does not support delete_remote_branch")
+
+    def list_merged_remote_branches(self, path: Path, target: str = "main", pattern: str = "origin/collaborator/*") -> list[str]:
+        """List remote branches that are fully merged into target."""
+        raise NotImplementedError(f"{self.name} backend does not support list_merged_remote_branches")
 
 
 class NativeGitBackend(GitBackend):
@@ -307,14 +327,36 @@ class NativeGitBackend(GitBackend):
         result = self._run(["branch", "--list", branch], cwd=path)
         return bool(result.stdout.strip())
 
+    def merge_base(self, path: Path, ref1: str, ref2: str) -> str:
+        result = self._run(["merge-base", ref1, ref2], cwd=path)
+        return result.stdout.strip()
+
+    def checkout_file(self, path: Path, ref: str, file: str) -> None:
+        self._run(["checkout", ref, "--", file], cwd=path)
+
     def diff_names(self, path: Path, base: str, head: str) -> list[str]:
         result = self._run(["diff", "--name-only", base, head], cwd=path, check=False)
         if result.returncode != 0 or not result.stdout.strip():
             return []
         return [f for f in result.stdout.strip().split("\n") if f]
 
-    def push_branch(self, path: Path, branch: str, remote: str = "origin") -> None:
-        self._run(["push", "-u", remote, branch], cwd=path)
+    def push_branch(self, path: Path, branch: str, remote: str = "origin", force_with_lease: bool = False) -> None:
+        args = ["push", "-u", remote, branch]
+        if force_with_lease:
+            args.insert(1, "--force-with-lease")
+        self._run(args, cwd=path)
+
+    def merge_abort(self, path: Path) -> None:
+        self._run(["merge", "--abort"], cwd=path)
+
+    def delete_remote_branch(self, path: Path, branch: str, remote: str = "origin") -> None:
+        self._run(["push", remote, "--delete", branch], cwd=path)
+
+    def list_merged_remote_branches(self, path: Path, target: str = "main", pattern: str = "origin/collaborator/*") -> list[str]:
+        result = self._run(["branch", "-r", "--merged", target, "--list", pattern], cwd=path, check=False)
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+        return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
 
 
 class DulwichBackend(GitBackend):

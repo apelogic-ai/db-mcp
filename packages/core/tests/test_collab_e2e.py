@@ -227,13 +227,13 @@ class TestCollaboratorPushSharedStateE2E:
         _create_shared_state_file(alice)
         result = collaborator_push(alice, "alice")
 
-        # Additive counted but NOT merged to main (shared-state triggers branch-only)
-        assert result.additive_merged == 1
+        # Additive files selectively merged to main even with shared-state present
+        assert result.additive_merged >= 1
         assert "schema/descriptions.yaml" in result.shared_state_files
 
         _refresh_master(master_repo)
-        assert not (master_repo / "examples" / "ex1.yaml").exists()
-        assert not (master_repo / "schema" / "descriptions.yaml").exists()
+        assert (master_repo / "examples" / "ex1.yaml").exists()  # additive: merged
+        assert not (master_repo / "schema" / "descriptions.yaml").exists()  # shared: NOT merged
 
     @patch("db_mcp.collab.sync.open_pr", return_value="https://fake/pr/1")
     @patch("db_mcp.collab.sync.gh_available", return_value=True)

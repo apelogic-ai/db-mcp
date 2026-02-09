@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from db_mcp.collab.classify import classify_files
+from db_mcp.collab.classify import classify_files, is_auto_mergeable_shared
 from db_mcp.collab.github import gh_available, open_pr
 from db_mcp.git_utils import git
 
@@ -97,33 +97,90 @@ def collaborator_push(connection_path: Path, user_name: str) -> SyncResult:
     if commit_hash is None:
         return result
 
-    # Find what differs from main
+    # Find what differs from main (using merge-base to only see our changes)
     try:
-        diff_files = git.diff_names(connection_path, "main", branch)
+        try:
+            base_ref = git.merge_base(connection_path, "main", branch)
+        except Exception:
+            base_ref = "main"
+        diff_files = git.diff_names(connection_path, base_ref, branch)
     except Exception:
-        diff_files = git.diff_names(connection_path, "master", branch)
+        try:
+            base_ref = git.merge_base(connection_path, "master", branch)
+        except Exception:
+            base_ref = "master"
+        diff_files = git.diff_names(connection_path, base_ref, branch)
 
     if not diff_files:
         return result
 
     additive, shared = classify_files(diff_files)
-    result.additive_merged = len(additive)
     result.shared_state_files = shared
 
-    if not shared:
-        # All additive — safe to auto-merge to main
-        git.checkout(connection_path, "main")
-        git.merge(connection_path, branch)
-        try:
-            git.push(connection_path)
-        except Exception as e:
-            logger.warning("Push main failed: %s", e)
-            result.error = str(e)
-        git.checkout(connection_path, branch)
-    else:
+    # Determine which shared files are safe to auto-merge (e.g. .collab.yaml)
+    auto_shared = [f for f in shared if f in (".collab.yaml",)]
+    real_shared = [f for f in shared if f not in (".collab.yaml",)]
+
+    # Files to auto-merge: additive + auto-mergeable shared
+    auto_merge_files = additive + auto_shared
+
+    if auto_merge_files:
+        if not real_shared:
+            # No real shared-state — full branch merge (simpler, preserves history)
+            try:
+                git.checkout(connection_path, "main")
+                git.merge(connection_path, branch)
+                try:
+                    git.push(connection_path)
+                except Exception as e:
+                    logger.warning("Push main failed: %s", e)
+                    result.error = str(e)
+                result.additive_merged = len(auto_merge_files)
+                git.checkout(connection_path, branch)
+            except Exception as merge_error:
+                logger.warning("Auto-merge failed, falling back to PR: %s", merge_error)
+                try:
+                    git.merge_abort(connection_path)
+                except Exception:
+                    pass
+                try:
+                    git.checkout(connection_path, branch)
+                except Exception:
+                    pass
+                result.additive_merged = 0
+                real_shared = shared + additive
+        else:
+            # Mixed: selective checkout of additive files into main
+            try:
+                git.checkout(connection_path, "main")
+                for f in auto_merge_files:
+                    try:
+                        git.checkout_file(connection_path, branch, f)
+                    except Exception:
+                        logger.warning("Could not checkout %s from branch", f)
+                        continue
+                git.add(connection_path, ["."])
+                commit_msg = f"Auto-merge additive files from {user_name}"
+                git.commit(connection_path, commit_msg)
+                try:
+                    git.push(connection_path)
+                except Exception as e:
+                    logger.warning("Push main failed: %s", e)
+                    result.error = str(e)
+                result.additive_merged = len(auto_merge_files)
+                git.checkout(connection_path, branch)
+            except Exception as e:
+                logger.warning("Selective merge failed: %s", e)
+                try:
+                    git.checkout(connection_path, branch)
+                except Exception:
+                    pass
+                result.additive_merged = 0
+
+    if real_shared:
         # Shared-state changes present — push branch and open PR
         try:
-            git.push_branch(connection_path, branch)
+            git.push_branch(connection_path, branch, force_with_lease=True)
         except Exception as e:
             logger.warning("Push branch failed: %s", e)
             result.error = str(e)

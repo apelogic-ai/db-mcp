@@ -9,6 +9,7 @@ from db_mcp.collab.merge import (
     MergeResult,
     _list_remote_collaborator_branches,
     master_merge_all,
+    prune_merged_branches,
 )
 
 
@@ -49,9 +50,10 @@ class TestListRemoteCollaboratorBranches:
 
 
 class TestMasterMergeAll:
+    @patch("db_mcp.collab.merge.prune_merged_branches", return_value=[])
     @patch("db_mcp.collab.merge._list_remote_collaborator_branches", return_value=[])
     @patch("db_mcp.collab.merge.git")
-    def test_no_collaborator_branches(self, mock_git, _list_fn):
+    def test_no_collaborator_branches(self, mock_git, _list_fn, _prune):
         mock_git.current_branch.return_value = "main"
         path = Path("/fake/connection")
 
@@ -60,13 +62,14 @@ class TestMasterMergeAll:
         assert result.collaborators == []
         assert result.total_additive == 0
 
+    @patch("db_mcp.collab.merge.prune_merged_branches", return_value=[])
     @patch("db_mcp.collab.merge.gh_available", return_value=False)
     @patch(
         "db_mcp.collab.merge._list_remote_collaborator_branches",
         return_value=["origin/collaborator/alice"],
     )
     @patch("db_mcp.collab.merge.git")
-    def test_auto_merges_additive(self, mock_git, _list_fn, _gh):
+    def test_auto_merges_additive(self, mock_git, _list_fn, _gh, _prune):
         mock_git.current_branch.return_value = "main"
         mock_git.diff_names.return_value = ["examples/abc.yaml", "examples/def.yaml"]
         path = Path("/fake/connection")
@@ -80,6 +83,7 @@ class TestMasterMergeAll:
         mock_git.merge.assert_called_once_with(path, "origin/collaborator/alice")
         mock_git.push.assert_called_once_with(path)
 
+    @patch("db_mcp.collab.merge.prune_merged_branches", return_value=[])
     @patch(
         "db_mcp.collab.merge.open_pr",
         return_value="https://github.com/org/repo/pull/5",
@@ -90,7 +94,7 @@ class TestMasterMergeAll:
         return_value=["origin/collaborator/bob"],
     )
     @patch("db_mcp.collab.merge.git")
-    def test_opens_pr_for_shared_state(self, mock_git, _list_fn, _gh, mock_pr):
+    def test_opens_pr_for_shared_state(self, mock_git, _list_fn, _gh, mock_pr, _prune):
         mock_git.current_branch.return_value = "main"
         mock_git.diff_names.return_value = [
             "examples/abc.yaml",
@@ -106,6 +110,7 @@ class TestMasterMergeAll:
         # Should NOT auto-merge when shared state is present
         mock_git.merge.assert_not_called()
 
+    @patch("db_mcp.collab.merge.prune_merged_branches", return_value=[])
     @patch("db_mcp.collab.merge.gh_available", return_value=False)
     @patch(
         "db_mcp.collab.merge._list_remote_collaborator_branches",
@@ -115,7 +120,7 @@ class TestMasterMergeAll:
         ],
     )
     @patch("db_mcp.collab.merge.git")
-    def test_processes_multiple_collaborators(self, mock_git, _list_fn, _gh):
+    def test_processes_multiple_collaborators(self, mock_git, _list_fn, _gh, _prune):
         mock_git.current_branch.return_value = "main"
         mock_git.diff_names.side_effect = [
             ["examples/a.yaml"],  # alice: additive only
@@ -128,6 +133,82 @@ class TestMasterMergeAll:
         assert len(result.collaborators) == 2
         assert result.total_additive == 2
         assert result.total_prs == 0  # gh not available
+
+
+class TestMergeConflictFallback:
+    @patch("db_mcp.collab.merge.prune_merged_branches", return_value=[])
+    @patch("db_mcp.collab.merge.open_pr", return_value="https://github.com/org/repo/pull/10")
+    @patch("db_mcp.collab.merge.gh_available", return_value=True)
+    @patch(
+        "db_mcp.collab.merge._list_remote_collaborator_branches",
+        return_value=["origin/collaborator/alice"],
+    )
+    @patch("db_mcp.collab.merge.git")
+    def test_merge_conflict_falls_back_to_pr(self, mock_git, _list_fn, _gh, mock_pr, _prune):
+        mock_git.current_branch.return_value = "main"
+        mock_git.diff_names.return_value = ["examples/abc.yaml"]
+        mock_git.merge.side_effect = Exception("conflict")
+        path = Path("/fake/connection")
+
+        result = master_merge_all(path)
+
+        mock_git.merge_abort.assert_called_once_with(path)
+        assert result.collaborators[0].pr_opened is True
+        assert result.collaborators[0].additive_merged == 0
+
+
+class TestCollabYamlAutoMerge:
+    @patch("db_mcp.collab.merge.prune_merged_branches", return_value=[])
+    @patch("db_mcp.collab.merge.gh_available", return_value=False)
+    @patch(
+        "db_mcp.collab.merge._list_remote_collaborator_branches",
+        return_value=["origin/collaborator/alice"],
+    )
+    @patch("db_mcp.collab.merge.git")
+    def test_collab_yaml_only_auto_merges(self, mock_git, _list_fn, _gh, _prune):
+        mock_git.current_branch.return_value = "main"
+        mock_git.diff_names.return_value = [".collab.yaml"]
+        path = Path("/fake/connection")
+
+        result = master_merge_all(path)
+
+        mock_git.merge.assert_called_once_with(path, "origin/collaborator/alice")
+        assert result.collaborators[0].additive_merged == 1  # .collab.yaml auto-merged
+        assert result.collaborators[0].shared_state_files == [".collab.yaml"]
+
+
+class TestPruneMergedBranches:
+    @patch("db_mcp.collab.merge.git")
+    def test_prunes_merged_branches(self, mock_git):
+        mock_git.list_merged_remote_branches.return_value = [
+            "origin/collaborator/alice",
+            "origin/collaborator/bob",
+        ]
+        path = Path("/fake/connection")
+
+        pruned = prune_merged_branches(path)
+
+        assert pruned == ["collaborator/alice", "collaborator/bob"]
+        assert mock_git.delete_remote_branch.call_count == 2
+
+    @patch("db_mcp.collab.merge.git")
+    def test_no_branches_to_prune(self, mock_git):
+        mock_git.list_merged_remote_branches.return_value = []
+        path = Path("/fake/connection")
+
+        pruned = prune_merged_branches(path)
+        assert pruned == []
+
+    @patch("db_mcp.collab.merge.git")
+    def test_handles_delete_failure(self, mock_git):
+        mock_git.list_merged_remote_branches.return_value = [
+            "origin/collaborator/alice",
+        ]
+        mock_git.delete_remote_branch.side_effect = Exception("permission denied")
+        path = Path("/fake/connection")
+
+        pruned = prune_merged_branches(path)
+        assert pruned == []  # failed to delete
 
 
 class TestMergeResult:
