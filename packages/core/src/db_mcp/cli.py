@@ -710,13 +710,9 @@ def _init_brownfield(name: str, git_url: str):
 
     connection_path = get_connection_path(name)
 
-    # Check if connection already exists
+    # Connection exists + repo URL → attach (synonym for collab attach)
     if connection_path.exists():
-        console.print(f"\n[red]Connection '{name}' already exists.[/red]")
-        console.print(
-            "[dim]Use 'db-mcp collab attach <url>' to add a shared repo, "
-            "or 'db-mcp remove' first.[/dim]"
-        )
+        _attach_repo(name, connection_path, git_url)
         return
 
     # Clone the repository
