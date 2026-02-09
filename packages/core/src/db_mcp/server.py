@@ -435,6 +435,43 @@ def _create_server() -> FastMCP:
 
         return "\n".join(lines)
 
+    @server.resource("db-mcp://connections")
+    def get_connections() -> str:
+        """List all available database connections.
+
+        Returns connection names, types, dialects, and descriptions.
+        Use this to discover which connections are available for
+        multi-connection queries.
+        """
+        import json
+
+        from db_mcp.registry import ConnectionRegistry
+
+        registry = ConnectionRegistry.get_instance()
+        connections = registry.list_connections()
+        return json.dumps(connections, indent=2)
+
+    @server.resource("db-mcp://schema/{connection}")
+    def get_connection_schema(connection: str) -> str:
+        """Get the cached schema for a specific connection.
+
+        Returns the schema.md content for the named connection.
+        Use this to understand table structures before writing
+        cross-connection queries.
+        """
+        from db_mcp.registry import ConnectionRegistry
+
+        registry = ConnectionRegistry.get_instance()
+        conn_path = registry.get_connection_path(connection)
+        schema_path = conn_path / "schema.md"
+        if schema_path.exists():
+            return schema_path.read_text()
+        # Fall back to descriptions.yaml
+        desc_path = conn_path / "schema" / "descriptions.yaml"
+        if desc_path.exists():
+            return desc_path.read_text()
+        return f"No schema found for connection '{connection}'."
+
     # Health check endpoint for k8s probes
     @server.custom_route("/health", methods=["GET"])
     async def health_check(request: Request) -> JSONResponse:

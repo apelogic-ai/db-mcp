@@ -416,6 +416,17 @@ ls -lt learnings/failures/*.yaml | head -10
 # Check knowledge gaps file directly
 cat knowledge_gaps.yaml 2>/dev/null
 ```
+
+## Multi-Connection Queries
+
+If the user's question spans multiple data sources, use `list_connections` to see
+all available connections. You can query any connection by passing the `connection`
+parameter to tools like `run_sql`, `list_tables`, etc. Combine results from
+different connections in your analysis.
+
+Read the `db-mcp://connections` resource to see all available connections and their
+types/dialects. Use `db-mcp://schema/{connection}` to inspect a specific
+connection's schema before querying.
 """
 
 # Directory structure to create inside connection
