@@ -529,6 +529,162 @@ def init(name: str, source: str | None):
         _init_greenfield(name)
 
 
+def _attach_repo(name: str, connection_path: Path, git_url: str):
+    """Attach a shared repo to an existing local connection.
+
+    Merges the master's knowledge into the local connection without
+    clobbering local files. Registers as collaborator afterward.
+    """
+    from db_mcp.collab.classify import classify_files
+    from db_mcp.collab.manifest import (
+        get_user_name_from_config,
+        set_user_name_in_config,
+    )
+    from db_mcp.git_utils import git
+
+    console.print(
+        Panel.fit(
+            f"[bold blue]Attach Shared Knowledge[/bold blue]\n\n"
+            f"Connection: [cyan]{name}[/cyan]\n"
+            f"Repo: [dim]{git_url}[/dim]\n\n"
+            "This will merge the team's knowledge into your "
+            "existing connection.",
+            border_style="blue",
+        )
+    )
+
+    # Ensure git
+    if not is_git_installed():
+        console.print("[red]Git is required.[/red]")
+        return
+
+    # Init git if not already a repo
+    if not is_git_repo(connection_path):
+        git.init(connection_path)
+        # Commit existing local files so merge has a clean base
+        git.add(connection_path, ["."])
+        try:
+            git.commit(
+                connection_path,
+                "Initial commit: local connection state",
+            )
+        except Exception:
+            pass  # Nothing to commit (empty dir)
+        console.print("[dim]Initialized git repo for existing files.[/dim]")
+
+    # Add remote
+    if git.has_remote(connection_path):
+        # Check if it's the same URL
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=connection_path,
+            capture_output=True,
+            text=True,
+        )
+        existing_url = result.stdout.strip()
+        if existing_url == git_url:
+            console.print("[dim]Remote already set to this URL.[/dim]")
+        else:
+            console.print(
+                f"[yellow]Remote already set to {existing_url}[/yellow]"
+            )
+            console.print(
+                "[yellow]Remove it first: git remote remove origin[/yellow]"
+            )
+            return
+    else:
+        import subprocess
+
+        subprocess.run(
+            ["git", "remote", "add", "origin", git_url],
+            cwd=connection_path,
+            check=True,
+        )
+
+    # Fetch remote
+    console.print("[dim]Fetching shared knowledge...[/dim]")
+    try:
+        git.fetch(connection_path)
+    except Exception as e:
+        console.print(f"[red]Fetch failed: {e}[/red]")
+        return
+
+    # Merge with allow-unrelated-histories
+    console.print("[dim]Merging team knowledge...[/dim]")
+    import subprocess
+
+    merge_result = subprocess.run(
+        [
+            "git", "merge", "origin/main",
+            "--allow-unrelated-histories",
+            "--no-edit",
+            "-m", "Merge shared knowledge from team repo",
+        ],
+        cwd=connection_path,
+        capture_output=True,
+        text=True,
+    )
+
+    if merge_result.returncode != 0:
+        stderr = merge_result.stderr.strip()
+        if "CONFLICT" in merge_result.stdout or "CONFLICT" in stderr:
+            # Show conflicts and let user resolve
+            console.print(
+                "[yellow]Merge conflicts detected. "
+                "Your local files conflict with the team repo.[/yellow]"
+            )
+            console.print("[dim]Resolve conflicts, then run:[/dim]")
+            console.print(f"  cd {connection_path}")
+            console.print("  git add . && git commit")
+            console.print("  db-mcp collab join")
+            return
+        else:
+            console.print(f"[red]Merge failed: {stderr}[/red]")
+            return
+
+    # Count what was merged
+    try:
+        diff_output = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            cwd=connection_path,
+            capture_output=True,
+            text=True,
+        )
+        merged_files = [
+            f for f in diff_output.stdout.strip().split("\n") if f
+        ]
+        additive, shared = classify_files(merged_files)
+        console.print(
+            f"[green]Merged {len(additive)} example/learning files "
+            f"and {len(shared)} shared-state files.[/green]"
+        )
+    except Exception:
+        console.print("[green]Merge complete.[/green]")
+
+    # Prompt for user name if needed
+    if not get_user_name_from_config():
+        user_name = click.prompt(
+            "\nYour name (used for branch names and attribution)"
+        )
+        set_user_name_in_config(user_name)
+
+    # Register as collaborator
+    _auto_register_collaborator(connection_path)
+
+    # Push main so the remote has the merged state
+    try:
+        git.push(connection_path)
+    except Exception:
+        pass  # Collaborator may not have push to main
+
+    console.print(
+        f"\n[green]Done! '{name}' is now connected to the team repo.[/green]"
+    )
+    console.print("[dim]Use 'db-mcp collab sync' to stay in sync.[/dim]")
+
+
 def _init_brownfield(name: str, git_url: str):
     """Initialize connection by cloning from git (brownfield setup)."""
     # Check git is installed
@@ -557,7 +713,10 @@ def _init_brownfield(name: str, git_url: str):
     # Check if connection already exists
     if connection_path.exists():
         console.print(f"\n[red]Connection '{name}' already exists.[/red]")
-        console.print("[dim]Use 'dbmcp remove {name}' first, or choose a different name.[/dim]")
+        console.print(
+            "[dim]Use 'db-mcp collab attach <url>' to add a shared repo, "
+            "or 'db-mcp remove' first.[/dim]"
+        )
         return
 
     # Clone the repository
@@ -1867,11 +2026,13 @@ def collab():
     """Collaborate on a shared knowledge vault via git.
 
     The master sets up the vault and reviews changes.
-    Collaborators join via 'db-mcp init <name> <repo-url>' and sync automatically.
+    Collaborators join via 'db-mcp collab attach <repo-url>' and sync automatically.
 
     Examples:
         db-mcp collab init                # Master: set up collaboration
-        db-mcp collab join                # Collaborator: register on existing connection
+        db-mcp collab attach <url>        # Attach shared repo to existing connection
+        db-mcp collab detach              # Remove shared repo link
+        db-mcp collab join                # Register as collaborator (after attach)
         db-mcp collab sync                # Push/pull changes
         db-mcp collab merge               # Master: merge collaborator changes
         db-mcp collab status              # Show sync status
@@ -1959,6 +2120,86 @@ def collab_init():
     except Exception as e:
         console.print(f"[yellow]Manifest saved locally but push failed: {e}[/yellow]")
         console.print("[dim]Push manually when ready.[/dim]")
+
+
+@collab.command("attach")
+@click.argument("url")
+def collab_attach(url: str):
+    """Attach a shared knowledge repo to the active connection.
+
+    Use this when you already have a local connection and want to
+    merge in a team's shared knowledge from a git repo.
+
+    Your local files are preserved. The team's knowledge is merged in.
+    You're automatically registered as a collaborator.
+
+    Examples:
+        db-mcp collab attach git@github.com:org/db-knowledge.git
+        db-mcp collab attach https://github.com/org/db-knowledge.git
+    """
+    name = get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        console.print(
+            "[dim]Create one first with 'db-mcp init'.[/dim]"
+        )
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+    _attach_repo(name, conn_path, url)
+
+
+@collab.command("detach")
+def collab_detach():
+    """Remove the shared repo link from the active connection.
+
+    Keeps all local files intact but removes the git remote.
+    Your knowledge stays, you just stop syncing with the team.
+    """
+    import subprocess
+
+    from db_mcp.git_utils import git
+
+    name = get_active_connection()
+    if not connection_exists(name):
+        console.print(f"[red]Connection '{name}' not found.[/red]")
+        sys.exit(1)
+
+    conn_path = get_connection_path(name)
+
+    if not is_git_repo(conn_path):
+        console.print("[yellow]Not a git repository. Nothing to detach.[/yellow]")
+        return
+
+    if not git.has_remote(conn_path):
+        console.print("[yellow]No remote configured. Nothing to detach.[/yellow]")
+        return
+
+    # Get remote URL for display
+    result = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=conn_path,
+        capture_output=True,
+        text=True,
+    )
+    remote_url = result.stdout.strip()
+
+    if not click.confirm(
+        f"Detach from '{remote_url}'? (local files kept)"
+    ):
+        return
+
+    subprocess.run(
+        ["git", "remote", "remove", "origin"],
+        cwd=conn_path,
+        check=True,
+    )
+
+    console.print(f"[green]Detached '{name}' from {remote_url}.[/green]")
+    console.print(
+        "[dim]Local files preserved. Re-attach with"
+        " 'db-mcp collab attach'.[/dim]"
+    )
 
 
 @collab.command("join")
