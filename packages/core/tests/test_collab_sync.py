@@ -92,7 +92,9 @@ class TestCollaboratorPush:
         assert result.shared_state_files == ["schema/descriptions.yaml"]
         assert result.pr_opened is True
         assert result.pr_url == "https://github.com/org/repo/pull/1"
-        mock_git.push_branch.assert_called_once_with(path, "collaborator/alice", force_with_lease=True)
+        mock_git.push_branch.assert_called_once_with(
+            path, "collaborator/alice", force_with_lease=True
+        )
 
     @patch("db_mcp.collab.sync.gh_available", return_value=False)
     @patch("db_mcp.collab.sync.git")
@@ -130,7 +132,9 @@ class TestCollaboratorPushConflictFallback:
         # Should have tried merge_abort
         mock_git.merge_abort.assert_called_once_with(path)
         # Should fall back to PR
-        mock_git.push_branch.assert_called_once_with(path, "collaborator/alice", force_with_lease=True)
+        mock_git.push_branch.assert_called_once_with(
+            path, "collaborator/alice", force_with_lease=True
+        )
         assert result.pr_opened is True
 
     @patch("db_mcp.collab.sync.gh_available", return_value=False)
@@ -161,7 +165,7 @@ class TestCollaboratorPushCollabYaml:
         mock_git.diff_names.return_value = [".collab.yaml"]
         path = Path("/fake/connection")
 
-        result = collaborator_push(path, "alice")
+        collaborator_push(path, "alice")
 
         # Should auto-merge (checkout main, merge, push)
         mock_git.checkout.assert_any_call(path, "main")

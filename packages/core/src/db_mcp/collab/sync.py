@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from db_mcp.collab.classify import classify_files, is_auto_mergeable_shared
+from db_mcp.collab.classify import classify_files
 from db_mcp.collab.github import gh_available, open_pr
 from db_mcp.git_utils import git
 
