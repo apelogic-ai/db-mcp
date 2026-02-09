@@ -388,6 +388,52 @@ def _create_server() -> FastMCP:
     # 3. Client caching could serve stale data
     # Use shell tool instead: cat schema/descriptions.yaml, cat domain/model.md
 
+    @server.resource("db-mcp://insights/pending")
+    def get_pending_insights() -> str:
+        """Pending insights from trace analysis.
+
+        Contains actionable observations about query patterns,
+        errors, knowledge gaps, and learning opportunities.
+        Check this resource periodically to stay proactive.
+
+        Returns empty when nothing needs attention.
+        """
+        from db_mcp.insights.detector import load_insights
+
+        connection_path = get_connection_path()
+        store = load_insights(connection_path)
+        pending = store.pending()
+
+        if not pending:
+            return "No pending insights. Everything looks good."
+
+        lines = [
+            f"# Pending Insights ({len(pending)})\n",
+        ]
+        for i, insight in enumerate(pending, 1):
+            icon = {
+                "action": "!",
+                "warning": "!",
+                "info": "i",
+            }.get(insight.severity, "-")
+            lines.append(
+                f"## [{icon}] {insight.title}\n"
+                f"**Category:** {insight.category} | "
+                f"**Severity:** {insight.severity}\n\n"
+                f"{insight.summary}\n"
+            )
+            if insight.details:
+                for k, v in insight.details.items():
+                    if isinstance(v, list) and v:
+                        lines.append(f"- **{k}:** {v}")
+                    elif v is not None:
+                        lines.append(f"- **{k}:** {v}")
+            lines.append(
+                f"\n*Dismiss: `dismiss_insight('{insight.id}')`*\n"
+            )
+
+        return "\n".join(lines)
+
     # Health check endpoint for k8s probes
     @server.custom_route("/health", methods=["GET"])
     async def health_check(request: Request) -> JSONResponse:
@@ -402,8 +448,73 @@ def _create_server() -> FastMCP:
         )
 
     # =========================================================================
+    # MCP Prompts - suggested actions for the agent
+    # =========================================================================
+
+    @server.prompt("review-insights")
+    def review_insights_prompt() -> str:
+        """Review pending insights and take action.
+
+        Checks for new trace insights (query patterns, errors,
+        knowledge gaps) and guides you through resolving them.
+        """
+        from db_mcp.insights.detector import load_insights
+
+        connection_path = get_connection_path()
+        store = load_insights(connection_path)
+        pending = store.pending()
+
+        if not pending:
+            return (
+                "Check the db-mcp://insights/pending resource. "
+                "If there are no pending insights, let the user know "
+                "everything looks good."
+            )
+
+        return (
+            "Read the db-mcp://insights/pending resource. "
+            f"There are {len(pending)} pending insight(s). "
+            "For each insight:\n"
+            "1. Explain what was detected and why it matters\n"
+            "2. Suggest a specific action (save example, add rule, "
+            "investigate error)\n"
+            "3. If the user agrees, execute the action using "
+            "the appropriate MCP tool\n"
+            "4. Dismiss the insight when resolved"
+        )
+
+    # =========================================================================
     # Core tools - always available
     # =========================================================================
+
+    async def _dismiss_insight(insight_id: str) -> dict:
+        """Dismiss a pending insight after reviewing or resolving it.
+
+        Args:
+            insight_id: The ID of the insight to dismiss
+                (shown in insights/pending resource).
+        """
+        from db_mcp.insights.detector import (
+            load_insights,
+            save_insights,
+        )
+
+        connection_path = get_connection_path()
+        store = load_insights(connection_path)
+        if store.dismiss(insight_id):
+            save_insights(connection_path, store)
+            remaining = len(store.pending())
+            return {
+                "status": "dismissed",
+                "insight_id": insight_id,
+                "remaining": remaining,
+            }
+        return {
+            "status": "not_found",
+            "insight_id": insight_id,
+        }
+
+    server.tool(name="dismiss_insight")(_dismiss_insight)
 
     async def _ping() -> dict:
         """Health check - verify server is running."""

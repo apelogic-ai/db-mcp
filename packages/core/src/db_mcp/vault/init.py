@@ -209,7 +209,20 @@ cat instructions/sql_rules.md
 cat instructions/business_rules.yaml
 ```
 
-6. Check knowledge gaps (recommended):
+6. Check for pending insights (RECOMMENDED):
+
+Read the `db-mcp://insights/pending` resource on every session start.
+This contains proactive observations from trace analysis — query patterns,
+errors, knowledge gaps, and learning opportunities that need attention.
+
+If there are pending insights, briefly mention the most important ones
+to the user (e.g., "I noticed 3 queries that keep repeating — want me
+to save them as examples?"). Don't dump the full list; prioritize
+by severity (action > warning > info).
+
+Use `dismiss_insight(id)` after resolving or reviewing each insight.
+
+7. Check knowledge gaps (recommended):
 ```
 get_knowledge_gaps()
 ```

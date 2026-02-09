@@ -2823,6 +2823,15 @@ This knowledge helps the AI generate better queries over time.
 
         analysis = analyze_traces(unique_traces, connection_path, days=days)
 
+        # Detect and store proactive insights from trace analysis
+        if connection_path:
+            try:
+                from db_mcp.insights.detector import scan_and_update
+
+                scan_and_update(connection_path, analysis)
+            except Exception as e:
+                logger.warning(f"Insight detection failed: {e}")
+
         # Auto-resolve gaps whose terms now appear in business rules
         if connection_path:
             try:
