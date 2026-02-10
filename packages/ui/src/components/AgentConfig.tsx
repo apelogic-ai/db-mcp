@@ -228,7 +228,7 @@ export default function AgentConfig() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <AgentIcon agentId={agent.id} size={20} className={agent.dbmcpConfigured ? "text-green-400" : ""} />
+                    <AgentIcon agentId={agent.id} size={20} />
                     <span className="text-white font-medium">{agent.name}</span>
                   </div>
                   {agent.installed && (
