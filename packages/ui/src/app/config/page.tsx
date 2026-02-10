@@ -729,7 +729,6 @@ export default function ConfigPage() {
                 Active
               </Badge>
             )}
-            {getDialectBadge(conn.dialect)}
             {getOnboardingBadge(conn.onboardingPhase)}
           </div>
           <div className="flex items-center gap-2">
