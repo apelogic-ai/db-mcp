@@ -716,7 +716,7 @@ export default function ConfigPage() {
         className={`p-4 rounded-lg border ${
           conn.isActive
             ? "bg-brand/10 border-brand/30"
-            : "bg-gray-950 border-gray-800 hover:border-gray-700"
+            : "bg-gray-900 border-gray-800 hover:border-gray-700"
         } ${editingConnection === conn.name ? "rounded-b-none border-b-0" : ""}`}
       >
         <div className="flex items-center justify-between">
