@@ -30,7 +30,7 @@ const DIM_TYPE_COLORS: Record<string, string> = {
   temporal: "bg-blue-900/50 text-blue-300",
   categorical: "bg-purple-900/50 text-purple-300",
   geographic: "bg-green-900/50 text-green-300",
-  entity: "bg-orange-900/50 text-orange-300",
+  entity: "bg-brand/20 text-brand-light",
 };
 
 function TagFilter({

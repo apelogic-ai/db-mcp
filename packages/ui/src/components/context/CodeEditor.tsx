@@ -480,7 +480,7 @@ export function CodeEditor({
             <span className="text-blue-400 text-xs">(read-only)</span>
           )}
           {gitEnabled && !isStockReadme && (
-            <span className="text-orange-500 text-xs" title="Git enabled">
+            <span className="text-brand text-xs" title="Git enabled">
               git
             </span>
           )}
@@ -584,7 +584,7 @@ export function CodeEditor({
                       setSchemaOpen(false);
                     }}
                     disabled={isLoading}
-                    className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-orange-400"
+                    className="text-xs border-gray-700 bg-gray-900 hover:bg-gray-800 text-brand-light"
                     title="View version history"
                   >
                     <HistoryIcon className="mr-1" />

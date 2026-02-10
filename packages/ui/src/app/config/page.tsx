@@ -679,7 +679,7 @@ export default function ConfigPage() {
       postgresql: "bg-blue-900 text-blue-300",
       clickhouse: "bg-yellow-900 text-yellow-300",
       trino: "bg-purple-900 text-purple-300",
-      mysql: "bg-orange-900 text-orange-300",
+      mysql: "bg-brand/20 text-brand-light",
       mssql: "bg-red-900 text-red-300",
       sqlite: "bg-gray-700 text-gray-300",
       duckdb: "bg-amber-900 text-amber-300",
@@ -700,7 +700,7 @@ export default function ConfigPage() {
         label: "Building",
         color: "bg-purple-900 text-purple-300",
       },
-      complete: { label: "Complete", color: "bg-orange-900 text-orange-300" },
+      complete: { label: "Complete", color: "bg-brand/20 text-brand-light" },
     };
     const info = phaseLabels[phase] || {
       label: phase,
@@ -715,7 +715,7 @@ export default function ConfigPage() {
       <div
         className={`p-4 rounded-lg border ${
           conn.isActive
-            ? "bg-orange-950/30 border-orange-900"
+            ? "bg-brand/10 border-brand/30"
             : "bg-gray-950 border-gray-800 hover:border-gray-700"
         } ${editingConnection === conn.name ? "rounded-b-none border-b-0" : ""}`}
       >
@@ -726,7 +726,7 @@ export default function ConfigPage() {
             />
             <span className="text-white font-medium">{conn.name}</span>
             {conn.isActive && (
-              <Badge className="bg-orange-900 text-orange-300 text-xs">
+              <Badge className="bg-brand/20 text-brand-light text-xs">
                 Active
               </Badge>
             )}

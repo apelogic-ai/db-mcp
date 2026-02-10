@@ -265,7 +265,7 @@ export function TreeView({
                 </span>
                 {conn.gitEnabled && (
                   <span title="Git enabled">
-                    <GitIcon className="text-orange-500" />
+                    <GitIcon className="text-brand" />
                   </span>
                 )}
               </div>

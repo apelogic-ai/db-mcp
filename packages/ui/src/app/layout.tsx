@@ -2,6 +2,7 @@
 
 import "./globals.css";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { Space_Grotesk, Inconsolata } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -44,14 +45,21 @@ export default function RootLayout({
         className={cn(
           spaceGrotesk.variable,
           inconsolata.variable,
-          "font-sans bg-gray-950 text-gray-100 min-h-screen",
+          "font-sans bg-[#121212] text-gray-100 min-h-screen dark",
         )}
       >
         <BICPProvider baseUrl="/bicp" autoConnect>
           <header className="border-b border-gray-800">
             <div className="max-w-7xl mx-auto px-4 py-4">
-              <Link href="/" className="text-xl font-bold text-white">
-                db-mcp
+              <Link href="/" className="flex items-center gap-3">
+                <Image
+                  src="/apegpt-logo.svg"
+                  alt="ApeGPT"
+                  width={108}
+                  height={30}
+                  priority
+                />
+                <span className="text-sm font-medium text-gray-400">db-mcp</span>
               </Link>
               <nav className="mt-4 flex items-center justify-between">
                 <div className="inline-flex h-9 items-center justify-center rounded-lg bg-gray-900 p-1 text-gray-400">
@@ -66,7 +74,7 @@ export default function RootLayout({
                         className={cn(
                           "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all",
                           isActive
-                            ? "bg-orange-600 text-white shadow"
+                            ? "bg-brand text-white shadow"
                             : "text-gray-400 hover:text-gray-200",
                         )}
                       >
