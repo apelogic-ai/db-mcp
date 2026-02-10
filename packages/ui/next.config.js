@@ -3,6 +3,9 @@ const nextConfig = {
   distDir: "dist",
   output: "export", // Static export for embedding in backend
   trailingSlash: true, // Ensures /config/ works as /config/index.html
+  turbopack: {
+    root: __dirname, // Fix monorepo workspace root inference
+  },
   async rewrites() {
     // In CI/playwright mocked e2e, we intercept /bicp in the browser.
     // If Next proxies /bicp to localhost:8080, tests fail with ECONNREFUSED.
