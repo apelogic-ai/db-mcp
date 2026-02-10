@@ -29,6 +29,46 @@ Just ask Claude something natural:
 
 Claude uses db-mcp to explore your schema, generate SQL, run it, and return results. No prompt engineering required.
 
+## Onboarding your database
+
+After `db-mcp init`, the onboarding flow walks you (and Claude) through building a complete semantic layer for your database. This happens conversationally — Claude drives it, you approve.
+
+### The flow
+
+```
+START → SCHEMA → DOMAIN → DONE
+```
+
+**1. Schema discovery** — Claude introspects your database, finds all tables and columns, and proposes descriptions for each one. You review and approve them one by one (or in bulk):
+
+> Claude: "The `orders` table appears to contain customer purchase records with columns for amount, status, and timestamps. Does this look right?"
+> You: "Yes, but `status` uses codes: 1=pending, 2=shipped, 3=delivered"
+
+Use these tools during schema onboarding:
+- `onboarding_next` — get the next table to describe
+- `onboarding_approve` — approve a description (with optional edits)
+- `onboarding_skip` — skip tables you don't need
+- `onboarding_bulk_approve` — approve multiple tables at once
+- `onboarding_add_ignore_pattern` — exclude tables by pattern (e.g., `tmp_*`, `_migrations`)
+
+**2. Domain modeling** — Once schema is complete, Claude builds a domain model: business terminology, entity relationships, common query patterns, and SQL rules specific to your database.
+
+**3. Done** — The knowledge vault is seeded. Claude can now answer questions accurately using your business language, not just raw column names.
+
+### Check progress
+
+```
+> "What's my onboarding status?"
+```
+
+Claude calls `onboarding_status` and shows you which phase you're in, how many tables are described, and what's left.
+
+### Tips
+
+- **Start small.** If you have hundreds of tables, use ignore patterns to focus on the ones that matter first. You can always onboard more later.
+- **Be specific.** When Claude gets a description wrong, correct it with business context — "this column stores the *net* revenue after refunds, not gross."
+- **It's iterative.** The vault keeps learning after onboarding. Every query you run teaches it more.
+
 ## What's happening under the hood
 
 Every connection has a **knowledge vault** — a local directory that stores everything db-mcp learns about your database:
