@@ -74,6 +74,13 @@ def _extract_key_args(tool_name: str, args: dict | None) -> dict[str, str]:
 
     attrs = {}
 
+    # Extract connection parameter for all tools that support it
+    if "connection" in args and args["connection"]:
+        attrs["db.connection"] = str(args["connection"])
+    elif "connection" in args:
+        # Connection parameter present but None/empty - mark as default
+        attrs["db.connection"] = "default"
+
     # SQL-related tools
     if tool_name in ("validate_sql", "run_sql", "export_results"):
         if "sql" in args:
