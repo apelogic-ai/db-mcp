@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBICP } from "@/lib/bicp-context";
 import AgentConfig from "@/components/AgentConfig";
+import { DialectIcon } from "@/components/DialectIcon";
 
 interface Connection {
   name: string;
@@ -721,9 +722,7 @@ export default function ConfigPage() {
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div
-              className={`w-2 h-2 rounded-full ${conn.isActive ? "bg-brand" : "bg-gray-600"}`}
-            />
+            <DialectIcon dialect={conn.dialect} size={20} className={conn.isActive ? "text-brand" : ""} />
             <span className="text-white font-medium">{conn.name}</span>
             {conn.isActive && (
               <Badge className="bg-brand/20 text-brand-light text-xs">
