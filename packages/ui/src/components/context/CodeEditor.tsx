@@ -204,6 +204,7 @@ interface CodeEditorProps {
   onDelete: () => Promise<void>;
   onCreateFile: () => void;
   onCreateFileForFolder?: () => void; // Create file when a folder is selected but no file open
+  onAddViaAgent?: () => void; // Add file via agent workflow
   hasFolderContext?: boolean; // Whether a folder is selected in the tree
   onRefresh?: () => void; // Called after git revert to refresh content
 }
@@ -222,6 +223,7 @@ export function CodeEditor({
   onDelete,
   onCreateFile,
   onCreateFileForFolder,
+  onAddViaAgent,
   hasFolderContext,
   onRefresh,
 }: CodeEditorProps) {
@@ -426,16 +428,31 @@ export function CodeEditor({
       <div className="h-full flex items-center justify-center text-gray-500">
         <div className="text-center space-y-4">
           <p>Select a file from the tree to view or edit.</p>
-          {hasFolderContext && onCreateFileForFolder && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onCreateFileForFolder}
-              className="text-xs border-green-800 bg-gray-900 text-green-400 hover:bg-green-950"
-            >
-              <PlusIcon className="mr-1" />
-              Create File
-            </Button>
+          {hasFolderContext && (onAddViaAgent || onCreateFileForFolder) && (
+            <div className="flex gap-2 justify-center">
+              {onAddViaAgent && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onAddViaAgent}
+                  className="text-xs bg-green-900/20 border-green-800 text-green-400 hover:bg-green-950"
+                >
+                  <PlusIcon className="mr-1" />
+                  Add via Agent
+                </Button>
+              )}
+              {onCreateFileForFolder && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onCreateFileForFolder}
+                  className="text-xs border-gray-700 text-gray-300 hover:bg-gray-800"
+                >
+                  <PlusIcon className="mr-1" />
+                  Add File
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -593,28 +610,53 @@ export function CodeEditor({
                 </>
               )}
               <ToolbarSeparator />
+              {onAddViaAgent && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onAddViaAgent}
+                  className="text-xs bg-green-900/20 border-green-800 text-green-400 hover:bg-green-950"
+                  title="Add file via agent workflow"
+                >
+                  <PlusIcon className="mr-1" />
+                  Add via Agent
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={onCreateFile}
-                className="text-xs border-green-800 bg-gray-900 text-green-400 hover:bg-green-950"
-                title="Create a new file in this folder"
+                className="text-xs border-gray-700 text-gray-300 hover:bg-gray-800"
+                title="Add file directly"
               >
                 <PlusIcon className="mr-1" />
-                New
+                Add File
               </Button>
             </>
           )}
           {isStockReadme && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onCreateFile}
-              className="text-xs border-green-800 bg-gray-900 text-green-400 hover:bg-green-950"
-            >
-              <PlusIcon className="mr-1" />
-              Create File
-            </Button>
+            <div className="flex items-center gap-2">
+              {onAddViaAgent && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onAddViaAgent}
+                  className="text-xs bg-green-900/20 border-green-800 text-green-400 hover:bg-green-950"
+                >
+                  <PlusIcon className="mr-1" />
+                  Add via Agent
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onCreateFile}
+                className="text-xs border-gray-700 text-gray-300 hover:bg-gray-800"
+              >
+                <PlusIcon className="mr-1" />
+                Add File
+              </Button>
+            </div>
           )}
         </div>
       </div>
