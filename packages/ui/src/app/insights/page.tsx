@@ -64,21 +64,16 @@ function Bar({
   );
 }
 
-function KnowledgeFlowCard({
+function KnowledgeFlowBanner({
   insights,
   traceCount,
 }: {
   insights: InsightsAnalysis["insights"];
   traceCount: number;
 }) {
+  const [dismissed, setDismissed] = useState<string | null>(null);
+
   const {
-    generationCalls,
-    callsWithExamples,
-    callsWithoutExamples,
-    callsWithRules,
-    exampleHitRate,
-    validateCalls,
-    validateFailRate,
     knowledgeCapturesByType,
     sessionCount,
   } = insights;
@@ -88,162 +83,133 @@ function KnowledgeFlowCard({
     0,
   );
 
-  // Build insight items — each is a question + answer + severity
-  type Insight = {
-    question: string;
-    answer: string;
-    severity: "good" | "warn" | "bad" | "neutral";
-  };
-
-  const items: Insight[] = [];
-
-  // 1. Is the agent finding what it needs?
-  if (generationCalls > 0) {
-    if (exampleHitRate !== null && exampleHitRate >= 80) {
-      items.push({
-        question: "Is the agent finding what it needs?",
-        answer: `Yes \u2014 ${exampleHitRate}% of generation calls had examples in context (${callsWithExamples}/${generationCalls})`,
-        severity: "good",
-      });
-    } else if (exampleHitRate !== null && exampleHitRate > 0) {
-      items.push({
-        question: "Is the agent finding what it needs?",
-        answer: `Partially \u2014 only ${exampleHitRate}% of generation calls had examples (${callsWithExamples}/${generationCalls}). ${callsWithoutExamples} calls had no examples.`,
-        severity: "warn",
-      });
-    } else {
-      items.push({
-        question: "Is the agent finding what it needs?",
-        answer: `No examples were available for any of the ${generationCalls} generation calls. Add training examples to improve accuracy.`,
-        severity: "bad",
-      });
-    }
-  }
-
-  // 2. Is it using prior knowledge?
-  if (generationCalls > 0) {
-    if (callsWithRules > 0 && callsWithExamples > 0) {
-      items.push({
-        question: "Is it reusing prior knowledge?",
-        answer: `Yes \u2014 ${callsWithRules}/${generationCalls} calls used business rules, ${callsWithExamples}/${generationCalls} used examples`,
-        severity: "good",
-      });
-    } else if (callsWithRules > 0 || callsWithExamples > 0) {
-      const missing = callsWithRules === 0 ? "business rules" : "examples";
-      items.push({
-        question: "Is it reusing prior knowledge?",
-        answer: `Partially \u2014 no ${missing} available. Add them to improve generation.`,
-        severity: "warn",
-      });
-    } else {
-      items.push({
-        question: "Is it reusing prior knowledge?",
-        answer:
-          "No prior knowledge used. The agent is generating SQL without examples or rules.",
-        severity: "bad",
-      });
-    }
-  }
-
-  // 3. Are there SQL generation mistakes?
-  if (validateCalls > 0) {
-    if (validateFailRate !== null && validateFailRate === 0) {
-      items.push({
-        question: "Are there SQL mistakes?",
-        answer: `No \u2014 all ${validateCalls} validations passed`,
-        severity: "good",
-      });
-    } else if (validateFailRate !== null) {
-      items.push({
-        question: "Are there SQL mistakes?",
-        answer: `${validateFailRate}% of validations failed (${validateCalls} total). Check errors below for patterns.`,
-        severity: validateFailRate > 20 ? "bad" : "warn",
-      });
-    }
-  }
-
-  // 4. Are we capturing new knowledge?
-  if (traceCount > 5) {
-    if (captureTotal > 0) {
-      const parts = Object.entries(knowledgeCapturesByType)
-        .map(([type, count]) => `${count} ${type.replace("_", " ")}`)
-        .join(", ");
-      items.push({
-        question: "Are we capturing new knowledge?",
-        answer: `Yes \u2014 ${parts}`,
-        severity: "good",
-      });
-    } else {
-      items.push({
-        question: "Are we capturing new knowledge?",
-        answer:
-          "No knowledge captured in this period. Use query_approve after successful queries to save examples.",
-        severity: "warn",
-      });
-    }
-  }
-
-  if (items.length === 0) {
-    // Not enough data yet
-    items.push({
-      question: "Not enough data yet",
-      answer:
-        generationCalls === 0
-          ? "Use get_data or query_generate to start generating SQL. Insights will appear once generation traces are recorded."
-          : "Keep using tools to build up trace data for analysis.",
-      severity: "neutral",
+  // Get active connection ID for localStorage key
+  const [connectionId, setConnectionId] = useState<string>("");
+  
+  useEffect(() => {
+    bicpCall<{
+      connections: Array<{ name: string; isActive: boolean }>;
+      activeConnection: string | null;
+    }>("connections/list", {}).then(result => {
+      if (result.activeConnection) {
+        setConnectionId(result.activeConnection);
+      }
+    }).catch(() => {
+      // Ignore errors, just use empty string
     });
+  }, []);
+
+  // Determine banner state
+  let state: "green" | "yellow" | "neutral";
+  if (captureTotal > 0) {
+    state = "green";
+  } else if (traceCount > 5) {
+    state = "yellow";
+  } else {
+    state = "neutral";
   }
 
-  const severityColor = {
-    good: "text-green-400",
-    warn: "text-yellow-400",
-    bad: "text-red-400",
-    neutral: "text-gray-400",
+  // Check if dismissed
+  useEffect(() => {
+    if (connectionId && state !== "neutral") {
+      const dismissKey = `insights-banner-dismissed-${connectionId}`;
+      const lastDismissed = localStorage.getItem(dismissKey);
+      setDismissed(lastDismissed);
+    }
+  }, [connectionId, state]);
+
+  // Reset dismiss state when state changes (e.g., was yellow, now green)
+  useEffect(() => {
+    if (connectionId) {
+      const dismissKey = `insights-banner-dismissed-${connectionId}`;
+      const lastDismissedState = localStorage.getItem(`${dismissKey}-state`);
+      
+      if (lastDismissedState && lastDismissedState !== state) {
+        // State changed, reset dismissal
+        localStorage.removeItem(dismissKey);
+        localStorage.setItem(`${dismissKey}-state`, state);
+        setDismissed(null);
+      } else if (!lastDismissedState) {
+        localStorage.setItem(`${dismissKey}-state`, state);
+      }
+    }
+  }, [connectionId, state]);
+
+  const handleDismiss = () => {
+    if (connectionId && state !== "neutral") {
+      const dismissKey = `insights-banner-dismissed-${connectionId}`;
+      const timestamp = Date.now().toString();
+      localStorage.setItem(dismissKey, timestamp);
+      setDismissed(timestamp);
+    }
   };
 
-  const severityIcon = {
-    good: "\u2713",
-    warn: "\u26A0",
-    bad: "\u2717",
-    neutral: "\u2022",
+  // Don't show if dismissed (except neutral state which is never dismissible)
+  if (dismissed && state !== "neutral") {
+    return null;
+  }
+
+  const stateConfig = {
+    green: {
+      borderColor: "border-l-green-500",
+      bgColor: "bg-green-900/10",
+      icon: "✓",
+      iconColor: "text-green-500",
+      text: `Knowledge capture active — ${captureTotal} examples & feedback saved${sessionCount > 0 ? ` (${sessionCount} session${sessionCount !== 1 ? 's' : ''})` : ''}`,
+      dismissable: true,
+    },
+    yellow: {
+      borderColor: "border-l-yellow-500",
+      bgColor: "bg-yellow-900/10", 
+      icon: "⚠",
+      iconColor: "text-yellow-500",
+      text: "No knowledge captured in this period. Approve successful queries to build your semantic layer.",
+      dismissable: true,
+    },
+    neutral: {
+      borderColor: "border-l-gray-500",
+      bgColor: "bg-gray-900/50",
+      icon: "ⓘ",
+      iconColor: "text-gray-500",
+      text: "Start using your agent to generate SQL — insights will appear as traces are recorded.",
+      dismissable: false,
+    },
   };
+
+  const config = stateConfig[state];
+  const learnHowUrl = process.env.NEXT_PUBLIC_KNOWLEDGE_HOWTO_URL;
 
   return (
-    <Card className="bg-gray-900 border-gray-800 col-span-2">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-white text-sm">
-          Knowledge Flow Insights
-        </CardTitle>
-        <CardDescription className="text-gray-500 text-xs">
-          Is the semantic layer helping the agent generate better SQL?
-          {sessionCount > 0 && (
-            <span className="ml-2 text-gray-600">
-              ({sessionCount} session{sessionCount !== 1 ? "s" : ""})
-            </span>
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {items.map((item, i) => (
-          <div key={i} className="border border-gray-800 rounded p-3">
-            <div className="flex items-start gap-2">
-              <span
-                className={`${severityColor[item.severity]} text-sm shrink-0 mt-0.5`}
-              >
-                {severityIcon[item.severity]}
-              </span>
-              <div>
-                <p className="text-gray-300 text-sm font-medium">
-                  {item.question}
-                </p>
-                <p className="text-gray-500 text-xs mt-0.5">{item.answer}</p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+    <div className={`w-full border-l-4 ${config.borderColor} ${config.bgColor} rounded p-3 flex items-center gap-3`}>
+      <span className={`${config.iconColor} text-sm shrink-0`}>
+        {config.icon}
+      </span>
+      <span className="text-gray-300 text-sm flex-1">
+        {config.text}
+        {state === "yellow" && learnHowUrl && (
+          <span>
+            {" "}
+            <a 
+              href={learnHowUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              Learn how →
+            </a>
+          </span>
+        )}
+      </span>
+      {config.dismissable && (
+        <button
+          onClick={handleDismiss}
+          className="text-gray-500 hover:text-gray-300 text-sm shrink-0 ml-2"
+          title="Dismiss"
+        >
+          ×
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1301,6 +1267,14 @@ export default function InsightsPage() {
 
       {analysis && (
         <>
+          {/* Knowledge Flow Banner */}
+          {analysis.insights && (
+            <KnowledgeFlowBanner
+              insights={analysis.insights}
+              traceCount={analysis.traceCount}
+            />
+          )}
+
           {/* Summary row */}
           <div className="grid grid-cols-4 gap-3">
             {[
@@ -1351,14 +1325,6 @@ export default function InsightsPage() {
             <SemanticLayerCard status={analysis.knowledgeStatus} />
             <ToolUsageCard usage={analysis.toolUsage} />
           </div>
-
-          {/* Knowledge Flow Insights */}
-          {analysis.insights && (
-            <KnowledgeFlowCard
-              insights={analysis.insights}
-              traceCount={analysis.traceCount}
-            />
-          )}
 
           {/* Vocabulary gaps — unmapped business terms */}
           {analysis.vocabularyGaps && analysis.vocabularyGaps.length > 0 && (

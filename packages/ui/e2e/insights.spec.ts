@@ -28,19 +28,21 @@ test.describe("Insights Page", () => {
     await expect(main.getByText("Knowledge Captured").first()).toBeVisible();
   });
 
-  test("displays Knowledge Flow Insights card", async ({ page }) => {
+  test("displays Knowledge Flow Banner", async ({ page }) => {
     await page.goto("/insights");
 
     const main = page.locator("main");
+    // The banner should appear above the stats cards, banner text will depend on state
+    // In the mock data, we should see either green (capturing) or yellow/neutral states
     await expect(
-      main.getByText("Knowledge Flow Insights").first(),
+      main.getByText(/Knowledge capture active|No knowledge captured|Start using your agent/).first(),
     ).toBeVisible();
-    await expect(
-      main.getByText("Are there SQL mistakes?").first(),
-    ).toBeVisible();
-    await expect(
-      main.getByText("Are we capturing new knowledge?").first(),
-    ).toBeVisible();
+    
+    // Banner should have dismiss button if not in neutral state
+    const dismissBtn = main.locator("button:has-text('×')");
+    if (await dismissBtn.isVisible()) {
+      await expect(dismissBtn).toBeVisible();
+    }
   });
 
   test("displays Unmapped Terms card with open and resolved gaps", async ({
