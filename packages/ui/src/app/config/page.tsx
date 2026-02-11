@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBICP } from "@/lib/bicp-context";
 import AgentConfig from "@/components/AgentConfig";
+import { DialectIcon } from "@/components/DialectIcon";
 
 interface Connection {
   name: string;
@@ -716,21 +717,18 @@ export default function ConfigPage() {
         className={`p-4 rounded-lg border ${
           conn.isActive
             ? "bg-brand/10 border-brand/30"
-            : "bg-gray-950 border-gray-800 hover:border-gray-700"
+            : "bg-gray-900 border-gray-800 hover:border-gray-700"
         } ${editingConnection === conn.name ? "rounded-b-none border-b-0" : ""}`}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div
-              className={`w-2 h-2 rounded-full ${conn.isActive ? "bg-brand" : "bg-gray-600"}`}
-            />
+            <DialectIcon dialect={conn.dialect} size={20} className={conn.isActive ? "text-brand" : ""} />
             <span className="text-white font-medium">{conn.name}</span>
             {conn.isActive && (
               <Badge className="bg-brand/20 text-brand-light text-xs">
                 Active
               </Badge>
             )}
-            {getDialectBadge(conn.dialect)}
             {getOnboardingBadge(conn.onboardingPhase)}
           </div>
           <div className="flex items-center gap-2">

@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useBICP } from "@/lib/bicp-context";
+import { AgentIcon } from "@/components/AgentIcon";
 
 interface Agent {
   id: string;
@@ -227,30 +228,8 @@ export default function AgentConfig() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
+                    <AgentIcon agentId={agent.id} size={20} />
                     <span className="text-white font-medium">{agent.name}</span>
-                    {agent.installed ? (
-                      <Badge
-                        variant="secondary"
-                        className="bg-green-900/50 text-green-400 border-green-800"
-                      >
-                        Installed
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="secondary"
-                        className="bg-gray-800 text-gray-500"
-                      >
-                        Not Installed
-                      </Badge>
-                    )}
-                    {agent.dbmcpConfigured && (
-                      <Badge
-                        variant="secondary"
-                        className="bg-blue-900/50 text-blue-400 border-blue-800"
-                      >
-                        Configured
-                      </Badge>
-                    )}
                   </div>
                   {agent.installed && (
                     <div className="flex items-center gap-2">

@@ -14,6 +14,20 @@ module.exports = {
         sm: "calc(var(--radius) - 4px)",
       },
       colors: {
+        /* True neutral grays — replaces Tailwind's blue-tinted defaults (APE palette) */
+        gray: {
+          50:  '#fafafa',
+          100: '#f5f5f5',
+          200: '#e5e5e5',
+          300: '#d4d4d4',
+          400: '#a3a3a3',
+          500: '#737373',
+          600: '#525252',
+          700: '#404040',
+          800: '#262626',
+          900: '#1a1a1a',
+          950: '#121212',
+        },
         brand: {
           DEFAULT: "#EF8626",
           dark: "#BF6C1E",
