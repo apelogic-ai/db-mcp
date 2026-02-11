@@ -151,24 +151,24 @@ function KnowledgeFlowBanner({
 
   const stateConfig = {
     green: {
-      borderColor: "border-l-green-500",
-      bgColor: "bg-green-900/10",
+      borderColor: "border-l-green-500 border border-green-500/30",
+      bgColor: "bg-green-900/20",
       icon: "✓",
       iconColor: "text-green-500",
       text: `Knowledge capture active — ${captureTotal} examples & feedback saved${sessionCount > 0 ? ` (${sessionCount} session${sessionCount !== 1 ? 's' : ''})` : ''}`,
       dismissable: true,
     },
     yellow: {
-      borderColor: "border-l-yellow-500",
-      bgColor: "bg-yellow-900/10", 
+      borderColor: "border-l-yellow-500 border border-yellow-500/30",
+      bgColor: "bg-yellow-900/20",
       icon: "⚠",
       iconColor: "text-yellow-500",
       text: "No knowledge captured in this period. Approve successful queries to build your semantic layer.",
       dismissable: true,
     },
     neutral: {
-      borderColor: "border-l-gray-500",
-      bgColor: "bg-gray-900/50",
+      borderColor: "border-l-gray-500 border border-gray-500/30",
+      bgColor: "bg-gray-900/30",
       icon: "ⓘ",
       iconColor: "text-gray-500",
       text: "Start using your agent to generate SQL — insights will appear as traces are recorded.",
