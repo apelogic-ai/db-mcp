@@ -1340,14 +1340,12 @@ export default function InsightsPage() {
             validationFailureCount={analysis.validationFailureCount}
           />
 
-          <div className="grid grid-cols-2 gap-4">
-            <KnowledgeCaptureCard
-              events={analysis.knowledgeEvents}
-              count={analysis.knowledgeCaptureCount}
-              traceCount={analysis.traceCount}
-            />
-            <TablesCard tables={analysis.tablesReferenced} />
-          </div>
+          <KnowledgeCaptureCard
+            events={analysis.knowledgeEvents}
+            count={analysis.knowledgeCaptureCount}
+            traceCount={analysis.traceCount}
+          />
+          <TablesCard tables={analysis.tablesReferenced} />
 
           {analysis.traceCount === 0 && (
             <Card className="bg-gray-900 border-gray-800">
