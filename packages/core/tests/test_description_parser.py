@@ -75,7 +75,10 @@ def test_full_table_name_in_prose(known_tables):
     result, _ = parse_descriptions(text, known_tables)
     assert "dwh.public.daily_stats_cdrs" in result
     assert "network statistics" in result["dwh.public.daily_stats_cdrs"]["description"]
-    assert result["dwh.public.daily_stats_cdrs"]["columns"]["date"] == "The specific date for the statistics"
+    assert (
+        result["dwh.public.daily_stats_cdrs"]["columns"]["date"]
+        == "The specific date for the statistics"
+    )
 
 
 # ── Short table name matching ──
@@ -291,8 +294,14 @@ User activity statistics for the platform
     result, _ = parse_descriptions(text, kt)
     assert "reporting.daily_metrics" in result
     assert "reporting.user_stats" in result
-    assert result["reporting.daily_metrics"]["columns"]["metric_date"] == "The date for which metrics were calculated"
-    assert result["reporting.user_stats"]["columns"]["login_count"] == "Number of times user has logged in"
+    assert (
+        result["reporting.daily_metrics"]["columns"]["metric_date"]
+        == "The date for which metrics were calculated"
+    )
+    assert (
+        result["reporting.user_stats"]["columns"]["login_count"]
+        == "Number of times user has logged in"
+    )
 
 
 def test_data_dictionary_format():

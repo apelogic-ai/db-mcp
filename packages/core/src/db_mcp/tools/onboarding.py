@@ -1494,6 +1494,8 @@ async def _onboarding_bulk_approve(
     if gaps_found > 0:
         result["knowledge_gaps_detected"] = gaps_found
     return result
+
+
 async def _onboarding_import_descriptions(
     descriptions: str,
     provider_id: str | None = None,
@@ -1547,11 +1549,13 @@ async def _onboarding_import_descriptions(
         }
 
     # Build known_tables mapping for the parser
-    known_tables = {table.full_name: [col.name for col in table.columns] for table in schema.tables}
-    
+    known_tables = {
+        table.full_name: [col.name for col in table.columns] for table in schema.tables
+    }
+
     # Parse the descriptions using universal parser
     descriptions_data, parse_warnings = parse_descriptions(descriptions, known_tables)
-    
+
     # Check if parsing completely failed (empty dict + warnings indicates failure)
     if not descriptions_data and parse_warnings:
         return {
@@ -1634,7 +1638,9 @@ async def _onboarding_import_descriptions(
             "Import existing rules/examples from files",
         ]
         if gaps_found > 0:
-            next_steps.insert(0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)")
+            next_steps.insert(
+                0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)"
+            )
 
         result = {
             "imported": True,
@@ -1645,9 +1651,16 @@ async def _onboarding_import_descriptions(
             "parse_warnings": parse_warnings,
             "phase": state.phase.value,
             "schema_file": save_result["file_path"],
-            "message": f"Imported descriptions for {tables_updated} tables with {columns_updated} column descriptions. All tables now complete - advanced to domain phase.",
+            "message": (
+                f"Imported descriptions for {tables_updated} tables "
+                f"with {columns_updated} column descriptions. "
+                "All tables now complete - advanced to domain phase."
+            ),
             "guidance": {
-                "summary": f"Imported descriptions for {tables_updated} tables. Schema phase complete!",
+                "summary": (
+                    f"Imported descriptions for {tables_updated} tables. "
+                    "Schema phase complete!"
+                ),
                 "next_steps": next_steps,
                 "suggested_response": (
                     f"✓ **Imported descriptions!**\n\n"
@@ -1676,9 +1689,16 @@ async def _onboarding_import_descriptions(
         "remaining": pending_count,
         "phase": state.phase.value,
         "schema_file": save_result["file_path"],
-        "message": f"Imported descriptions for {tables_updated} tables with {columns_updated} column descriptions. {pending_count} tables remain pending.",
+        "message": (
+            f"Imported descriptions for {tables_updated} tables "
+            f"with {columns_updated} column descriptions. "
+            f"{pending_count} tables remain pending."
+        ),
         "guidance": {
-            "summary": f"Imported descriptions for {tables_updated} tables. {pending_count} tables still pending.",
+            "summary": (
+                f"Imported descriptions for {tables_updated} tables. "
+                f"{pending_count} tables still pending."
+            ),
             "next_steps": [
                 "Continue describing remaining tables with onboarding_next",
                 "Or bulk-approve remaining tables",

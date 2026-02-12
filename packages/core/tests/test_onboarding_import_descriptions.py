@@ -153,7 +153,9 @@ class TestImportDescriptions:
         assert result["tables_not_found"] == []
         assert result["columns_not_found"] == []
         assert result["parse_warnings"] == []  # No parsing warnings for valid JSON
-        assert result["phase"] == "schema"  # Should still be in schema phase (products table pending)
+        assert (
+            result["phase"] == "schema"
+        )  # Should still be in schema phase (products table pending)
 
         # Verify schema was updated
         schema = load_schema_descriptions(provider_id)
@@ -176,7 +178,9 @@ class TestImportDescriptions:
         assert products_table.description is None
 
     @pytest.mark.asyncio
-    async def test_import_descriptions_complete_all_tables(self, temp_connection_dir, mock_connector):
+    async def test_import_descriptions_complete_all_tables(
+        self, temp_connection_dir, mock_connector
+    ):
         """Test importing descriptions for all tables advances to domain phase."""
         provider_id = "test-provider"
         await _setup_schema_phase(provider_id, mock_connector)
@@ -411,7 +415,9 @@ class TestImportDescriptions:
         assert "Schema descriptions not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_import_descriptions_empty_descriptions(self, temp_connection_dir, mock_connector):
+    async def test_import_descriptions_empty_descriptions(
+        self, temp_connection_dir, mock_connector
+    ):
         """Test importing with empty descriptions object."""
         provider_id = "test-provider"
         await _setup_schema_phase(provider_id, mock_connector)
@@ -449,7 +455,9 @@ class TestImportDescriptions:
         )
 
         assert result["imported"] is True
-        assert result["tables_updated"] == 2  # Both tables processed (users as simple string, orders as object)
+        assert (
+            result["tables_updated"] == 2
+        )  # Both tables processed (users as simple string, orders as object)
         assert result["columns_updated"] == 0  # No columns updated due to malformed data
         assert "parse_warnings" in result  # Should have warnings about malformed columns data
 
@@ -459,7 +467,7 @@ class TestImportDescriptions:
         provider_id = "test-provider"
         await _setup_schema_phase(provider_id, mock_connector)
 
-        yaml_descriptions = '''public.users:
+        yaml_descriptions = """public.users:
   description: User account information
   columns:
     id: Unique user identifier
@@ -470,7 +478,7 @@ public.orders:
   columns:
     id: Unique order identifier
     user_id: Reference to users table
-'''
+"""
 
         result = await _onboarding_import_descriptions(
             descriptions=yaml_descriptions,
@@ -488,10 +496,10 @@ public.orders:
         provider_id = "test-provider"
         await _setup_schema_phase(provider_id, mock_connector)
 
-        text_descriptions = '''public.users: User account information
+        text_descriptions = """public.users: User account information
 public.orders: Customer order records
 public.products: Product catalog
-'''
+"""
 
         result = await _onboarding_import_descriptions(
             descriptions=text_descriptions,
@@ -503,20 +511,22 @@ public.products: Product catalog
         assert result["columns_updated"] == 0  # No column descriptions in simple format
         assert result["phase"] == "domain"  # All tables described, advance to domain
 
-    @pytest.mark.asyncio  
-    async def test_import_descriptions_mixed_format_with_warnings(self, temp_connection_dir, mock_connector):
+    @pytest.mark.asyncio
+    async def test_import_descriptions_mixed_format_with_warnings(
+        self, temp_connection_dir, mock_connector
+    ):
         """Test importing with messy input that generates warnings."""
         provider_id = "test-provider"
         await _setup_schema_phase(provider_id, mock_connector)
 
-        messy_descriptions = '''public.users: User account information
+        messy_descriptions = """public.users: User account information
   id: User ID
   email: Email address
 
 : Empty table name should be skipped
-public.orders -> Customer order records  
+public.orders -> Customer order records
 some garbage text without separator
-'''
+"""
 
         result = await _onboarding_import_descriptions(
             descriptions=messy_descriptions,
@@ -525,4 +535,6 @@ some garbage text without separator
 
         assert result["imported"] is True
         assert result["tables_updated"] >= 2  # At least users and orders
-        assert len(result["parse_warnings"]) > 0  # Should have warnings about empty keys and unparseable lines
+        assert (
+            len(result["parse_warnings"]) > 0
+        )  # Should have warnings about empty keys and unparseable lines

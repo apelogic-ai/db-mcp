@@ -587,12 +587,8 @@ def _attach_repo(name: str, connection_path: Path, git_url: str):
         if existing_url == git_url:
             console.print("[dim]Remote already set to this URL.[/dim]")
         else:
-            console.print(
-                f"[yellow]Remote already set to {existing_url}[/yellow]"
-            )
-            console.print(
-                "[yellow]Remove it first: git remote remove origin[/yellow]"
-            )
+            console.print(f"[yellow]Remote already set to {existing_url}[/yellow]")
+            console.print("[yellow]Remove it first: git remote remove origin[/yellow]")
             return
     else:
         import subprocess
@@ -617,10 +613,13 @@ def _attach_repo(name: str, connection_path: Path, git_url: str):
 
     merge_result = subprocess.run(
         [
-            "git", "merge", "origin/main",
+            "git",
+            "merge",
+            "origin/main",
             "--allow-unrelated-histories",
             "--no-edit",
-            "-m", "Merge shared knowledge from team repo",
+            "-m",
+            "Merge shared knowledge from team repo",
         ],
         cwd=connection_path,
         capture_output=True,
@@ -652,9 +651,7 @@ def _attach_repo(name: str, connection_path: Path, git_url: str):
             capture_output=True,
             text=True,
         )
-        merged_files = [
-            f for f in diff_output.stdout.strip().split("\n") if f
-        ]
+        merged_files = [f for f in diff_output.stdout.strip().split("\n") if f]
         additive, shared = classify_files(merged_files)
         console.print(
             f"[green]Merged {len(additive)} example/learning files "
@@ -665,9 +662,7 @@ def _attach_repo(name: str, connection_path: Path, git_url: str):
 
     # Prompt for user name if needed
     if not get_user_name_from_config():
-        user_name = click.prompt(
-            "\nYour name (used for branch names and attribution)"
-        )
+        user_name = click.prompt("\nYour name (used for branch names and attribution)")
         set_user_name_in_config(user_name)
 
     # Register as collaborator
@@ -679,9 +674,7 @@ def _attach_repo(name: str, connection_path: Path, git_url: str):
     except Exception:
         pass  # Collaborator may not have push to main
 
-    console.print(
-        f"\n[green]Done! '{name}' is now connected to the team repo.[/green]"
-    )
+    console.print(f"\n[green]Done! '{name}' is now connected to the team repo.[/green]")
     console.print("[dim]Use 'db-mcp collab sync' to stay in sync.[/dim]")
 
 
@@ -859,6 +852,7 @@ def _init_greenfield(name: str):
     if Confirm.ask("Run schema discovery now?", default=True):
         try:
             from db_mcp.connectors import get_connector
+
             connector = get_connector(str(connection_path))
             result = _run_discovery_with_progress(connector, conn_name=name, save=True)
             if result:
@@ -887,7 +881,9 @@ def _init_greenfield(name: str):
         console.print("[dim]Please restart Claude Desktop manually.[/dim]")
 
 
-def _run_discovery_with_progress(connector, conn_name: str = "cli-discover", save: bool = False) -> dict | None:
+def _run_discovery_with_progress(
+    connector, conn_name: str = "cli-discover", save: bool = False
+) -> dict | None:
     """Run schema discovery with Rich progress indicators.
 
     Args:
@@ -899,6 +895,7 @@ def _run_discovery_with_progress(connector, conn_name: str = "cli-discover", sav
         Dict with discovered tables info, or None on failure
     """
     from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+
     from db_mcp.onboarding.schema_store import create_initial_schema
 
     err_console = Console(stderr=True)
@@ -918,7 +915,9 @@ def _run_discovery_with_progress(connector, conn_name: str = "cli-discover", sav
         try:
             test_result = connector.test_connection()
             if not test_result.get("connected"):
-                console.print(f"[red]Connection failed: {test_result.get('error', 'unknown')}[/red]")
+                console.print(
+                    f"[red]Connection failed: {test_result.get('error', 'unknown')}[/red]"
+                )
                 return None
             dialect = test_result.get("dialect")
         except Exception as e:
@@ -932,7 +931,12 @@ def _run_discovery_with_progress(connector, conn_name: str = "cli-discover", sav
             catalogs = connector.get_catalogs()
         except Exception:
             catalogs = [None]
-        progress.update(task, description=f"Found {len([c for c in catalogs if c])} catalogs ✓", completed=1, total=1)
+        progress.update(
+            task,
+            description=f"Found {len([c for c in catalogs if c])} catalogs ✓",
+            completed=1,
+            total=1,
+        )
 
         # Phase 3: Schemas
         progress.update(task, description="Discovering schemas...", completed=0, total=None)
@@ -944,7 +948,9 @@ def _run_discovery_with_progress(connector, conn_name: str = "cli-discover", sav
                     all_schemas.append({"catalog": catalog, "schema": schema})
             except Exception:
                 pass
-        progress.update(task, description=f"Found {len(all_schemas)} schemas ✓", completed=1, total=1)
+        progress.update(
+            task, description=f"Found {len(all_schemas)} schemas ✓", completed=1, total=1
+        )
 
         # Phase 4: Tables + columns
         progress.remove_task(task)
@@ -993,6 +999,7 @@ def _run_discovery_with_progress(connector, conn_name: str = "cli-discover", sav
     # Optionally save to connection directory
     if save:
         from db_mcp.onboarding.schema_store import save_schema_descriptions
+
         schema_obj.provider_id = conn_name
         save_result = save_schema_descriptions(schema_obj)
         if save_result.get("saved"):
@@ -2271,9 +2278,7 @@ def collab_attach(url: str):
     name = get_active_connection()
     if not connection_exists(name):
         console.print(f"[red]Connection '{name}' not found.[/red]")
-        console.print(
-            "[dim]Create one first with 'db-mcp init'.[/dim]"
-        )
+        console.print("[dim]Create one first with 'db-mcp init'.[/dim]")
         sys.exit(1)
 
     conn_path = get_connection_path(name)
@@ -2315,9 +2320,7 @@ def collab_detach():
     )
     remote_url = result.stdout.strip()
 
-    if not click.confirm(
-        f"Detach from '{remote_url}'? (local files kept)"
-    ):
+    if not click.confirm(f"Detach from '{remote_url}'? (local files kept)"):
         return
 
     subprocess.run(
@@ -2327,10 +2330,7 @@ def collab_detach():
     )
 
     console.print(f"[green]Detached '{name}' from {remote_url}.[/green]")
-    console.print(
-        "[dim]Local files preserved. Re-attach with"
-        " 'db-mcp collab attach'.[/dim]"
-    )
+    console.print("[dim]Local files preserved. Re-attach with 'db-mcp collab attach'.[/dim]")
 
 
 @collab.command("join")
@@ -2972,7 +2972,6 @@ def discover(url, output, conn_name, fmt):
         db-mcp discover --connection mydb --output schema.yaml
         db-mcp discover --url postgres://... --format json
     """
-    from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
     from db_mcp.connectors import Connector
     from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
@@ -3018,7 +3017,9 @@ def discover(url, output, conn_name, fmt):
     if fmt == "json":
         output_str = json.dumps(schema_dict, indent=2, ensure_ascii=False)
     else:
-        output_str = yaml.dump(schema_dict, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        output_str = yaml.dump(
+            schema_dict, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
 
     # Output
     if output:

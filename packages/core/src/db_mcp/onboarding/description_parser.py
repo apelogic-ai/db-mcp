@@ -50,7 +50,7 @@ def parse_descriptions(
     sections: list[tuple[_TableMatch, str]] = []
     for i, m in enumerate(mentions):
         end = mentions[i + 1].start if i + 1 < len(mentions) else len(text)
-        sections.append((m, text[m.start:end]))
+        sections.append((m, text[m.start : end]))
 
     out: dict[str, dict] = {}
     for m, section in sections:
@@ -90,9 +90,7 @@ def _fuzzy_pattern(phrase: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![A-Za-z0-9_.]){body}(?![A-Za-z0-9_])", re.IGNORECASE)
 
 
-def _find_all_table_mentions(
-    text: str, known_tables: dict[str, list[str]]
-) -> list[_TableMatch]:
+def _find_all_table_mentions(text: str, known_tables: dict[str, list[str]]) -> list[_TableMatch]:
     alias_entries: list[tuple[str, str]] = []
     for full in known_tables:
         for alias in _table_aliases(full):
@@ -165,10 +163,14 @@ def _extract_table_description(section: str, name_offset: int) -> str:
     m = re.match(r"""["\s]*[:=\-|>]+\s*["']?(.+?)(?:["']?\s*$)""", after, re.MULTILINE)
     if m:
         desc = _clean(m.group(1))
-        if desc and len(desc) > 3 and not re.match(
-            r"^(description|columns?|tables?|schema|info|fields?)\s*[:=|]?\s*$",
-            desc,
-            re.IGNORECASE,
+        if (
+            desc
+            and len(desc) > 3
+            and not re.match(
+                r"^(description|columns?|tables?|schema|info|fields?)\s*[:=|]?\s*$",
+                desc,
+                re.IGNORECASE,
+            )
         ):
             return desc
 
@@ -204,9 +206,7 @@ def _read_indented_block(text: str, pos: int) -> str:
 # --------------- Column description extraction ---------------
 
 
-def _extract_column_descriptions(
-    section: str, known_cols: list[str]
-) -> dict[str, str]:
+def _extract_column_descriptions(section: str, known_cols: list[str]) -> dict[str, str]:
     result: dict[str, str] = {}
     lines = section.splitlines()
 
@@ -266,7 +266,7 @@ def _col_desc_from_line(line: str, match: re.Match) -> str:
     if after:
         # For JSON-like content, stop at '", ' boundary
         m2 = re.match(r'^([^"]+)"', after)
-        if m2 and ',' in after:
+        if m2 and "," in after:
             return _clean(m2.group(1))
         return _clean(after)
 

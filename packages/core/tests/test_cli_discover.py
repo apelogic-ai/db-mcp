@@ -54,8 +54,10 @@ class TestDiscoverCommand:
     def test_discover_no_url_no_connection_no_active(self, tmp_path):
         """Should fail when no URL, connection, or active connection exists."""
         runner = CliRunner()
-        with patch("db_mcp.cli.get_active_connection", return_value="default"), \
-             patch("db_mcp.cli.get_connection_path", return_value=tmp_path / "nonexistent"):
+        with (
+            patch("db_mcp.cli.get_active_connection", return_value="default"),
+            patch("db_mcp.cli.get_connection_path", return_value=tmp_path / "nonexistent"),
+        ):
             result = runner.invoke(main, ["discover"])
         assert result.exit_code != 0
 
@@ -98,7 +100,9 @@ class TestDiscoverCommand:
         mock_connector = _make_mock_connector()
 
         with patch("db_mcp.connectors.sql.SQLConnector", return_value=mock_connector):
-            result = runner.invoke(main, ["discover", "--url", "postgres://u:p@h/db", "--format", "json"])
+            result = runner.invoke(
+                main, ["discover", "--url", "postgres://u:p@h/db", "--format", "json"]
+            )
 
         assert result.exit_code == 0
         parsed = _extract_json(result.output)
