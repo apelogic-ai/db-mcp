@@ -215,12 +215,27 @@ Read the `db-mcp://insights/pending` resource on every session start.
 This contains proactive observations from trace analysis — query patterns,
 errors, knowledge gaps, and learning opportunities that need attention.
 
+**Conversational Insights Suggestion:**
+The resource includes timing information. If "Conversational suggestion warranted: YES",
+naturally suggest insights processing during the conversation, e.g.:
+- "I've been analyzing your recent queries and noticed some interesting patterns. Want me to share what I found?"
+- "It's been a while since we reviewed insights — I spotted some trends worth exploring."
+
+**Timing Guidelines:**
+- If last processed >24h ago AND insights exist → suggest conversationally
+- Choose natural moments (after completing queries, during conversation breaks)
+- Be helpful, not pushy — if user declines, respect it and wait
+
+**When Processing Insights:**
+1. Use the `review-insights` prompt or explain insights directly
+2. After reviewing with user, call `mark_insights_processed()` to update timestamp
+3. Use `dismiss_insight(id)` for each resolved insight
+
+**Session Start Behavior:**
 If there are pending insights, briefly mention the most important ones
 to the user (e.g., "I noticed 3 queries that keep repeating — want me
 to save them as examples?"). Don't dump the full list; prioritize
 by severity (action > warning > info).
-
-Use `dismiss_insight(id)` after resolving or reviewing each insight.
 
 7. Check knowledge gaps (recommended):
 ```

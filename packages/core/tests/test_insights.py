@@ -192,3 +192,93 @@ class TestScanAndUpdate:
             # Second scan shouldn't duplicate
             store2 = scan_and_update(path, analysis)
             assert len(store2.pending()) == len(store.pending())
+
+
+class TestConversationalSuggestions:
+    def test_should_suggest_insights_with_pending_and_time(self):
+        """Test that suggestions are made when insights exist and time threshold is met."""
+        from db_mcp.insights.detector import should_suggest_insights
+        import time
+        
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)
+            store = InsightStore()
+            # Add a pending insight
+            insight = Insight(id="test", category="pattern", severity="action",
+                            title="Test", summary="Test insight")
+            store.add(insight)
+            # Set last processed time to 25 hours ago
+            store.last_processed_at = time.time() - (25 * 3600)
+            save_insights(path, store)
+            
+            # Should suggest (has insights and >24h)
+            assert should_suggest_insights(path, threshold_hours=24.0) is True
+
+    def test_should_not_suggest_no_insights(self):
+        """Test that no suggestions are made when no insights exist."""
+        from db_mcp.insights.detector import should_suggest_insights
+        import time
+        
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)
+            store = InsightStore()
+            store.last_processed_at = time.time() - (25 * 3600)  # Old timestamp
+            save_insights(path, store)
+            
+            # Should not suggest (no insights)
+            assert should_suggest_insights(path, threshold_hours=24.0) is False
+
+    def test_should_not_suggest_recent_processing(self):
+        """Test that no suggestions are made when insights were recently processed."""
+        from db_mcp.insights.detector import should_suggest_insights
+        import time
+        
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)
+            store = InsightStore()
+            # Add a pending insight
+            insight = Insight(id="test", category="pattern", severity="action",
+                            title="Test", summary="Test insight")
+            store.add(insight)
+            # Set last processed time to 1 hour ago
+            store.last_processed_at = time.time() - 3600
+            save_insights(path, store)
+            
+            # Should not suggest (recent processing)
+            assert should_suggest_insights(path, threshold_hours=24.0) is False
+
+    def test_mark_insights_processed_updates_timestamp(self):
+        """Test that marking insights as processed updates the timestamp."""
+        from db_mcp.insights.detector import mark_insights_processed
+        import time
+        
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)
+            store = InsightStore()
+            store.last_processed_at = 0.0  # Never processed
+            save_insights(path, store)
+            
+            # Mark as processed
+            before_time = time.time()
+            mark_insights_processed(path)
+            after_time = time.time()
+            
+            # Load and check timestamp was updated
+            updated_store = load_insights(path)
+            assert updated_store.last_processed_at >= before_time
+            assert updated_store.last_processed_at <= after_time
+
+    def test_persistence_includes_last_processed_at(self):
+        """Test that last_processed_at is saved and loaded correctly."""
+        import time
+        
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)
+            store = InsightStore()
+            test_time = time.time() - 12345
+            store.last_processed_at = test_time
+            save_insights(path, store)
+            
+            # Load and verify
+            loaded_store = load_insights(path)
+            assert loaded_store.last_processed_at == test_time
