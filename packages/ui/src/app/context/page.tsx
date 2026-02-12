@@ -68,14 +68,18 @@ export default function ContextPage() {
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
-  // Create file modal state
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  // Modal states
+  const [showAgentModal, setShowAgentModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
   const [createContext, setCreateContext] = useState<{
     connection: string;
     folder: string;
   } | null>(null);
-  const [newFileName, setNewFileName] = useState("");
+  const [uploadType, setUploadType] = useState<"domain" | "data" | null>(null);
+  const [uploadContent, setUploadContent] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
+  const [uploadMode, setUploadMode] = useState<"upload" | "paste">("upload");
 
   // Split pane resize
   const resizingRef = useRef(false);
@@ -234,54 +238,88 @@ export default function ContextPage() {
     }
   };
 
-  // Handle create file button (from file/folder view)
-  const handleCreateFileButton = () => {
-    if (!selectedFile) return;
-
-    // Extract folder from path: for stock READMEs the path IS the folder,
-    // for real files like "domain/model.md" we need the directory part
-    const folder = selectedFile.path.includes("/")
-      ? selectedFile.path.split("/")[0]
-      : selectedFile.path;
-    setCreateContext({ connection: selectedFile.connection, folder });
-    setNewFileName(
-      folder === "training" || folder === "examples" ? "example.yaml" : "",
-    );
-    setShowCreateModal(true);
+  // Handle add via agent
+  const handleAddViaAgent = () => {
+    setShowAgentModal(true);
   };
 
-  // Handle create file from folder context (no file open, but folder selected in tree)
-  const handleCreateFileForFolder = () => {
-    if (!selectedTreeNode?.folder) return;
+  // Handle add file
+  const handleAddFile = () => {
+    if (!selectedFile && !selectedTreeNode?.folder) return;
 
-    const folder = selectedTreeNode.folder;
-    setCreateContext({ connection: selectedTreeNode.connection, folder });
-    setNewFileName(
-      folder === "training" || folder === "examples" ? "example.yaml" : "",
-    );
-    setShowCreateModal(true);
+    // Get folder context
+    const folder = selectedFile 
+      ? (selectedFile.path.includes("/")
+          ? selectedFile.path.split("/")[0]
+          : selectedFile.path)
+      : selectedTreeNode!.folder!;
+    const connection = selectedFile?.connection || selectedTreeNode!.connection;
+    
+    setCreateContext({ connection, folder });
+    setUploadType(null);
+    setUploadContent("");
+    setUploadFile(null);
+    setUploadMode("upload");
+    setShowUploadModal(true);
   };
 
-  // Handle create file submit
-  const handleCreateFile = async () => {
-    if (!createContext || !newFileName.trim()) return;
+  // Handle upload file submit
+  const handleUploadFile = async () => {
+    if (!createContext || !uploadType) return;
+
+    let content = "";
+    let filename = "";
+
+    if (uploadMode === "upload" && uploadFile) {
+      content = await uploadFile.text();
+      // Generate filename from first markdown heading or timestamp
+      const headingMatch = content.match(/^#\s+(.+)/m);
+      if (headingMatch) {
+        filename = headingMatch[1]
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .substring(0, 50) + '.md';
+      } else {
+        const date = new Date().toISOString().split('T')[0];
+        filename = `${date}-content.md`;
+      }
+    } else if (uploadMode === "paste" && uploadContent.trim()) {
+      content = uploadContent;
+      // Generate filename from first markdown heading or timestamp
+      const headingMatch = content.match(/^#\s+(.+)/m);
+      if (headingMatch) {
+        filename = headingMatch[1]
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .substring(0, 50) + '.md';
+      } else {
+        const date = new Date().toISOString().split('T')[0];
+        filename = `${date}-content.md`;
+      }
+    } else {
+      return;
+    }
 
     setCreateLoading(true);
     try {
-      const path = `${createContext.folder}/${newFileName.trim()}`;
+      const path = `${uploadType}/${filename}`;
       const result = await call<CreateResult>("context/create", {
         connection: createContext.connection,
         path,
-        content: "",
+        content,
       });
 
       if (result.success) {
-        setShowCreateModal(false);
-        setNewFileName("");
+        setShowUploadModal(false);
+        setUploadType(null);
+        setUploadContent("");
+        setUploadFile(null);
         // Select the new file
         setSelectedFile({ connection: createContext.connection, path });
-        setContent("");
-        setOriginalContent("");
+        setContent(content);
+        setOriginalContent(content);
         setIsStockReadme(false);
         // Refresh tree
         fetchTree();
@@ -454,60 +492,199 @@ export default function ContextPage() {
             onSave={handleSave}
             onDiscard={handleDiscard}
             onDelete={handleDelete}
-            onCreateFile={handleCreateFileButton}
-            onCreateFileForFolder={handleCreateFileForFolder}
+            onCreateFile={handleAddFile}
+            onCreateFileForFolder={handleAddFile}
+            onAddViaAgent={handleAddViaAgent}
             hasFolderContext={!!selectedTreeNode?.folder}
           />
         </div>
       </div>
 
-      {/* Create file modal */}
-      {showCreateModal && createContext && (
+      {/* Add via Agent modal */}
+      {showAgentModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-96">
-            <h3 className="text-white font-medium mb-4">Create New File</h3>
-            <div className="mb-4">
-              <label className="text-sm text-gray-400 block mb-1">
-                File name
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500 text-sm">
-                  {createContext.folder}/
-                </span>
-                <Input
-                  value={newFileName}
-                  onChange={(e) => setNewFileName(e.target.value)}
-                  placeholder="filename.yaml"
-                  className="flex-1 bg-gray-950 border-gray-700 text-white"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCreateFile();
-                    if (e.key === "Escape") setShowCreateModal(false);
-                  }}
-                />
+            <h3 className="text-white font-medium mb-4">Add via Agent</h3>
+            <div className="space-y-4 text-gray-300 text-sm">
+              <p>
+                Most context files (schema descriptions, examples, learnings, instructions) use structured formats that are best created through your AI agent.
+              </p>
+              <div>
+                <p className="text-gray-400 mb-2">Example prompts:</p>
+                <ul className="list-disc list-inside space-y-1 text-gray-400 text-xs">
+                  <li>&ldquo;Save this SQL as a training example&rdquo;</li>
+                  <li>&ldquo;Add a business rule: always use UTC timestamps&rdquo;</li>
+                  <li>&ldquo;Describe the users table schema&rdquo;</li>
+                </ul>
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Allowed: .yaml, .yml, .md
+              <p className="text-gray-500 text-xs">
+                <em>Coming soon:</em> Deep-linking to agents
               </p>
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end mt-6">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => setShowAgentModal(false)}
                 className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300"
               >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleCreateFile}
-                disabled={createLoading || !newFileName.trim()}
-                className="bg-brand hover:bg-brand-dark text-white"
-              >
-                {createLoading ? "Creating..." : "Create"}
+                Close
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add File upload modal */}
+      {showUploadModal && createContext && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-[480px]">
+            <h3 className="text-white font-medium mb-4">Add File</h3>
+            
+            {/* Step 1: Type selector */}
+            {!uploadType && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm text-gray-400 block mb-3">
+                    Select file type:
+                  </label>
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => setUploadType("domain")}
+                      className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 hover:bg-gray-700 text-left"
+                    >
+                      <div className="text-white font-medium">Domain Model</div>
+                      <div className="text-gray-400 text-xs">Saves to domain/ as .md</div>
+                    </button>
+                    <button
+                      onClick={() => setUploadType("data")}
+                      className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 hover:bg-gray-700 text-left"
+                    >
+                      <div className="text-white font-medium">Data Reference</div>
+                      <div className="text-gray-400 text-xs">Saves to data/ as .md</div>
+                    </button>
+                    
+                    {/* Disabled options */}
+                    <div className="space-y-2 opacity-50 cursor-not-allowed">
+                      <div className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 text-left">
+                        <div className="text-gray-400 font-medium">Schema Description</div>
+                        <div className="text-gray-500 text-xs">Use your agent for structured formats</div>
+                      </div>
+                      <div className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 text-left">
+                        <div className="text-gray-400 font-medium">Training Example</div>
+                        <div className="text-gray-500 text-xs">Use your agent for structured formats</div>
+                      </div>
+                      <div className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 text-left">
+                        <div className="text-gray-400 font-medium">Learning / Feedback</div>
+                        <div className="text-gray-500 text-xs">Use your agent for structured formats</div>
+                      </div>
+                      <div className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 text-left">
+                        <div className="text-gray-400 font-medium">Instructions / Rules</div>
+                        <div className="text-gray-500 text-xs">Use your agent for structured formats</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowUploadModal(false)}
+                    className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: File upload */}
+            {uploadType && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-400">
+                    Type: {uploadType === "domain" ? "Domain Model" : "Data Reference"}
+                  </span>
+                  <button
+                    onClick={() => setUploadType(null)}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Change type
+                  </button>
+                </div>
+
+                {/* Upload/Paste toggle */}
+                <div className="flex border border-gray-700 rounded-lg">
+                  <button
+                    onClick={() => setUploadMode("upload")}
+                    className={`flex-1 px-3 py-2 text-xs rounded-l-lg ${
+                      uploadMode === "upload" 
+                        ? "bg-gray-700 text-white" 
+                        : "bg-gray-800 text-gray-400 hover:text-gray-300"
+                    }`}
+                  >
+                    Upload File
+                  </button>
+                  <button
+                    onClick={() => setUploadMode("paste")}
+                    className={`flex-1 px-3 py-2 text-xs rounded-r-lg ${
+                      uploadMode === "paste" 
+                        ? "bg-gray-700 text-white" 
+                        : "bg-gray-800 text-gray-400 hover:text-gray-300"
+                    }`}
+                  >
+                    Paste Content
+                  </button>
+                </div>
+
+                {/* File input or textarea */}
+                {uploadMode === "upload" ? (
+                  <div>
+                    <Input
+                      type="file"
+                      accept=".md,.txt"
+                      onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                      className="bg-gray-950 border-gray-700 text-white"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Max 100KB. Accepts .md and .txt files
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <textarea
+                      value={uploadContent}
+                      onChange={(e) => setUploadContent(e.target.value)}
+                      placeholder="Paste your content here..."
+                      rows={8}
+                      className="w-full p-3 bg-gray-950 border border-gray-700 rounded-lg text-white text-sm resize-none"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Max 100KB of content
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowUploadModal(false)}
+                    className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleUploadFile}
+                    disabled={createLoading || (uploadMode === "upload" && !uploadFile) || (uploadMode === "paste" && !uploadContent.trim())}
+                    className="bg-brand hover:bg-brand-dark text-white"
+                  >
+                    {createLoading ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
