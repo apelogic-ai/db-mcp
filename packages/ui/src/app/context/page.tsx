@@ -296,44 +296,71 @@ export default function ContextPage() {
     setShowUploadModal(true);
   };
 
+  // Derive filename from type, content heading, or increment
+  const deriveFilename = (type: string, content: string, existingFiles: string[]): string => {
+    // First try: extract from markdown heading
+    const headingMatch = content.match(/^#\s+(.+)/m);
+    if (headingMatch) {
+      const base = headingMatch[1]
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .substring(0, 50);
+      let name = `${base}.md`;
+      let i = 1;
+      while (existingFiles.includes(`${type}/${name}`)) {
+        name = `${base}-${i}.md`;
+        i++;
+      }
+      return name;
+    }
+
+    // Fallback: type-derived name (domain -> model.md, data -> reference.md)
+    const baseNames: Record<string, string> = {
+      domain: "model",
+      data: "reference",
+    };
+    const base = baseNames[type] || "content";
+    let name = `${base}.md`;
+    let i = 1;
+    while (existingFiles.includes(`${type}/${name}`)) {
+      name = `${base}-${i}.md`;
+      i++;
+    }
+    return name;
+  };
+
   // Handle upload file submit
   const handleUploadFile = async () => {
     if (!createContext || !uploadType) return;
 
     let content = "";
-    let filename = "";
 
     if (uploadMode === "upload" && uploadFile) {
       content = await uploadFile.text();
-      // Generate filename from first markdown heading or timestamp
-      const headingMatch = content.match(/^#\s+(.+)/m);
-      if (headingMatch) {
-        filename = headingMatch[1]
-          .toLowerCase()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .substring(0, 50) + '.md';
-      } else {
-        const date = new Date().toISOString().split('T')[0];
-        filename = `${date}-content.md`;
-      }
     } else if (uploadMode === "paste" && uploadContent.trim()) {
       content = uploadContent;
-      // Generate filename from first markdown heading or timestamp
-      const headingMatch = content.match(/^#\s+(.+)/m);
-      if (headingMatch) {
-        filename = headingMatch[1]
-          .toLowerCase()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .substring(0, 50) + '.md';
-      } else {
-        const date = new Date().toISOString().split('T')[0];
-        filename = `${date}-content.md`;
-      }
     } else {
       return;
     }
+
+    // Collect existing file paths for dedup
+    const existingFiles: string[] = [];
+    for (const conn of connections) {
+      if (conn.name === createContext.connection) {
+        for (const folder of conn.folders) {
+          for (const file of folder.files) {
+            existingFiles.push(file.path);
+          }
+        }
+        for (const file of conn.rootFiles || []) {
+          existingFiles.push(file.path);
+        }
+        break;
+      }
+    }
+
+    const filename = deriveFilename(uploadType, content, existingFiles);
 
     setCreateLoading(true);
     try {
