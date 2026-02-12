@@ -72,11 +72,13 @@ test.describe("Config Page", () => {
   }) => {
     await page.goto("/config");
 
-    // Enter edit mode
+    // Wait for connections to render, then enter edit mode
+    await expect(page.locator("main").getByText("production")).toBeVisible();
     await page.getByRole("button", { name: "Edit" }).first().click();
 
     // The Update button should be disabled when URL contains masked value
     const updateButton = page.getByRole("button", { name: "Update" });
+    await expect(updateButton).toBeVisible();
     await expect(updateButton).toBeDisabled();
 
     // Verify no update call was made
