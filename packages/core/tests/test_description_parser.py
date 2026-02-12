@@ -357,3 +357,49 @@ table.with.dots: Table with dots
         assert len(result) == 100
         assert f"table_50" in result
         assert "Description for table number 50" in result["table_50"]["description"]
+
+    def test_yaml_with_tables_wrapper(self):
+        """Test YAML with top-level 'tables:' key (Arsenii's format)."""
+        text = """
+tables:
+  dwh.public.daily_stats_cdrs:
+    description: Contains network statistics aggregated by date and carrier
+    columns:
+      date:
+        description: Date
+      carrier:
+        description: Name of the carrier
+  dwh.public.users:
+    description: User accounts table
+"""
+        result, warnings = parse_descriptions(text)
+        assert "dwh.public.daily_stats_cdrs" in result
+        assert "dwh.public.users" in result
+        assert result["dwh.public.daily_stats_cdrs"]["description"] == "Contains network statistics aggregated by date and carrier"
+        assert result["dwh.public.daily_stats_cdrs"]["columns"]["date"] == "Date"
+        assert result["dwh.public.daily_stats_cdrs"]["columns"]["carrier"] == "Name of the carrier"
+
+    def test_column_descriptions_as_objects(self):
+        """Test column descriptions given as {description: '...'} objects."""
+        text = """
+{
+  "public.orders": {
+    "description": "Order records",
+    "columns": {
+      "id": {"description": "Primary key"},
+      "amount": {"description": "Order total in cents"},
+      "status": "Active or archived"
+    }
+  }
+}
+"""
+        result, warnings = parse_descriptions(text)
+        assert result["public.orders"]["columns"]["id"] == "Primary key"
+        assert result["public.orders"]["columns"]["amount"] == "Order total in cents"
+        assert result["public.orders"]["columns"]["status"] == "Active or archived"
+
+    def test_schemas_wrapper_key(self):
+        """Test top-level 'schemas:' wrapper is also unwrapped."""
+        text = '{"schemas": {"public.users": {"description": "Users table"}}}'
+        result, warnings = parse_descriptions(text)
+        assert "public.users" in result

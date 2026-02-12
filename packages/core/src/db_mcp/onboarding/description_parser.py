@@ -77,7 +77,13 @@ def _normalize_structure(parsed: Dict[str, Any]) -> Tuple[Dict[str, Any], List[s
     """
     warnings = []
     result = {}
-    
+
+    # Unwrap common wrapper keys like "tables:" at top level
+    if len(parsed) == 1:
+        only_key = next(iter(parsed))
+        if only_key.lower() in ("tables", "schemas", "schema") and isinstance(parsed[only_key], dict):
+            parsed = parsed[only_key]
+
     for key, value in parsed.items():
         if not isinstance(value, dict):
             # Simple string value - treat as table description only
@@ -92,8 +98,9 @@ def _normalize_structure(parsed: Dict[str, Any]) -> Tuple[Dict[str, Any], List[s
         
         # Handle description
         if "description" in value:
-            if isinstance(value["description"], str):
-                table_entry["description"] = value["description"]
+            desc = value["description"]
+            if isinstance(desc, str):
+                table_entry["description"] = desc
             else:
                 warnings.append(f"Skipped description for {key}: must be string")
         
@@ -103,8 +110,15 @@ def _normalize_structure(parsed: Dict[str, Any]) -> Tuple[Dict[str, Any], List[s
                 for col_name, col_desc in value["columns"].items():
                     if isinstance(col_desc, str):
                         table_entry["columns"][col_name] = col_desc
+                    elif isinstance(col_desc, dict):
+                        # Handle {"description": "..."} format for columns
+                        cd = col_desc.get("description", "")
+                        if isinstance(cd, str) and cd:
+                            table_entry["columns"][col_name] = cd
+                        else:
+                            warnings.append(f"Skipped column {key}.{col_name}: no description found in object")
                     else:
-                        warnings.append(f"Skipped column {key}.{col_name}: description must be string")
+                        warnings.append(f"Skipped column {key}.{col_name}: description must be string or object")
             else:
                 warnings.append(f"Skipped columns for {key}: must be object")
         
