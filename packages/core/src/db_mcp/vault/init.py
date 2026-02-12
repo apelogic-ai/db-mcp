@@ -218,8 +218,8 @@ errors, knowledge gaps, and learning opportunities that need attention.
 **Conversational Insights Suggestion:**
 The resource includes timing information. If "Conversational suggestion warranted: YES",
 naturally suggest insights processing during the conversation, e.g.:
-- "I've been analyzing your recent queries and noticed some interesting patterns. Want me to share what I found?"
-- "It's been a while since we reviewed insights — I spotted some trends worth exploring."
+- "I noticed some interesting patterns in your recent queries. Want me to share?"
+- "It's been a while since we reviewed insights — worth exploring."
 
 **Timing Guidelines:**
 - If last processed >24h ago AND insights exist → suggest conversationally

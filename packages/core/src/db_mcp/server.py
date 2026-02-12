@@ -398,31 +398,44 @@ def _create_server() -> FastMCP:
         Check this resource periodically to stay proactive.
 
         Returns empty when nothing needs attention.
-        
+
         Also includes timing information to help with conversational suggestions.
         """
         import time
+
         from db_mcp.insights.detector import load_insights
 
         connection_path = get_connection_path()
         store = load_insights(connection_path)
         pending = store.pending()
-        
+
         # Calculate timing information for conversational suggestions
         current_time = time.time()
-        hours_since_processed = (current_time - store.last_processed_at) / 3600 if store.last_processed_at > 0 else float('inf')
-        
+        if store.last_processed_at > 0:
+            hours_since = (current_time - store.last_processed_at) / 3600
+        else:
+            hours_since = float('inf')
+
         # Determine if conversational suggestion is warranted
-        should_suggest = len(pending) > 0 and hours_since_processed >= 24.0
+        should_suggest = len(pending) > 0 and hours_since >= 24.0
 
         if not pending:
-            suggestion_note = f" Last processed {hours_since_processed:.1f}h ago." if store.last_processed_at > 0 else " Never processed."
-            return f"No pending insights. Everything looks good.{suggestion_note}"
+            if store.last_processed_at > 0:
+                note = f" Last processed {hours_since:.1f}h ago."
+            else:
+                note = " Never processed."
+            return f"No pending insights. Everything looks good.{note}"
+
+        if store.last_processed_at > 0:
+            processed_line = f"**Last processed:** {hours_since:.1f} hours ago\n"
+        else:
+            processed_line = "**Last processed:** Never\n"
+        suggest_str = 'YES' if should_suggest else 'NO'
 
         lines = [
             f"# Pending Insights ({len(pending)})\n",
-            f"**Last processed:** {hours_since_processed:.1f} hours ago\n" if store.last_processed_at > 0 else "**Last processed:** Never\n",
-            f"**Conversational suggestion warranted:** {'YES' if should_suggest else 'NO'}\n\n",
+            processed_line,
+            f"**Conversational suggestion warranted:** {suggest_str}\n\n",
         ]
         for i, insight in enumerate(pending, 1):
             icon = {
@@ -569,16 +582,16 @@ def _create_server() -> FastMCP:
 
     async def _mark_insights_processed() -> dict:
         """Mark insights as processed to update the timestamp.
-        
+
         Call this when you've reviewed insights with the user, either through
         the review-insights prompt or after a conversational suggestion.
         This updates the last processed timestamp to prevent repeated suggestions.
         """
         from db_mcp.insights.detector import mark_insights_processed
-        
+
         connection_path = get_connection_path()
         mark_insights_processed(connection_path)
-        
+
         return {
             "status": "processed",
             "message": "Insights processing timestamp updated"

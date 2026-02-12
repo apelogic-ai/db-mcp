@@ -276,30 +276,30 @@ def detect_insights(
 
 def should_suggest_insights(connection_path: Path, threshold_hours: float = 24.0) -> bool:
     """Check if agent should suggest insights processing based on time threshold.
-    
+
     Args:
         connection_path: Path to connection directory
         threshold_hours: Hours since last processing to trigger suggestion (default 24)
-        
+
     Returns:
         True if insights should be suggested (time threshold passed and insights exist)
     """
     store = load_insights(connection_path)
-    
+
     # No pending insights = no suggestion needed
     if not store.pending():
         return False
-    
+
     # Check if enough time has passed since last processing
     current_time = time.time()
     hours_since_processed = (current_time - store.last_processed_at) / 3600
-    
+
     return hours_since_processed >= threshold_hours
 
 
 def mark_insights_processed(connection_path: Path) -> None:
     """Mark insights as processed (updates timestamp).
-    
+
     Call this when the agent has reviewed insights, either through
     the review-insights prompt or conversational suggestion.
     """
