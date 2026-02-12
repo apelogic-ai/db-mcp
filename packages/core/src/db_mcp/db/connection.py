@@ -80,7 +80,7 @@ def normalize_database_url(database_url: str) -> str:
 
 
 @lru_cache(maxsize=8)
-def get_engine(database_url: str | None = None) -> Engine:
+def get_engine(database_url: str | None = None, *, connect_args: dict | None = None) -> Engine:
     """Get or create a SQLAlchemy engine.
 
     Args:
@@ -110,6 +110,9 @@ def get_engine(database_url: str | None = None) -> Engine:
         "pool_recycle": 300,
     }
 
+    if connect_args:
+        engine_kwargs["connect_args"] = connect_args
+
     if dialect == "trino":
         # Trino-specific configuration
         # Extract username/password from URL for BasicAuthentication
@@ -121,6 +124,10 @@ def get_engine(database_url: str | None = None) -> Engine:
             "http_scheme": "https",
             "verify": False,  # TODO: Make configurable for production
         }
+
+        # Merge caller-provided connect_args, if any
+        if "connect_args" in engine_kwargs:
+            connect_args = {**connect_args, **engine_kwargs["connect_args"]}
 
         # Add BasicAuthentication if credentials are in the URL
         if username and password:

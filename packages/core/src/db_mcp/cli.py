@@ -920,19 +920,8 @@ def _run_discovery_with_progress(
     all_tables: list[dict] = []
     dialect: str | None = None
 
-    def _timeout_handler(signum, frame):
-        raise TimeoutError(f"Discovery timed out after {timeout_s}s")
-
-    def _set_alarm():
-        if timeout_s <= 0:
-            return
-        if hasattr(signal, "SIGALRM"):
-            signal.signal(signal.SIGALRM, _timeout_handler)
-            signal.alarm(timeout_s)
-
-    def _clear_alarm():
-        if hasattr(signal, "SIGALRM"):
-            signal.alarm(0)
+    # NOTE: SIGALRM cannot reliably interrupt blocking DBAPI calls (e.g., psycopg2),
+    # so we run the whole discovery in a daemon thread with a hard deadline.
 
     with Progress(
         SpinnerColumn(),
@@ -946,102 +935,134 @@ def _run_discovery_with_progress(
         task = progress.add_task("Starting discovery...", total=None)
         progress.refresh()
 
-        # Optional timeout using SIGALRM (Unix/macOS). Best-effort on platforms without it.
-        _set_alarm()
-        try:
-            # Phase 1: Connect
-            progress.update(task, description="Connecting...", total=None)
-            test_result = connector.test_connection()
-            if not test_result.get("connected"):
-                console.print(
-                    f"[red]Connection failed: {test_result.get('error', 'unknown')}[/red]"
-                )
-                return None
-            dialect = test_result.get("dialect")
-            progress.update(task, description="Connected ✓", completed=1, total=1)
+        result: list[dict | None] = [None]
+        error: list[Exception | None] = [None]
 
-            # Phase 2: Catalogs
-            progress.update(task, description="Discovering catalogs...", completed=0, total=None)
+        def run() -> None:
             try:
-                catalogs = connector.get_catalogs()
-            except Exception:
-                catalogs = [None]
-            progress.update(
-                task,
-                description=f"Found {len([c for c in catalogs if c])} catalogs ✓",
-                completed=1,
-                total=1,
-            )
+                # Phase 1: Connect
+                progress.update(task, description="Connecting...", total=None)
+                test_result = connector.test_connection()
+                if not test_result.get("connected"):
+                    error[0] = RuntimeError(test_result.get("error", "unknown"))
+                    return
 
-            # Phase 3: Schemas
-            progress.update(task, description="Discovering schemas...", completed=0, total=None)
-            all_schemas: list[dict] = []
-            for catalog in catalogs:
-                try:
-                    found = connector.get_schemas(catalog=catalog)
-                except Exception:
-                    found = []
+                nonlocal dialect
+                dialect = test_result.get("dialect")
+                progress.update(task, description="Connected ✓", completed=1, total=1)
 
-                for schema in found:
-                    if schemas and schema not in schemas:
-                        continue
-                    all_schemas.append({"catalog": catalog, "schema": schema})
-
-            progress.update(
-                task, description=f"Found {len(all_schemas)} schemas ✓", completed=1, total=1
-            )
-
-            # Phase 4: Tables + columns (progress per table)
-            progress.remove_task(task)
-            table_task = progress.add_task("Scanning tables...", total=1)
-
-            total_tables = 0
-            for schema_info in all_schemas:
-                catalog = schema_info["catalog"]
-                schema = schema_info["schema"]
-                label = f"{catalog}.{schema}" if catalog else (schema or "default")
+                # Phase 2: Catalogs
                 progress.update(
-                    table_task,
-                    description=f"Listing tables in {label}...",
-                    total=None,
+                    task, description="Discovering catalogs...", completed=0, total=None
+                )
+                try:
+                    catalogs = connector.get_catalogs()
+                except Exception:
+                    catalogs = [None]
+                progress.update(
+                    task,
+                    description=f"Found {len([c for c in catalogs if c])} catalogs ✓",
+                    completed=1,
+                    total=1,
                 )
 
-                try:
-                    tables = connector.get_tables(schema=schema, catalog=catalog)
-                except Exception:
-                    tables = []
+                # Phase 3: Schemas
+                progress.update(
+                    task, description="Discovering schemas...", completed=0, total=None
+                )
+                all_schemas: list[dict] = []
+                for catalog in catalogs:
+                    try:
+                        found = connector.get_schemas(catalog=catalog)
+                    except Exception:
+                        found = []
 
-                # update total now that we know table count for this schema
-                total_tables += len(tables)
-                progress.update(table_task, total=max(total_tables, 1))
+                    for schema in found:
+                        if schemas and schema not in schemas:
+                            continue
+                        all_schemas.append({"catalog": catalog, "schema": schema})
 
-                for t in tables:
+                progress.update(
+                    task,
+                    description=f"Found {len(all_schemas)} schemas ✓",
+                    completed=1,
+                    total=1,
+                )
+
+                # Phase 4: Tables + columns (progress per table)
+                progress.remove_task(task)
+                table_task = progress.add_task("Scanning tables...", total=1)
+
+                total_tables = 0
+                for schema_info in all_schemas:
+                    catalog = schema_info["catalog"]
+                    schema = schema_info["schema"]
+                    label = f"{catalog}.{schema}" if catalog else (schema or "default")
                     progress.update(
                         table_task,
-                        description=f"Scanning {t.get('full_name') or t.get('name')}...",
+                        description=f"Listing tables in {label}...",
+                        total=None,
                     )
+
                     try:
-                        columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
+                        tables = connector.get_tables(schema=schema, catalog=catalog)
                     except Exception:
-                        columns = []
-                    all_tables.append(
-                        {
-                            "name": t["name"],
-                            "schema": schema,
-                            "catalog": catalog,
-                            "full_name": t.get("full_name") or t["name"],
-                            "columns": columns,
-                        }
-                    )
-                    progress.advance(table_task)
-        except TimeoutError as e:
-            console.print(f"[red]{e}[/red]")
+                        tables = []
+
+                    # update total now that we know table count for this schema
+                    total_tables += len(tables)
+                    progress.update(table_task, total=max(total_tables, 1))
+
+                    for t in tables:
+                        progress.update(
+                            table_task,
+                            description=f"Scanning {t.get('full_name') or t.get('name')}...",
+                        )
+                        try:
+                            columns = connector.get_columns(
+                                t["name"], schema=schema, catalog=catalog
+                            )
+                        except Exception:
+                            columns = []
+                        all_tables.append(
+                            {
+                                "name": t["name"],
+                                "schema": schema,
+                                "catalog": catalog,
+                                "full_name": t.get("full_name") or t["name"],
+                                "columns": columns,
+                            }
+                        )
+                        progress.advance(table_task)
+
+                result[0] = {
+                    "tables": all_tables,
+                    "total_columns": sum(len(t["columns"]) for t in all_tables),
+                    "dialect": dialect,
+                }
+            except Exception as e:
+                error[0] = e
+
+        import threading
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        if timeout_s > 0:
+            t.join(timeout=timeout_s)
+        else:
+            t.join()
+
+        if t.is_alive():
+            console.print(f"[red]Discovery timed out after {timeout_s}s[/red]")
             return None
-        except Exception as e:
-            console.print(f"[red]Discovery failed: {e}[/red]")
+
+        if error[0] is not None:
+            console.print(f"[red]Discovery failed: {error[0]}[/red]")
             return None
-        finally:
-            _clear_alarm()
+
+        if result[0] is None:
+            console.print("[red]Discovery failed: unknown error[/red]")
+            return None
 
     total_columns = sum(len(t["columns"]) for t in all_tables)
     err_console.print(
@@ -1518,8 +1539,14 @@ def status(connection: str | None):
     connections = list_connections()
     active = get_active_connection()
 
+    if connection and connection not in connections:
+        console.print(f"[red]Connection '{connection}' not found.[/red]")
+        sys.exit(1)
+
     if connections:
         for conn in connections:
+            if connection and conn != connection:
+                continue
             conn_path = get_connection_path(conn)
             is_active = conn == active
             marker = "[green]●[/green]" if is_active else "[dim]○[/dim]"
@@ -1709,7 +1736,7 @@ def use(name: str):
     """
     if not connection_exists(name):
         console.print(f"[red]Connection '{name}' not found.[/red]")
-        console.print("[dim]Run 'dbmcp list' to see available connections.[/dim]")
+        console.print("[dim]Run 'db-mcp list' to see available connections.[/dim]")
         sys.exit(1)
 
     set_active_connection(name)
@@ -1781,7 +1808,8 @@ def pull(name: str | None):
         return
 
     console.print(f"[bold]Pulling updates for: {name}[/bold]")
-    git_pull(conn_path)
+    if not git_pull(conn_path):
+        sys.exit(1)
 
 
 @main.command("git-init")
@@ -1871,7 +1899,7 @@ def edit(name: str | None):
 
     if not connection_exists(name):
         console.print(f"[red]Connection '{name}' not found.[/red]")
-        console.print("[dim]Run 'dbmcp list' to see available connections.[/dim]")
+        console.print("[dim]Run 'db-mcp list' to see available connections.[/dim]")
         sys.exit(1)
 
     env_path = _get_connection_env_path(name)
@@ -1915,7 +1943,7 @@ def rename(old_name: str, new_name: str):
     """
     if not connection_exists(old_name):
         console.print(f"[red]Connection '{old_name}' not found.[/red]")
-        console.print("[dim]Run 'dbmcp list' to see available connections.[/dim]")
+        console.print("[dim]Run 'db-mcp list' to see available connections.[/dim]")
         sys.exit(1)
 
     if connection_exists(new_name):
@@ -1971,7 +1999,7 @@ def remove(name: str, force: bool):
         remaining = list_connections()
         if remaining:
             console.print(f"[yellow]'{name}' was the active connection.[/yellow]")
-            console.print(f"[dim]Run 'dbmcp use {remaining[0]}' to switch.[/dim]")
+            console.print(f"[dim]Run 'db-mcp use {remaining[0]}' to switch.[/dim]")
 
 
 @main.command()
@@ -3064,8 +3092,13 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
     connector: Connector | None = None
 
     if url:
-        # Direct URL: create a SQL connector
-        config = SQLConnectorConfig(database_url=url)
+        # Direct URL: create a SQL connector with per-statement timeout where supported.
+        config = SQLConnectorConfig(
+            database_url=url,
+            capabilities={
+                "connect_args": {"options": "-c statement_timeout=10000"},
+            },
+        )
         connector = SQLConnector(config)
     elif conn_name:
         # Named connection

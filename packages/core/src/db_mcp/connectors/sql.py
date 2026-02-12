@@ -55,7 +55,10 @@ class SQLConnector:
         This is SQL-specific and not part of the Connector protocol.
         Used by validation/explain and generation for direct engine access.
         """
-        return get_engine(self.config.database_url)
+        connect_args = self.config.capabilities.get("connect_args")
+        if not isinstance(connect_args, dict):
+            connect_args = None
+        return get_engine(self.config.database_url, connect_args=connect_args)
 
     def test_connection(self) -> dict[str, Any]:
         """Test database connectivity."""
@@ -106,7 +109,10 @@ class SQLConnector:
     def execute_sql(self, sql: str, params: dict | None = None) -> list[dict[str, Any]]:
         """Execute SQL and return rows as dicts."""
         try:
-            engine = get_engine(self.config.database_url)
+            connect_args = self.config.capabilities.get("connect_args")
+            if not isinstance(connect_args, dict):
+                connect_args = None
+            engine = get_engine(self.config.database_url, connect_args=connect_args)
             with engine.connect() as conn:
                 result = conn.execute(text(sql), params or {})
                 columns = result.keys()

@@ -7,6 +7,41 @@ from sqlalchemy import inspect, text
 from db_mcp.db.connection import DatabaseError, get_engine
 
 
+def _fallback_information_schema_columns(
+    *, engine, schema: str | None, table_name: str
+) -> list[dict[str, Any]]:
+    """Fallback column discovery via information_schema.
+
+    Helps for restricted Postgres roles where SQLAlchemy reflection may query
+    pg_catalog tables like pg_collation and fail with permission errors.
+    """
+
+    if not schema:
+        return []
+
+    sql = text(
+        """
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = :schema AND table_name = :table
+        ORDER BY ordinal_position
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"schema": schema, "table": table_name}).fetchall()
+    return [
+        {
+            "name": row[0],
+            "type": str(row[1]),
+            "nullable": True,
+            "default": None,
+            "primary_key": False,
+            "comment": None,
+        }
+        for row in rows
+    ]
+
+
 def get_dialect(database_url: str | None = None) -> str:
     """Get the SQL dialect for the database.
 
@@ -273,7 +308,16 @@ def get_columns(
 
         # Use SQLAlchemy inspector for other databases or as fallback
         inspector = inspect(engine)
-        columns = inspector.get_columns(table_name, schema=schema)
+        try:
+            columns = inspector.get_columns(table_name, schema=schema)
+        except Exception:
+            # Fallback for restricted Postgres roles
+            columns = _fallback_information_schema_columns(
+                engine=engine, schema=schema, table_name=table_name
+            )
+            if columns:
+                return columns
+            raise
 
         result = []
         for col in columns:
