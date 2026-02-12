@@ -3143,7 +3143,14 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
 
         from db_mcp.connectors import get_connector
 
-        connector = get_connector(str(conn_path))
+        try:
+            connector = get_connector(str(conn_path))
+        except Exception:
+            console.print(
+                "[red]No connection specified. Use --url or --connection, "
+                "or set up a connection with 'db-mcp init'.[/red]"
+            )
+            sys.exit(1)
 
     # Run discovery
     result = _run_discovery_with_progress(
