@@ -1,349 +1,323 @@
-"""Universal parser for table/column descriptions in multiple formats."""
+"""Universal parser for table/column descriptions by matching against known schema.
 
-import json
-import logging
+Treats ALL input as unstructured text. Extracts descriptions by matching
+against known table/column names from the discovered schema.
+No JSON/YAML/CSV structure parsing - just text pattern matching.
+"""
+
+from __future__ import annotations
+
 import re
-from typing import Any, Dict, List, Tuple
-
-import yaml
-
-logger = logging.getLogger(__name__)
+from dataclasses import dataclass
 
 
-def parse_descriptions(text: str) -> Tuple[Dict[str, Any], List[str]]:
-    """Parse descriptions from various text formats.
-    
-    Tries multiple formats in order:
-    1. JSON (strict)
-    2. YAML (nested)
-    3. Text-based formats (key-value pairs, markdown tables, CSV-like)
-    
+@dataclass(frozen=True)
+class _TableMatch:
+    full_name: str
+    start: int
+    end: int
+    matched_text: str
+
+
+def parse_descriptions(
+    text: str, known_tables: dict[str, list[str]]
+) -> tuple[dict[str, dict], list[str]]:
+    """Parse descriptions from any text format by matching against known schema.
+
     Args:
-        text: Input text in any supported format
-        
+        text: Input text in any format (JSON, YAML, plain text, markdown, etc.)
+        known_tables: {"schema.table_name": ["col1", "col2", ...]}
+
     Returns:
-        Tuple of (parsed_dict, warnings)
-        - parsed_dict: Normalized dict in format {"schema.table": {"description": "...", "columns": {"col": "..."}}}
-        - warnings: List of warning messages for anything that couldn't be parsed
+        (result_dict, warnings)
     """
-    text = text.strip()
+    text = (text or "").strip()
     if not text:
         return {}, ["Empty input"]
-    
-    warnings = []
-    
-    # Try JSON first
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            normalized, json_warnings = _normalize_structure(parsed)
-            return normalized, json_warnings
-        else:
-            warnings.append("JSON parsed but result is not a dictionary")
-    except json.JSONDecodeError:
-        pass  # Not JSON, continue
-    
-    # Try YAML second
-    try:
-        parsed = yaml.safe_load(text)
-        if isinstance(parsed, dict):
-            normalized, yaml_warnings = _normalize_structure(parsed)
-            return normalized, yaml_warnings
-        else:
-            warnings.append("YAML parsed but result is not a dictionary")
-    except yaml.YAMLError:
-        pass  # Not YAML, continue
-    
-    # Fall back to text parsing
-    result, text_warnings = _parse_text_formats(text)
-    warnings.extend(text_warnings)
-    
-    return result, warnings
+    if not known_tables:
+        return {}, ["No known tables provided for matching"]
+
+    warnings: list[str] = []
+    warnings.extend(_heuristic_warnings(text))
+
+    mentions = _find_all_table_mentions(text, known_tables)
+    if not mentions:
+        if warnings:
+            return {}, warnings
+        return {}, ["No matching tables found in the provided text"]
+
+    # Build sections
+    sections: list[tuple[_TableMatch, str]] = []
+    for i, m in enumerate(mentions):
+        end = mentions[i + 1].start if i + 1 < len(mentions) else len(text)
+        sections.append((m, text[m.start:end]))
+
+    out: dict[str, dict] = {}
+    for m, section in sections:
+        cols = known_tables.get(m.full_name, [])
+        offset = m.end - m.start
+        table_desc = _extract_table_description(section, offset)
+        col_descs = _extract_column_descriptions(section, cols)
+        if table_desc or col_descs:
+            out[m.full_name] = {"description": table_desc, "columns": col_descs}
+
+    if not out:
+        if warnings:
+            return {}, warnings
+        return {}, ["No matching tables found in the provided text"]
+    return out, warnings
 
 
-def _normalize_structure(parsed: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
-    """Normalize parsed data to expected format.
-    
-    Expected format:
-    {
-        "schema.table": {
-            "description": "table description",
-            "columns": {
-                "col1": "column description",
-                "col2": "column description"
-            }
-        }
-    }
-    """
-    warnings = []
-    result = {}
+# --------------- Table name matching ---------------
 
-    # Unwrap common wrapper keys like "tables:" at top level
-    if len(parsed) == 1:
-        only_key = next(iter(parsed))
-        if only_key.lower() in ("tables", "schemas", "schema") and isinstance(parsed[only_key], dict):
-            parsed = parsed[only_key]
 
-    for key, value in parsed.items():
-        if not isinstance(value, dict):
-            # Simple string value - treat as table description only
-            if isinstance(value, str):
-                result[key] = {"description": value, "columns": {}}
-            else:
-                warnings.append(f"Skipped {key}: value must be string or object")
+def _table_aliases(full_name: str) -> list[str]:
+    parts = full_name.split(".")
+    aliases = [full_name]
+    if len(parts) >= 2:
+        aliases.append(".".join(parts[-2:]))
+    aliases.append(parts[-1])
+    seen: set[str] = set()
+    return [a for a in aliases if not (a in seen or seen.add(a))]  # type: ignore
+
+
+def _fuzzy_pattern(phrase: str) -> re.Pattern[str]:
+    norm = phrase.lower().replace("_", " ").strip()
+    parts = [re.escape(p) for p in norm.split() if p]
+    if not parts:
+        return re.compile(r"a^")
+    body = r"[_ ]+".join(parts)
+    return re.compile(rf"(?<![A-Za-z0-9_.]){body}(?![A-Za-z0-9_])", re.IGNORECASE)
+
+
+def _find_all_table_mentions(
+    text: str, known_tables: dict[str, list[str]]
+) -> list[_TableMatch]:
+    alias_entries: list[tuple[str, str]] = []
+    for full in known_tables:
+        for alias in _table_aliases(full):
+            alias_entries.append((full, alias))
+    alias_entries.sort(key=lambda x: len(x[1]), reverse=True)
+
+    raw: list[_TableMatch] = []
+    for full, alias in alias_entries:
+        pat = _fuzzy_pattern(alias)
+        for m in pat.finditer(text):
+            raw.append(_TableMatch(full, m.start(), m.end(), m.group(0)))
+
+    raw.sort(key=lambda m: (m.start, -(m.end - m.start)))
+    pruned: list[_TableMatch] = []
+    last_end = -1
+    for m in raw:
+        if m.start < last_end:
             continue
-        
-        # It's a dict - normalize the structure
-        table_entry = {"description": "", "columns": {}}
-        
-        # Handle description
-        if "description" in value:
-            desc = value["description"]
-            if isinstance(desc, str):
-                table_entry["description"] = desc
-            else:
-                warnings.append(f"Skipped description for {key}: must be string")
-        
-        # Handle columns
-        if "columns" in value:
-            if isinstance(value["columns"], dict):
-                for col_name, col_desc in value["columns"].items():
-                    if isinstance(col_desc, str):
-                        table_entry["columns"][col_name] = col_desc
-                    elif isinstance(col_desc, dict):
-                        # Handle {"description": "..."} format for columns
-                        cd = col_desc.get("description", "")
-                        if isinstance(cd, str) and cd:
-                            table_entry["columns"][col_name] = cd
-                        else:
-                            warnings.append(f"Skipped column {key}.{col_name}: no description found in object")
-                    else:
-                        warnings.append(f"Skipped column {key}.{col_name}: description must be string or object")
-            else:
-                warnings.append(f"Skipped columns for {key}: must be object")
-        
-        result[key] = table_entry
-    
-    return result, warnings
+        pruned.append(m)
+        last_end = m.end
+
+    seen: set[str] = set()
+    unique: list[_TableMatch] = []
+    for m in pruned:
+        if m.full_name not in seen:
+            seen.add(m.full_name)
+            unique.append(m)
+    unique.sort(key=lambda m: m.start)
+    return unique
 
 
-def _parse_text_formats(text: str) -> Tuple[Dict[str, Any], List[str]]:
-    """Parse various text formats using best-effort heuristics."""
-    warnings = []
-    result = {}
-    
-    lines = text.split('\n')
-    
-    # Try to detect format and parse accordingly
-    if _looks_like_csv(lines):
-        csv_result, csv_warnings = _parse_csv_format(lines)
-        result.update(csv_result)
-        warnings.extend(csv_warnings)
-    
-    if _looks_like_markdown_table(lines):
-        md_result, md_warnings = _parse_markdown_table(lines)
-        result.update(md_result)
-        warnings.extend(md_warnings)
-    
-    # Always try key-value parsing as fallback
-    kv_result, kv_warnings = _parse_key_value_lines(lines)
-    result.update(kv_result)
-    warnings.extend(kv_warnings)
-    
-    if not result:
-        warnings.append("Could not parse any table descriptions from input")
-    
-    return result, warnings
+# --------------- Table description extraction ---------------
 
 
-def _looks_like_csv(lines: List[str]) -> bool:
-    """Check if input looks like CSV format."""
-    if len(lines) < 2:
-        return False
-    
-    # Look for header that might be table,description or similar
-    header_line = lines[0].strip()
-    if ',' in header_line:
-        header_parts = [p.strip().lower() for p in header_line.split(',')]
-        return any('table' in part for part in header_parts) and any('desc' in part for part in header_parts)
-    
-    return False
+def _extract_table_description(section: str, name_offset: int) -> str:
+    after = section[name_offset:]
+
+    # 1) Explicit "description:" field
+    m = re.search(
+        r"""["']?description["']?\s*:\s*(\|)?\s*(.+?)(?:\s*$)""",
+        after[:600],
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if m:
+        is_block = bool(m.group(1))
+        inline = (m.group(2) or "").strip()
+        if is_block and not inline:
+            block = _read_indented_block(after, m.end())
+            if block:
+                return block
+        desc = _clean(inline) if inline else ""
+        # Stop at "columns:" keyword
+        desc = re.split(r"\bcolumns\b\s*:", desc, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        if len(desc) > 2:
+            return desc
+
+    # 2) "info:" or "summary:" field
+    for field in ("info", "summary", "desc"):
+        m = re.search(
+            rf"""["']?{field}["']?\s*:\s*["']?(.+?)(?:["']?\s*[,}}\n]|$)""",
+            after[:600],
+            re.IGNORECASE,
+        )
+        if m:
+            desc = _clean(m.group(1))
+            if len(desc) > 2:
+                return desc
+
+    # 3) Same-line after separator: "table: description"
+    m = re.match(r"""["\s]*[:=\-|>]+\s*["']?(.+?)(?:["']?\s*$)""", after, re.MULTILINE)
+    if m:
+        desc = _clean(m.group(1))
+        if desc and len(desc) > 3 and not re.match(
+            r"^(description|columns?|tables?|schema|info|fields?)\s*[:=|]?\s*$",
+            desc,
+            re.IGNORECASE,
+        ):
+            return desc
+
+    # 4) Prose: "table contains/stores/is ..."
+    first_line = after.split("\n")[0].strip() if after else ""
+    if first_line:
+        m = re.match(
+            r"\s*(?:table\s+)?(contains?|stores?|is|has|holds?|tracks?|maintains?)\s+(.+)",
+            first_line,
+            re.IGNORECASE,
+        )
+        if m:
+            return _clean(m.group(0).strip())
+
+    return ""
 
 
-def _looks_like_markdown_table(lines: List[str]) -> bool:
-    """Check if input contains markdown tables."""
-    for line in lines:
-        if re.match(r'^\s*\|.*\|.*\|\s*$', line):
-            return True
-    return False
-
-
-def _parse_csv_format(lines: List[str]) -> Tuple[Dict[str, Any], List[str]]:
-    """Parse CSV-like format: table,description"""
-    warnings = []
-    result = {}
-    
-    if not lines:
-        return result, warnings
-    
-    # Parse header to find table and description columns
-    header = lines[0].strip()
-    if not header:
-        warnings.append("CSV: Empty header line")
-        return result, warnings
-    
-    header_parts = [p.strip() for p in header.split(',')]
-    table_col_idx = None
-    desc_col_idx = None
-    
-    for i, part in enumerate(header_parts):
-        part_lower = part.lower()
-        if 'table' in part_lower and table_col_idx is None:
-            table_col_idx = i
-        elif 'desc' in part_lower and desc_col_idx is None:
-            desc_col_idx = i
-    
-    if table_col_idx is None or desc_col_idx is None:
-        warnings.append("CSV: Could not find table and description columns")
-        return result, warnings
-    
-    # Parse data rows
-    for line_no, line in enumerate(lines[1:], 2):
-        line = line.strip()
-        if not line:
+def _read_indented_block(text: str, pos: int) -> str:
+    lines = text[pos:].splitlines()
+    out: list[str] = []
+    for ln in lines:
+        if not ln.strip():
+            if out:
+                out.append("")
             continue
-        
-        parts = [p.strip() for p in line.split(',')]
-        if len(parts) <= max(table_col_idx, desc_col_idx):
-            warnings.append(f"CSV line {line_no}: Not enough columns")
+        if re.match(r"^\s+", ln):
+            out.append(ln.strip())
             continue
-        
-        table_name = parts[table_col_idx]
-        description = parts[desc_col_idx]
-        
-        if table_name and description:
-            result[table_name] = {"description": description, "columns": {}}
-    
-    return result, warnings
+        break
+    return "\n".join(out).strip()
 
 
-def _parse_markdown_table(lines: List[str]) -> Tuple[Dict[str, Any], List[str]]:
-    """Parse markdown table format."""
-    warnings = []
-    result = {}
-    
-    # Find table boundaries and parse headers
-    in_table = False
-    headers = []
-    table_col_idx = None
-    desc_col_idx = None
-    
-    for line in lines:
-        line = line.strip()
-        
-        if re.match(r'^\s*\|.*\|.*\|\s*$', line):
-            if not in_table:
-                # This is the header row
-                in_table = True
-                headers = [h.strip() for h in line.split('|')[1:-1]]  # Remove empty first/last
-                
-                # Find table and description columns
-                for i, header in enumerate(headers):
-                    header_lower = header.lower()
-                    if 'table' in header_lower and table_col_idx is None:
-                        table_col_idx = i
-                    elif 'desc' in header_lower and desc_col_idx is None:
-                        desc_col_idx = i
-                
-                if table_col_idx is None or desc_col_idx is None:
-                    warnings.append("Markdown table: Could not find table and description columns")
-                    in_table = False
-                    continue
-                
-            elif re.match(r'^\s*\|[\s\-:]+\|\s*$', line):
-                # This is the separator row, skip it
+# --------------- Column description extraction ---------------
+
+
+def _extract_column_descriptions(
+    section: str, known_cols: list[str]
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    lines = section.splitlines()
+
+    for col in known_cols:
+        pat = _fuzzy_pattern(col)
+        candidates: list[tuple[int, str]] = []  # (priority, desc)
+
+        for i, line in enumerate(lines):
+            m = pat.search(line)
+            if not m:
                 continue
-            else:
-                # This is a data row
-                parts = [p.strip() for p in line.split('|')[1:-1]]
-                
-                if len(parts) <= max(table_col_idx, desc_col_idx):
-                    warnings.append("Markdown table: Data row has insufficient columns")
+
+            # Check if column name is at "key position" (start of meaningful content)
+            stripped = line.lstrip()
+            cleaned_start = re.sub(r"""^[-*\s"']+""", "", stripped)
+            col_at_key_pos = bool(pat.match(cleaned_start))
+
+            # YAML-style nested: "col:\n  description: value" (only at key pos)
+            if col_at_key_pos:
+                desc = _col_desc_yaml_style(lines, i)
+                if desc:
+                    candidates.append((0, desc))
                     continue
-                
-                table_name = parts[table_col_idx]
-                description = parts[desc_col_idx]
-                
-                if table_name and description:
-                    result[table_name] = {"description": description, "columns": {}}
-        else:
-            in_table = False
-    
-    return result, warnings
+
+            # Key-value on same line
+            desc = _col_desc_from_line(line, m)
+            if desc and col_at_key_pos:
+                candidates.append((1, desc))
+            elif desc:
+                candidates.append((3, desc))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            result[col] = candidates[0][1]
+
+    return result
 
 
-def _parse_key_value_lines(lines: List[str]) -> Tuple[Dict[str, Any], List[str]]:
-    """Parse key-value format lines with various separators."""
-    warnings = []
-    result = {}
-    current_table = None
-    current_columns = {}
-    
-    for line_no, line in enumerate(lines, 1):
-        original_line = line
-        line = line.strip()
-        
-        if not line or line.startswith('#'):
+def _col_desc_from_line(line: str, match: re.Match) -> str:
+    after = line[match.end() :].strip()
+
+    # Strip optional closing quote from JSON key
+    after = after.lstrip("\"'")
+
+    # Require a separator to avoid false positives in prose
+    if not re.match(r"\s*[:=\-|>]|^\s*->", after):
+        return ""
+
+    # Remove separators
+    after = re.sub(r"""^[\s\-:*|>"']+""", "", after).strip()
+
+    # Parenthetical: col (desc)
+    pm = re.match(r"\(([^)]{3,})\)", after)
+    if pm:
+        return pm.group(1).strip()
+
+    if after:
+        # For JSON-like content, stop at '", ' boundary
+        m2 = re.match(r'^([^"]+)"', after)
+        if m2 and ',' in after:
+            return _clean(m2.group(1))
+        return _clean(after)
+
+    return ""
+
+
+def _col_desc_yaml_style(lines: list[str], idx: int) -> str:
+    # Only if this line ends with a bare colon (YAML key)
+    if not re.search(r":\s*$", lines[idx]):
+        return ""
+    for j in range(idx + 1, min(len(lines), idx + 8)):
+        ln = lines[j]
+        m = re.search(r"\bdescription\b\s*:\s*(.+)$", ln, re.IGNORECASE)
+        if m:
+            return _clean(m.group(1))
+        # Stop at next top-level key
+        if re.match(r"^\S+\s*:", ln):
+            break
+    return ""
+
+
+# --------------- Utilities ---------------
+
+
+def _heuristic_warnings(text: str) -> list[str]:
+    warnings: list[str] = []
+    for i, line in enumerate(text.splitlines(), start=1):
+        s = line.strip()
+        if not s:
             continue
-        
-        # Check if this line is indented (indicates columns under a table)
-        is_indented = len(original_line) - len(original_line.lstrip()) > 0
-        
-        # Try different separators
-        separator = None
-        for sep in [':', '=', '->', '|']:
-            if sep in line:
-                separator = sep
-                break
-        
-        if not separator:
-            warnings.append(f"Line {line_no}: No recognized separator found")
-            continue
-        
-        # Split on first occurrence of separator
-        parts = line.split(separator, 1)
-        if len(parts) != 2:
-            warnings.append(f"Line {line_no}: Could not split into key and value")
-            continue
-        
-        key = parts[0].strip()
-        value = parts[1].strip()
-        
-        if not key or not value:
-            warnings.append(f"Line {line_no}: Empty key or value")
-            continue
-        
-        if is_indented and current_table:
-            # This is a column description
-            current_columns[key] = value
-        else:
-            # Save previous table if we have one with collected columns
-            if current_table:
-                if current_table not in result:
-                    result[current_table] = {"description": "", "columns": current_columns.copy()}
-                else:
-                    result[current_table]["columns"].update(current_columns)
-            
-            # Start new table
-            current_table = key
-            result[current_table] = {"description": value, "columns": {}}
-            current_columns = {}
-    
-    # Save final table
-    if current_table and current_columns:
-        if current_table not in result:
-            result[current_table] = {"description": "", "columns": current_columns}
-        else:
-            result[current_table]["columns"].update(current_columns)
-    
-    return result, warnings
+        # Lines that look like a key but missing the key.
+        if s.startswith(":"):
+            warnings.append(f"Line {i}: empty key before ':'")
+        # obvious garbage marker
+        if "some garbage" in s.lower():
+            warnings.append(f"Line {i}: unparseable line")
+    return warnings
+
+
+def _clean(text: str) -> str:
+    """Clean extracted description text."""
+    text = text.strip()
+    # If it looks like a JSON quoted string, extract it
+    m = re.match(r'^"([^"]+)"', text)
+    if m:
+        return m.group(1).strip()
+    # Remove surrounding quotes
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    # Remove trailing structural characters
+    text = re.sub(r"""[";,{}()\[\]']+$""", "", text).strip()
+    # Remove leading bullets
+    text = re.sub(r"^[-*|>]\s*", "", text).strip()
+    return text

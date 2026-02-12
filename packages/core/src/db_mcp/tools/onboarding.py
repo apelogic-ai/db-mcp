@@ -1546,8 +1546,11 @@ async def _onboarding_import_descriptions(
             "error": "Schema descriptions not found. Call onboarding_discover first.",
         }
 
+    # Build known_tables mapping for the parser
+    known_tables = {table.full_name: [col.name for col in table.columns] for table in schema.tables}
+    
     # Parse the descriptions using universal parser
-    descriptions_data, parse_warnings = parse_descriptions(descriptions)
+    descriptions_data, parse_warnings = parse_descriptions(descriptions, known_tables)
     
     # Check if parsing completely failed (empty dict + warnings indicates failure)
     if not descriptions_data and parse_warnings:

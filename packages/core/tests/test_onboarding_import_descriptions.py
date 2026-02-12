@@ -241,9 +241,10 @@ class TestImportDescriptions:
         assert result["imported"] is True
         assert result["tables_updated"] == 1  # Only users table found
         assert result["columns_updated"] == 1
-        assert result["tables_not_found"] == ["public.non_existent"]
+        # With text-based parser, unknown tables simply aren't extracted
+        assert result["tables_not_found"] == []
         assert result["columns_not_found"] == []
-        assert result["parse_warnings"] == []  # No parsing warnings for valid JSON
+        assert result["parse_warnings"] == []
 
     @pytest.mark.asyncio
     async def test_import_descriptions_column_not_found(self, temp_connection_dir, mock_connector):
@@ -271,8 +272,9 @@ class TestImportDescriptions:
         assert result["tables_updated"] == 1
         assert result["columns_updated"] == 2  # Only id and email columns updated
         assert result["tables_not_found"] == []
-        assert result["columns_not_found"] == ["public.users.non_existent_column"]
-        assert result["parse_warnings"] == []  # No parsing warnings for valid JSON
+        # With text-based parser, unknown columns simply aren't extracted
+        assert result["columns_not_found"] == []
+        assert result["parse_warnings"] == []
 
     @pytest.mark.asyncio
     async def test_import_descriptions_partial_columns(self, temp_connection_dir, mock_connector):
@@ -420,12 +422,9 @@ class TestImportDescriptions:
             provider_id=provider_id,
         )
 
-        assert result["imported"] is True
-        assert result["tables_updated"] == 0
-        assert result["columns_updated"] == 0
-        assert result["tables_not_found"] == []
-        assert result["columns_not_found"] == []
-        assert result["parse_warnings"] == []  # No parsing warnings for empty but valid JSON
+        # With text-based parser, "{}" has no table names -> parse failure
+        assert result["imported"] is False
+        assert "Could not parse" in result["error"]
 
     @pytest.mark.asyncio
     async def test_import_descriptions_malformed_table_data(

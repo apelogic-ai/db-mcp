@@ -1,366 +1,103 @@
 """Test the universal description parser."""
 
+import json
+
 import pytest
 
 from db_mcp.onboarding.description_parser import parse_descriptions
 
 
-class TestParseDescriptions:
-    """Test the main parse_descriptions function."""
-    
-    def test_empty_input(self):
-        """Test empty input returns empty dict with warning."""
-        result, warnings = parse_descriptions("")
-        assert result == {}
-        assert "Empty input" in warnings
-        
-        result, warnings = parse_descriptions("   ")
-        assert result == {}
-        assert "Empty input" in warnings
-    
-    def test_valid_json_format(self):
-        """Test valid JSON format (existing behavior)."""
-        json_input = '''
-        {
-            "schema.users": {
-                "description": "User accounts table",
-                "columns": {
-                    "id": "Primary key",
-                    "email": "User email address"
-                }
-            },
-            "schema.orders": {
-                "description": "Customer orders"
-            }
-        }
-        '''
-        
-        result, warnings = parse_descriptions(json_input)
-        
-        assert len(warnings) == 0
-        assert "schema.users" in result
-        assert result["schema.users"]["description"] == "User accounts table"
-        assert result["schema.users"]["columns"]["id"] == "Primary key"
-        assert result["schema.users"]["columns"]["email"] == "User email address"
-        assert "schema.orders" in result
-        assert result["schema.orders"]["description"] == "Customer orders"
-        assert result["schema.orders"]["columns"] == {}
-    
-    def test_simple_json_string_values(self):
-        """Test JSON with simple string values."""
-        json_input = '''
-        {
-            "users": "User accounts table",
-            "orders": "Customer orders",
-            "products": "Product catalog"
-        }
-        '''
-        
-        result, warnings = parse_descriptions(json_input)
-        
-        assert len(warnings) == 0
-        assert result["users"]["description"] == "User accounts table"
-        assert result["users"]["columns"] == {}
-        assert result["orders"]["description"] == "Customer orders"
-        assert result["products"]["description"] == "Product catalog"
-    
-    def test_valid_yaml_format(self):
-        """Test valid YAML format."""
-        yaml_input = '''schema.users:
-  description: User accounts table
+@pytest.fixture()
+def known_tables():
+    return {
+        "dwh.public.daily_stats_cdrs": ["date", "carrier", "call_count"],
+        "public.users": ["id", "username", "email"],
+        "schema.orders": ["id", "amount", "status"],
+        "core.customers": ["customer_id", "name", "email"],
+    }
+
+
+# ── Basic edge cases ──
+
+
+def test_empty_input(known_tables):
+    result, warnings = parse_descriptions("", known_tables)
+    assert result == {}
+    assert "Empty input" in warnings
+
+    result, warnings = parse_descriptions("   \n", known_tables)
+    assert result == {}
+    assert warnings
+
+
+def test_no_known_tables():
+    result, warnings = parse_descriptions("some text", {})
+    assert result == {}
+    assert any("No known tables" in w for w in warnings)
+
+
+def test_garbage_input_no_matches(known_tables):
+    result, warnings = parse_descriptions("asdf qwer zxcv", known_tables)
+    assert result == {}
+    assert any("No matching tables" in w for w in warnings)
+
+
+# ── Full table name matching ──
+
+
+def test_full_table_name_yaml_style(known_tables):
+    text = """
+dwh.public.daily_stats_cdrs:
+  description: Contains network statistics aggregated by date and carrier
   columns:
-    id: Primary key
-    email: User email address
-    created_at: Account creation timestamp
+    date:
+      description: The specific date for the statistics
+    carrier:
+      description: Name of the telecommunications carrier
+    call_count:
+      description: Number of calls processed that day
+"""
+    result, _ = parse_descriptions(text, known_tables)
+    assert "dwh.public.daily_stats_cdrs" in result
+    entry = result["dwh.public.daily_stats_cdrs"]
+    assert "network statistics" in entry["description"]
+    assert entry["columns"]["date"] == "The specific date for the statistics"
+    assert entry["columns"]["carrier"] == "Name of the telecommunications carrier"
+    assert entry["columns"]["call_count"] == "Number of calls processed that day"
 
-schema.orders:
-  description: Customer orders
-  columns:
-    id: Order identifier
-    user_id: Foreign key to users table
-'''
-        
-        result, warnings = parse_descriptions(yaml_input)
-        
-        assert len(warnings) == 0
-        assert "schema.users" in result
-        assert result["schema.users"]["description"] == "User accounts table"
-        assert result["schema.users"]["columns"]["id"] == "Primary key"
-        assert result["schema.users"]["columns"]["created_at"] == "Account creation timestamp"
-        assert "schema.orders" in result
-        assert result["schema.orders"]["description"] == "Customer orders"
-        assert result["schema.orders"]["columns"]["user_id"] == "Foreign key to users table"
-    
-    def test_malformed_yaml_partial_parsing(self):
-        """Test that malformed YAML still extracts what it can."""
-        yaml_input = '''
-        schema.users:
-          description: User accounts table
-          columns:
-            id: Primary key
-            email: User email address
-        
-        schema.orders:
-          description: Customer orders
-          columns
-            id: Order identifier  # Missing colon
-        
-        schema.products: Product catalog  # Simple format
-        '''
-        
-        result, warnings = parse_descriptions(yaml_input)
-        
-        # Should parse what it can even if YAML is malformed
-        # If YAML fails completely, it falls back to text parsing
-        assert len(result) >= 1  # At least some data extracted
-        # Should have warnings about parsing issues
-        assert len(warnings) >= 0  # May or may not have warnings depending on fallback success
-    
-    def test_key_value_pairs_colon(self):
-        """Test key-value pairs with colon separator."""
-        text_input = '''users: User accounts table
-orders: Customer orders  
-products: Product catalog
-analytics_events: Event tracking data
-'''
-        
-        result, warnings = parse_descriptions(text_input)
-        
-        assert "users" in result
-        assert result["users"]["description"] == "User accounts table"
-        assert result["orders"]["description"] == "Customer orders"
-        assert result["analytics_events"]["description"] == "Event tracking data"
-    
-    def test_key_value_pairs_various_separators(self):
-        """Test key-value pairs with different separators."""
-        text_input = '''users = User accounts table
-orders -> Customer orders
-products | Product catalog
-events: Event tracking data
-'''
-        
-        result, warnings = parse_descriptions(text_input)
-        
-        assert len(result) == 4
-        assert result["users"]["description"] == "User accounts table"
-        assert result["orders"]["description"] == "Customer orders"
-        assert result["products"]["description"] == "Product catalog"
-        assert result["events"]["description"] == "Event tracking data"
-    
-    def test_indented_columns(self):
-        """Test indented format for columns under tables."""
-        text_input = '''schema.users: User accounts table
-  id: Primary key
-  email: User email address
-  created_at: Account creation timestamp
 
-schema.orders: Customer orders
-  id: Order identifier
-  user_id: Foreign key to users
-  total: Order total amount
-'''
-        
-        result, warnings = parse_descriptions(text_input)
-        
-        assert "schema.users" in result
-        assert result["schema.users"]["description"] == "User accounts table"
-        assert result["schema.users"]["columns"]["id"] == "Primary key"
-        assert result["schema.users"]["columns"]["email"] == "User email address"
-        assert result["schema.users"]["columns"]["created_at"] == "Account creation timestamp"
-        
-        assert "schema.orders" in result
-        assert result["schema.orders"]["description"] == "Customer orders"
-        assert result["schema.orders"]["columns"]["user_id"] == "Foreign key to users"
-        assert result["schema.orders"]["columns"]["total"] == "Order total amount"
-    
-    def test_csv_like_format(self):
-        """Test CSV-like format."""
-        csv_input = '''table,description
-users,User accounts table
-orders,Customer orders
-products,Product catalog
-events,Event tracking data
-'''
-        
-        result, warnings = parse_descriptions(csv_input)
-        
-        assert len(result) >= 4  # Should find at least the 4 tables
-        assert any("users" in key for key in result.keys())
-        # Find the users entry (key might be "users" or include schema prefix)
-        users_keys = [key for key in result.keys() if "users" in key]
-        assert len(users_keys) > 0
-        users_key = users_keys[0]
-        assert "User accounts table" in result[users_key]["description"]
-    
-    def test_markdown_table_format(self):
-        """Test markdown table format."""
-        md_input = '''| Table Name | Description |
-|------------|-------------|
-| users      | User accounts table |
-| orders     | Customer orders |
-| products   | Product catalog |
-'''
-        
-        result, warnings = parse_descriptions(md_input)
-        
-        assert len(result) >= 3
-        assert any("users" in key for key in result.keys())
-        users_keys = [key for key in result.keys() if "users" in key]
-        assert len(users_keys) > 0
-        users_key = users_keys[0]
-        assert "User accounts table" in result[users_key]["description"]
-    
-    def test_mixed_formats(self):
-        """Test input with mixed formats."""
-        mixed_input = '''# This is a comment
-users: User accounts table
+def test_full_table_name_in_prose(known_tables):
+    text = """
+    The dwh.public.daily_stats_cdrs table contains network statistics aggregated by date.
+    - date: The specific date for the statistics
+    - carrier: Name of the telecommunications carrier
+    """
+    result, _ = parse_descriptions(text, known_tables)
+    assert "dwh.public.daily_stats_cdrs" in result
+    assert "network statistics" in result["dwh.public.daily_stats_cdrs"]["description"]
+    assert result["dwh.public.daily_stats_cdrs"]["columns"]["date"] == "The specific date for the statistics"
 
-orders = Customer orders
 
-products -> Product catalog
-  name: Product name
-  price: Product price
+# ── Short table name matching ──
 
-# Some CSV data
-table,description
-events,Event tracking data
-analytics,Analytics data
-'''
-        
-        result, warnings = parse_descriptions(mixed_input)
-        
-        # Should extract data from multiple formats
-        assert len(result) >= 3
-        assert "users" in str(result)
-        assert "orders" in str(result)
-        assert "products" in str(result)
-    
-    def test_real_world_messy_input(self):
-        """Test with messy real-world input."""
-        messy_input = '''Database Schema Documentation
-============================
 
-user_accounts: Stores all user account information
-  user_id: Primary key (auto-increment)
-  email: User email (unique)
-  password_hash: Bcrypt hash of password
-  created_at: Timestamp of account creation
-  
-order_items -> Line items for customer orders
-  order_item_id -> Primary key
-  order_id -> Foreign key to orders table
-  product_id -> Foreign key to products
-  
-Table: product_catalog
-Description: Master list of all products
-Columns:
-- product_id: Primary key
-- name: Product display name
-- sku: Stock keeping unit
+def test_short_table_name_matching(known_tables):
+    text = """
+    users: User account information
+    - username: Unique login identifier
+    - email: Contact email address
+    """
+    result, _ = parse_descriptions(text, known_tables)
+    assert "public.users" in result
+    assert "User account information" in result["public.users"]["description"]
+    assert result["public.users"]["columns"]["username"] == "Unique login identifier"
 
-# Legacy tables (might be empty)
-old_user_data = Historical user data (deprecated)
-temp_import_staging | Temporary staging area
-'''
-        
-        result, warnings = parse_descriptions(messy_input)
-        
-        # Should extract something useful despite the mess
-        assert len(result) >= 3
-        assert len(warnings) >= 0  # May have warnings but shouldn't crash
-        
-        # Should find the main tables
-        assert "user_accounts" in str(result) or "user" in str(result)
-        assert "order_items" in str(result) or "order" in str(result)
-        assert "product" in str(result)
-    
-    def test_garbage_input(self):
-        """Test with complete garbage input."""
-        garbage_input = '''This is not structured data at all.
-Just random text without any clear format.
-No colons, equals, or separators.
-'''
-        
-        result, warnings = parse_descriptions(garbage_input)
-        
-        assert result == {}
-        assert len(warnings) > 0
-        assert any("Could not parse" in warning for warning in warnings)
-    
-    def test_json_error_handling(self):
-        """Test JSON error handling."""
-        invalid_json = '''
-        {
-            "users": {
-                "description": "User table",
-                "columns": "this should be an object not a string"
-            }
-        }
-        '''
-        
-        result, warnings = parse_descriptions(invalid_json)
-        
-        assert "users" in result
-        assert result["users"]["description"] == "User table"
-        # Should have warning about invalid columns format
-        assert any("columns" in warning for warning in warnings)
-    
-    def test_non_dict_json(self):
-        """Test JSON that parses to non-dict."""
-        non_dict_json = '["users", "orders", "products"]'
-        
-        result, warnings = parse_descriptions(non_dict_json)
-        
-        # Should fall back to text parsing
-        assert len(warnings) >= 1
-        assert any("not a dictionary" in warning for warning in warnings)
-    
-    def test_empty_table_names(self):
-        """Test handling of empty table names."""
-        text_input = ''': Empty table name
-users: User accounts
-: Another empty one
-orders: Customer orders
-'''
-        
-        result, warnings = parse_descriptions(text_input)
-        
-        assert "users" in result
-        assert "orders" in result
-        # Should have warnings about empty keys
-        assert any("Empty key" in warning for warning in warnings)
-    
-    def test_unicode_and_special_chars(self):
-        """Test handling of unicode and special characters."""
-        unicode_input = '''users_table: Table des utilisateurs (français)
-产品目录: Product catalog in Chinese
-заказы: Orders in Russian
-table-with-dashes: Table with dashes
-table_with_underscores: Table with underscores
-table.with.dots: Table with dots
-'''
-        
-        result, warnings = parse_descriptions(unicode_input)
-        
-        assert len(result) >= 4
-        assert "users_table" in result
-        assert "Table des utilisateurs (français)" in result["users_table"]["description"]
-    
-    def test_very_long_input(self):
-        """Test with very long input to check performance."""
-        long_input = ""
-        for i in range(100):
-            long_input += f"table_{i}: Description for table number {i}\n"
-        
-        result, warnings = parse_descriptions(long_input)
-        
-        assert len(result) == 100
-        assert f"table_50" in result
-        assert "Description for table number 50" in result["table_50"]["description"]
 
-    def test_yaml_with_tables_wrapper(self):
-        """Test YAML with top-level 'tables:' key (Arsenii's format)."""
-        text = """
+# ── YAML formats ──
+
+
+def test_yaml_with_tables_wrapper(known_tables):
+    text = """
 tables:
   dwh.public.daily_stats_cdrs:
     description: Contains network statistics aggregated by date and carrier
@@ -369,37 +106,262 @@ tables:
         description: Date
       carrier:
         description: Name of the carrier
-  dwh.public.users:
-    description: User accounts table
 """
-        result, warnings = parse_descriptions(text)
-        assert "dwh.public.daily_stats_cdrs" in result
-        assert "dwh.public.users" in result
-        assert result["dwh.public.daily_stats_cdrs"]["description"] == "Contains network statistics aggregated by date and carrier"
-        assert result["dwh.public.daily_stats_cdrs"]["columns"]["date"] == "Date"
-        assert result["dwh.public.daily_stats_cdrs"]["columns"]["carrier"] == "Name of the carrier"
+    result, _ = parse_descriptions(text, known_tables)
+    assert "dwh.public.daily_stats_cdrs" in result
+    assert "network statistics" in result["dwh.public.daily_stats_cdrs"]["description"]
+    assert result["dwh.public.daily_stats_cdrs"]["columns"]["date"] == "Date"
+    assert result["dwh.public.daily_stats_cdrs"]["columns"]["carrier"] == "Name of the carrier"
 
-    def test_column_descriptions_as_objects(self):
-        """Test column descriptions given as {description: '...'} objects."""
-        text = """
-{
-  "public.orders": {
-    "description": "Order records",
+
+def test_yaml_block_scalar():
+    """YAML block scalar (|) treated as text."""
+    kt = {"dwh.public.daily_stats_cdrs": ["date", "carrier"]}
+    text = """
+dwh.public.daily_stats_cdrs:
+  description: |
+    Contains network statistics aggregated by date and carrier
+  columns:
+    date:
+      description: Date
+    carrier:
+      description: Name of the carrier
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "dwh.public.daily_stats_cdrs" in result
+    assert "network statistics" in result["dwh.public.daily_stats_cdrs"]["description"]
+    assert result["dwh.public.daily_stats_cdrs"]["columns"]["date"] == "Date"
+
+
+# ── JSON format ──
+
+
+def test_json_format(known_tables):
+    """JSON treated as text — table names and descriptions are extracted."""
+    text = """{
+  "orders": {
+    "description": "Order records from the e-commerce system",
     "columns": {
-      "id": {"description": "Primary key"},
-      "amount": {"description": "Order total in cents"},
-      "status": "Active or archived"
+      "amount": "Order total in cents",
+      "status": "Processing status"
     }
   }
-}
-"""
-        result, warnings = parse_descriptions(text)
-        assert result["public.orders"]["columns"]["id"] == "Primary key"
-        assert result["public.orders"]["columns"]["amount"] == "Order total in cents"
-        assert result["public.orders"]["columns"]["status"] == "Active or archived"
+}"""
+    result, _ = parse_descriptions(text, known_tables)
+    assert "schema.orders" in result
+    assert "e-commerce system" in result["schema.orders"]["description"]
+    assert result["schema.orders"]["columns"]["amount"] == "Order total in cents"
+    assert result["schema.orders"]["columns"]["status"] == "Processing status"
 
-    def test_schemas_wrapper_key(self):
-        """Test top-level 'schemas:' wrapper is also unwrapped."""
-        text = '{"schemas": {"public.users": {"description": "Users table"}}}'
-        result, warnings = parse_descriptions(text)
-        assert "public.users" in result
+
+def test_json_nested_structure(known_tables):
+    payload = {
+        "database_schema": {
+            "orders": {
+                "info": "Order records from the e-commerce system",
+                "fields": {"amount": "Order total in cents", "status": "Processing status"},
+            }
+        }
+    }
+    text = json.dumps(payload)
+    result, _ = parse_descriptions(text, known_tables)
+    assert "schema.orders" in result
+    # The "info" field is similar to "description" — parser should find it
+    assert result["schema.orders"]["columns"]["amount"] == "Order total in cents"
+
+
+# ── Key-value / indented formats ──
+
+
+def test_key_value_with_indented_columns():
+    kt = {
+        "public.users": ["id", "email", "name"],
+        "public.orders": ["id", "user_id", "total"],
+    }
+    text = """
+users: This is the user accounts table
+  id: Primary key for users
+  email: User's email address
+  name: Full name of the user
+
+orders: Customer order records
+  total: Order total in cents
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "public.users" in result
+    assert "public.orders" in result
+    assert "user accounts" in result["public.users"]["description"]
+    assert result["public.users"]["columns"]["email"] == "User's email address"
+    assert result["public.orders"]["columns"]["total"] == "Order total in cents"
+
+
+# ── Markdown format ──
+
+
+def test_markdown_bullet_list():
+    kt = {
+        "public.users": ["id", "username", "email"],
+        "public.posts": ["id", "title", "content"],
+    }
+    text = """
+## users
+User account information
+
+- username: Unique login identifier
+- email: Contact email address
+
+## posts
+Blog post data
+
+- title: Post headline
+- content: Full post body text
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "public.users" in result
+    assert "public.posts" in result
+    assert result["public.users"]["columns"]["username"] == "Unique login identifier"
+    assert result["public.posts"]["columns"]["title"] == "Post headline"
+
+
+# ── Fuzzy matching ──
+
+
+def test_fuzzy_matching_underscores_vs_spaces_and_case():
+    kt = {"data.user_profiles": ["user_id", "first_name"]}
+    text = """
+USER PROFILES: Stores detailed user profile information
+  user id: Primary key
+  first name: Given name
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "data.user_profiles" in result
+    assert "Stores detailed" in result["data.user_profiles"]["description"]
+    assert result["data.user_profiles"]["columns"]["user_id"] == "Primary key"
+    assert result["data.user_profiles"]["columns"]["first_name"] == "Given name"
+
+
+# ── Column scoping ──
+
+
+def test_column_scoping_to_table_context():
+    kt = {
+        "public.users": ["id", "name", "email"],
+        "public.orders": ["id", "name", "amount"],
+    }
+    text = """
+users: User accounts table
+  id: User primary key
+  name: User full name
+  email: User email address
+
+orders: Purchase records table
+  id: Order identifier
+  name: Order display name
+  amount: Total cost
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert result["public.users"]["columns"]["id"] == "User primary key"
+    assert result["public.users"]["columns"]["name"] == "User full name"
+    assert result["public.orders"]["columns"]["id"] == "Order identifier"
+    assert result["public.orders"]["columns"]["name"] == "Order display name"
+
+
+# ── Wiki/data dictionary formats ──
+
+
+def test_wiki_page_format():
+    kt = {
+        "reporting.daily_metrics": ["metric_date", "metric_name", "metric_value"],
+        "reporting.user_stats": ["user_id", "login_count", "last_seen"],
+    }
+    text = """
+=== daily_metrics ===
+Daily aggregated metrics for business intelligence.
+
+* metric_date - The date for which metrics were calculated
+* metric_name - Name of the specific metric being tracked
+* metric_value - Numerical value of the metric
+
+=== user_stats ===
+User activity statistics for the platform
+
+* login_count - Number of times user has logged in
+* last_seen - Timestamp of most recent activity
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "reporting.daily_metrics" in result
+    assert "reporting.user_stats" in result
+    assert result["reporting.daily_metrics"]["columns"]["metric_date"] == "The date for which metrics were calculated"
+    assert result["reporting.user_stats"]["columns"]["login_count"] == "Number of times user has logged in"
+
+
+def test_data_dictionary_format():
+    kt = {
+        "prod.customers": ["customer_id", "company_name", "industry"],
+        "prod.contracts": ["contract_id", "start_date", "end_date"],
+    }
+    text = """
+customers: Master customer information
+  customer_id: Primary key, auto-generated
+  company_name: Legal company name
+  industry: Industry classification code
+
+contracts: Customer contract records
+  start_date: Contract effective date
+  end_date: Contract expiration date
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "prod.customers" in result
+    assert "prod.contracts" in result
+    assert "Master customer" in result["prod.customers"]["description"]
+    assert result["prod.customers"]["columns"]["customer_id"] == "Primary key, auto-generated"
+    assert result["prod.contracts"]["columns"]["start_date"] == "Contract effective date"
+
+
+# ── Multiple schemas with same table name ──
+
+
+def test_multiple_schemas_same_table_name():
+    kt = {
+        "public.users": ["id", "email"],
+        "admin.users": ["id", "role"],
+        "archive.users": ["id", "deleted_at"],
+    }
+    text = """
+public.users: Main user accounts
+  email: Primary email address
+
+admin.users: Administrative user accounts
+  role: User's administrative role
+
+archive.users: Deleted user records
+  deleted_at: When the user was archived
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "public.users" in result
+    assert "admin.users" in result
+    assert "archive.users" in result
+    assert result["public.users"]["columns"]["email"] == "Primary email address"
+    assert result["admin.users"]["columns"]["role"] == "User's administrative role"
+    assert result["archive.users"]["columns"]["deleted_at"] == "When the user was archived"
+
+
+# ── Partial matches ──
+
+
+def test_partial_table_matches():
+    kt = {
+        "dwh.users": ["id", "email"],
+        "dwh.orders": ["id", "total"],
+        "dwh.products": ["id", "name"],
+    }
+    text = """
+users: User account records
+  email: User's email address
+
+orders: Customer purchase data
+"""
+    result, _ = parse_descriptions(text, kt)
+    assert "dwh.users" in result
+    assert "dwh.orders" in result
+    assert "dwh.products" not in result
