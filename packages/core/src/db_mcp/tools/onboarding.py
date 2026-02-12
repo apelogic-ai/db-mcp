@@ -1494,3 +1494,199 @@ async def _onboarding_bulk_approve(
     if gaps_found > 0:
         result["knowledge_gaps_detected"] = gaps_found
     return result
+async def _onboarding_import_descriptions(
+    descriptions: str,
+    provider_id: str | None = None,
+) -> dict:
+    """Import table and column descriptions from JSON, YAML, or freeform text.
+
+    This tool allows users to import pre-existing schema descriptions
+    from external documentation, data dictionaries, or other sources.
+    It accepts multiple formats and does best-effort parsing.
+
+    Args:
+        descriptions: Text containing descriptions in JSON, YAML, or freeform format.
+            Supported formats:
+            - JSON: {"schema.table": {"description": "...", "columns": {"col": "..."}}}
+            - YAML: nested format with same structure
+            - Key-value pairs: "table_name: description"
+            - Indented columns: "schema.table\n  col1: description"
+            - Markdown tables, CSV-like format, etc.
+        provider_id: Provider ID. Uses configured default if not provided.
+
+    Returns:
+        Import result with counts, summary, and any parsing warnings
+    """
+    from db_mcp.onboarding.description_parser import parse_descriptions
+
+    if provider_id is None:
+        settings = get_settings()
+        provider_id = settings.provider_id
+
+    # Load current state
+    state = load_state(provider_id)
+    if state is None:
+        return {
+            "imported": False,
+            "error": "Onboarding not started. Call onboarding_start first.",
+        }
+
+    if state.phase != OnboardingPhase.SCHEMA:
+        return {
+            "imported": False,
+            "error": f"Not in schema phase. Current phase: {state.phase.value}",
+            "phase": state.phase.value,
+        }
+
+    # Load existing schema descriptions
+    schema = load_schema_descriptions(provider_id)
+    if schema is None:
+        return {
+            "imported": False,
+            "error": "Schema descriptions not found. Call onboarding_discover first.",
+        }
+
+    # Parse the descriptions using universal parser
+    descriptions_data, parse_warnings = parse_descriptions(descriptions)
+    
+    # Check if parsing completely failed (empty dict + warnings indicates failure)
+    if not descriptions_data and parse_warnings:
+        return {
+            "imported": False,
+            "error": "Could not parse any table descriptions from input",
+            "warnings": parse_warnings,
+        }
+
+    # Track results
+    tables_updated = 0
+    columns_updated = 0
+    tables_not_found = []
+    columns_not_found = []
+
+    # Create a lookup of existing tables by full_name
+    existing_tables = {table.full_name: table for table in schema.tables}
+
+    # Process each table in the import data
+    for full_name, table_data in descriptions_data.items():
+        if not isinstance(table_data, dict):
+            logger.warning(f"Skipping {full_name}: table data must be an object")
+            continue
+
+        # Find the table in our schema
+        if full_name not in existing_tables:
+            tables_not_found.append(full_name)
+            continue
+
+        table = existing_tables[full_name]
+        table_description = table_data.get("description")
+        column_descriptions = table_data.get("columns", {})
+
+        if not isinstance(column_descriptions, dict):
+            logger.warning(f"Skipping column descriptions for {full_name}: must be an object")
+            column_descriptions = {}
+
+        # Update table description if provided
+        if table_description:
+            table.description = table_description
+
+        # Update column descriptions
+        existing_columns = {col.name: col for col in table.columns}
+        for col_name, col_description in column_descriptions.items():
+            if col_name not in existing_columns:
+                columns_not_found.append(f"{full_name}.{col_name}")
+                continue
+
+            existing_columns[col_name].description = col_description
+            columns_updated += 1
+
+        # Mark table as approved if it wasn't already
+        if table.status != TableDescriptionStatus.APPROVED:
+            table.status = TableDescriptionStatus.APPROVED
+
+        tables_updated += 1
+
+    # Save the updated schema
+    save_result = save_schema_descriptions(schema)
+    if not save_result["saved"]:
+        return {
+            "imported": False,
+            "error": f"Failed to save updated schema: {save_result['error']}",
+        }
+
+    # Check if all tables are now complete and advance phase if so
+    counts = schema.count_by_status()
+    pending_count = counts.get("pending", 0)
+
+    if pending_count == 0:
+        # All tables processed, advance to domain phase
+        state.phase = OnboardingPhase.DOMAIN
+        save_state(state)
+
+        # Run deterministic schema gap scan
+        gaps_found = _run_schema_gap_scan(provider_id)
+
+        next_steps = [
+            "Add business rules for SQL generation",
+            "Add query examples",
+            "Import existing rules/examples from files",
+        ]
+        if gaps_found > 0:
+            next_steps.insert(0, f"Review {gaps_found} detected knowledge gaps (abbreviations/jargon)")
+
+        result = {
+            "imported": True,
+            "tables_updated": tables_updated,
+            "columns_updated": columns_updated,
+            "tables_not_found": tables_not_found,
+            "columns_not_found": columns_not_found,
+            "parse_warnings": parse_warnings,
+            "phase": state.phase.value,
+            "schema_file": save_result["file_path"],
+            "message": f"Imported descriptions for {tables_updated} tables with {columns_updated} column descriptions. All tables now complete - advanced to domain phase.",
+            "guidance": {
+                "summary": f"Imported descriptions for {tables_updated} tables. Schema phase complete!",
+                "next_steps": next_steps,
+                "suggested_response": (
+                    f"✓ **Imported descriptions!**\n\n"
+                    f"- {tables_updated} tables updated\n"
+                    f"- {columns_updated} column descriptions added\n\n"
+                    "All tables are now described. Moving to business rules phase."
+                ),
+            },
+        }
+        if gaps_found > 0:
+            result["knowledge_gaps_detected"] = gaps_found
+        return result
+
+    # Still have pending tables
+    tables_described = counts.get("approved", 0) + counts.get("skipped", 0)
+
+    return {
+        "imported": True,
+        "tables_updated": tables_updated,
+        "columns_updated": columns_updated,
+        "tables_not_found": tables_not_found,
+        "columns_not_found": columns_not_found,
+        "parse_warnings": parse_warnings,
+        "tables_total": state.tables_total,
+        "tables_described": tables_described,
+        "remaining": pending_count,
+        "phase": state.phase.value,
+        "schema_file": save_result["file_path"],
+        "message": f"Imported descriptions for {tables_updated} tables with {columns_updated} column descriptions. {pending_count} tables remain pending.",
+        "guidance": {
+            "summary": f"Imported descriptions for {tables_updated} tables. {pending_count} tables still pending.",
+            "next_steps": [
+                "Continue describing remaining tables with onboarding_next",
+                "Or bulk-approve remaining tables",
+                "Or import more descriptions",
+            ],
+            "suggested_response": (
+                f"✓ **Imported descriptions!**\n\n"
+                f"- {tables_updated} tables updated\n"
+                f"- {columns_updated} column descriptions added\n\n"
+                f"Progress: {tables_described}/{state.tables_total} tables described\n"
+                f"{pending_count} tables remain. Continue with next table or bulk approve?"
+            ),
+        },
+    }

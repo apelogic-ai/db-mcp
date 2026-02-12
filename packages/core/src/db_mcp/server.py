@@ -55,6 +55,7 @@ from db_mcp.tools.onboarding import (
     _onboarding_approve,
     _onboarding_bulk_approve,
     _onboarding_discover,
+    _onboarding_import_descriptions,
     _onboarding_import_ignore_patterns,
     _onboarding_next,
     _onboarding_remove_ignore_pattern,
@@ -671,6 +672,7 @@ def _create_server() -> FastMCP:
     server.tool(name="mcp_setup_approve")(_onboarding_approve)
     server.tool(name="mcp_setup_skip")(_onboarding_skip)
     server.tool(name="mcp_setup_bulk_approve")(_onboarding_bulk_approve)
+    server.tool(name="mcp_setup_import_descriptions")(_onboarding_import_descriptions)
 
     # MCP domain tools (domain model generation)
     server.tool(name="mcp_domain_status")(_domain_status)
