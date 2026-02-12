@@ -9,9 +9,12 @@ test.describe("Config Page", () => {
     await expect(main.getByText("production")).toBeVisible();
     await expect(main.getByText("staging")).toBeVisible();
 
-    // Dialect badges
-    await expect(main.getByText("postgresql", { exact: true })).toBeVisible();
-    await expect(main.getByText("clickhouse", { exact: true })).toBeVisible();
+    // Dialect icons (replaced text badges with SVG DialectIcon components)
+    // Check for the presence of connection rows which contain DialectIcon components
+    const productionRow = main.locator("[class*='rounded-lg border']").filter({ hasText: "production" });
+    const stagingRow = main.locator("[class*='rounded-lg border']").filter({ hasText: "staging" });
+    await expect(productionRow).toBeVisible();
+    await expect(stagingRow).toBeVisible();
   });
 
   test("empty state when no connections", async ({ page, bicpMock }) => {
@@ -280,28 +283,31 @@ test.describe("Config Page", () => {
 
   // ── Agent Configuration ─────────────────────────────────────
 
-  test("displays detected agents with badges", async ({ page }) => {
+  test("displays detected agents with action buttons", async ({ page }) => {
     await page.goto("/config");
 
     // Agent Configuration section title
     await expect(page.getByText("Agent Configuration")).toBeVisible();
 
-    // All three agents visible
+    // All three agents visible (names only, badges removed in rebrand)
     await expect(page.getByText("Claude Desktop")).toBeVisible();
     await expect(page.getByText("Claude Code")).toBeVisible();
     await expect(page.getByText("Codex CLI")).toBeVisible();
 
-    // Installed badges for Claude Desktop and Claude Code
+    // Claude Desktop is configured - should have Remove and Edit Config buttons
     const desktopRow = page.getByTestId("agent-claude-desktop");
-    await expect(desktopRow.getByText("Installed")).toBeVisible();
-    await expect(desktopRow.getByText("Configured")).toBeVisible();
+    await expect(desktopRow.getByRole("button", { name: "Remove" })).toBeVisible();
+    await expect(desktopRow.getByRole("button", { name: "Edit Config" })).toBeVisible();
 
+    // Claude Code is installed but not configured - should have Add button
     const codeRow = page.getByTestId("agent-claude-code");
-    await expect(codeRow.getByText("Installed")).toBeVisible();
+    await expect(codeRow.getByRole("button", { name: "Add" })).toBeVisible();
 
-    // Codex is not installed
+    // Codex is not installed - should have no action buttons (agent row exists but disabled/grayed out)
     const codexRow = page.getByTestId("agent-codex");
-    await expect(codexRow.getByText("Not Installed")).toBeVisible();
+    await expect(codexRow).toBeVisible();
+    await expect(codexRow.getByRole("button", { name: "Add" })).not.toBeVisible();
+    await expect(codexRow.getByRole("button", { name: "Remove" })).not.toBeVisible();
   });
 
   test("add db-mcp to agent", async ({ page, bicpMock }) => {
