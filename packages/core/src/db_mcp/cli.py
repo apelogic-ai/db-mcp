@@ -459,10 +459,11 @@ def git_pull(path: Path) -> bool:
                 console.print("[yellow]Merge conflict detected.[/yellow]")
                 console.print(f"[dim]Resolve conflicts in {path}[/dim]")
                 return False
-            elif "couldn't find remote ref" in error_msg:
+            if "couldn't find remote ref" in error_msg:
                 console.print("[dim]Remote branch not found (may not exist yet).[/dim]")
-            else:
-                console.print(f"[yellow]Pull warning: {e}[/yellow]")
+                return True
+            console.print(f"[yellow]Pull warning: {e}[/yellow]")
+            return False
 
         # Pop stash if we stashed
         if stashed:
@@ -923,13 +924,14 @@ def _run_discovery_with_progress(
     # NOTE: SIGALRM cannot reliably interrupt blocking DBAPI calls (e.g., psycopg2),
     # so we run the whole discovery in a daemon thread with a hard deadline.
 
+    err_console.print("[dim]Starting discovery...[/dim]")
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         MofNCompleteColumn(),
         console=err_console,
-        transient=True,
     ) as progress:
         # Start spinner immediately so the user sees *something* before any blocking calls.
         task = progress.add_task("Starting discovery...", total=None)
@@ -941,7 +943,6 @@ def _run_discovery_with_progress(
         def run() -> None:
             try:
                 # Phase 1: Connect
-                progress.update(task, description="Connecting...", total=None)
                 test_result = connector.test_connection()
                 if not test_result.get("connected"):
                     error[0] = RuntimeError(test_result.get("error", "unknown"))
@@ -1044,17 +1045,26 @@ def _run_discovery_with_progress(
                 error[0] = e
 
         import threading
+        import time
 
         t = threading.Thread(target=run, daemon=True)
         t.start()
-        if timeout_s > 0:
-            t.join(timeout=timeout_s)
-        else:
-            t.join()
 
-        if t.is_alive():
-            console.print(f"[red]Discovery timed out after {timeout_s}s[/red]")
-            return None
+        deadline = time.monotonic() + timeout_s if timeout_s and timeout_s > 0 else None
+
+        while True:
+            # Timeout handling
+            if deadline is not None and time.monotonic() > deadline:
+                console.print(f"[red]Discovery timed out after {timeout_s}s[/red]")
+                return None
+
+            # Allow Rich to refresh while the worker thread runs.
+            progress.refresh()
+            time.sleep(0.1)
+
+            # Exit when worker finishes
+            if not t.is_alive():
+                break
 
         if error[0] is not None:
             console.print(f"[red]Discovery failed: {error[0]}[/red]")
@@ -3119,6 +3129,18 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
                 "or set up a connection with 'db-mcp init'.[/red]"
             )
             sys.exit(1)
+
+        # We have a connection directory, but it may not have a DB URL configured.
+        # Avoid surfacing an internal message like "No database URL configured".
+        conn_env = _load_connection_env(active)
+        database_url = conn_env.get("DATABASE_URL")
+        if not database_url:
+            console.print(
+                "[red]No connection specified. Use --url or --connection, "
+                "or set up a connection with 'db-mcp init'.[/red]"
+            )
+            sys.exit(1)
+
         from db_mcp.connectors import get_connector
 
         connector = get_connector(str(conn_path))
