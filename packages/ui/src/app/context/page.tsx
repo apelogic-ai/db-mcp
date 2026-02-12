@@ -90,7 +90,7 @@ export default function ContextPage() {
     connection: string;
     folder: string;
   } | null>(null);
-  const [uploadType, setUploadType] = useState<"domain" | "data" | null>(null);
+  const [uploadType, setUploadType] = useState<"domain" | "data" | "instructions" | null>(null);
   const [uploadContent, setUploadContent] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
@@ -319,6 +319,7 @@ export default function ContextPage() {
     const baseNames: Record<string, string> = {
       domain: "model",
       data: "reference",
+      instructions: "rules",
     };
     const base = baseNames[type] || "content";
     let name = `${base}.md`;
@@ -672,6 +673,13 @@ export default function ContextPage() {
                       <div className="text-white font-medium">Data Reference</div>
                       <div className="text-gray-400 text-xs">Saves to data/ as .md</div>
                     </button>
+                    <button
+                      onClick={() => setUploadType("instructions")}
+                      className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 hover:bg-gray-700 text-left"
+                    >
+                      <div className="text-white font-medium">Business Rules</div>
+                      <div className="text-gray-400 text-xs">Saves to instructions/ as .md</div>
+                    </button>
                     
                     {/* Disabled options */}
                     <div className="space-y-2 opacity-50 cursor-not-allowed">
@@ -685,10 +693,6 @@ export default function ContextPage() {
                       </div>
                       <div className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 text-left">
                         <div className="text-gray-400 font-medium">Learning / Feedback</div>
-                        <div className="text-gray-500 text-xs">Use your agent for structured formats</div>
-                      </div>
-                      <div className="w-full p-3 border border-gray-700 rounded-lg bg-gray-800 text-left">
-                        <div className="text-gray-400 font-medium">Instructions / Rules</div>
                         <div className="text-gray-500 text-xs">Use your agent for structured formats</div>
                       </div>
                     </div>
@@ -712,7 +716,7 @@ export default function ContextPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-400">
-                    Type: {uploadType === "domain" ? "Domain Model" : "Data Reference"}
+                    Type: {uploadType === "domain" ? "Domain Model" : uploadType === "data" ? "Data Reference" : "Business Rules"}
                   </span>
                   <button
                     onClick={() => setUploadType(null)}
