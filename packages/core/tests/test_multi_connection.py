@@ -132,9 +132,7 @@ class TestGenerationToolsConnection:
     @patch("db_mcp.connectors.get_connector_capabilities")
     @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
     @patch("db_mcp.tools.generation.explain_sql")
-    async def test_validate_sql_passes_connection(
-        self, mock_explain, mock_ro, mock_caps, mock_gc
-    ):
+    async def test_validate_sql_passes_connection(self, mock_explain, mock_ro, mock_caps, mock_gc):
         from db_mcp.tools.generation import _validate_sql
 
         mock_connector = MagicMock()
@@ -145,9 +143,7 @@ class TestGenerationToolsConnection:
         mock_explain_result.error = "test"
         mock_explain.return_value = mock_explain_result
 
-        with patch(
-            "db_mcp.tools.utils._resolve_connection_path", return_value="/p/prod"
-        ):
+        with patch("db_mcp.tools.utils._resolve_connection_path", return_value="/p/prod"):
             await _validate_sql(sql="SELECT 1", connection="prod")
 
         mock_gc.assert_called_once_with(connection_path="/p/prod")
@@ -181,9 +177,7 @@ class TestShellToolConnection:
     @patch("db_mcp.tools.shell.get_connection_path")
     @patch("db_mcp.tools.shell.run_sandboxed")
     @patch("db_mcp.tools.shell.validate_command")
-    async def test_shell_without_connection_uses_default(
-        self, mock_validate, mock_run, mock_gcp
-    ):
+    async def test_shell_without_connection_uses_default(self, mock_validate, mock_run, mock_gcp):
         from db_mcp.tools.shell import _shell
 
         mock_validate.return_value = MagicMock(ok=True, is_write=False)

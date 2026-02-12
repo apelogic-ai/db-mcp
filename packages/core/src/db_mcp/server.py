@@ -415,7 +415,7 @@ def _create_server() -> FastMCP:
         if store.last_processed_at > 0:
             hours_since = (current_time - store.last_processed_at) / 3600
         else:
-            hours_since = float('inf')
+            hours_since = float("inf")
 
         # Determine if conversational suggestion is warranted
         should_suggest = len(pending) > 0 and hours_since >= 24.0
@@ -431,7 +431,7 @@ def _create_server() -> FastMCP:
             processed_line = f"**Last processed:** {hours_since:.1f} hours ago\n"
         else:
             processed_line = "**Last processed:** Never\n"
-        suggest_str = 'YES' if should_suggest else 'NO'
+        suggest_str = "YES" if should_suggest else "NO"
 
         lines = [
             f"# Pending Insights ({len(pending)})\n",
@@ -456,9 +456,7 @@ def _create_server() -> FastMCP:
                         lines.append(f"- **{k}:** {v}")
                     elif v is not None:
                         lines.append(f"- **{k}:** {v}")
-            lines.append(
-                f"\n*Dismiss: `dismiss_insight('{insight.id}')`*\n"
-            )
+            lines.append(f"\n*Dismiss: `dismiss_insight('{insight.id}')`*\n")
 
         return "\n".join(lines)
 
@@ -593,10 +591,7 @@ def _create_server() -> FastMCP:
         connection_path = get_connection_path()
         mark_insights_processed(connection_path)
 
-        return {
-            "status": "processed",
-            "message": "Insights processing timestamp updated"
-        }
+        return {"status": "processed", "message": "Insights processing timestamp updated"}
 
     server.tool(name="mark_insights_processed")(_mark_insights_processed)
 

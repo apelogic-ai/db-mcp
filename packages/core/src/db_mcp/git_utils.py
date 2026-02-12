@@ -159,13 +159,14 @@ class GitBackend(ABC):
         raise NotImplementedError(f"{self.name} backend does not support diff_names")
 
     def push_branch(
-        self, path: Path, branch: str,
-        remote: str = "origin", force_with_lease: bool = False,
+        self,
+        path: Path,
+        branch: str,
+        remote: str = "origin",
+        force_with_lease: bool = False,
     ) -> None:
         """Push a specific branch to remote."""
-        raise NotImplementedError(
-            f"{self.name} backend does not support push_branch"
-        )
+        raise NotImplementedError(f"{self.name} backend does not support push_branch")
 
     def merge_abort(self, path: Path) -> None:
         """Abort an in-progress merge."""
@@ -176,13 +177,13 @@ class GitBackend(ABC):
         raise NotImplementedError(f"{self.name} backend does not support delete_remote_branch")
 
     def list_merged_remote_branches(
-        self, path: Path, target: str = "main",
+        self,
+        path: Path,
+        target: str = "main",
         pattern: str = "origin/collaborator/*",
     ) -> list[str]:
         """List remote branches fully merged into target."""
-        raise NotImplementedError(
-            f"{self.name} does not support list_merged_remote_branches"
-        )
+        raise NotImplementedError(f"{self.name} does not support list_merged_remote_branches")
 
 
 class NativeGitBackend(GitBackend):
@@ -351,8 +352,11 @@ class NativeGitBackend(GitBackend):
         return [f for f in result.stdout.strip().split("\n") if f]
 
     def push_branch(
-        self, path: Path, branch: str,
-        remote: str = "origin", force_with_lease: bool = False,
+        self,
+        path: Path,
+        branch: str,
+        remote: str = "origin",
+        force_with_lease: bool = False,
     ) -> None:
         args = ["push", "-u", remote, branch]
         if force_with_lease:
@@ -366,12 +370,15 @@ class NativeGitBackend(GitBackend):
         self._run(["push", remote, "--delete", branch], cwd=path)
 
     def list_merged_remote_branches(
-        self, path: Path, target: str = "main",
+        self,
+        path: Path,
+        target: str = "main",
         pattern: str = "origin/collaborator/*",
     ) -> list[str]:
         result = self._run(
             ["branch", "-r", "--merged", target, "--list", pattern],
-            cwd=path, check=False,
+            cwd=path,
+            check=False,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return []

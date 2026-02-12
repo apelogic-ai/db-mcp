@@ -41,13 +41,10 @@ class InsightStore:
     def add(self, insight: Insight) -> bool:
         """Add insight if not duplicate. Returns True if added."""
         for existing in self.insights:
-            if (
-                existing.id == insight.id
-                or (
-                    existing.category == insight.category
-                    and existing.title == insight.title
-                    and not existing.dismissed
-                )
+            if existing.id == insight.id or (
+                existing.category == insight.category
+                and existing.title == insight.title
+                and not existing.dismissed
             ):
                 return False
         self.insights.append(insight)
@@ -130,146 +127,150 @@ def detect_insights(
             continue  # Already saved, not actionable
         count = rq.get("count", 0)
         if count >= 3:
-            insights.append(Insight(
-                id=f"repeated-{hash(rq.get('full_sql', '')) % 10**8}",
-                category="pattern",
-                severity="action",
-                title=f"Query repeated {count} times",
-                summary=(
-                    f"The same query has been generated {count} times "
-                    f"across sessions. Saving it as an example would "
-                    f"let the agent reuse it directly."
-                ),
-                details={
-                    "sql_preview": rq.get("sql_preview", ""),
-                    "suggested_intent": rq.get("suggested_intent", ""),
-                    "count": count,
-                },
-                detected_at=ts,
-            ))
+            insights.append(
+                Insight(
+                    id=f"repeated-{hash(rq.get('full_sql', '')) % 10**8}",
+                    category="pattern",
+                    severity="action",
+                    title=f"Query repeated {count} times",
+                    summary=(
+                        f"The same query has been generated {count} times "
+                        f"across sessions. Saving it as an example would "
+                        f"let the agent reuse it directly."
+                    ),
+                    details={
+                        "sql_preview": rq.get("sql_preview", ""),
+                        "suggested_intent": rq.get("suggested_intent", ""),
+                        "count": count,
+                    },
+                    detected_at=ts,
+                )
+            )
 
     # 2. Validation failures -- knowledge gaps
     fail_rate = analysis.get("insights", {}).get("validateFailRate")
     fail_count = analysis.get("validationFailureCount", 0)
     if fail_rate is not None and fail_rate > 30 and fail_count >= 3:
-        insights.append(Insight(
-            id=f"high-fail-rate-{int(ts)}",
-            category="error",
-            severity="warning",
-            title=f"High SQL validation failure rate ({fail_rate}%)",
-            summary=(
-                f"{fail_count} validation failures detected. "
-                f"The agent may be missing schema context or "
-                f"business rules for common query patterns."
-            ),
-            details={
-                "fail_rate": fail_rate,
-                "fail_count": fail_count,
-                "sample_errors": [
-                    e.get("error_message", "")
-                    for e in analysis.get("validationFailures", [])[:3]
-                ],
-            },
-            detected_at=ts,
-        ))
+        insights.append(
+            Insight(
+                id=f"high-fail-rate-{int(ts)}",
+                category="error",
+                severity="warning",
+                title=f"High SQL validation failure rate ({fail_rate}%)",
+                summary=(
+                    f"{fail_count} validation failures detected. "
+                    f"The agent may be missing schema context or "
+                    f"business rules for common query patterns."
+                ),
+                details={
+                    "fail_rate": fail_rate,
+                    "fail_count": fail_count,
+                    "sample_errors": [
+                        e.get("error_message", "")
+                        for e in analysis.get("validationFailures", [])[:3]
+                    ],
+                },
+                detected_at=ts,
+            )
+        )
 
     # 3. Vocabulary gaps detected
-    open_gaps = [
-        g for g in analysis.get("vocabularyGaps", [])
-        if g.get("status") == "open"
-    ]
+    open_gaps = [g for g in analysis.get("vocabularyGaps", []) if g.get("status") == "open"]
     if open_gaps:
-        terms = [
-            t.get("term", "")
-            for g in open_gaps
-            for t in g.get("terms", [])
-        ][:5]
-        insights.append(Insight(
-            id=f"vocab-gaps-{len(open_gaps)}",
-            category="gap",
-            severity="action",
-            title=f"{len(open_gaps)} unmapped business terms",
-            summary=(
-                f"Terms like {', '.join(repr(t) for t in terms)} "
-                f"appeared in queries but aren't mapped to schema. "
-                f"Adding business rules would improve accuracy."
-            ),
-            details={
-                "gap_count": len(open_gaps),
-                "sample_terms": terms,
-            },
-            detected_at=ts,
-        ))
+        terms = [t.get("term", "") for g in open_gaps for t in g.get("terms", [])][:5]
+        insights.append(
+            Insight(
+                id=f"vocab-gaps-{len(open_gaps)}",
+                category="gap",
+                severity="action",
+                title=f"{len(open_gaps)} unmapped business terms",
+                summary=(
+                    f"Terms like {', '.join(repr(t) for t in terms)} "
+                    f"appeared in queries but aren't mapped to schema. "
+                    f"Adding business rules would improve accuracy."
+                ),
+                details={
+                    "gap_count": len(open_gaps),
+                    "sample_terms": terms,
+                },
+                detected_at=ts,
+            )
+        )
 
     # 4. Low example hit rate -- agent not using knowledge
     hit_rate = analysis.get("insights", {}).get("exampleHitRate")
     gen_calls = analysis.get("insights", {}).get("generationCalls", 0)
     if hit_rate is not None and hit_rate < 30 and gen_calls >= 5:
-        insights.append(Insight(
-            id=f"low-hit-rate-{int(ts)}",
-            category="knowledge",
-            severity="info",
-            title=f"Low example reuse ({hit_rate}%)",
-            summary=(
-                f"Only {hit_rate}% of SQL generation calls found "
-                f"relevant examples. The knowledge vault may need "
-                f"more examples for common query patterns."
-            ),
-            details={
-                "hit_rate": hit_rate,
-                "generation_calls": gen_calls,
-            },
-            detected_at=ts,
-        ))
+        insights.append(
+            Insight(
+                id=f"low-hit-rate-{int(ts)}",
+                category="knowledge",
+                severity="info",
+                title=f"Low example reuse ({hit_rate}%)",
+                summary=(
+                    f"Only {hit_rate}% of SQL generation calls found "
+                    f"relevant examples. The knowledge vault may need "
+                    f"more examples for common query patterns."
+                ),
+                details={
+                    "hit_rate": hit_rate,
+                    "generation_calls": gen_calls,
+                },
+                detected_at=ts,
+            )
+        )
 
     # 5. Errors with saveable SQL -- learning opportunities
     unsaved_errors = [
-        e for e in analysis.get("errors", [])
-        if e.get("sql") and not e.get("is_saved")
+        e for e in analysis.get("errors", []) if e.get("sql") and not e.get("is_saved")
     ]
     if len(unsaved_errors) >= 3:
-        insights.append(Insight(
-            id=f"unsaved-errors-{len(unsaved_errors)}",
-            category="knowledge",
-            severity="action",
-            title=f"{len(unsaved_errors)} failed queries not saved",
-            summary=(
-                f"There are {len(unsaved_errors)} failed queries "
-                f"with SQL that could be saved as learnings to "
-                f"prevent the agent from repeating the same mistakes."
-            ),
-            details={
-                "count": len(unsaved_errors),
-                "sample_errors": [
-                    {
-                        "sql": e.get("sql", "")[:100],
-                        "error": e.get("error", "")[:100],
-                    }
-                    for e in unsaved_errors[:3]
-                ],
-            },
-            detected_at=ts,
-        ))
+        insights.append(
+            Insight(
+                id=f"unsaved-errors-{len(unsaved_errors)}",
+                category="knowledge",
+                severity="action",
+                title=f"{len(unsaved_errors)} failed queries not saved",
+                summary=(
+                    f"There are {len(unsaved_errors)} failed queries "
+                    f"with SQL that could be saved as learnings to "
+                    f"prevent the agent from repeating the same mistakes."
+                ),
+                details={
+                    "count": len(unsaved_errors),
+                    "sample_errors": [
+                        {
+                            "sql": e.get("sql", "")[:100],
+                            "error": e.get("error", "")[:100],
+                        }
+                        for e in unsaved_errors[:3]
+                    ],
+                },
+                detected_at=ts,
+            )
+        )
 
     # 6. No knowledge captures in recent traces
     capture_count = analysis.get("knowledgeCaptureCount", 0)
     trace_count = analysis.get("traceCount", 0)
     if trace_count >= 10 and capture_count == 0:
-        insights.append(Insight(
-            id=f"no-captures-{int(ts)}",
-            category="knowledge",
-            severity="info",
-            title="No knowledge captured recently",
-            summary=(
-                f"{trace_count} queries analyzed but no examples, "
-                f"rules, or feedback saved. The knowledge vault "
-                f"isn't growing from usage."
-            ),
-            details={
-                "trace_count": trace_count,
-            },
-            detected_at=ts,
-        ))
+        insights.append(
+            Insight(
+                id=f"no-captures-{int(ts)}",
+                category="knowledge",
+                severity="info",
+                title="No knowledge captured recently",
+                summary=(
+                    f"{trace_count} queries analyzed but no examples, "
+                    f"rules, or feedback saved. The knowledge vault "
+                    f"isn't growing from usage."
+                ),
+                details={
+                    "trace_count": trace_count,
+                },
+                detected_at=ts,
+            )
+        )
 
     return insights
 

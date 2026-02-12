@@ -1658,8 +1658,7 @@ async def _onboarding_import_descriptions(
             ),
             "guidance": {
                 "summary": (
-                    f"Imported descriptions for {tables_updated} tables. "
-                    "Schema phase complete!"
+                    f"Imported descriptions for {tables_updated} tables. Schema phase complete!"
                 ),
                 "next_steps": next_steps,
                 "suggested_response": (

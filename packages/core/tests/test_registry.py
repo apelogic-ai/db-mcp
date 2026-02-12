@@ -177,9 +177,7 @@ class TestSingleton:
 
 class TestConnectionInfo:
     def test_to_dict(self):
-        info = ConnectionInfo(
-            name="test", path=Path("/tmp/test"), type="api", description="Test"
-        )
+        info = ConnectionInfo(name="test", path=Path("/tmp/test"), type="api", description="Test")
         d = info.to_dict()
         assert d == {
             "name": "test",

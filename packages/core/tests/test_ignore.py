@@ -1,6 +1,5 @@
 """Tests for .db-mcpignore pattern matching."""
 
-
 from db_mcp.onboarding.ignore import IgnorePatterns, get_default_ignore_content
 
 

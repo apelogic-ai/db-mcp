@@ -33,6 +33,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
@@ -49,6 +50,19 @@ from db_mcp.agents import (
 )
 
 console = Console()
+
+
+def _get_cli_version() -> str:
+    """Get installed package version.
+
+    Falls back to "unknown" when package metadata isn't available
+    (e.g. running from a source checkout without installation).
+    """
+
+    try:
+        return version("db-mcp")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def _handle_sigint(signum, frame):
@@ -485,7 +499,7 @@ def is_git_url(s: str) -> bool:
 
 
 @click.group()
-@click.version_option(version="0.5.0")
+@click.version_option(version=_get_cli_version())
 def main():
     """db-mcp - Database metadata MCP server for Claude Desktop."""
     pass
@@ -882,7 +896,11 @@ def _init_greenfield(name: str):
 
 
 def _run_discovery_with_progress(
-    connector, conn_name: str = "cli-discover", save: bool = False
+    connector,
+    conn_name: str = "cli-discover",
+    save: bool = False,
+    timeout_s: int = 300,
+    schemas: list[str] | None = None,
 ) -> dict | None:
     """Run schema discovery with Rich progress indicators.
 
@@ -902,6 +920,20 @@ def _run_discovery_with_progress(
     all_tables: list[dict] = []
     dialect: str | None = None
 
+    def _timeout_handler(signum, frame):
+        raise TimeoutError(f"Discovery timed out after {timeout_s}s")
+
+    def _set_alarm():
+        if timeout_s <= 0:
+            return
+        if hasattr(signal, "SIGALRM"):
+            signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(timeout_s)
+
+    def _clear_alarm():
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -910,9 +942,15 @@ def _run_discovery_with_progress(
         console=err_console,
         transient=True,
     ) as progress:
-        # Phase 1: Connect
-        task = progress.add_task("Connecting...", total=None)
+        # Start spinner immediately so the user sees *something* before any blocking calls.
+        task = progress.add_task("Starting discovery...", total=None)
+        progress.refresh()
+
+        # Optional timeout using SIGALRM (Unix/macOS). Best-effort on platforms without it.
+        _set_alarm()
         try:
+            # Phase 1: Connect
+            progress.update(task, description="Connecting...", total=None)
             test_result = connector.test_connection()
             if not test_result.get("connected"):
                 console.print(
@@ -920,68 +958,90 @@ def _run_discovery_with_progress(
                 )
                 return None
             dialect = test_result.get("dialect")
-        except Exception as e:
-            console.print(f"[red]Connection failed: {e}[/red]")
-            return None
-        progress.update(task, description="Connected ✓", completed=1, total=1)
+            progress.update(task, description="Connected ✓", completed=1, total=1)
 
-        # Phase 2: Catalogs
-        progress.update(task, description="Discovering catalogs...", completed=0, total=None)
-        try:
-            catalogs = connector.get_catalogs()
-        except Exception:
-            catalogs = [None]
-        progress.update(
-            task,
-            description=f"Found {len([c for c in catalogs if c])} catalogs ✓",
-            completed=1,
-            total=1,
-        )
-
-        # Phase 3: Schemas
-        progress.update(task, description="Discovering schemas...", completed=0, total=None)
-        all_schemas = []
-        for catalog in catalogs:
+            # Phase 2: Catalogs
+            progress.update(task, description="Discovering catalogs...", completed=0, total=None)
             try:
-                schemas = connector.get_schemas(catalog=catalog)
-                for schema in schemas:
-                    all_schemas.append({"catalog": catalog, "schema": schema})
+                catalogs = connector.get_catalogs()
             except Exception:
-                pass
-        progress.update(
-            task, description=f"Found {len(all_schemas)} schemas ✓", completed=1, total=1
-        )
+                catalogs = [None]
+            progress.update(
+                task,
+                description=f"Found {len([c for c in catalogs if c])} catalogs ✓",
+                completed=1,
+                total=1,
+            )
 
-        # Phase 4: Tables + columns
-        progress.remove_task(task)
-        table_task = progress.add_task("Scanning tables...", total=len(all_schemas) or 1)
-
-        for schema_info in all_schemas:
-            catalog = schema_info["catalog"]
-            schema = schema_info["schema"]
-            label = f"{catalog}.{schema}" if catalog else (schema or "default")
-            progress.update(table_task, description=f"Scanning tables in {label}...")
-
-            try:
-                tables = connector.get_tables(schema=schema, catalog=catalog)
-            except Exception:
-                tables = []
-
-            for t in tables:
+            # Phase 3: Schemas
+            progress.update(task, description="Discovering schemas...", completed=0, total=None)
+            all_schemas: list[dict] = []
+            for catalog in catalogs:
                 try:
-                    columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
+                    found = connector.get_schemas(catalog=catalog)
                 except Exception:
-                    columns = []
-                all_tables.append(
-                    {
-                        "name": t["name"],
-                        "schema": schema,
-                        "catalog": catalog,
-                        "full_name": t["full_name"],
-                        "columns": columns,
-                    }
+                    found = []
+
+                for schema in found:
+                    if schemas and schema not in schemas:
+                        continue
+                    all_schemas.append({"catalog": catalog, "schema": schema})
+
+            progress.update(
+                task, description=f"Found {len(all_schemas)} schemas ✓", completed=1, total=1
+            )
+
+            # Phase 4: Tables + columns (progress per table)
+            progress.remove_task(task)
+            table_task = progress.add_task("Scanning tables...", total=1)
+
+            total_tables = 0
+            for schema_info in all_schemas:
+                catalog = schema_info["catalog"]
+                schema = schema_info["schema"]
+                label = f"{catalog}.{schema}" if catalog else (schema or "default")
+                progress.update(
+                    table_task,
+                    description=f"Listing tables in {label}...",
+                    total=None,
                 )
-            progress.advance(table_task)
+
+                try:
+                    tables = connector.get_tables(schema=schema, catalog=catalog)
+                except Exception:
+                    tables = []
+
+                # update total now that we know table count for this schema
+                total_tables += len(tables)
+                progress.update(table_task, total=max(total_tables, 1))
+
+                for t in tables:
+                    progress.update(
+                        table_task,
+                        description=f"Scanning {t.get('full_name') or t.get('name')}...",
+                    )
+                    try:
+                        columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
+                    except Exception:
+                        columns = []
+                    all_tables.append(
+                        {
+                            "name": t["name"],
+                            "schema": schema,
+                            "catalog": catalog,
+                            "full_name": t.get("full_name") or t["name"],
+                            "columns": columns,
+                        }
+                    )
+                    progress.advance(table_task)
+        except TimeoutError as e:
+            console.print(f"[red]{e}[/red]")
+            return None
+        except Exception as e:
+            console.print(f"[red]Discovery failed: {e}[/red]")
+            return None
+        finally:
+            _clear_alarm()
 
     total_columns = sum(len(t["columns"]) for t in all_tables)
     err_console.print(
@@ -2955,13 +3015,27 @@ def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
 @click.option("--output", "-o", help="Output file path (default: stdout)")
 @click.option("--connection", "-c", "conn_name", help="Use existing connection by name")
 @click.option(
+    "--schema",
+    "schemas",
+    multiple=True,
+    help="Limit discovery to one or more schemas (repeatable).",
+)
+@click.option(
+    "--timeout",
+    "timeout_s",
+    type=int,
+    default=300,
+    show_default=True,
+    help="Abort discovery if it takes longer than this many seconds (best-effort).",
+)
+@click.option(
     "--format",
     "fmt",
     type=click.Choice(["yaml", "json"]),
     default="yaml",
     help="Output format",
 )
-def discover(url, output, conn_name, fmt):
+def discover(url, output, conn_name, schemas, timeout_s, fmt):
     """Discover database schema (catalogs, schemas, tables, columns).
 
     Connects to a database and discovers its full schema structure.
@@ -2975,6 +3049,16 @@ def discover(url, output, conn_name, fmt):
 
     from db_mcp.connectors import Connector
     from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
+
+    if url and conn_name:
+        console.print("[red]Use either --url or --connection, not both.[/red]")
+        sys.exit(1)
+
+    if timeout_s is None:
+        timeout_s = 300
+    if timeout_s < 0:
+        console.print("[red]--timeout must be >= 0[/red]")
+        sys.exit(1)
 
     # Resolve connector
     connector: Connector | None = None
@@ -3007,7 +3091,12 @@ def discover(url, output, conn_name, fmt):
         connector = get_connector(str(conn_path))
 
     # Run discovery
-    result = _run_discovery_with_progress(connector, conn_name=conn_name or "cli-discover")
+    result = _run_discovery_with_progress(
+        connector,
+        conn_name=conn_name or "cli-discover",
+        timeout_s=timeout_s,
+        schemas=list(schemas) if schemas else None,
+    )
     if result is None:
         sys.exit(1)
 
