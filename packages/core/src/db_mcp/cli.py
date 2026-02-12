@@ -854,6 +854,22 @@ def _init_greenfield(name: str):
     # Offer git sync setup (only for greenfield, if git is available)
     _offer_git_setup(name, connection_path)
 
+    # Run schema discovery
+    console.print()
+    if Confirm.ask("Run schema discovery now?", default=True):
+        try:
+            from db_mcp.connectors import get_connector
+            connector = get_connector(str(connection_path))
+            result = _run_discovery_with_progress(connector, conn_name=name, save=True)
+            if result:
+                console.print(
+                    f"[green]✓ Discovered {len(result['tables'])} tables "
+                    f"with {result['total_columns']} columns[/green]"
+                )
+        except Exception as e:
+            console.print(f"[yellow]Discovery failed: {e}[/yellow]")
+            console.print("[dim]You can run discovery later with 'db-mcp discover'[/dim]")
+
     console.print()
     console.print(
         Panel.fit(
@@ -869,6 +885,125 @@ def _init_greenfield(name: str):
         launch_claude_desktop()
     else:
         console.print("[dim]Please restart Claude Desktop manually.[/dim]")
+
+
+def _run_discovery_with_progress(connector, conn_name: str = "cli-discover", save: bool = False) -> dict | None:
+    """Run schema discovery with Rich progress indicators.
+
+    Args:
+        connector: Database connector instance
+        conn_name: Connection name (used for schema file if saving)
+        save: If True, save schema_descriptions.yaml to the connection dir
+
+    Returns:
+        Dict with discovered tables info, or None on failure
+    """
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+    from db_mcp.onboarding.schema_store import create_initial_schema
+
+    err_console = Console(stderr=True)
+    all_tables: list[dict] = []
+    dialect: str | None = None
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=err_console,
+        transient=True,
+    ) as progress:
+        # Phase 1: Connect
+        task = progress.add_task("Connecting...", total=None)
+        try:
+            test_result = connector.test_connection()
+            if not test_result.get("connected"):
+                console.print(f"[red]Connection failed: {test_result.get('error', 'unknown')}[/red]")
+                return None
+            dialect = test_result.get("dialect")
+        except Exception as e:
+            console.print(f"[red]Connection failed: {e}[/red]")
+            return None
+        progress.update(task, description="Connected ✓", completed=1, total=1)
+
+        # Phase 2: Catalogs
+        progress.update(task, description="Discovering catalogs...", completed=0, total=None)
+        try:
+            catalogs = connector.get_catalogs()
+        except Exception:
+            catalogs = [None]
+        progress.update(task, description=f"Found {len([c for c in catalogs if c])} catalogs ✓", completed=1, total=1)
+
+        # Phase 3: Schemas
+        progress.update(task, description="Discovering schemas...", completed=0, total=None)
+        all_schemas = []
+        for catalog in catalogs:
+            try:
+                schemas = connector.get_schemas(catalog=catalog)
+                for schema in schemas:
+                    all_schemas.append({"catalog": catalog, "schema": schema})
+            except Exception:
+                pass
+        progress.update(task, description=f"Found {len(all_schemas)} schemas ✓", completed=1, total=1)
+
+        # Phase 4: Tables + columns
+        progress.remove_task(task)
+        table_task = progress.add_task("Scanning tables...", total=len(all_schemas) or 1)
+
+        for schema_info in all_schemas:
+            catalog = schema_info["catalog"]
+            schema = schema_info["schema"]
+            label = f"{catalog}.{schema}" if catalog else (schema or "default")
+            progress.update(table_task, description=f"Scanning tables in {label}...")
+
+            try:
+                tables = connector.get_tables(schema=schema, catalog=catalog)
+            except Exception:
+                tables = []
+
+            for t in tables:
+                try:
+                    columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
+                except Exception:
+                    columns = []
+                all_tables.append(
+                    {
+                        "name": t["name"],
+                        "schema": schema,
+                        "catalog": catalog,
+                        "full_name": t["full_name"],
+                        "columns": columns,
+                    }
+                )
+            progress.advance(table_task)
+
+    total_columns = sum(len(t["columns"]) for t in all_tables)
+    err_console.print(
+        f"[green]Done![/green] Found [bold]{len(all_tables)}[/bold] tables "
+        f"with [bold]{total_columns}[/bold] columns."
+    )
+
+    # Build schema object
+    schema_obj = create_initial_schema(
+        provider_id=conn_name,
+        dialect=dialect,
+        tables=all_tables,
+    )
+
+    # Optionally save to connection directory
+    if save:
+        from db_mcp.onboarding.schema_store import save_schema_descriptions
+        schema_obj.provider_id = conn_name
+        save_result = save_schema_descriptions(schema_obj)
+        if save_result.get("saved"):
+            err_console.print(f"[green]✓ Schema saved to {save_result.get('file_path')}[/green]")
+
+    return {
+        "tables": all_tables,
+        "total_columns": total_columns,
+        "dialect": dialect,
+        "schema": schema_obj,
+    }
 
 
 def _get_connection_env_path(name: str) -> Path:
@@ -2872,102 +3007,12 @@ def discover(url, output, conn_name, fmt):
 
         connector = get_connector(str(conn_path))
 
-    # Use stderr for progress so stdout stays clean for piping
-    err_console = Console(stderr=True)
+    # Run discovery
+    result = _run_discovery_with_progress(connector, conn_name=conn_name or "cli-discover")
+    if result is None:
+        sys.exit(1)
 
-    # Discover schema with progress
-    all_tables: list[dict] = []
-    dialect: str | None = None
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        console=err_console,
-        transient=True,
-    ) as progress:
-        # Phase 1: Connect
-        task = progress.add_task("Connecting...", total=None)
-        try:
-            test_result = connector.test_connection()
-            if not test_result.get("connected"):
-                console.print(f"[red]Connection failed: {test_result.get('error', 'unknown')}[/red]")
-                sys.exit(1)
-            dialect = test_result.get("dialect")
-        except Exception as e:
-            console.print(f"[red]Connection failed: {e}[/red]")
-            sys.exit(1)
-        progress.update(task, description="Connected ✓", completed=1, total=1)
-
-        # Phase 2: Catalogs
-        progress.update(task, description="Discovering catalogs...", completed=0, total=None)
-        try:
-            catalogs = connector.get_catalogs()
-        except Exception:
-            catalogs = [None]
-        progress.update(task, description=f"Found {len([c for c in catalogs if c])} catalogs ✓", completed=1, total=1)
-
-        # Phase 3: Schemas
-        progress.update(task, description="Discovering schemas...", completed=0, total=None)
-        all_schemas = []
-        for catalog in catalogs:
-            try:
-                schemas = connector.get_schemas(catalog=catalog)
-                for schema in schemas:
-                    all_schemas.append({"catalog": catalog, "schema": schema})
-            except Exception:
-                pass
-        progress.update(task, description=f"Found {len(all_schemas)} schemas ✓", completed=1, total=1)
-
-        # Phase 4: Tables + columns
-        progress.remove_task(task)
-        table_task = progress.add_task("Scanning tables...", total=len(all_schemas) or 1)
-
-        for schema_info in all_schemas:
-            catalog = schema_info["catalog"]
-            schema = schema_info["schema"]
-            label = f"{catalog}.{schema}" if catalog else (schema or "default")
-            progress.update(table_task, description=f"Scanning tables in {label}...")
-
-            try:
-                tables = connector.get_tables(schema=schema, catalog=catalog)
-            except Exception:
-                tables = []
-
-            for t in tables:
-                try:
-                    columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
-                except Exception:
-                    columns = []
-                all_tables.append(
-                    {
-                        "name": t["name"],
-                        "schema": schema,
-                        "catalog": catalog,
-                        "full_name": t["full_name"],
-                        "columns": columns,
-                    }
-                )
-            progress.advance(table_task)
-
-    total_columns = sum(len(t["columns"]) for t in all_tables)
-    err_console.print(
-        f"[green]Done![/green] Found [bold]{len(all_tables)}[/bold] tables "
-        f"with [bold]{total_columns}[/bold] columns."
-    )
-
-    # Build output structure (same as schema_descriptions.yaml)
-    from db_mcp_models import ColumnDescription, SchemaDescriptions, TableDescription, TableDescriptionStatus
-    from db_mcp.onboarding.schema_store import create_initial_schema
-
-    provider_id = conn_name or "cli-discover"
-    schema_obj = create_initial_schema(
-        provider_id=provider_id,
-        dialect=dialect,
-        tables=all_tables,
-    )
-    schema_dict = schema_obj.model_dump(mode="json", by_alias=True)
+    schema_dict = result["schema"].model_dump(mode="json", by_alias=True)
 
     # Serialize
     if fmt == "json":
@@ -2979,7 +3024,7 @@ def discover(url, output, conn_name, fmt):
     if output:
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         Path(output).write_text(output_str)
-        err_console.print(f"[green]Schema written to {output}[/green]")
+        Console(stderr=True).print(f"[green]Schema written to {output}[/green]")
     else:
         click.echo(output_str)
 
