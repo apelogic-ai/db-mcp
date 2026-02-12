@@ -38,6 +38,21 @@ interface DeleteResult {
   error?: string;
 }
 
+interface Agent {
+  id: string;
+  name: string;
+  installed: boolean;
+  configPath: string;
+  configExists: boolean;
+  configFormat: string;
+  dbmcpConfigured: boolean;
+  binaryPath: string | null;
+}
+
+interface AgentsListResult {
+  agents: Agent[];
+}
+
 export default function ContextPage() {
   const { isInitialized, call } = useBICP();
   const {
@@ -80,6 +95,10 @@ export default function ContextPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
   const [uploadMode, setUploadMode] = useState<"upload" | "paste">("upload");
+  
+  // Agent states
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
 
   // Split pane resize
   const resizingRef = useRef(false);
@@ -107,6 +126,20 @@ export default function ContextPage() {
       setTreeLoading(false);
     }
   }, [isInitialized, call]);
+
+  // Fetch agents
+  const loadAgents = useCallback(async () => {
+    setAgentsLoading(true);
+    try {
+      const result = await call<AgentsListResult>("agents/list");
+      setAgents(result.agents);
+    } catch (err) {
+      console.error("Failed to load agents:", err);
+      setAgents([]);
+    } finally {
+      setAgentsLoading(false);
+    }
+  }, [call]);
 
   // Fetch file content
   const fetchFile = useCallback(
@@ -371,6 +404,26 @@ export default function ContextPage() {
     };
   }, [setTreeWidth]);
 
+  // Load agents when agent modal is shown
+  useEffect(() => {
+    if (showAgentModal && isInitialized) {
+      loadAgents();
+    }
+  }, [showAgentModal, isInitialized, loadAgents]);
+
+  // Get URL scheme for agent
+  const getAgentUrlScheme = (agentId: string) => {
+    switch (agentId) {
+      case "claude-desktop":
+      case "claude-code":
+        return "claude://";
+      case "codex":
+        return "codex://";
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="h-[calc(100vh-120px)] flex flex-col">
       {/* Header */}
@@ -517,9 +570,38 @@ export default function ContextPage() {
                   <li>&ldquo;Describe the users table schema&rdquo;</li>
                 </ul>
               </div>
-              <p className="text-gray-500 text-xs">
-                <em>Coming soon:</em> Deep-linking to agents
-              </p>
+              {agentsLoading ? (
+                <p className="text-gray-400 text-xs">Loading agents...</p>
+              ) : (
+                <div>
+                  <p className="text-gray-400 mb-2 text-xs">Open in agent:</p>
+                  <div className="space-y-2">
+                    {agents
+                      .filter((agent) => agent.installed && getAgentUrlScheme(agent.id))
+                      .map((agent) => (
+                        <a
+                          key={agent.id}
+                          href={getAgentUrlScheme(agent.id)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block border border-gray-700 rounded-lg bg-gray-800 hover:bg-gray-700 p-3 text-left transition-colors"
+                        >
+                          <div className="text-white text-sm font-medium">
+                            {agent.name}
+                          </div>
+                          <div className="text-gray-400 text-xs">
+                            Open agent
+                          </div>
+                        </a>
+                      ))}
+                    {agents.filter((agent) => agent.installed && getAgentUrlScheme(agent.id)).length === 0 && (
+                      <p className="text-gray-500 text-xs">
+                        No supported agents installed
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex justify-end mt-6">
               <Button
