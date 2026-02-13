@@ -2347,7 +2347,12 @@ This knowledge helps the AI generate better queries over time.
             }
         """
         from collections import defaultdict
-        from db_mcp.bicp.traces import extract_context_paths, list_trace_dates, read_traces_from_jsonl
+
+        from db_mcp.bicp.traces import (
+            extract_context_paths,
+            list_trace_dates,
+            read_traces_from_jsonl,
+        )
 
         connection = params.get("connection")
         days = params.get("days", 7)
@@ -2363,16 +2368,16 @@ This knowledge helps the AI generate better queries over time.
 
         # For now, use a fixed user_id - in the future this could be parameterized
         user_id = "default"
-        
+
         # Get trace dates within the time window
         import time
         cutoff_time = time.time() - (days * 86400)  # days ago
-        
+
         available_dates = list_trace_dates(conn_path, user_id)
-        
+
         file_counts = defaultdict(int)
         file_last_used = {}
-        
+
         # Process traces from each date
         for date_str in available_dates:
             # Parse date to check if within window
@@ -2383,37 +2388,43 @@ This knowledge helps the AI generate better queries over time.
                     continue
             except ValueError:
                 continue
-                
+
             trace_file = conn_path / "traces" / user_id / f"{date_str}.jsonl"
             if not trace_file.exists():
                 continue
-                
+
             traces = read_traces_from_jsonl(trace_file)
-            
+
             for trace in traces:
                 for span in trace.get("spans", []):
                     attrs = span.get("attributes", {})
                     span_timestamp = span.get("start_time", 0)
-                    
+
                     # Source 1: Shell commands (grep/cat/find/ls)
                     tool_name = attrs.get("tool.name")
                     command = attrs.get("command")
                     if tool_name == "shell" and command:
                         context_paths = extract_context_paths(command)
+                        ctx_dirs = [
+                            "schema", "examples", "instructions",
+                            "domain", "data", "learnings",
+                        ]
                         for path in context_paths:
-                            # Map search terms to likely files in context directories
-                            for context_dir in ["schema", "examples", "instructions", "domain", "data", "learnings"]:
+                            for context_dir in ctx_dirs:
                                 file_key = f"{context_dir}/{path}"
                                 file_counts[file_key] += 1
-                                file_last_used[file_key] = max(file_last_used.get(file_key, 0), span_timestamp)
-                    
+                                ts = span_timestamp
+                                prev = file_last_used.get(file_key, 0)
+                                file_last_used[file_key] = max(prev, ts)
+
                     # Source 2: Knowledge file loads (from generation.py instrumentation)
                     files_used = attrs.get("knowledge.files_used")
                     if files_used:
                         for file_path in files_used:
                             file_counts[file_path] += 1
-                            file_last_used[file_path] = max(file_last_used.get(file_path, 0), span_timestamp)
-                    
+                            prev = file_last_used.get(file_path, 0)
+                            file_last_used[file_path] = max(prev, span_timestamp)
+
                     # Source 3: Resource reads (MCP resources/read)
                     if span.get("name") == "resources/read":
                         resource_uri = attrs.get("resource.uri")
@@ -2422,25 +2433,29 @@ This knowledge helps the AI generate better queries over time.
                             import urllib.parse
                             file_path = urllib.parse.unquote(resource_uri.replace("file://", ""))
                             # Only track context-related paths
-                            for context_dir in ["schema", "examples", "instructions", "domain", "data", "learnings"]:
-                                if context_dir in file_path:
-                                    # Extract relative path from context directory
-                                    parts = file_path.split(context_dir, 1)
+                            for ctx_dir in ctx_dirs:
+                                if ctx_dir in file_path:
+                                    parts = file_path.split(ctx_dir, 1)
                                     if len(parts) > 1:
-                                        rel_path = f"{context_dir}{parts[1]}"
-                                        file_counts[rel_path] += 1
-                                        file_last_used[rel_path] = max(file_last_used.get(rel_path, 0), span_timestamp)
-        
+                                        rel = f"{ctx_dir}{parts[1]}"
+                                        file_counts[rel] += 1
+                                        prev = file_last_used.get(rel, 0)
+                                        file_last_used[rel] = max(
+                                            prev, span_timestamp
+                                        )
+
         # Aggregate folder counts
         folder_counts = defaultdict(int)
         folder_last_used = {}
-        
+
         for file_path, count in file_counts.items():
             if "/" in file_path:
                 folder = file_path.split("/")[0]
                 folder_counts[folder] += count
-                folder_last_used[folder] = max(folder_last_used.get(folder, 0), file_last_used.get(file_path, 0))
-        
+                prev = folder_last_used.get(folder, 0)
+                last = file_last_used.get(file_path, 0)
+                folder_last_used[folder] = max(prev, last)
+
         return {
             "files": {
                 path: {"count": count, "lastUsed": int(file_last_used.get(path, 0))}

@@ -369,17 +369,17 @@ def _extract_search_terms(command: str) -> list[str]:
 
 def extract_context_paths(command: str) -> list[str]:
     """Extract context file paths from shell commands.
-    
+
     Parses grep/cat/find/ls commands for search terms that indicate
-    file access within context directories (schema/, domain/, examples/, 
+    file access within context directories (schema/, domain/, examples/,
     instructions/, data/, learnings/).
-    
+
     Args:
         command: Shell command string
-        
+
     Returns:
         List of context search terms extracted from the command
-        
+
     Examples:
         >>> extract_context_paths('grep -ri "venue" examples/')
         ['venue']
@@ -406,14 +406,14 @@ def extract_context_paths(command: str) -> list[str]:
                 cleaned = re.sub(r"\\[bBwWdDsS]", "", part)
                 cleaned = re.sub(r"[\\^$.*+?{}()\[\]:\-]+", "", cleaned)
                 cleaned = cleaned.strip().lower()
-                
+
                 # Split multi-word phrases into individual words
                 if cleaned:
                     words = cleaned.split()
                     for word in words:
                         if word and len(word) >= 2 and word not in _STOP_WORDS:
                             terms.append(word)
-                            
+
         # Also handle unquoted grep patterns after pipes
         if "| grep" in cmd_lower:
             # Extract patterns like: ls examples/ | grep revenue
