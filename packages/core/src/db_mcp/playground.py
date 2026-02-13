@@ -1,7 +1,7 @@
-"""Auto-create playground connection for first-time users.
+"""On-demand playground connection installer.
 
-When no connections exist, copies the bundled Chinook SQLite database
-and pre-seeded context files into ~/.db-mcp/connections/playground/.
+Copies the bundled Chinook SQLite database and pre-seeded context files
+into ~/.db-mcp/ for use as a demo connection.
 """
 
 import importlib.resources
@@ -18,9 +18,7 @@ PLAYGROUND_CONNECTION_NAME = "playground"
 
 def _get_data_path() -> Path:
     """Get path to bundled data files using importlib.resources."""
-    # For Python 3.9+ with importlib.resources.files
     ref = importlib.resources.files("db_mcp") / "data"
-    # Materialize to a real path
     return Path(str(ref))
 
 
@@ -29,62 +27,114 @@ def _get_connections_dir() -> Path:
     return Path.home() / ".db-mcp" / "connections"
 
 
-def maybe_create_playground() -> bool:
-    """Create playground connection if no connections exist.
+def _get_data_dir() -> Path:
+    """Get the shared data directory."""
+    return Path.home() / ".db-mcp" / "data"
+
+
+def is_playground_installed() -> bool:
+    """Check if the playground connection exists."""
+    playground_dir = _get_connections_dir() / PLAYGROUND_CONNECTION_NAME
+    return playground_dir.exists() and (playground_dir / "connector.yaml").exists()
+
+
+def install_playground() -> dict:
+    """Install the playground connection on demand.
+
+    Copies chinook.db to ~/.db-mcp/data/chinook.db (shared location),
+    creates a "playground" connection with pre-seeded context files.
 
     Returns:
-        True if playground was created, False otherwise.
+        dict with success status, connection name, and database_url.
     """
-    connections_dir = _get_connections_dir()
+    if is_playground_installed():
+        # Already installed — return existing info
+        playground_dir = _get_connections_dir() / PLAYGROUND_CONNECTION_NAME
+        connector_path = playground_dir / "connector.yaml"
+        db_url = ""
+        if connector_path.exists():
+            with open(connector_path) as f:
+                config = yaml.safe_load(f) or {}
+                db_url = config.get("database_url", "")
+        return {
+            "success": True,
+            "connection": PLAYGROUND_CONNECTION_NAME,
+            "database_url": db_url,
+            "already_installed": True,
+        }
 
-    # If connections dir exists and has any subdirectories, skip
-    if connections_dir.exists():
-        existing = [p for p in connections_dir.iterdir() if p.is_dir()]
-        if existing:
-            logger.debug(
-                f"Connections already exist ({len(existing)}), skipping playground creation"
-            )
-            return False
-
-    # Create playground
     data_path = _get_data_path()
     chinook_src = data_path / "chinook.db"
     playground_src = data_path / "playground"
 
     if not chinook_src.exists():
-        logger.warning(f"Chinook database not found at {chinook_src}, skipping playground")
-        return False
+        return {"success": False, "error": f"Chinook database not found at {chinook_src}"}
 
     if not playground_src.exists():
-        logger.warning(f"Playground data not found at {playground_src}, skipping playground")
-        return False
+        return {"success": False, "error": f"Playground data not found at {playground_src}"}
 
-    playground_dir = connections_dir / PLAYGROUND_CONNECTION_NAME
-    playground_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy chinook.db
-    chinook_dest = playground_dir / "chinook.db"
+    # Copy chinook.db to shared data directory
+    data_dir = _get_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    chinook_dest = data_dir / "chinook.db"
     shutil.copy2(chinook_src, chinook_dest)
     logger.info(f"Copied Chinook database to {chinook_dest}")
+
+    # Create playground connection directory
+    playground_dir = _get_connections_dir() / PLAYGROUND_CONNECTION_NAME
+    playground_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy all pre-seeded context files
     _copy_tree(playground_src, playground_dir)
 
-    # Update connector.yaml with the actual absolute path
+    # Build the database URL
+    database_url = f"sqlite:///{chinook_dest}"
+
+    # Update connector.yaml with actual path
     connector_path = playground_dir / "connector.yaml"
     if connector_path.exists():
         with open(connector_path) as f:
-            config = yaml.safe_load(f)
-        config["database_url"] = f"sqlite:///{chinook_dest}"
-        with open(connector_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            config = yaml.safe_load(f) or {}
+    else:
+        config = {"type": "sql"}
+    config["database_url"] = database_url
+    with open(connector_path, "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
-    # Create standard vault directories that aren't in the pre-seeded data
+    # Create .env file with DATABASE_URL
+    env_file = playground_dir / ".env"
+    with open(env_file, "w") as f:
+        f.write("# db-mcp playground connection\n")
+        f.write(f'DATABASE_URL="{database_url}"\n')
+
+    # Create .gitignore
+    gitignore_file = playground_dir / ".gitignore"
+    with open(gitignore_file, "w") as f:
+        f.write("# Ignore credentials\n")
+        f.write(".env\n")
+        f.write("# Ignore local state\n")
+        f.write("state.yaml\n")
+
+    # Create standard vault directories
     for subdir in ["learnings/failures", "metrics"]:
         (playground_dir / subdir).mkdir(parents=True, exist_ok=True)
 
+    # Mark onboarding complete in state.yaml (already copied from playground data)
+    state_path = playground_dir / "state.yaml"
+    if state_path.exists():
+        with open(state_path) as f:
+            state = yaml.safe_load(f) or {}
+        state["phase"] = "complete"
+        with open(state_path, "w") as f:
+            yaml.dump(state, f, default_flow_style=False, sort_keys=False)
+
     logger.info(f"Created playground connection at {playground_dir}")
-    return True
+
+    return {
+        "success": True,
+        "connection": PLAYGROUND_CONNECTION_NAME,
+        "database_url": database_url,
+    }
 
 
 def _copy_tree(src: Path, dst: Path) -> None:

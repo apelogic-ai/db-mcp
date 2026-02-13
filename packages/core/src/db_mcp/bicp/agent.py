@@ -131,6 +131,10 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["agents/config-snippet"] = self._handle_agents_config_snippet
         self._method_handlers["agents/config-write"] = self._handle_agents_config_write
 
+        # Playground handlers
+        self._method_handlers["playground/install"] = self._handle_playground_install
+        self._method_handlers["playground/status"] = self._handle_playground_status
+
         # Schema explorer handlers
         self._method_handlers["schema/catalogs"] = self._handle_schema_catalogs
         self._method_handlers["schema/schemas"] = self._handle_schema_schemas
@@ -1846,6 +1850,18 @@ This knowledge helps the AI generate better queries over time.
         except Exception as e:
             logger.warning(f"Git commit failed: {e}")
             return False
+
+    async def _handle_playground_install(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Install the playground demo connection on demand."""
+        from db_mcp.playground import install_playground
+
+        return install_playground()
+
+    async def _handle_playground_status(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Check if playground connection is installed."""
+        from db_mcp.playground import is_playground_installed
+
+        return {"installed": is_playground_installed()}
 
     async def _handle_context_tree(self, params: dict[str, Any]) -> dict[str, Any]:
         """Get the file tree for all connections.
