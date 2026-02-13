@@ -2349,7 +2349,6 @@ This knowledge helps the AI generate better queries over time.
         from collections import defaultdict
 
         from db_mcp.bicp.traces import (
-            extract_context_paths,
             list_trace_dates,
             read_traces_from_jsonl,
         )
@@ -2410,24 +2409,35 @@ This knowledge helps the AI generate better queries over time.
                         attrs = span.get("attributes", {})
                         span_timestamp = span.get("start_time", 0)
 
-                        # Source 1: Shell commands
+                        ctx_dirs = (
+                            "schema", "examples",
+                            "instructions", "domain",
+                            "data", "learnings", "metrics",
+                        )
+
+                        def _track(file_key: str) -> None:
+                            file_counts[file_key] += 1
+                            prev = file_last_used.get(file_key, 0)
+                            file_last_used[file_key] = max(
+                                prev, span_timestamp
+                            )
+
+                        # Source 1: Shell commands that reference
+                        # actual context file paths
                         tool_name = attrs.get("tool.name")
                         command = attrs.get("command")
                         if tool_name == "shell" and command:
-                            ctx_paths = extract_context_paths(command)
-                            ctx_dirs = [
-                                "schema", "examples",
-                                "instructions", "domain",
-                                "data", "learnings",
-                            ]
-                            for path in ctx_paths:
-                                for ctx_dir in ctx_dirs:
-                                    fk = f"{ctx_dir}/{path}"
-                                    file_counts[fk] += 1
-                                    prev = file_last_used.get(fk, 0)
-                                    file_last_used[fk] = max(
-                                        prev, span_timestamp
-                                    )
+                            # Match paths like schema/foo.yaml,
+                            # examples/bar.md, domain/model.md
+                            import re as _re
+                            for m in _re.finditer(
+                                r"(?:^|[\s/])("
+                                + "|".join(ctx_dirs)
+                                + r")/([^\s;|>&]+)",
+                                command,
+                            ):
+                                fk = f"{m.group(1)}/{m.group(2)}"
+                                _track(fk)
 
                         # Source 2: Knowledge file loads
                         files_used = attrs.get(
@@ -2435,13 +2445,9 @@ This knowledge helps the AI generate better queries over time.
                         )
                         if files_used:
                             for fp in files_used:
-                                file_counts[fp] += 1
-                                prev = file_last_used.get(fp, 0)
-                                file_last_used[fp] = max(
-                                    prev, span_timestamp
-                                )
+                                _track(fp)
 
-                        # Source 3: Resource reads
+                        # Source 3: Resource reads (MCP)
                         if span.get("name") == "resources/read":
                             uri = attrs.get("resource.uri")
                             if uri and uri.startswith("file://"):
@@ -2449,18 +2455,14 @@ This knowledge helps the AI generate better queries over time.
                                 fp = urllib.parse.unquote(
                                     uri.replace("file://", "")
                                 )
-                                for ctx_dir in ctx_dirs:
-                                    if ctx_dir in fp:
-                                        parts = fp.split(ctx_dir, 1)
+                                for cd in ctx_dirs:
+                                    if cd in fp:
+                                        parts = fp.split(cd, 1)
                                         if len(parts) > 1:
-                                            rel = f"{ctx_dir}{parts[1]}"
-                                            file_counts[rel] += 1
-                                            prev = file_last_used.get(
-                                                rel, 0
+                                            _track(
+                                                f"{cd}{parts[1]}"
                                             )
-                                            file_last_used[rel] = max(
-                                                prev, span_timestamp
-                                            )
+                                            break
 
         # Aggregate folder counts
         folder_counts = defaultdict(int)
