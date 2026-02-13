@@ -90,6 +90,7 @@ class DBMCPAgent(BICPAgent):
 
         # Context viewer handlers
         self._method_handlers["context/tree"] = self._handle_context_tree
+        self._method_handlers["context/usage"] = self._handle_context_usage
         self._method_handlers["context/read"] = self._handle_context_read
         self._method_handlers["context/write"] = self._handle_context_write
         self._method_handlers["context/create"] = self._handle_context_create
@@ -2325,6 +2326,146 @@ This knowledge helps the AI generate better queries over time.
 
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    async def _handle_context_usage(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Get context file usage statistics from traces.
+
+        Args:
+            params: {
+                "connection": str - Connection name
+                "days": int (default 7) - Number of days to analyze
+            }
+
+        Returns:
+            {
+                "files": {
+                    "examples/foo.yaml": {"count": 12, "lastUsed": 1707800000}
+                },
+                "folders": {
+                    "examples": {"count": 45, "lastUsed": 1707800000}
+                }
+            }
+        """
+        from collections import defaultdict
+
+        from db_mcp.bicp.traces import (
+            extract_context_paths,
+            list_trace_dates,
+            read_traces_from_jsonl,
+        )
+
+        connection = params.get("connection")
+        days = params.get("days", 7)
+
+        if not connection:
+            return {"success": False, "error": "connection is required"}
+
+        # Get the connection path
+        connections_dir = self._get_connections_dir()
+        conn_path = connections_dir / connection
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{connection}' not found"}
+
+        # For now, use a fixed user_id - in the future this could be parameterized
+        user_id = "default"
+
+        # Get trace dates within the time window
+        import time
+        cutoff_time = time.time() - (days * 86400)  # days ago
+
+        available_dates = list_trace_dates(conn_path, user_id)
+
+        file_counts = defaultdict(int)
+        file_last_used = {}
+
+        # Process traces from each date
+        for date_str in available_dates:
+            # Parse date to check if within window
+            try:
+                from datetime import datetime
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                if date_obj.timestamp() < cutoff_time:
+                    continue
+            except ValueError:
+                continue
+
+            trace_file = conn_path / "traces" / user_id / f"{date_str}.jsonl"
+            if not trace_file.exists():
+                continue
+
+            traces = read_traces_from_jsonl(trace_file)
+
+            for trace in traces:
+                for span in trace.get("spans", []):
+                    attrs = span.get("attributes", {})
+                    span_timestamp = span.get("start_time", 0)
+
+                    # Source 1: Shell commands (grep/cat/find/ls)
+                    tool_name = attrs.get("tool.name")
+                    command = attrs.get("command")
+                    if tool_name == "shell" and command:
+                        context_paths = extract_context_paths(command)
+                        ctx_dirs = [
+                            "schema", "examples", "instructions",
+                            "domain", "data", "learnings",
+                        ]
+                        for path in context_paths:
+                            for context_dir in ctx_dirs:
+                                file_key = f"{context_dir}/{path}"
+                                file_counts[file_key] += 1
+                                ts = span_timestamp
+                                prev = file_last_used.get(file_key, 0)
+                                file_last_used[file_key] = max(prev, ts)
+
+                    # Source 2: Knowledge file loads (from generation.py instrumentation)
+                    files_used = attrs.get("knowledge.files_used")
+                    if files_used:
+                        for file_path in files_used:
+                            file_counts[file_path] += 1
+                            prev = file_last_used.get(file_path, 0)
+                            file_last_used[file_path] = max(prev, span_timestamp)
+
+                    # Source 3: Resource reads (MCP resources/read)
+                    if span.get("name") == "resources/read":
+                        resource_uri = attrs.get("resource.uri")
+                        if resource_uri and resource_uri.startswith("file://"):
+                            # Extract relative path
+                            import urllib.parse
+                            file_path = urllib.parse.unquote(resource_uri.replace("file://", ""))
+                            # Only track context-related paths
+                            for ctx_dir in ctx_dirs:
+                                if ctx_dir in file_path:
+                                    parts = file_path.split(ctx_dir, 1)
+                                    if len(parts) > 1:
+                                        rel = f"{ctx_dir}{parts[1]}"
+                                        file_counts[rel] += 1
+                                        prev = file_last_used.get(rel, 0)
+                                        file_last_used[rel] = max(
+                                            prev, span_timestamp
+                                        )
+
+        # Aggregate folder counts
+        folder_counts = defaultdict(int)
+        folder_last_used = {}
+
+        for file_path, count in file_counts.items():
+            if "/" in file_path:
+                folder = file_path.split("/")[0]
+                folder_counts[folder] += count
+                prev = folder_last_used.get(folder, 0)
+                last = file_last_used.get(file_path, 0)
+                folder_last_used[folder] = max(prev, last)
+
+        return {
+            "files": {
+                path: {"count": count, "lastUsed": int(file_last_used.get(path, 0))}
+                for path, count in file_counts.items()
+            },
+            "folders": {
+                path: {"count": count, "lastUsed": int(folder_last_used.get(path, 0))}
+                for path, count in folder_counts.items()
+            }
+        }
 
     # ========== Knowledge Gaps Methods ==========
 

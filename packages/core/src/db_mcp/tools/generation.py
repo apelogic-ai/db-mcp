@@ -128,6 +128,12 @@ def _build_schema_context(provider_id: str, tables_hint: list[str] | None = None
     if not schema:
         return ""
 
+    # Track file usage for instrumentation
+    current_span = trace.get_current_span()
+    files_used = current_span.get_attribute("knowledge.files_used") or []
+    files_used.append("schema/descriptions.yaml")
+    current_span.set_attribute("knowledge.files_used", files_used)
+
     lines = ["## Available Tables\n"]
 
     for table in schema.tables:
@@ -153,6 +159,17 @@ def _build_examples_context(provider_id: str, limit: int = 5) -> str:
     if not examples.examples:
         return ""
 
+    # Track file usage for instrumentation
+    current_span = trace.get_current_span()
+    files_used = list(current_span.get_attribute("knowledge.files_used") or [])
+
+    # Track the actual example files that were loaded (up to the limit used)
+    examples_used = examples.examples[:limit]
+    for example in examples_used:
+        files_used.append(f"examples/{example.id}.yaml")
+
+    current_span.set_attribute("knowledge.files_used", files_used)
+
     lines = ["## Query Examples\n"]
 
     for ex in examples.examples[:limit]:
@@ -168,6 +185,12 @@ def _build_rules_context(provider_id: str) -> str:
     instructions = load_instructions(provider_id)
     if not instructions.rules:
         return ""
+
+    # Track file usage for instrumentation
+    current_span = trace.get_current_span()
+    files_used = list(current_span.get_attribute("knowledge.files_used") or [])
+    files_used.append("instructions/business_rules.yaml")
+    current_span.set_attribute("knowledge.files_used", files_used)
 
     lines = ["## Business Rules\n"]
     for rule in instructions.rules:

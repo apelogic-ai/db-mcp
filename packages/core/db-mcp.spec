@@ -86,6 +86,11 @@ a = Analysis(
         "rich.console",
         "rich.panel",
         "rich.prompt",
+        "rich._unicode_data",
+        "rich._unicode_data.unicode17-0-0",
+        "rich._unicode_data.unicode15-0-0",
+        "rich._unicode_data.unicode15-1-0",
+        "rich._unicode_data.unicode5-2-0",
         # Click
         "click",
         # YAML

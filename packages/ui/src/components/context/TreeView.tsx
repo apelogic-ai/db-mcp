@@ -155,6 +155,11 @@ export interface ConnectionNode {
   rootFiles?: FileNode[];
 }
 
+export interface UsageData {
+  files: Record<string, { count: number; lastUsed: number }>;
+  folders: Record<string, { count: number; lastUsed: number }>;
+}
+
 interface TreeViewProps {
   connections: ConnectionNode[];
   selectedFile: { connection: string; path: string } | null;
@@ -165,6 +170,39 @@ interface TreeViewProps {
   onSelectFolder: (connection: string, folderName: string) => void;
   onToggleConnection: (name: string) => void;
   onToggleFolder: (key: string) => void;
+  usage?: UsageData | null;
+}
+
+// Helper functions for usage badges
+function formatTimeAgo(timestamp: number): string {
+  const now = Date.now() / 1000;
+  const diff = now - timestamp;
+  
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return `${Math.floor(diff / 604800)}w ago`;
+}
+
+function UsageBadge({ count, lastUsed, className }: { count: number; lastUsed: number; className?: string }) {
+  if (count === 0) return null;
+  
+  const isHighUsage = count > 20;
+  const timeAgo = formatTimeAgo(lastUsed);
+  
+  return (
+    <span
+      className={cn(
+        "text-xs",
+        isHighUsage ? "text-orange-400" : "text-gray-500",
+        className
+      )}
+      title={`Used ${count} times, last ${timeAgo}`}
+    >
+      {count}x
+    </span>
+  );
 }
 
 export function TreeView({
@@ -177,6 +215,7 @@ export function TreeView({
   onSelectFolder,
   onToggleConnection,
   onToggleFolder,
+  usage,
 }: TreeViewProps) {
   const isFileSelected = (connection: string, path: string) => {
     return (
@@ -339,6 +378,13 @@ export function TreeView({
                             {folder.isEmpty && !isEmptyClickable && " (empty)"}
                           </span>
                           {getImportanceIcon(folder)}
+                          {usage && (
+                            <UsageBadge
+                              count={usage.folders[folder.name]?.count || 0}
+                              lastUsed={usage.folders[folder.name]?.lastUsed || 0}
+                              className="ml-auto"
+                            />
+                          )}
                         </div>
 
                         {/* Files */}
@@ -379,6 +425,13 @@ export function TreeView({
                                   >
                                     {file.name}
                                   </span>
+                                  {usage && (
+                                    <UsageBadge
+                                      count={usage.files[file.path]?.count || 0}
+                                      lastUsed={usage.files[file.path]?.lastUsed || 0}
+                                      className="ml-2"
+                                    />
+                                  )}
                                   {file.size !== undefined && (
                                     <span className="text-gray-600 text-xs ml-auto">
                                       {formatFileSize(file.size)}
@@ -426,6 +479,13 @@ export function TreeView({
                             >
                               {file.name}
                             </span>
+                            {usage && (
+                              <UsageBadge
+                                count={usage.files[file.path]?.count || 0}
+                                lastUsed={usage.files[file.path]?.lastUsed || 0}
+                                className="ml-2"
+                              />
+                            )}
                             {file.size !== undefined && (
                               <span className="text-gray-600 text-xs ml-auto">
                                 {formatFileSize(file.size)}
