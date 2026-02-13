@@ -602,9 +602,10 @@ export default function ContextPage() {
         title="Add via Agent"
         description="Most context files (schema descriptions, examples, learnings, instructions) use structured formats that are best created through your AI agent."
         prompts={[
-          "Save this SQL as a training example",
-          "Add a business rule: always use UTC timestamps",
-          "Describe the users table schema",
+          "Run mcp_setup_start to discover and describe my database tables",
+          "Save my last successful query as a training example with explanation",
+          "Review my recent queries and extract reusable patterns as examples",
+          "Add a business rule about how date columns should be filtered",
         ]}
       />
 
