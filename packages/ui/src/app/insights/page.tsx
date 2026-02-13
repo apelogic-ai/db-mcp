@@ -17,6 +17,7 @@ import {
   saveExample,
   type InsightsAnalysis,
 } from "@/lib/bicp";
+import { AgentDialog } from "@/components/AgentDialog";
 
 function formatDuration(ms: number): string {
   if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
@@ -1176,6 +1177,107 @@ function TablesCard({ tables }: { tables: Record<string, number> }) {
   );
 }
 
+function ProcessingBanner({
+  analysis,
+}: {
+  analysis: InsightsAnalysis;
+}) {
+  const [showDialog, setShowDialog] = useState(false);
+
+  // Count unsaved captures (repeated queries without is_example)
+  const unsavedCaptures = analysis.repeatedQueries.filter(
+    (q) => !q.is_example,
+  );
+  const unsavedCount = unsavedCaptures.length;
+
+  // Count unresolved unmapped terms
+  const openGaps = (analysis.vocabularyGaps || []).filter(
+    (g) => g.status !== "resolved" && g.status !== "dismissed",
+  );
+  const openGapCount = openGaps.length;
+
+  // Count unsaved errors (soft errors with SQL that aren't saved)
+  const unsavedErrors = analysis.errors.filter(
+    (e) => e.error_type === "soft" && e.sql && !e.is_saved,
+  );
+  const unsavedErrorCount = unsavedErrors.length;
+
+  const totalCount = unsavedCount + openGapCount + unsavedErrorCount;
+
+  if (totalCount === 0) return null;
+
+  // Build dynamic text
+  const parts: string[] = [];
+  if (unsavedCount > 0) {
+    parts.push(`${unsavedCount} query pattern${unsavedCount !== 1 ? "s" : ""}`);
+  }
+  if (openGapCount > 0) {
+    parts.push(`${openGapCount} unmapped term${openGapCount !== 1 ? "s" : ""}`);
+  }
+  if (unsavedErrorCount > 0) {
+    parts.push(`${unsavedErrorCount} error${unsavedErrorCount !== 1 ? "s" : ""}`);
+  }
+  const bannerText = `${parts.join(" and ")} ready for processing`;
+
+  // Build dynamic prompts
+  const prompts: string[] = [];
+  if (unsavedCount > 0) {
+    prompts.push(
+      "Review my recent query patterns and save the most useful ones as training examples",
+    );
+  }
+  if (openGapCount > 0) {
+    const termNames = openGaps
+      .flatMap((g) => g.terms.map((t) => t.term))
+      .slice(0, 5);
+    prompts.push(
+      `Resolve unmapped business terms: ${termNames.join(", ")}`,
+    );
+  }
+  if (unsavedErrorCount > 0) {
+    prompts.push(
+      `Analyze my ${unsavedErrorCount} error${unsavedErrorCount !== 1 ? "s" : ""} and add learnings to prevent them`,
+    );
+  }
+
+  return (
+    <>
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-3 flex items-center gap-3">
+        <svg
+          className="w-4 h-4 text-gray-400 shrink-0"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+        <span className="text-gray-300 text-sm flex-1">{bannerText}</span>
+        <button
+          onClick={() => setShowDialog(true)}
+          className="px-3 py-1.5 rounded text-sm font-medium text-white shrink-0 transition-colors"
+          style={{ backgroundColor: "#EF8626" }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#d6751f")}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#EF8626")}
+        >
+          Accumulate Knowledge via Agent
+        </button>
+      </div>
+      <AgentDialog
+        open={showDialog}
+        onClose={() => setShowDialog(false)}
+        title="Accumulate Knowledge via Agent"
+        description="Use your AI agent to process pending insights and build your semantic layer."
+        prompts={prompts}
+      />
+    </>
+  );
+}
+
 export default function InsightsPage() {
   const [analysis, setAnalysis] = useState<InsightsAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1319,6 +1421,9 @@ export default function InsightsPage() {
               </Card>
             ))}
           </div>
+
+          {/* Processing Banner */}
+          <ProcessingBanner analysis={analysis} />
 
           {/* Semantic Layer + Tool Usage */}
           <div className="grid grid-cols-2 gap-4">
