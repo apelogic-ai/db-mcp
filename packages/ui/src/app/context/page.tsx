@@ -143,15 +143,21 @@ export default function ContextPage() {
 
       const usageResults = await Promise.all(usagePromises);
       
-      // Merge all usage data
+      // Namespace usage data by connection to prevent cross-connection pollution
       const mergedUsage: UsageData = {
         files: {},
         folders: {},
       };
 
-      usageResults.forEach(({ usage: connUsage }) => {
-        Object.assign(mergedUsage.files, connUsage.files);
-        Object.assign(mergedUsage.folders, connUsage.folders);
+      usageResults.forEach(({ connection, usage: connUsage }) => {
+        // Prefix keys with connection name so schema/foo from "nova"
+        // doesn't bleed into "boost-softball"'s schema/foo
+        for (const [key, value] of Object.entries(connUsage.files)) {
+          mergedUsage.files[`${connection}/${key}`] = value;
+        }
+        for (const [key, value] of Object.entries(connUsage.folders)) {
+          mergedUsage.folders[`${connection}/${key}`] = value;
+        }
       });
 
       setUsage(mergedUsage);
@@ -596,9 +602,10 @@ export default function ContextPage() {
         title="Add via Agent"
         description="Most context files (schema descriptions, examples, learnings, instructions) use structured formats that are best created through your AI agent."
         prompts={[
-          "Save this SQL as a training example",
-          "Add a business rule: always use UTC timestamps",
-          "Describe the users table schema",
+          "Run mcp_setup_start to discover and describe my database tables",
+          "Save my last successful query as a training example with explanation",
+          "Review my recent queries and extract reusable patterns as examples",
+          "Add a business rule about how date columns should be filtered",
         ]}
       />
 

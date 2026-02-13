@@ -1259,12 +1259,12 @@ function ProcessingBanner({
         <span className="text-gray-300 text-sm flex-1">{bannerText}</span>
         <button
           onClick={() => setShowDialog(true)}
-          className="px-3 py-1.5 rounded text-sm font-medium text-white shrink-0 transition-colors"
-          style={{ backgroundColor: "#EF8626" }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#d6751f")}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#EF8626")}
+          className="px-3 py-1.5 rounded text-sm font-medium shrink-0 transition-colors border"
+          style={{ borderColor: "#EF8626", color: "#EF8626", backgroundColor: "transparent" }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(239,134,38,0.1)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
         >
-          Accumulate Knowledge via Agent
+          + Accumulate Knowledge via Agent
         </button>
       </div>
       <AgentDialog

@@ -435,7 +435,7 @@ export function CodeEditor({
                   variant="outline"
                   size="sm"
                   onClick={onAddViaAgent}
-                  className="text-xs bg-green-900/20 border-green-800 text-green-400 hover:bg-green-950"
+                  className="text-xs border-[#EF8626] text-[#EF8626] hover:bg-[#EF8626]/10 bg-transparent"
                 >
                   <PlusIcon className="mr-1" />
                   Add via Agent
@@ -615,7 +615,7 @@ export function CodeEditor({
                   variant="outline"
                   size="sm"
                   onClick={onAddViaAgent}
-                  className="text-xs bg-green-900/20 border-green-800 text-green-400 hover:bg-green-950"
+                  className="text-xs border-[#EF8626] text-[#EF8626] hover:bg-[#EF8626]/10 bg-transparent"
                   title="Add file via agent workflow"
                 >
                   <PlusIcon className="mr-1" />
@@ -641,7 +641,7 @@ export function CodeEditor({
                   variant="outline"
                   size="sm"
                   onClick={onAddViaAgent}
-                  className="text-xs bg-green-900/20 border-green-800 text-green-400 hover:bg-green-950"
+                  className="text-xs border-[#EF8626] text-[#EF8626] hover:bg-[#EF8626]/10 bg-transparent"
                 >
                   <PlusIcon className="mr-1" />
                   Add via Agent
