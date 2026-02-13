@@ -130,12 +130,26 @@ class JSONLSpanExporter(SpanExporter):
             logger.error(f"Failed to export spans: {e}")
             return SpanExportResult.FAILURE
 
+    def _auto_commit(self) -> None:
+        """Auto-commit trace files to git if repo exists."""
+        try:
+            from db_mcp.utils import git
+            if git.is_repo(self.connection_path):
+                git.add(self.connection_path, ["traces/"])
+                git.commit(
+                    self.connection_path,
+                    "auto: update traces",
+                )
+        except Exception:
+            pass  # Best-effort, don't block shutdown
+
     def shutdown(self) -> None:
         """Shutdown the exporter."""
-        pass
+        self._auto_commit()
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         """Force flush any buffered spans."""
+        self._auto_commit()
         return True
 
 

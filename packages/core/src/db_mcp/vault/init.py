@@ -538,8 +538,20 @@ def ensure_connection_structure() -> bool:
             logger.info(f"Created template file: {file_path}")
             created = True
 
+    # Auto-commit changes to git
     if created:
         logger.info("Connection structure initialized")
+        try:
+            from db_mcp.utils import git
+            if git.is_repo(connection_path):
+                git.add(connection_path, ["."])
+                git.commit(
+                    connection_path,
+                    "auto: update connection structure",
+                )
+                logger.info("Auto-committed connection changes")
+        except Exception as e:
+            logger.debug(f"Auto-commit skipped: {e}")
     else:
         logger.debug("Connection structure already exists")
 
