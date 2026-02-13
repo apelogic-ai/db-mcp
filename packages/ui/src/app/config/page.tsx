@@ -208,6 +208,45 @@ export default function ConfigPage() {
   // Auto-test debounce
   const testTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Playground state
+  const [playgroundInstalling, setPlaygroundInstalling] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+
+  // Check localStorage for onboarding dismissal on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setOnboardingDismissed(
+        localStorage.getItem("db-mcp-onboarding-dismissed") === "true",
+      );
+    }
+  }, []);
+
+  const hasPlayground = connections.some((c) => c.name === "playground");
+  const hasNoConnections = connections.length === 0 && !connectionsLoading && hasFetched;
+  const showOnboardingBubble = hasNoConnections && !onboardingDismissed;
+  const showPlaygroundButton = !hasNoConnections && !hasPlayground && hasFetched && !connectionsLoading;
+
+  const handleInstallPlayground = async () => {
+    setPlaygroundInstalling(true);
+    try {
+      await call("playground/install", {});
+      await fetchConnections();
+    } catch (err) {
+      setConnectionsError(
+        err instanceof Error ? err.message : "Failed to install playground",
+      );
+    } finally {
+      setPlaygroundInstalling(false);
+    }
+  };
+
+  const handleDismissOnboarding = () => {
+    setOnboardingDismissed(true);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("db-mcp-onboarding-dismissed", "true");
+    }
+  };
+
   // Filtered connection lists
   const sqlConnections = connections.filter(
     (c) => c.connectorType !== "file" && c.connectorType !== "api",
@@ -1013,6 +1052,43 @@ export default function ConfigPage() {
         </div>
       )}
 
+      {/* Onboarding bubble when no connections exist */}
+      {showOnboardingBubble && isInitialized && (
+        <div className="border border-[#EF8626] rounded-lg p-6 bg-[#EF8626]/5">
+          <h3 className="text-white font-medium text-lg mb-2">
+            Get Started with a Demo Database
+          </h3>
+          <p className="text-gray-400 text-sm mb-4">
+            Try db-mcp with a sample music database (SQLite + Chinook)
+          </p>
+          <ol className="text-gray-300 text-sm space-y-1 mb-5 list-decimal list-inside">
+            <li>Click &quot;+ Add Playground DB&quot; below</li>
+            <li>
+              See the playground connection appear with pre-configured schema,
+              examples, and domain model
+            </li>
+            <li>Restart your agent and start querying</li>
+          </ol>
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={handleInstallPlayground}
+              disabled={playgroundInstalling}
+              variant="outline"
+              className="border-[#EF8626] text-[#EF8626] hover:bg-[#EF8626]/10 bg-transparent"
+            >
+              {playgroundInstalling ? "Installing..." : "+ Add Playground DB"}
+            </Button>
+            <Button
+              onClick={handleDismissOnboarding}
+              variant="outline"
+              className="border-gray-700 text-gray-400 hover:bg-gray-800 bg-transparent"
+            >
+              Skip, I have my own DB
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Section 1: Database Connections */}
       <Card className="bg-gray-900 border-gray-800">
         <CardHeader>
@@ -1068,6 +1144,19 @@ export default function ConfigPage() {
                 >
                   + Add Database
                 </Button>
+                {showPlaygroundButton && (
+                  <Button
+                    onClick={handleInstallPlayground}
+                    disabled={playgroundInstalling}
+                    variant="outline"
+                    size="sm"
+                    className="border-[#EF8626] text-[#EF8626] hover:bg-[#EF8626]/10 bg-transparent text-xs"
+                  >
+                    {playgroundInstalling
+                      ? "Installing..."
+                      : "+ Add Playground DB"}
+                  </Button>
+                )}
               </div>
             )}
           </div>

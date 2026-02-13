@@ -127,9 +127,15 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check() -> dict[str, str]:
         """Health check endpoint."""
+        from importlib.metadata import version as pkg_version
+        try:
+            ver = pkg_version("db-mcp")
+        except Exception:
+            ver = "dev"
         return {
             "status": "healthy",
             "service": "db-mcp-ui",
+            "version": ver,
         }
 
     @app.post("/api/spans")
