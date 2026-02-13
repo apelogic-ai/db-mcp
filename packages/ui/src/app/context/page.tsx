@@ -7,6 +7,7 @@ import { TreeView, ConnectionNode, UsageData } from "@/components/context/TreeVi
 import { CodeEditor } from "@/components/context/CodeEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AgentDialog } from "@/components/AgentDialog";
 
 interface ContextTreeResult {
   connections: ConnectionNode[];
@@ -36,21 +37,6 @@ interface DeleteResult {
   gitCommit?: boolean;
   trashedTo?: string;
   error?: string;
-}
-
-interface Agent {
-  id: string;
-  name: string;
-  installed: boolean;
-  configPath: string;
-  configExists: boolean;
-  configFormat: string;
-  dbmcpConfigured: boolean;
-  binaryPath: string | null;
-}
-
-interface AgentsListResult {
-  agents: Agent[];
 }
 
 export default function ContextPage() {
@@ -96,9 +82,7 @@ export default function ContextPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [uploadMode, setUploadMode] = useState<"upload" | "paste">("upload");
   
-  // Agent states
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [agentsLoading, setAgentsLoading] = useState(false);
+  // Agent modal state (dialog handles its own agent loading)
 
   // Usage tracking state
   const [usage, setUsage] = useState<UsageData | null>(null);
@@ -133,20 +117,6 @@ export default function ContextPage() {
       setTreeLoading(false);
     }
   }, [isInitialized, call]);
-
-  // Fetch agents
-  const loadAgents = useCallback(async () => {
-    setAgentsLoading(true);
-    try {
-      const result = await call<AgentsListResult>("agents/list");
-      setAgents(result.agents);
-    } catch (err) {
-      console.error("Failed to load agents:", err);
-      setAgents([]);
-    } finally {
-      setAgentsLoading(false);
-    }
-  }, [call]);
 
   // Fetch usage data
   const fetchUsage = useCallback(async () => {
@@ -489,26 +459,6 @@ export default function ContextPage() {
     };
   }, [setTreeWidth]);
 
-  // Load agents when agent modal is shown
-  useEffect(() => {
-    if (showAgentModal && isInitialized) {
-      loadAgents();
-    }
-  }, [showAgentModal, isInitialized, loadAgents]);
-
-  // Get URL scheme for agent
-  const getAgentUrlScheme = (agentId: string) => {
-    switch (agentId) {
-      case "claude-desktop":
-      case "claude-code":
-        return "claude://";
-      case "codex":
-        return "codex://";
-      default:
-        return null;
-    }
-  };
-
   return (
     <div className="h-[calc(100vh-120px)] flex flex-col">
       {/* Header */}
@@ -640,68 +590,17 @@ export default function ContextPage() {
       </div>
 
       {/* Add via Agent modal */}
-      {showAgentModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-96">
-            <h3 className="text-white font-medium mb-4">Add via Agent</h3>
-            <div className="space-y-4 text-gray-300 text-sm">
-              <p>
-                Most context files (schema descriptions, examples, learnings, instructions) use structured formats that are best created through your AI agent.
-              </p>
-              <div>
-                <p className="text-gray-400 mb-2">Example prompts:</p>
-                <ul className="list-disc list-inside space-y-1 text-gray-400 text-xs">
-                  <li>&ldquo;Save this SQL as a training example&rdquo;</li>
-                  <li>&ldquo;Add a business rule: always use UTC timestamps&rdquo;</li>
-                  <li>&ldquo;Describe the users table schema&rdquo;</li>
-                </ul>
-              </div>
-              {agentsLoading ? (
-                <p className="text-gray-400 text-xs">Loading agents...</p>
-              ) : (
-                <div>
-                  <p className="text-gray-400 mb-2 text-xs">Open in agent:</p>
-                  <div className="space-y-2">
-                    {agents
-                      .filter((agent) => agent.installed && getAgentUrlScheme(agent.id))
-                      .map((agent) => (
-                        <a
-                          key={agent.id}
-                          href={getAgentUrlScheme(agent.id)!}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block border border-gray-700 rounded-lg bg-gray-800 hover:bg-gray-700 p-3 text-left transition-colors"
-                        >
-                          <div className="text-white text-sm font-medium">
-                            {agent.name}
-                          </div>
-                          <div className="text-gray-400 text-xs">
-                            Open agent
-                          </div>
-                        </a>
-                      ))}
-                    {agents.filter((agent) => agent.installed && getAgentUrlScheme(agent.id)).length === 0 && (
-                      <p className="text-gray-500 text-xs">
-                        No supported agents installed
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end mt-6">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAgentModal(false)}
-                className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300"
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AgentDialog
+        open={showAgentModal}
+        onClose={() => setShowAgentModal(false)}
+        title="Add via Agent"
+        description="Most context files (schema descriptions, examples, learnings, instructions) use structured formats that are best created through your AI agent."
+        prompts={[
+          "Save this SQL as a training example",
+          "Add a business rule: always use UTC timestamps",
+          "Describe the users table schema",
+        ]}
+      />
 
       {/* Add File upload modal */}
       {showUploadModal && createContext && (
