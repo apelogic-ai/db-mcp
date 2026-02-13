@@ -4,6 +4,7 @@ import "./globals.css";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Space_Grotesk, Inconsolata } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { BICPProvider } from "@/lib/bicp-context";
@@ -34,6 +35,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/health")
+      .then((r) => r.json())
+      .then((d) => setVersion(d.version || null))
+      .catch(() => {});
+  }, []);
 
   return (
     <html lang="en">
@@ -51,19 +60,26 @@ export default function RootLayout({
         <BICPProvider baseUrl="/bicp" autoConnect>
           <header className="border-b border-gray-800">
             <div className="max-w-7xl mx-auto px-4 py-4">
-              <Link href="/" className="flex items-center gap-2.5">
-                <Image
-                  src="/ape-icon.svg"
-                  alt="APE"
-                  width={32}
-                  height={32}
-                  priority
-                />
-                <span className="text-xl font-bold tracking-tight">
-                  <span className="text-white">db</span>
-                  <span className="text-brand">mcp</span>
-                </span>
-              </Link>
+              <div className="flex items-center justify-between">
+                <Link href="/" className="flex items-center gap-2.5">
+                  <Image
+                    src="/ape-icon.svg"
+                    alt="APE"
+                    width={32}
+                    height={32}
+                    priority
+                  />
+                  <span className="text-xl font-bold tracking-tight">
+                    <span className="text-white">db</span>
+                    <span className="text-brand">mcp</span>
+                  </span>
+                </Link>
+                {version && (
+                  <span className="text-xs text-gray-600 font-mono">
+                    v{version}
+                  </span>
+                )}
+              </div>
               <nav className="mt-4 flex items-center justify-between">
                 <div className="inline-flex h-9 items-center justify-center gap-1 text-gray-400">
                   {navItems.map((item) => {
