@@ -143,15 +143,21 @@ export default function ContextPage() {
 
       const usageResults = await Promise.all(usagePromises);
       
-      // Merge all usage data
+      // Namespace usage data by connection to prevent cross-connection pollution
       const mergedUsage: UsageData = {
         files: {},
         folders: {},
       };
 
-      usageResults.forEach(({ usage: connUsage }) => {
-        Object.assign(mergedUsage.files, connUsage.files);
-        Object.assign(mergedUsage.folders, connUsage.folders);
+      usageResults.forEach(({ connection, usage: connUsage }) => {
+        // Prefix keys with connection name so schema/foo from "nova"
+        // doesn't bleed into "boost-softball"'s schema/foo
+        for (const [key, value] of Object.entries(connUsage.files)) {
+          mergedUsage.files[`${connection}/${key}`] = value;
+        }
+        for (const [key, value] of Object.entries(connUsage.folders)) {
+          mergedUsage.folders[`${connection}/${key}`] = value;
+        }
       });
 
       setUsage(mergedUsage);

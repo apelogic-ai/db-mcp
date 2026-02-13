@@ -380,8 +380,8 @@ export function TreeView({
                           {getImportanceIcon(folder)}
                           {usage && (
                             <UsageBadge
-                              count={usage.folders[folder.name]?.count || 0}
-                              lastUsed={usage.folders[folder.name]?.lastUsed || 0}
+                              count={usage.folders[`${conn.name}/${folder.name}`]?.count || 0}
+                              lastUsed={usage.folders[`${conn.name}/${folder.name}`]?.lastUsed || 0}
                               className="ml-auto"
                             />
                           )}
@@ -427,8 +427,8 @@ export function TreeView({
                                   </span>
                                   {usage && (
                                     <UsageBadge
-                                      count={usage.files[file.path]?.count || 0}
-                                      lastUsed={usage.files[file.path]?.lastUsed || 0}
+                                      count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
+                                      lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
                                       className="ml-2"
                                     />
                                   )}
@@ -481,8 +481,8 @@ export function TreeView({
                             </span>
                             {usage && (
                               <UsageBadge
-                                count={usage.files[file.path]?.count || 0}
-                                lastUsed={usage.files[file.path]?.lastUsed || 0}
+                                count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
+                                lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
                                 className="ml-2"
                               />
                             )}
