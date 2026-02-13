@@ -1,0 +1,28 @@
+id: top_selling_artists
+intent: "Who are the top 10 best-selling artists by revenue?"
+sql: |
+  SELECT
+      ar.Name AS ArtistName,
+      ROUND(SUM(il.UnitPrice * il.Quantity), 2) AS TotalRevenue,
+      COUNT(DISTINCT i.InvoiceId) AS InvoiceCount,
+      COUNT(il.InvoiceLineId) AS TracksSold
+  FROM InvoiceLine il
+  JOIN Track t ON il.TrackId = t.TrackId
+  JOIN Album a ON t.AlbumId = a.AlbumId
+  JOIN Artist ar ON a.ArtistId = ar.ArtistId
+  JOIN Invoice i ON il.InvoiceId = i.InvoiceId
+  GROUP BY ar.ArtistId, ar.Name
+  ORDER BY TotalRevenue DESC
+  LIMIT 10
+tables:
+  - InvoiceLine
+  - Track
+  - Album
+  - Artist
+  - Invoice
+keywords:
+  - top selling
+  - best selling
+  - artist revenue
+  - top artists
+validated: true

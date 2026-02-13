@@ -50,6 +50,11 @@ try:
 except Exception:
     pass
 
+# Include bundled playground data (chinook.db + pre-seeded context files)
+data_dir = src_dir / "db_mcp" / "data"
+if data_dir.exists():
+    datas.append((str(data_dir), "db_mcp/data"))
+
 # Include vault templates if they exist
 if resources_dir.exists():
     datas.append((str(resources_dir / "db_mcp_app"), "resources/db_mcp_app"))

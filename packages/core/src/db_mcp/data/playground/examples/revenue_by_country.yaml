@@ -1,0 +1,21 @@
+id: revenue_by_country
+intent: "What's the total revenue by country?"
+sql: |
+  SELECT
+      i.BillingCountry AS Country,
+      ROUND(SUM(il.UnitPrice * il.Quantity), 2) AS TotalRevenue,
+      COUNT(DISTINCT i.InvoiceId) AS InvoiceCount,
+      COUNT(DISTINCT i.CustomerId) AS CustomerCount
+  FROM Invoice i
+  JOIN InvoiceLine il ON i.InvoiceId = il.InvoiceId
+  GROUP BY i.BillingCountry
+  ORDER BY TotalRevenue DESC
+tables:
+  - Invoice
+  - InvoiceLine
+keywords:
+  - revenue by country
+  - sales by country
+  - country breakdown
+  - geographic revenue
+validated: true

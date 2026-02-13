@@ -1,0 +1,35 @@
+id: customer_purchase_history
+intent: "Show a customer's complete purchase history"
+sql: |
+  SELECT
+      c.FirstName || ' ' || c.LastName AS CustomerName,
+      i.InvoiceId,
+      i.InvoiceDate,
+      t.Name AS TrackName,
+      ar.Name AS ArtistName,
+      a.Title AS AlbumTitle,
+      il.UnitPrice,
+      il.Quantity,
+      ROUND(il.UnitPrice * il.Quantity, 2) AS LineTotal
+  FROM Customer c
+  JOIN Invoice i ON c.CustomerId = i.CustomerId
+  JOIN InvoiceLine il ON i.InvoiceId = il.InvoiceId
+  JOIN Track t ON il.TrackId = t.TrackId
+  JOIN Album a ON t.AlbumId = a.AlbumId
+  JOIN Artist ar ON a.ArtistId = ar.ArtistId
+  WHERE c.CustomerId = 1
+  ORDER BY i.InvoiceDate DESC, il.InvoiceLineId
+tables:
+  - Customer
+  - Invoice
+  - InvoiceLine
+  - Track
+  - Album
+  - Artist
+keywords:
+  - customer history
+  - purchase history
+  - customer orders
+  - what did customer buy
+notes: "Replace CustomerId = 1 with the desired customer ID."
+validated: true

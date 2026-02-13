@@ -1,0 +1,22 @@
+provider_id: playground
+phase: complete
+database_url_configured: true
+connection_verified: true
+dialect_detected: sqlite
+tables_discovered:
+  - main.Album
+  - main.Artist
+  - main.Customer
+  - main.Employee
+  - main.Genre
+  - main.Invoice
+  - main.InvoiceLine
+  - main.MediaType
+  - main.Playlist
+  - main.PlaylistTrack
+  - main.Track
+tables_total: 11
+domain_model_generated: true
+domain_model_approved: true
+started_at: "2026-02-13T00:00:00Z"
+last_updated_at: "2026-02-13T00:00:00Z"

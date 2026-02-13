@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 
 from db_mcp.config import get_settings
 from db_mcp.onboarding.state import get_connection_path
+from db_mcp.playground import maybe_create_playground
 from db_mcp.tasks.store import get_task_store
 from db_mcp.tools.api import _api_describe_endpoint, _api_discover, _api_execute_sql, _api_query
 from db_mcp.tools.database import (
@@ -804,6 +805,9 @@ def main():
 
     # Migrate from legacy ~/.dbmeta namespace if present
     migrate_namespace()
+
+    # Auto-create playground connection for first-time users
+    maybe_create_playground()
 
     # Ensure connection directory structure exists
     ensure_connection_structure()
