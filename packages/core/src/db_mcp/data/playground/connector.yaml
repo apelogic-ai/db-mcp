@@ -1,0 +1,2 @@
+type: sql
+database_url: "sqlite:///PLACEHOLDER_PATH/chinook.db"

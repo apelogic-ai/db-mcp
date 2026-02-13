@@ -1,0 +1,14 @@
+version: "1.0.0"
+provider_id: playground
+rules:
+  - "Revenue is calculated as InvoiceLine.UnitPrice * InvoiceLine.Quantity, not from Invoice.Total. Always join through InvoiceLine for accurate revenue attribution."
+  - "Track duration is stored in Track.Milliseconds. Divide by 1000 for seconds, by 60000 for minutes. Never treat the raw value as seconds."
+  - "All monetary values (UnitPrice, Total) are in USD. No currency conversion is needed."
+  - "All datetime columns (InvoiceDate, BirthDate, HireDate) are stored in UTC."
+  - "Invoice.BillingAddress is a snapshot at purchase time and may differ from the customer's current address in the Customer table."
+  - "To get an artist's revenue, join: InvoiceLine → Track → Album → Artist. There is no direct Artist-to-Invoice relationship."
+  - "Employee.ReportsTo is a self-referential foreign key. NULL means the employee is at the top of the hierarchy (General Manager)."
+  - "Track.Composer is nullable — many tracks have no composer listed. Don't assume it's always populated."
+  - "Playlist ↔ Track is many-to-many via PlaylistTrack. A track can appear in multiple playlists."
+  - "Customer.SupportRepId links to Employee.EmployeeId. Only employees with title 'Sales Support Agent' are support reps."
+candidate_rules: []

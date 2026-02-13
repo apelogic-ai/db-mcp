@@ -1,0 +1,273 @@
+version: "1.0.0"
+provider_id: playground
+dialect: sqlite
+generated_at: "2026-02-13T00:00:00Z"
+tables:
+  - name: Album
+    schema: main
+    full_name: main.Album
+    description: "Music albums. Each album belongs to exactly one artist."
+    status: approved
+    columns:
+      - name: AlbumId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each album."
+      - name: Title
+        type: NVARCHAR(160)
+        description: "Album title (e.g. 'Let There Be Rock', 'Nevermind')."
+      - name: ArtistId
+        type: INTEGER
+        description: "Foreign key to Artist.ArtistId. The artist who created this album."
+
+  - name: Artist
+    schema: main
+    full_name: main.Artist
+    description: "Musical artists and bands. Parent entity for albums."
+    status: approved
+    columns:
+      - name: ArtistId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each artist."
+      - name: Name
+        type: NVARCHAR(120)
+        description: "Artist or band name (e.g. 'AC/DC', 'Nirvana')."
+
+  - name: Customer
+    schema: main
+    full_name: main.Customer
+    description: "Store customers who purchase music. Each customer is assigned a support representative (Employee)."
+    status: approved
+    columns:
+      - name: CustomerId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each customer."
+      - name: FirstName
+        type: NVARCHAR(40)
+        description: "Customer's first name."
+      - name: LastName
+        type: NVARCHAR(20)
+        description: "Customer's last name."
+      - name: Company
+        type: NVARCHAR(80)
+        description: "Company name, if the customer is a business buyer. Nullable."
+      - name: Address
+        type: NVARCHAR(70)
+        description: "Street address."
+      - name: City
+        type: NVARCHAR(40)
+        description: "City of residence."
+      - name: State
+        type: NVARCHAR(40)
+        description: "State or province. Nullable (not all countries have states)."
+      - name: Country
+        type: NVARCHAR(40)
+        description: "Country of residence."
+      - name: PostalCode
+        type: NVARCHAR(10)
+        description: "Postal or ZIP code. Nullable."
+      - name: Phone
+        type: NVARCHAR(24)
+        description: "Phone number. Nullable."
+      - name: Fax
+        type: NVARCHAR(24)
+        description: "Fax number. Nullable — largely unused."
+      - name: Email
+        type: NVARCHAR(60)
+        description: "Email address. Required and unique per customer."
+      - name: SupportRepId
+        type: INTEGER
+        description: "Foreign key to Employee.EmployeeId. The sales support agent assigned to this customer."
+
+  - name: Employee
+    schema: main
+    full_name: main.Employee
+    description: "Company employees. Self-referential hierarchy via ReportsTo. Some employees are sales support reps assigned to customers."
+    status: approved
+    columns:
+      - name: EmployeeId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each employee."
+      - name: LastName
+        type: NVARCHAR(20)
+        description: "Employee's last name."
+      - name: FirstName
+        type: NVARCHAR(20)
+        description: "Employee's first name."
+      - name: Title
+        type: NVARCHAR(30)
+        description: "Job title (e.g. 'Sales Support Agent', 'General Manager')."
+      - name: ReportsTo
+        type: INTEGER
+        description: "Foreign key to Employee.EmployeeId (self-referential). The manager this employee reports to. NULL for the top-level manager."
+      - name: BirthDate
+        type: DATETIME
+        description: "Employee's date of birth."
+      - name: HireDate
+        type: DATETIME
+        description: "Date the employee was hired."
+      - name: Address
+        type: NVARCHAR(70)
+        description: "Street address."
+      - name: City
+        type: NVARCHAR(40)
+        description: "City."
+      - name: State
+        type: NVARCHAR(40)
+        description: "State or province."
+      - name: Country
+        type: NVARCHAR(40)
+        description: "Country."
+      - name: PostalCode
+        type: NVARCHAR(10)
+        description: "Postal or ZIP code."
+      - name: Phone
+        type: NVARCHAR(24)
+        description: "Phone number."
+      - name: Fax
+        type: NVARCHAR(24)
+        description: "Fax number."
+      - name: Email
+        type: NVARCHAR(60)
+        description: "Email address."
+
+  - name: Genre
+    schema: main
+    full_name: main.Genre
+    description: "Music genres (Rock, Jazz, Latin, etc.). Each track belongs to one genre."
+    status: approved
+    columns:
+      - name: GenreId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each genre."
+      - name: Name
+        type: NVARCHAR(120)
+        description: "Genre name (e.g. 'Rock', 'Jazz', 'Metal', 'Alternative & Punk')."
+
+  - name: Invoice
+    schema: main
+    full_name: main.Invoice
+    description: "Sales invoices. Each invoice belongs to one customer and contains one or more invoice lines. The Total column is the invoice-level total in USD."
+    status: approved
+    columns:
+      - name: InvoiceId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each invoice."
+      - name: CustomerId
+        type: INTEGER
+        description: "Foreign key to Customer.CustomerId. The customer who made this purchase."
+      - name: InvoiceDate
+        type: DATETIME
+        description: "Date and time the invoice was created. Stored in UTC."
+      - name: BillingAddress
+        type: NVARCHAR(70)
+        description: "Billing street address (snapshot at time of purchase)."
+      - name: BillingCity
+        type: NVARCHAR(40)
+        description: "Billing city."
+      - name: BillingState
+        type: NVARCHAR(40)
+        description: "Billing state or province. Nullable."
+      - name: BillingCountry
+        type: NVARCHAR(40)
+        description: "Billing country."
+      - name: BillingPostalCode
+        type: NVARCHAR(10)
+        description: "Billing postal code. Nullable."
+      - name: Total
+        type: NUMERIC(10,2)
+        description: "Invoice total in USD. Should equal SUM(InvoiceLine.UnitPrice * InvoiceLine.Quantity) for this invoice."
+
+  - name: InvoiceLine
+    schema: main
+    full_name: main.InvoiceLine
+    description: "Individual line items on an invoice. Each line represents one track purchased. Revenue = UnitPrice * Quantity."
+    status: approved
+    columns:
+      - name: InvoiceLineId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each invoice line."
+      - name: InvoiceId
+        type: INTEGER
+        description: "Foreign key to Invoice.InvoiceId. The parent invoice."
+      - name: TrackId
+        type: INTEGER
+        description: "Foreign key to Track.TrackId. The track that was purchased."
+      - name: UnitPrice
+        type: NUMERIC(10,2)
+        description: "Price per unit in USD at the time of purchase."
+      - name: Quantity
+        type: INTEGER
+        description: "Number of units purchased (typically 1)."
+
+  - name: MediaType
+    schema: main
+    full_name: main.MediaType
+    description: "Media formats for tracks (e.g. MPEG audio, AAC, Protected AAC, video)."
+    status: approved
+    columns:
+      - name: MediaTypeId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each media type."
+      - name: Name
+        type: NVARCHAR(120)
+        description: "Media type name (e.g. 'MPEG audio file', 'Protected AAC audio file', 'MPEG-4 video file')."
+
+  - name: Playlist
+    schema: main
+    full_name: main.Playlist
+    description: "Named playlists that group tracks. Many-to-many relationship with Track via PlaylistTrack."
+    status: approved
+    columns:
+      - name: PlaylistId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each playlist."
+      - name: Name
+        type: NVARCHAR(120)
+        description: "Playlist name (e.g. 'Music', 'Movies', '90s Music', 'Heavy Metal Classic')."
+
+  - name: PlaylistTrack
+    schema: main
+    full_name: main.PlaylistTrack
+    description: "Junction table linking playlists to tracks (many-to-many). Composite primary key (PlaylistId, TrackId)."
+    status: approved
+    columns:
+      - name: PlaylistId
+        type: INTEGER
+        description: "Foreign key to Playlist.PlaylistId. Part of composite primary key."
+      - name: TrackId
+        type: INTEGER
+        description: "Foreign key to Track.TrackId. Part of composite primary key."
+
+  - name: Track
+    schema: main
+    full_name: main.Track
+    description: "Individual music tracks. Central entity linking to albums, genres, media types, and purchases. Duration is stored in milliseconds (not seconds)."
+    status: approved
+    columns:
+      - name: TrackId
+        type: INTEGER
+        description: "Primary key. Unique identifier for each track."
+      - name: Name
+        type: NVARCHAR(200)
+        description: "Track title (e.g. 'For Those About To Rock (We Salute You)')."
+      - name: AlbumId
+        type: INTEGER
+        description: "Foreign key to Album.AlbumId. The album this track belongs to. Nullable."
+      - name: MediaTypeId
+        type: INTEGER
+        description: "Foreign key to MediaType.MediaTypeId. The format of this track."
+      - name: GenreId
+        type: INTEGER
+        description: "Foreign key to Genre.GenreId. The genre classification. Nullable."
+      - name: Composer
+        type: NVARCHAR(220)
+        description: "Track composer(s). Nullable — many tracks have no composer listed."
+      - name: Milliseconds
+        type: INTEGER
+        description: "Track duration in MILLISECONDS (not seconds). Divide by 1000 for seconds, by 60000 for minutes."
+      - name: Bytes
+        type: INTEGER
+        description: "File size in bytes. Nullable."
+      - name: UnitPrice
+        type: NUMERIC(10,2)
+        description: "Catalog price in USD (typically 0.99 or 1.99)."

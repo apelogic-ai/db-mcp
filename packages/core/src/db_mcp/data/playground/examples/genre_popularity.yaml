@@ -1,0 +1,23 @@
+id: genre_popularity
+intent: "Which music genres generate the most revenue?"
+sql: |
+  SELECT
+      g.Name AS Genre,
+      COUNT(il.InvoiceLineId) AS TracksSold,
+      ROUND(SUM(il.UnitPrice * il.Quantity), 2) AS TotalRevenue,
+      ROUND(AVG(il.UnitPrice), 2) AS AvgPrice
+  FROM InvoiceLine il
+  JOIN Track t ON il.TrackId = t.TrackId
+  JOIN Genre g ON t.GenreId = g.GenreId
+  GROUP BY g.GenreId, g.Name
+  ORDER BY TotalRevenue DESC
+tables:
+  - InvoiceLine
+  - Track
+  - Genre
+keywords:
+  - genre popularity
+  - genre revenue
+  - best selling genre
+  - music genre sales
+validated: true

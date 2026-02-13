@@ -301,6 +301,14 @@ export function TreeView({
                   )}
                 >
                   {conn.name}
+                  {conn.name === "playground" && (
+                    <span
+                      className="ml-1.5 text-[10px] text-gray-500 font-normal"
+                      title="Demo connection with sample music database"
+                    >
+                      (demo)
+                    </span>
+                  )}
                 </span>
                 {conn.gitEnabled && (
                   <span title="Git enabled">
