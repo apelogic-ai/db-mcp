@@ -367,6 +367,73 @@ def _extract_search_terms(command: str) -> list[str]:
     return terms
 
 
+def extract_context_paths(command: str) -> list[str]:
+    """Extract context file paths from shell commands.
+    
+    Parses grep/cat/find/ls commands for search terms that indicate
+    file access within context directories (schema/, domain/, examples/, 
+    instructions/, data/, learnings/).
+    
+    Args:
+        command: Shell command string
+        
+    Returns:
+        List of context search terms extracted from the command
+        
+    Examples:
+        >>> extract_context_paths('grep -ri "venue" examples/')
+        ['venue']
+        >>> extract_context_paths('find schema -name "*revenue*"')
+        ['revenue']
+        >>> extract_context_paths('grep -r "cui\\\\|CUI" schema/')
+        ['cui', 'cui']
+    """
+    terms: list[str] = []
+    cmd_lower = command.lower().strip()
+
+    if cmd_lower.startswith("grep") or "| grep" in cmd_lower:
+        # Extract quoted arguments from grep commands (including piped ones)
+        quoted = re.findall(r"""['"]([^'"]+)['"]""", command)
+        for q in quoted:
+            # Skip file paths and glob patterns
+            if "/" in q or q.startswith(".") or q.startswith("*"):
+                continue
+            # Split on regex alternation (\|) first, then clean each part
+            # e.g. "cui\b\|CUI\b" → ["cui\b", "CUI\b"] → ["cui", "CUI"]
+            parts = re.split(r"\\?\|", q)
+            for part in parts:
+                # Strip regex metacharacters: \b \w \d anchors etc.
+                cleaned = re.sub(r"\\[bBwWdDsS]", "", part)
+                cleaned = re.sub(r"[\\^$.*+?{}()\[\]:\-]+", "", cleaned)
+                cleaned = cleaned.strip().lower()
+                
+                # Split multi-word phrases into individual words
+                if cleaned:
+                    words = cleaned.split()
+                    for word in words:
+                        if word and len(word) >= 2 and word not in _STOP_WORDS:
+                            terms.append(word)
+                            
+        # Also handle unquoted grep patterns after pipes
+        if "| grep" in cmd_lower:
+            # Extract patterns like: ls examples/ | grep revenue
+            pipe_grep_matches = re.findall(r'\|\s*grep\s+([^\s\'"]+)', command, re.I)
+            for match in pipe_grep_matches:
+                cleaned = match.lower().strip()
+                if cleaned and len(cleaned) >= 2 and cleaned not in _STOP_WORDS:
+                    terms.append(cleaned)
+
+    elif cmd_lower.startswith("find"):
+        # find ... -name "*pattern*" or -iname "*pattern*"
+        name_matches = re.findall(r'-i?name\s+["\']?\*?([^"\'*\s]+)\*?["\']?', command, re.I)
+        for t in name_matches:
+            cleaned = t.lower().strip()
+            if cleaned and len(cleaned) >= 2 and cleaned not in _STOP_WORDS:
+                terms.append(cleaned)
+
+    return terms
+
+
 def _are_similar(a: str, b: str) -> bool:
     """Check if two terms are similar enough to group together.
 

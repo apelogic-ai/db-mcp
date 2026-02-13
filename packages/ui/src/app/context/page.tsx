@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useBICP } from "@/lib/bicp-context";
 import { useContextViewer } from "@/lib/context-viewer-context";
-import { TreeView, ConnectionNode } from "@/components/context/TreeView";
+import { TreeView, ConnectionNode, UsageData } from "@/components/context/TreeView";
 import { CodeEditor } from "@/components/context/CodeEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,6 +100,10 @@ export default function ContextPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
 
+  // Usage tracking state
+  const [usage, setUsage] = useState<UsageData | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+
   // Split pane resize
   const resizingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -118,6 +122,9 @@ export default function ContextPage() {
     try {
       const result = await call<ContextTreeResult>("context/tree", {});
       setConnections(result.connections);
+      
+      // Fetch usage data after tree is loaded
+      // Note: fetchUsage will be called in a useEffect when connections change
     } catch (err) {
       setTreeError(
         err instanceof Error ? err.message : "Failed to fetch context tree",
@@ -140,6 +147,51 @@ export default function ContextPage() {
       setAgentsLoading(false);
     }
   }, [call]);
+
+  // Fetch usage data
+  const fetchUsage = useCallback(async () => {
+    if (!isInitialized || connections.length === 0) {
+      setUsage(null);
+      return;
+    }
+
+    setUsageLoading(true);
+    try {
+      // Fetch usage for all active connections and merge results
+      const usagePromises = connections.map(async (conn) => {
+        try {
+          const result = await call<UsageData>("context/usage", {
+            connection: conn.name,
+            days: 7,
+          });
+          return { connection: conn.name, usage: result };
+        } catch (err) {
+          console.error(`Failed to fetch usage for ${conn.name}:`, err);
+          return { connection: conn.name, usage: { files: {}, folders: {} } };
+        }
+      });
+
+      const usageResults = await Promise.all(usagePromises);
+      
+      // Merge all usage data
+      const mergedUsage: UsageData = {
+        files: {},
+        folders: {},
+      };
+
+      usageResults.forEach(({ usage: connUsage }) => {
+        Object.assign(mergedUsage.files, connUsage.files);
+        Object.assign(mergedUsage.folders, connUsage.folders);
+      });
+
+      setUsage(mergedUsage);
+    } catch (err) {
+      console.error("Failed to fetch usage data:", err);
+      setUsage(null);
+    } finally {
+      setUsageLoading(false);
+    }
+  }, [isInitialized, call, connections]);
 
   // Fetch file content
   const fetchFile = useCallback(
@@ -186,6 +238,11 @@ export default function ContextPage() {
   useEffect(() => {
     fetchTree();
   }, [fetchTree]);
+
+  // Fetch usage when connections change
+  useEffect(() => {
+    fetchUsage();
+  }, [fetchUsage]);
 
   // Handle file selection
   const handleSelectFile = (connection: string, path: string) => {
@@ -550,6 +607,7 @@ export default function ContextPage() {
                 setIsStockReadme(false);
               }
             }}
+            usage={usage}
           />
         </div>
 
