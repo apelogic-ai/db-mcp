@@ -2366,83 +2366,101 @@ This knowledge helps the AI generate better queries over time.
         if not conn_path.exists():
             return {"success": False, "error": f"Connection '{connection}' not found"}
 
-        # For now, use a fixed user_id - in the future this could be parameterized
-        user_id = "default"
-
-        # Get trace dates within the time window
+        # Scan all user_id subdirectories under traces/
         import time
         cutoff_time = time.time() - (days * 86400)  # days ago
 
-        available_dates = list_trace_dates(conn_path, user_id)
+        traces_dir = conn_path / "traces"
+        user_ids = []
+        if traces_dir.exists():
+            user_ids = [
+                d.name for d in traces_dir.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            ]
+        if not user_ids:
+            user_ids = ["default"]
 
         file_counts = defaultdict(int)
         file_last_used = {}
 
-        # Process traces from each date
-        for date_str in available_dates:
-            # Parse date to check if within window
-            try:
-                from datetime import datetime
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-                if date_obj.timestamp() < cutoff_time:
+        # Process traces from each user_id and date
+        for user_id in user_ids:
+            available_dates = list_trace_dates(conn_path, user_id)
+
+            for date_str in available_dates:
+                # Parse date to check if within window
+                try:
+                    from datetime import datetime
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                    if date_obj.timestamp() < cutoff_time:
+                        continue
+                except ValueError:
                     continue
-            except ValueError:
-                continue
 
-            trace_file = conn_path / "traces" / user_id / f"{date_str}.jsonl"
-            if not trace_file.exists():
-                continue
+                trace_file = (
+                    conn_path / "traces" / user_id / f"{date_str}.jsonl"
+                )
+                if not trace_file.exists():
+                    continue
 
-            traces = read_traces_from_jsonl(trace_file)
+                traces = read_traces_from_jsonl(trace_file)
 
-            for trace in traces:
-                for span in trace.get("spans", []):
-                    attrs = span.get("attributes", {})
-                    span_timestamp = span.get("start_time", 0)
+                for trace in traces:
+                    for span in trace.get("spans", []):
+                        attrs = span.get("attributes", {})
+                        span_timestamp = span.get("start_time", 0)
 
-                    # Source 1: Shell commands (grep/cat/find/ls)
-                    tool_name = attrs.get("tool.name")
-                    command = attrs.get("command")
-                    if tool_name == "shell" and command:
-                        context_paths = extract_context_paths(command)
-                        ctx_dirs = [
-                            "schema", "examples", "instructions",
-                            "domain", "data", "learnings",
-                        ]
-                        for path in context_paths:
-                            for context_dir in ctx_dirs:
-                                file_key = f"{context_dir}/{path}"
-                                file_counts[file_key] += 1
-                                ts = span_timestamp
-                                prev = file_last_used.get(file_key, 0)
-                                file_last_used[file_key] = max(prev, ts)
+                        # Source 1: Shell commands
+                        tool_name = attrs.get("tool.name")
+                        command = attrs.get("command")
+                        if tool_name == "shell" and command:
+                            ctx_paths = extract_context_paths(command)
+                            ctx_dirs = [
+                                "schema", "examples",
+                                "instructions", "domain",
+                                "data", "learnings",
+                            ]
+                            for path in ctx_paths:
+                                for ctx_dir in ctx_dirs:
+                                    fk = f"{ctx_dir}/{path}"
+                                    file_counts[fk] += 1
+                                    prev = file_last_used.get(fk, 0)
+                                    file_last_used[fk] = max(
+                                        prev, span_timestamp
+                                    )
 
-                    # Source 2: Knowledge file loads (from generation.py instrumentation)
-                    files_used = attrs.get("knowledge.files_used")
-                    if files_used:
-                        for file_path in files_used:
-                            file_counts[file_path] += 1
-                            prev = file_last_used.get(file_path, 0)
-                            file_last_used[file_path] = max(prev, span_timestamp)
+                        # Source 2: Knowledge file loads
+                        files_used = attrs.get(
+                            "knowledge.files_used"
+                        )
+                        if files_used:
+                            for fp in files_used:
+                                file_counts[fp] += 1
+                                prev = file_last_used.get(fp, 0)
+                                file_last_used[fp] = max(
+                                    prev, span_timestamp
+                                )
 
-                    # Source 3: Resource reads (MCP resources/read)
-                    if span.get("name") == "resources/read":
-                        resource_uri = attrs.get("resource.uri")
-                        if resource_uri and resource_uri.startswith("file://"):
-                            # Extract relative path
-                            import urllib.parse
-                            file_path = urllib.parse.unquote(resource_uri.replace("file://", ""))
-                            # Only track context-related paths
-                            for ctx_dir in ctx_dirs:
-                                if ctx_dir in file_path:
-                                    parts = file_path.split(ctx_dir, 1)
-                                    if len(parts) > 1:
-                                        rel = f"{ctx_dir}{parts[1]}"
-                                        file_counts[rel] += 1
-                                        prev = file_last_used.get(rel, 0)
-                                        file_last_used[rel] = max(
-                                            prev, span_timestamp
-                                        )
+                        # Source 3: Resource reads
+                        if span.get("name") == "resources/read":
+                            uri = attrs.get("resource.uri")
+                            if uri and uri.startswith("file://"):
+                                import urllib.parse
+                                fp = urllib.parse.unquote(
+                                    uri.replace("file://", "")
+                                )
+                                for ctx_dir in ctx_dirs:
+                                    if ctx_dir in fp:
+                                        parts = fp.split(ctx_dir, 1)
+                                        if len(parts) > 1:
+                                            rel = f"{ctx_dir}{parts[1]}"
+                                            file_counts[rel] += 1
+                                            prev = file_last_used.get(
+                                                rel, 0
+                                            )
+                                            file_last_used[rel] = max(
+                                                prev, span_timestamp
+                                            )
 
         # Aggregate folder counts
         folder_counts = defaultdict(int)
