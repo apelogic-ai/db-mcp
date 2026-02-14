@@ -161,30 +161,42 @@ def load_ignore_patterns(provider_id: str | None = None) -> IgnorePatterns:
     if provider_id is None:
         provider_id = settings.provider_id
 
+    # Always start with default patterns
+    default_patterns = IgnorePatterns._parse_patterns(DEFAULT_IGNORE_PATTERNS)
+
+    # Try to find a custom ignore file and merge its patterns with defaults
+    custom_content = None
+
     # Check connection-specific file first (new v2 structure)
     connection_path = settings.get_effective_connection_path()
     connection_ignore = connection_path / ".db-mcpignore"
     if connection_ignore.exists():
-        content = connection_ignore.read_text()
-        patterns = IgnorePatterns._parse_patterns(content)
-        return IgnorePatterns(patterns)
+        custom_content = connection_ignore.read_text()
 
     # Check legacy provider directory
-    if settings.providers_dir:
+    if custom_content is None and settings.providers_dir:
         provider_ignore = Path(settings.providers_dir) / provider_id / ".db-mcpignore"
         if provider_ignore.exists():
-            content = provider_ignore.read_text()
-            patterns = IgnorePatterns._parse_patterns(content)
-            return IgnorePatterns(patterns)
+            custom_content = provider_ignore.read_text()
 
     # Check resources directory
-    resources_ignore = Path(settings.resources_dir) / ".db-mcpignore"
-    if resources_ignore.exists():
-        content = resources_ignore.read_text()
-        patterns = IgnorePatterns._parse_patterns(content)
-        return IgnorePatterns(patterns)
+    if custom_content is None:
+        resources_ignore = Path(settings.resources_dir) / ".db-mcpignore"
+        if resources_ignore.exists():
+            custom_content = resources_ignore.read_text()
 
-    # Fall back to defaults
+    if custom_content is not None:
+        custom_patterns = IgnorePatterns._parse_patterns(custom_content)
+        # Merge: defaults + custom (deduplicated, preserving order)
+        seen = set(default_patterns)
+        merged = list(default_patterns)
+        for p in custom_patterns:
+            if p not in seen:
+                merged.append(p)
+                seen.add(p)
+        return IgnorePatterns(merged)
+
+    # No custom file — use defaults only
     return IgnorePatterns()
 
 
@@ -192,9 +204,14 @@ def get_default_ignore_content() -> str:
     """Get the default .db-mcpignore file content.
 
     Returns:
-        Default ignore patterns as a string
+        Default ignore patterns as a string with explanatory header
     """
-    return DEFAULT_IGNORE_PATTERNS
+    return (
+        "# Custom patterns are merged with built-in defaults.\n"
+        "# Default patterns (pg_catalog, information_schema, django_*, etc.) "
+        "are always applied.\n"
+        "# Add your custom patterns below:\n"
+    )
 
 
 def save_ignore_patterns(provider_id: str, patterns: list[str]) -> dict:
@@ -216,7 +233,16 @@ def save_ignore_patterns(provider_id: str, patterns: list[str]) -> dict:
     ignore_file = connection_path / ".db-mcpignore"
 
     try:
-        content = "\n".join(patterns)
+        # Only save user-added patterns (exclude defaults)
+        default_set = set(IgnorePatterns._parse_patterns(DEFAULT_IGNORE_PATTERNS))
+        user_patterns = [p for p in patterns if p not in default_set]
+        content = (
+            "# Custom ignore patterns (merged with built-in defaults)\n"
+            "# Default patterns (pg_catalog, information_schema, etc.) are always applied.\n"
+            "# Only add your custom patterns here.\n"
+        )
+        if user_patterns:
+            content += "\n".join(user_patterns)
         ignore_file.write_text(content)
         return {
             "saved": True,
