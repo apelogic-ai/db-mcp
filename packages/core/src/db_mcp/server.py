@@ -55,6 +55,7 @@ from db_mcp.tools.onboarding import (
     _onboarding_approve,
     _onboarding_bulk_approve,
     _onboarding_discover,
+    _onboarding_discover_status,
     _onboarding_import_descriptions,
     _onboarding_import_ignore_patterns,
     _onboarding_next,
@@ -662,6 +663,7 @@ def _create_server() -> FastMCP:
     server.tool(name="mcp_setup_remove_ignore_pattern")(_onboarding_remove_ignore_pattern)
     server.tool(name="mcp_setup_import_ignore_patterns")(_onboarding_import_ignore_patterns)
     server.tool(name="mcp_setup_discover")(_onboarding_discover)
+    server.tool(name="mcp_setup_discover_status")(_onboarding_discover_status)
     server.tool(name="mcp_setup_reset")(_onboarding_reset)
     server.tool(name="mcp_setup_next")(_onboarding_next)
     server.tool(name="mcp_setup_approve")(_onboarding_approve)

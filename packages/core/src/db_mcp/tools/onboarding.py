@@ -1,7 +1,9 @@
 """Onboarding MCP tools."""
 
+import asyncio
 import logging
 import sys
+import uuid
 
 from db_mcp_models import OnboardingPhase, TableDescriptionStatus
 from mcp.server.fastmcp import Context
@@ -67,6 +69,244 @@ def _run_schema_gap_scan(provider_id: str) -> int:
     except Exception as e:
         logger.warning(f"Schema gap scan failed: {e}")
         return 0
+
+
+# In-memory store for async discovery tasks
+_discovery_tasks: dict[str, dict] = {}
+
+
+async def _discover_tables_background(discovery_id: str, provider_id: str) -> None:
+    """Background task to discover tables asynchronously.
+
+    Updates _discovery_tasks[discovery_id] with progress and results.
+    """
+    task = _discovery_tasks[discovery_id]
+    try:
+        state = load_state(provider_id)
+        if state is None:
+            task["status"] = "error"
+            task["error"] = "Onboarding state not found"
+            return
+
+        ignore = load_ignore_patterns(provider_id)
+        connector = get_connector()
+
+        # Re-filter schemas
+        all_schemas_filtered = []
+        catalogs = state.catalogs_discovered if state.catalogs_discovered else [None]
+
+        for catalog in catalogs:
+            schemas = connector.get_schemas(catalog=catalog)
+            schemas = ignore.filter_schemas(schemas)
+            for schema in schemas:
+                if schema is not None:
+                    all_schemas_filtered.append({"catalog": catalog, "schema": schema})
+                else:
+                    all_schemas_filtered.append({"catalog": catalog, "schema": None})
+
+        state.schemas_discovered = [s["schema"] or "(default)" for s in all_schemas_filtered]
+        total_schemas = len(all_schemas_filtered)
+        task["schemas_total"] = total_schemas
+
+        print(
+            f"[DISCOVERY] Async: Schemas after re-filtering: {total_schemas}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        # Discover tables with columns
+        all_tables = []
+        try:
+            for schema_idx, schema_info in enumerate(all_schemas_filtered):
+                catalog = schema_info["catalog"]
+                schema = schema_info["schema"]
+
+                task["schemas_processed"] = schema_idx
+                task["tables_found_so_far"] = len(all_tables)
+
+                print(
+                    f"[DISCOVERY] Async: Discovering tables for {catalog}.{schema}...",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                tables = connector.get_tables(schema=schema, catalog=catalog)
+                tables = ignore.filter_tables(tables)
+
+                for t in tables:
+                    try:
+                        columns = connector.get_columns(
+                            t["name"], schema=schema, catalog=catalog
+                        )
+                    except Exception as e:
+                        print(
+                            f"[DISCOVERY] Async: Error getting columns for {t['name']}: {e}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        columns = []
+
+                    all_tables.append(
+                        {
+                            "name": t["name"],
+                            "schema": schema,
+                            "catalog": catalog,
+                            "full_name": t["full_name"],
+                            "columns": columns,
+                        }
+                    )
+
+                # Yield to event loop periodically
+                await asyncio.sleep(0)
+
+            state.tables_discovered = [t["full_name"] for t in all_tables]
+            state.tables_total = len(all_tables)
+        except Exception as e:
+            print(
+                f"[DISCOVERY] Async: Error discovering tables: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+            state.tables_discovered = []
+            state.tables_total = 0
+
+        task["schemas_processed"] = total_schemas
+        task["tables_found_so_far"] = len(all_tables)
+
+        # Create schema_descriptions.yaml
+        schema = create_initial_schema(
+            provider_id=provider_id,
+            dialect=state.dialect_detected,
+            tables=all_tables,
+        )
+        schema_result = save_schema_descriptions(schema)
+        if not schema_result["saved"]:
+            task["status"] = "error"
+            task["error"] = f"Failed to save schema descriptions: {schema_result['error']}"
+            return
+
+        # Move to schema phase
+        state.phase = OnboardingPhase.SCHEMA
+        save_result = save_state(state)
+        if not save_result["saved"]:
+            task["status"] = "error"
+            task["error"] = f"Failed to save state: {save_result['error']}"
+            return
+
+        # Store completed result
+        task["status"] = "complete"
+        task["result"] = {
+            "discovered": True,
+            "discovery_phase": "tables",
+            "provider_id": provider_id,
+            "dialect": state.dialect_detected,
+            "catalogs_found": len(state.catalogs_discovered) if state.catalogs_discovered else 0,
+            "schemas_found": len(state.schemas_discovered),
+            "tables_found": state.tables_total,
+            "phase": state.phase.value,
+            "schema_file": schema_result["file_path"],
+            "next_action": state.next_action(),
+            "guidance": {
+                "summary": (
+                    f"Discovered {state.tables_total} tables "
+                    f"across {len(state.schemas_discovered)} schemas"
+                    + (
+                        f" in {len(state.catalogs_discovered)} catalogs"
+                        if state.catalogs_discovered
+                        else ""
+                    )
+                    + "."
+                ),
+                "next_steps": [
+                    "Describe tables one by one with onboarding_next",
+                    "Or bulk-approve all tables with onboarding_bulk_approve",
+                ],
+            },
+        }
+        print(
+            f"[DISCOVERY] Async: Complete. {state.tables_total} tables found.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    except Exception as e:
+        task["status"] = "error"
+        task["error"] = str(e)
+        print(
+            f"[DISCOVERY] Async: Fatal error: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+async def _onboarding_discover_status(discovery_id: str) -> dict:
+    """Check the status of an async table discovery task.
+
+    Use this to poll for results after onboarding_discover(phase='tables')
+    returns status='submitted'. Call repeatedly until status is 'complete' or 'error'.
+
+    Args:
+        discovery_id: Discovery ID from onboarding_discover
+
+    Returns:
+        Dict with discovery status and results (when complete)
+    """
+    task = _discovery_tasks.get(discovery_id)
+    if task is None:
+        return {
+            "status": "not_found",
+            "discovery_id": discovery_id,
+            "message": "Discovery task not found. It may have expired or the ID is invalid.",
+        }
+
+    status = task["status"]
+
+    if status == "running":
+        schemas_processed = task.get("schemas_processed", 0)
+        schemas_total = task.get("schemas_total", 0)
+        tables_found = task.get("tables_found_so_far", 0)
+        progress_pct = (
+            round(100 * schemas_processed / schemas_total) if schemas_total > 0 else 0
+        )
+        return {
+            "status": "running",
+            "discovery_id": discovery_id,
+            "progress_percent": progress_pct,
+            "schemas_processed": schemas_processed,
+            "schemas_total": schemas_total,
+            "tables_found_so_far": tables_found,
+            "message": (
+                f"Discovery in progress: {schemas_processed}/{schemas_total} schemas scanned, "
+                f"{tables_found} tables found so far."
+            ),
+            "poll_interval_seconds": 10,
+            "guidance": {
+                "next_steps": [
+                    f"Poll again in 10 seconds: mcp_setup_discover_status('{discovery_id}')",
+                    "Tell the user discovery is still running",
+                ],
+            },
+        }
+
+    if status == "complete":
+        result = task.get("result", {})
+        # Clean up completed task
+        _discovery_tasks.pop(discovery_id, None)
+        return result
+
+    if status == "error":
+        error = task.get("error", "Unknown error")
+        _discovery_tasks.pop(discovery_id, None)
+        return {
+            "status": "error",
+            "discovery_id": discovery_id,
+            "discovered": False,
+            "error": error,
+        }
+
+    return {
+        "status": "unknown",
+        "discovery_id": discovery_id,
+    }
 
 
 async def _report_progress(ctx: Context | None, progress: float, total: float = 100) -> None:
@@ -622,170 +862,52 @@ async def _onboarding_discover(
         }
 
     # ============================================================
-    # PHASE: TABLES - Discover tables in non-ignored schemas (slow)
+    # PHASE: TABLES - Discover tables in non-ignored schemas (async)
     # ============================================================
-    await _report_progress(ctx, 0, 100)  # 0% - Starting tables phase
+    # Start background discovery and return immediately to avoid timeouts
+    discovery_id = str(uuid.uuid4())
+    _discovery_tasks[discovery_id] = {
+        "status": "running",
+        "provider_id": provider_id,
+        "schemas_processed": 0,
+        "schemas_total": 0,
+        "tables_found_so_far": 0,
+    }
 
-    # Re-filter schemas in case new ignore patterns were added
-    all_schemas_filtered = []
-    catalogs = state.catalogs_discovered if state.catalogs_discovered else [None]
+    # Run synchronously when no MCP context (tests) to keep deterministic behavior
+    if ctx is None:
+        await _discover_tables_background(discovery_id, provider_id)
+        task = _discovery_tasks.get(discovery_id, {})
+        if task.get("status") == "complete":
+            result = task.get("result", {})
+            _discovery_tasks.pop(discovery_id, None)
+            return result
+        elif task.get("status") == "error":
+            error = task.get("error", "Unknown error")
+            _discovery_tasks.pop(discovery_id, None)
+            return {"discovered": False, "error": error}
 
-    for catalog in catalogs:
-        schemas = connector.get_schemas(catalog=catalog)
-        schemas = ignore.filter_schemas(schemas)
-        for schema in schemas:
-            if schema is not None:
-                all_schemas_filtered.append({"catalog": catalog, "schema": schema})
-            else:
-                # Flat-hierarchy connector (e.g. file/DuckDB): no named schemas
-                all_schemas_filtered.append({"catalog": catalog, "schema": None})
-
-    # Update state with filtered schemas
-    state.schemas_discovered = [s["schema"] or "(default)" for s in all_schemas_filtered]
-    total_schemas = len(all_schemas_filtered)
-
-    print(
-        f"[DISCOVERY] Schemas after re-filtering: {total_schemas}",
-        file=sys.stderr,
-        flush=True,
-    )
-
-    await _report_progress(ctx, 5, 100)  # 5% - Schemas filtered
-
-    # Discover tables with columns (iterate catalog -> schema -> table)
-    all_tables = []
-    try:
-        for schema_idx, schema_info in enumerate(all_schemas_filtered):
-            catalog = schema_info["catalog"]
-            schema = schema_info["schema"]
-
-            # Report progress: 5% to 90% for schema discovery
-            if total_schemas > 0:
-                schema_progress = 5 + (85 * schema_idx / total_schemas)
-                await _report_progress(ctx, schema_progress, 100)
-
-            print(
-                f"[DISCOVERY] Discovering tables for {catalog}.{schema}...",
-                file=sys.stderr,
-                flush=True,
-            )
-            tables = connector.get_tables(schema=schema, catalog=catalog)
-            print(
-                f"[DISCOVERY] Found {len(tables)} tables in {catalog}.{schema} (pre-filter)",
-                file=sys.stderr,
-                flush=True,
-            )
-            tables = ignore.filter_tables(tables)
-            print(
-                f"[DISCOVERY] Found {len(tables)} tables in {catalog}.{schema} (after filter)",
-                file=sys.stderr,
-                flush=True,
-            )
-
-            for t in tables:
-                # Get columns for each table
-                try:
-                    columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
-                except Exception as e:
-                    print(
-                        f"[DISCOVERY] Error getting columns for {t['name']}: {e}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    columns = []
-
-                all_tables.append(
-                    {
-                        "name": t["name"],
-                        "schema": schema,
-                        "catalog": catalog,
-                        "full_name": t["full_name"],
-                        "columns": columns,
-                    }
-                )
-
-        state.tables_discovered = [t["full_name"] for t in all_tables]
-        state.tables_total = len(all_tables)
-        print(
-            f"[DISCOVERY] Total tables discovered: {len(all_tables)}", file=sys.stderr, flush=True
-        )
-    except Exception as e:
-        print(f"[DISCOVERY] Error discovering tables: {e}", file=sys.stderr, flush=True)
-        state.tables_discovered = []
-        state.tables_total = 0
-
-    await _report_progress(ctx, 90, 100)  # 90% - Tables discovered, saving
-
-    # Create schema_descriptions.yaml with all discovered tables
-    schema = create_initial_schema(
-        provider_id=provider_id,
-        dialect=state.dialect_detected,
-        tables=all_tables,
-    )
-    schema_result = save_schema_descriptions(schema)
-    if not schema_result["saved"]:
-        return {
-            "discovered": False,
-            "provider_id": provider_id,
-            "error": f"Failed to save schema descriptions: {schema_result['error']}",
-        }
-
-    # Move to schema phase
-    state.phase = OnboardingPhase.SCHEMA
-
-    # Save state
-    save_result = save_state(state)
-    if not save_result["saved"]:
-        return {
-            "discovered": False,
-            "provider_id": provider_id,
-            "error": f"Failed to save state: {save_result['error']}",
-        }
-
-    await _report_progress(ctx, 100, 100)  # 100% - Complete
+    asyncio.create_task(_discover_tables_background(discovery_id, provider_id))
 
     return {
-        "discovered": True,
+        "status": "submitted",
+        "discovery_id": discovery_id,
         "discovery_phase": "tables",
         "provider_id": provider_id,
-        "dialect": state.dialect_detected,
-        "catalogs_found": len(state.catalogs_discovered) if state.catalogs_discovered else 0,
-        "schemas_found": len(state.schemas_discovered),
-        "tables_found": state.tables_total,
-        "phase": state.phase.value,
-        "schema_file": schema_result["file_path"],
-        "next_action": state.next_action(),
+        "message": (
+            "Table discovery started in the background. "
+            "Use mcp_setup_discover_status to check progress."
+        ),
+        "poll_interval_seconds": 10,
         "guidance": {
-            "summary": (
-                f"Discovered {state.tables_total} tables "
-                f"across {len(state.schemas_discovered)} schemas"
-                + (
-                    f" in {len(state.catalogs_discovered)} catalogs"
-                    if state.catalogs_discovered
-                    else ""
-                )
-                + "."
-            ),
             "next_steps": [
-                "Describe tables one by one with onboarding_next",
-                "Or bulk-approve all tables with onboarding_bulk_approve",
+                f"Poll status with: mcp_setup_discover_status('{discovery_id}')",
+                "Check every 10-30 seconds until status is 'complete'",
             ],
             "suggested_response": (
-                "**Discovery complete!**\n\n"
-                "I found:\n"
-                + (
-                    f"- **Catalogs:** {len(state.catalogs_discovered)}\n"
-                    if state.catalogs_discovered
-                    else ""
-                )
-                + f"- **Schemas:** {len(state.schemas_discovered)}\n"
-                f"- **Tables:** {state.tables_total}\n\n"
-                "Now let's add descriptions to your tables. This helps me understand "
-                "your data and generate accurate SQL queries.\n\n"
-                "**How would you like to proceed?**\n"
-                "1. **One by one** - I'll show each table with sample data\n"
-                "2. **Bulk approve** - Auto-generate descriptions (editable later)\n\n"
-                "Which option works best for you?"
+                "**Table discovery started!** 🔍\n\n"
+                "This runs in the background so it won't time out. "
+                "I'll check on progress shortly."
             ),
         },
     }
