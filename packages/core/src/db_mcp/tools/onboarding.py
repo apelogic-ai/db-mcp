@@ -874,6 +874,19 @@ async def _onboarding_discover(
         "tables_found_so_far": 0,
     }
 
+    # Run synchronously when no MCP context (tests) to keep deterministic behavior
+    if ctx is None:
+        await _discover_tables_background(discovery_id, provider_id)
+        task = _discovery_tasks.get(discovery_id, {})
+        if task.get("status") == "complete":
+            result = task.get("result", {})
+            _discovery_tasks.pop(discovery_id, None)
+            return result
+        elif task.get("status") == "error":
+            error = task.get("error", "Unknown error")
+            _discovery_tasks.pop(discovery_id, None)
+            return {"discovered": False, "error": error}
+
     asyncio.create_task(_discover_tables_background(discovery_id, provider_id))
 
     return {
