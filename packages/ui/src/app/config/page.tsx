@@ -1062,12 +1062,12 @@ export default function ConfigPage() {
             Try db-mcp with a sample music database (SQLite + Chinook)
           </p>
           <ol className="text-gray-300 text-sm space-y-1 mb-5 list-decimal list-inside">
-            <li>Click &quot;+ Add Playground DB&quot; below</li>
+            <li>Click &quot;+ Add Playground DB&quot; to install a sample SQLite database</li>
             <li>
-              See the playground connection appear with pre-configured schema,
-              examples, and domain model
+              Restart your agent and start the onboarding flow — discover
+              tables, describe schema, build domain knowledge
             </li>
-            <li>Restart your agent and start querying</li>
+            <li>Learn the full db-mcp workflow with real data</li>
           </ol>
           <div className="flex items-center gap-3">
             <Button

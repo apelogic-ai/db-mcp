@@ -80,24 +80,18 @@ def install_playground() -> dict:
     shutil.copy2(chinook_src, chinook_dest)
     logger.info(f"Copied Chinook database to {chinook_dest}")
 
-    # Create playground connection directory
+    # Create playground connection directory with credentials ONLY
+    # Do NOT copy pre-seeded context — the whole point is for the user
+    # to learn the onboarding flow by going through it themselves.
     playground_dir = _get_connections_dir() / PLAYGROUND_CONNECTION_NAME
     playground_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy all pre-seeded context files
-    _copy_tree(playground_src, playground_dir)
 
     # Build the database URL
     database_url = f"sqlite:///{chinook_dest}"
 
-    # Update connector.yaml with actual path
+    # Create connector.yaml with just the connection info
     connector_path = playground_dir / "connector.yaml"
-    if connector_path.exists():
-        with open(connector_path) as f:
-            config = yaml.safe_load(f) or {}
-    else:
-        config = {"type": "sql"}
-    config["database_url"] = database_url
+    config = {"type": "sql", "database_url": database_url}
     with open(connector_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
@@ -114,19 +108,6 @@ def install_playground() -> dict:
         f.write(".env\n")
         f.write("# Ignore local state\n")
         f.write("state.yaml\n")
-
-    # Create standard vault directories
-    for subdir in ["learnings/failures", "metrics"]:
-        (playground_dir / subdir).mkdir(parents=True, exist_ok=True)
-
-    # Mark onboarding complete in state.yaml (already copied from playground data)
-    state_path = playground_dir / "state.yaml"
-    if state_path.exists():
-        with open(state_path) as f:
-            state = yaml.safe_load(f) or {}
-        state["phase"] = "complete"
-        with open(state_path, "w") as f:
-            yaml.dump(state, f, default_flow_style=False, sort_keys=False)
 
     logger.info(f"Created playground connection at {playground_dir}")
 
