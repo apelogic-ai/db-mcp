@@ -115,6 +115,11 @@ main() {
 
     download_binary "$version" "$platform" "$binary_path"
 
+    # Remove macOS quarantine flag (unsigned binary)
+    if [ "$(uname -s)" = "Darwin" ]; then
+        xattr -d com.apple.quarantine "$binary_path" 2>/dev/null || true
+    fi
+
     if [ -x "$binary_path" ]; then
         success "✓ db-mcp installed successfully!"
         printf '  Location: %s\n\n' "$binary_path"
