@@ -50,6 +50,44 @@ async def test_run_sql_allows_direct_sql_for_api_sync():
 
 
 @pytest.mark.asyncio
+async def test_run_sql_direct_sql_response_no_validate_mention():
+    """Success response must not tell user to call validate_sql."""
+    with (
+        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.connectors.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "sql_mode": "api_sync",
+            },
+        ),
+    ):
+        result = await _run_sql(sql="SELECT 1")
+
+    payload = result.structuredContent
+    assert payload["status"] == "success"
+    # Check the text content doesn't mention validate_sql
+    text_parts = [c.text for c in result.content if hasattr(c, "text")]
+    full_text = " ".join(text_parts).lower()
+    assert (
+        "validate_sql" not in full_text
+        or "not supported" in full_text
+        or "not needed" in full_text
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_sql_no_params_guidance_adapts():
+    """When called with no params, guidance should mention direct sql option."""
+    result = await _run_sql()
+
+    payload = result.structuredContent
+    assert payload["status"] == "error"
+    assert any("run_sql(sql=...)" in step for step in payload["guidance"]["next_steps"])
+
+
+@pytest.mark.asyncio
 async def test_validate_sql_reports_unsupported_for_api_connector():
     with (
         patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),

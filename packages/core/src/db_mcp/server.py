@@ -317,6 +317,34 @@ DO NOT look for other schema discovery tools. Use `shell` to explore the vault.
 # =============================================================================
 
 
+def _strip_validate_sql_from_instructions(instructions: str) -> str:
+    """Remove validate_sql references for connectors that don't support it."""
+    replacements = {
+        (
+            '5. validate_sql(sql="...")                    '
+            "# Validate before running\n"
+            '6. run_sql(query_id="...")                    '
+            "# Execute"
+        ): (
+            '5. run_sql(sql="...")                         '
+            "# Execute directly"
+        ),
+        (
+            "- validate_sql / run_sql / get_result"
+            " - Query execution (required for running SQL)"
+        ): (
+            "- run_sql / get_result"
+            " - Query execution (run_sql accepts sql= directly)"
+        ),
+        "- Query: get_data, run_sql, validate_sql, get_result, export_results": (
+            "- Query: get_data, run_sql, get_result, export_results"
+        ),
+    }
+    for old, new in replacements.items():
+        instructions = instructions.replace(old, new)
+    return instructions
+
+
 def _create_server() -> FastMCP:
     """Create and configure the MCP server based on tool_mode setting."""
     settings = get_settings()
@@ -341,6 +369,10 @@ def _create_server() -> FastMCP:
     supports_async_jobs = connector_caps.get("supports_async_jobs", connector_type != "api")
 
     instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
+
+    # Adapt instructions when validate_sql is not supported
+    if not supports_validate:
+        instructions = _strip_validate_sql_from_instructions(instructions)
 
     server = FastMCP(
         name="db-mcp",
