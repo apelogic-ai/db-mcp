@@ -3,6 +3,7 @@
 import json
 import os
 import platform
+import shutil
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -51,6 +52,11 @@ def get_claude_code_config_path() -> Path:
 def get_codex_config_path() -> Path:
     """Get OpenAI Codex config path."""
     return Path.home() / ".codex" / "config.toml"
+
+
+def get_openclaw_config_path() -> Path:
+    """Get OpenClaw mcporter config path."""
+    return Path.home() / ".openclaw" / "workspace" / "config" / "mcporter.json"
 
 
 def detect_claude_desktop() -> bool:
@@ -103,6 +109,17 @@ def detect_codex() -> bool:
     return shutil.which("codex") is not None
 
 
+def detect_openclaw() -> bool:
+    """Detect if OpenClaw is installed."""
+    # Check if OpenClaw state directory exists
+    openclaw_dir = Path.home() / ".openclaw"
+    if openclaw_dir.exists():
+        return True
+
+    # Check if openclaw CLI is available
+    return shutil.which("openclaw") is not None
+
+
 # Agent registry
 AGENTS: dict[str, MCPAgent] = {
     "claude-desktop": MCPAgent(
@@ -125,6 +142,13 @@ AGENTS: dict[str, MCPAgent] = {
         config_format="toml",
         config_key="mcp_servers",
         detect_fn=detect_codex,
+    ),
+    "openclaw": MCPAgent(
+        name="OpenClaw",
+        config_path=get_openclaw_config_path(),
+        config_format="json",
+        config_key="mcpServers",
+        detect_fn=detect_openclaw,
     ),
 }
 
@@ -250,13 +274,22 @@ def configure_agent_for_dbmcp(agent_id: str, binary_path: str) -> bool:
 
     agent = AGENTS[agent_id]
 
+    # Special handling for OpenClaw - check mcporter dependency
+    if agent_id == "openclaw":
+        if not shutil.which("mcporter"):
+            console.print(
+                "[yellow]Warning: mcporter is required for OpenClaw integration. "
+                "Install with: npm i -g mcporter[/yellow]"
+            )
+            # Continue anyway - user might install mcporter after
+
     try:
         # Load existing config
         config = load_agent_config(agent)
 
         # Add/update db-mcp entry
         if agent.config_format == "json":
-            # JSON format (Claude Desktop, Claude Code)
+            # JSON format (Claude Desktop, Claude Code, OpenClaw)
             if agent.config_key not in config:
                 config[agent.config_key] = {}
 

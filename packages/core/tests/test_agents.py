@@ -16,6 +16,7 @@ from db_mcp.agents import (
     detect_claude_desktop,
     detect_codex,
     detect_installed_agents,
+    detect_openclaw,
     get_db_mcp_binary_path,
     load_agent_config,
     remove_dbmcp_from_agent,
@@ -100,16 +101,35 @@ class TestAgentDetection:
                 with patch("shutil.which", return_value=None):
                     assert detect_codex() is False
 
+    def test_detect_openclaw_by_directory(self):
+        """Test detecting OpenClaw by state directory."""
+        with patch("pathlib.Path.exists", return_value=True):
+            assert detect_openclaw() is True
+
+    def test_detect_openclaw_by_cli(self):
+        """Test detecting OpenClaw by CLI."""
+        with patch("pathlib.Path.exists", return_value=False):
+            with patch("shutil.which", return_value="/usr/local/bin/openclaw"):
+                assert detect_openclaw() is True
+
+    def test_detect_openclaw_not_found(self):
+        """Test when OpenClaw is not installed."""
+        with patch("pathlib.Path.exists", return_value=False):
+            with patch("shutil.which", return_value=None):
+                assert detect_openclaw() is False
+
     def test_detect_installed_agents(self):
         """Test detecting all installed agents."""
         # We need to patch the detect functions in the AGENTS dict
         with patch.object(AGENTS["claude-desktop"], "detect_fn", return_value=True):
             with patch.object(AGENTS["claude-code"], "detect_fn", return_value=False):
                 with patch.object(AGENTS["codex"], "detect_fn", return_value=True):
-                    installed = detect_installed_agents()
-                    assert "claude-desktop" in installed
-                    assert "claude-code" not in installed
-                    assert "codex" in installed
+                    with patch.object(AGENTS["openclaw"], "detect_fn", return_value=False):
+                        installed = detect_installed_agents()
+                        assert "claude-desktop" in installed
+                        assert "claude-code" not in installed
+                        assert "codex" in installed
+                        assert "openclaw" not in installed
 
 
 class TestAgentConfig:
@@ -373,6 +393,78 @@ class TestAgentConfiguration:
         result = configure_agent_for_dbmcp("invalid-agent", "/usr/local/bin/db-mcp")
         assert result is False
 
+    def test_configure_openclaw(self):
+        """Test configuring OpenClaw."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcporter.json"
+
+            agent = AGENTS["openclaw"]
+            agent.config_path = config_path
+
+            with patch("shutil.which", return_value="/usr/local/bin/mcporter"):
+                result = configure_agent_for_dbmcp("openclaw", "/usr/local/bin/db-mcp")
+
+            assert result is True
+            assert config_path.exists()
+
+            with open(config_path) as f:
+                config = json.load(f)
+
+            assert "mcpServers" in config
+            assert "db-mcp" in config["mcpServers"]
+            assert config["mcpServers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
+            assert config["mcpServers"]["db-mcp"]["args"] == ["start"]
+
+    def test_configure_openclaw_preserves_imports(self):
+        """Test that configuring OpenClaw preserves imports key."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcporter.json"
+
+            # Create existing config with imports
+            existing_config = {
+                "imports": ["./other-config.json"],
+                "mcpServers": {"github": {"command": "npx", "args": ["@github/mcp"]}}
+            }
+
+            with open(config_path, "w") as f:
+                json.dump(existing_config, f)
+
+            agent = AGENTS["openclaw"]
+            agent.config_path = config_path
+
+            with patch("shutil.which", return_value="/usr/local/bin/mcporter"):
+                configure_agent_for_dbmcp("openclaw", "/usr/local/bin/db-mcp")
+
+            with open(config_path) as f:
+                config = json.load(f)
+
+            assert "imports" in config
+            assert config["imports"] == ["./other-config.json"]
+            assert "github" in config["mcpServers"]
+            assert "db-mcp" in config["mcpServers"]
+
+    def test_configure_openclaw_mcporter_warning(self):
+        """Test that OpenClaw configuration warns when mcporter is not installed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcporter.json"
+
+            agent = AGENTS["openclaw"]
+            agent.config_path = config_path
+
+            with patch("shutil.which", return_value=None):
+                with patch("db_mcp.agents.console.print") as mock_print:
+                    result = configure_agent_for_dbmcp("openclaw", "/usr/local/bin/db-mcp")
+
+                    # Should still succeed but print warning
+                    assert result is True
+                    assert config_path.exists()
+                    
+                    # Check that warning was printed (should have 2 calls: warning + success)
+                    assert mock_print.call_count == 2
+                    warning_call = mock_print.call_args_list[0][0][0]
+                    assert "mcporter is required for OpenClaw integration" in warning_call
+                    assert "npm i -g mcporter" in warning_call
+
     def test_configure_multiple_agents(self):
         """Test configuring multiple agents."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -466,6 +558,30 @@ class TestRemoveAgent:
             AGENTS["claude-desktop"].config_path = config_path
             result = remove_dbmcp_from_agent("claude-desktop")
             assert result is True
+
+    def test_remove_from_openclaw_agent(self):
+        """Test removing db-mcp from OpenClaw agent config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcporter.json"
+            existing = {
+                "imports": ["./other-config.json"],
+                "mcpServers": {
+                    "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                    "github": {"command": "npx", "args": ["@github/mcp"]},
+                }
+            }
+            with open(config_path, "w") as f:
+                json.dump(existing, f)
+
+            AGENTS["openclaw"].config_path = config_path
+            result = remove_dbmcp_from_agent("openclaw")
+
+            assert result is True
+            with open(config_path) as f:
+                config = json.load(f)
+            assert "db-mcp" not in config["mcpServers"]
+            assert "github" in config["mcpServers"]
+            assert "imports" in config  # preserves imports
 
     def test_remove_invalid_agent(self):
         """Test removing from an invalid agent ID."""
