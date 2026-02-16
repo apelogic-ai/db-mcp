@@ -458,7 +458,7 @@ class TestAgentConfiguration:
                     # Should still succeed but print warning
                     assert result is True
                     assert config_path.exists()
-                    
+
                     # Check that warning was printed (should have 2 calls: warning + success)
                     assert mock_print.call_count == 2
                     warning_call = mock_print.call_args_list[0][0][0]
