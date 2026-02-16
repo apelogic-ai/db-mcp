@@ -91,7 +91,11 @@ def install_playground() -> dict:
 
     # Create connector.yaml with just the connection info
     connector_path = playground_dir / "connector.yaml"
-    config = {"type": "sql", "database_url": database_url}
+    config = {
+        "type": "sql",
+        "database_url": database_url,
+        "capabilities": {"supports_validate_sql": False},
+    }
     with open(connector_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
