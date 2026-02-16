@@ -55,6 +55,36 @@ db-mcp init
 db-mcp status
 ```
 
+## Supported Agents
+
+### Claude Desktop
+
+The default setup works with Claude Desktop. Follow the Quick Start instructions above.
+
+### OpenClaw
+
+db-mcp works with [OpenClaw](https://openclaw.ai) via mcporter:
+
+```bash
+# Install mcporter (MCP bridge for OpenClaw)
+npm i -g mcporter
+
+# Configure db-mcp for OpenClaw
+db-mcp init
+```
+
+Or manually add to `~/.openclaw/workspace/config/mcporter.json`:
+```json
+{
+  "mcpServers": {
+    "db-mcp": {
+      "command": "db-mcp",
+      "args": ["start"]
+    }
+  }
+}
+```
+
 ## Supported Databases
 
 - PostgreSQL
