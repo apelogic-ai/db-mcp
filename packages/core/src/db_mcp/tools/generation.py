@@ -703,7 +703,8 @@ async def _run_sql(
             )
 
         sql_mode = caps.get("sql_mode")
-        if sql_mode == "api_sync":
+        if sql_mode is None or sql_mode == "api_sync" or sql_mode == "engine":
+            # Standard SQL connector (no sql_mode), sync API, or direct engine access
             try:
                 rows = connector.execute_sql(sql)
                 columns = list(rows[0].keys()) if rows else []

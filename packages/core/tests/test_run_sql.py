@@ -50,6 +50,50 @@ async def test_run_sql_allows_direct_sql_for_api_sync():
 
 
 @pytest.mark.asyncio
+async def test_run_sql_allows_direct_sql_for_standard_connector():
+    """Standard SQL connectors (no sql_mode) should support direct SQL when validate disabled."""
+    with (
+        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.connectors.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                # No sql_mode specified - this is the key difference from api_sync test
+            },
+        ),
+    ):
+        result = await _run_sql(sql="SELECT 1")
+
+    payload = result.structuredContent
+    assert payload["status"] == "success"
+    assert payload["rows_returned"] == 1
+    assert payload["data"][0]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_run_sql_allows_direct_sql_for_engine_mode():
+    """Engine mode SQL connectors should support direct SQL when validate disabled."""
+    with (
+        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.connectors.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "sql_mode": "engine",  # This is what playground connector has
+            },
+        ),
+    ):
+        result = await _run_sql(sql="SELECT 1")
+
+    payload = result.structuredContent
+    assert payload["status"] == "success"
+    assert payload["rows_returned"] == 1
+    assert payload["data"][0]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
 async def test_run_sql_direct_sql_response_no_validate_mention():
     """Success response must not tell user to call validate_sql."""
     with (

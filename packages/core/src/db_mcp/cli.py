@@ -3181,5 +3181,84 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
         click.echo(output_str)
 
 
+@main.group()
+def playground():
+    """Manage the playground connection with Chinook SQLite database.
+
+    The playground provides a sample SQLite database (Chinook) for
+    testing and learning db-mcp features without setting up your own database.
+
+    Examples:
+        db-mcp playground install    # Install playground database
+        db-mcp playground status     # Check installation status
+    """
+    pass
+
+
+@playground.command("install")
+def playground_install():
+    """Install the playground connection.
+
+    Downloads and installs the Chinook SQLite database as a sample connection
+    called 'playground'. This gives you a working database to test db-mcp features.
+    """
+    from db_mcp.playground import install_playground
+
+    try:
+        result = install_playground()
+
+        if result["success"]:
+            if result.get("already_installed"):
+                console.print("[dim]Playground already installed.[/dim]")
+                console.print("Connection: [cyan]playground[/cyan]")
+                console.print(f"Database: [dim]{result['database_url']}[/dim]")
+            else:
+                console.print(f"[green]✓ Playground installed: {result['database_url']}[/green]")
+        else:
+            error_msg = result.get('error', 'Unknown error')
+            console.print(f"[red]Failed to install playground: {error_msg}[/red]")
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error installing playground: {e}[/red]")
+        sys.exit(1)
+
+
+@playground.command("status")
+def playground_status():
+    """Check if playground is installed and show connection details."""
+    from db_mcp.playground import PLAYGROUND_CONNECTION_NAME, is_playground_installed
+
+    if is_playground_installed():
+        console.print("Playground: [green]installed[/green]")
+        console.print(f"Connection: [cyan]{PLAYGROUND_CONNECTION_NAME}[/cyan]")
+
+        # Try to read the database URL from the connector
+        try:
+            from pathlib import Path
+
+            import yaml
+
+            connections_dir = Path.home() / ".db-mcp" / "connections"
+            playground_dir = connections_dir / PLAYGROUND_CONNECTION_NAME
+            connector_path = playground_dir / "connector.yaml"
+
+            if connector_path.exists():
+                with open(connector_path) as f:
+                    config = yaml.safe_load(f) or {}
+                    db_url = config.get("database_url", "")
+                    if db_url:
+                        console.print(f"Database: [dim]{db_url}[/dim]")
+                    else:
+                        console.print("Database: [yellow]not configured[/yellow]")
+            else:
+                console.print("Database: [yellow]connector.yaml not found[/yellow]")
+        except Exception as e:
+            console.print(f"Database: [yellow]error reading config: {e}[/yellow]")
+    else:
+        console.print("Playground: [dim]not installed[/dim]")
+        console.print("[dim]Run 'db-mcp playground install' to install.[/dim]")
+
+
 if __name__ == "__main__":
     main()
