@@ -60,10 +60,15 @@ class APIPaginationConfig:
 class APIAuthConfig:
     """Authentication configuration."""
 
-    type: str = "bearer"  # bearer | header | query_param
+    type: str = "bearer"  # bearer | header | query_param | jwt_login
     token_env: str = ""  # env var name for the token
     header_name: str = "Authorization"
     param_name: str = "api_key"
+    # jwt_login fields
+    login_endpoint: str = ""
+    username_env: str = ""
+    password_env: str = ""
+    token_field: str = "access_token"
 
 
 @dataclass
@@ -103,6 +108,7 @@ class APIConnector(FileConnector):
         self._data_dir = Path(data_dir)
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._env_path = env_path
+        self._jwt_token: str | None = None
 
         # Build FileConnectorConfig pointing to the data directory
         file_config = FileConnectorConfig(directory=str(self._data_dir))
@@ -130,6 +136,13 @@ class APIConnector(FileConnector):
 
     def _resolve_auth_headers(self) -> dict[str, str]:
         """Build auth headers from config + .env."""
+        auth_type = self.api_config.auth.type
+
+        if auth_type == "jwt_login":
+            if self._jwt_token is None:
+                self._jwt_login()
+            return {"Authorization": f"Bearer {self._jwt_token}"}
+
         env = self._load_env()
         token_env = self.api_config.auth.token_env
 
@@ -140,7 +153,6 @@ class APIConnector(FileConnector):
             )
 
         token = env.get(token_env, "")
-        auth_type = self.api_config.auth.type
 
         if auth_type == "bearer":
             return {"Authorization": f"Bearer {token}"}
@@ -152,6 +164,49 @@ class APIConnector(FileConnector):
         else:
             return {}
 
+    def _jwt_login(self) -> None:
+        """Perform JWT login: POST creds to login endpoint, cache token."""
+        auth = self.api_config.auth
+        env = self._load_env()
+
+        if auth.username_env and auth.username_env not in env:
+            raise ValueError(
+                f"JWT username env var '{auth.username_env}' not found in .env file. "
+                f"Add {auth.username_env}=<username> to your .env file."
+            )
+        if auth.password_env and auth.password_env not in env:
+            raise ValueError(
+                f"JWT password env var '{auth.password_env}' not found in .env file. "
+                f"Add {auth.password_env}=<password> to your .env file."
+            )
+
+        username = env.get(auth.username_env, "")
+        password = env.get(auth.password_env, "")
+
+        login_url = self.api_config.base_url.rstrip("/") + auth.login_endpoint
+        resp = requests.post(
+            login_url,
+            json={"username": username, "password": password},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        token_field = auth.token_field or "access_token"
+        self._jwt_token = data.get(token_field)
+        if not self._jwt_token:
+            raise ValueError(
+                f"JWT login response missing token field '{token_field}'. "
+                f"Response keys: {list(data.keys())}"
+            )
+        self._jwt_expires = time.time() + 3600  # Default 1h cache
+
+    def _jwt_refresh(self) -> None:
+        """Force refresh JWT token by re-logging in."""
+        self._jwt_token = None
+        self._jwt_expires = 0.0
+        self._jwt_login()
+
     def _resolve_auth_params(self) -> dict[str, str]:
         """Build auth query params (for query_param auth type)."""
         if self.api_config.auth.type != "query_param":
@@ -159,6 +214,34 @@ class APIConnector(FileConnector):
         env = self._load_env()
         token = env.get(self.api_config.auth.token_env, "")
         return {self.api_config.auth.param_name: token}
+
+    # -- Unified HTTP dispatch ----------------------------------------------
+
+    def _send_request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        query_params: dict[str, str] | None = None,
+        body: dict | None = None,
+    ) -> Any:
+        """Send an HTTP request using requests.request.
+
+        GET: params as query string, no body.
+        POST/PUT/PATCH/DELETE: body as JSON, params as query string.
+        """
+        kwargs: dict[str, Any] = {
+            "method": method.upper(),
+            "url": url,
+            "headers": headers,
+            "params": query_params or {},
+            "timeout": 30,
+        }
+        if body is not None:
+            kwargs["json"] = body
+        resp = requests.request(**kwargs)
+        resp.raise_for_status()
+        return resp.json()
 
     # -- Test connection ----------------------------------------------------
 
@@ -384,15 +467,19 @@ class APIConnector(FileConnector):
         params: dict[str, str] | None = None,
         max_pages: int = 1,
         id: str | list[str] | None = None,
+        body: dict[str, Any] | None = None,
+        method_override: str | None = None,
     ) -> dict[str, Any]:
         """Query an API endpoint directly with params, return results.
 
         Args:
             endpoint_name: Name of the configured endpoint to query.
-            params: Query parameters to pass to the endpoint.
+            params: Query string parameters to pass to the endpoint.
             max_pages: Maximum number of pages to fetch (default 1).
             id: Fetch specific record(s) by ID. Appends /{id} to endpoint path.
                 Pass a single string or a list of strings for multiple records.
+            body: JSON request body for POST/PUT/PATCH requests.
+            method_override: Override the endpoint's default HTTP method.
 
         Returns:
             {data: [...], rows_returned: int}
@@ -419,7 +506,7 @@ class APIConnector(FileConnector):
             rendered_path, merged_params = self._render_path(endpoint.path, merged_params)
             base_url = self.api_config.base_url.rstrip("/") + rendered_path
 
-            method = endpoint.method.upper()
+            method = (method_override or endpoint.method).upper()
 
             # Detail endpoint: fetch by ID(s)
             if id is not None:
@@ -428,16 +515,79 @@ class APIConnector(FileConnector):
                 ids = [id] if isinstance(id, str) else id
                 rows = self._fetch_by_ids(base_url, headers, merged_params, ids)
             elif method == "GET":
+                if endpoint.response_mode == "raw":
+                    raw = self._send_request_with_retry(
+                        method, base_url, headers, merged_params, body
+                    )
+                    return {"data": raw, "rows_returned": 1}
                 rows = self._fetch_with_pagination(base_url, headers, merged_params, max_pages)
+            elif method in ("POST", "PUT", "PATCH", "DELETE"):
+                # Determine the effective JSON body:
+                # - Explicit body parameter takes priority
+                # - Backward compat: body_mode=json with no explicit body → params as body
+                effective_body = body
+                effective_params = merged_params
+                if effective_body is None and endpoint.body_mode == "json":
+                    effective_body = merged_params
+                    effective_params = {}
+
+                raw = self._send_request_with_retry(
+                    method, base_url, headers, effective_params, effective_body
+                )
+                if endpoint.response_mode == "raw":
+                    return {"data": raw, "rows_returned": 1}
+                if isinstance(raw, list):
+                    rows = raw
+                elif isinstance(raw, dict):
+                    # Try to extract rows from a collection wrapper
+                    data_field = self.api_config.pagination.data_field
+                    extracted = raw.get(data_field)
+                    if extracted is None:
+                        extracted = raw.get("results")
+                    if isinstance(extracted, list):
+                        rows = extracted
+                    else:
+                        # Single object response (e.g. created resource)
+                        rows = [raw]
+                else:
+                    rows = []
             else:
                 rows = self._fetch_non_get(base_url, headers, merged_params, endpoint)
 
             return {
                 "data": rows,
-                "rows_returned": len(rows),
+                "rows_returned": len(rows) if isinstance(rows, list) else 1,
             }
         except Exception as exc:
             return {"error": str(exc)}
+
+    def _send_request_with_retry(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        query_params: dict[str, str] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> Any:
+        """Send request with automatic JWT 401 retry.
+
+        If the request fails with 401 and auth type is jwt_login,
+        refreshes the token and retries once.
+        """
+        try:
+            return self._send_request(method, url, headers, query_params, body)
+        except requests.exceptions.HTTPError as exc:
+            if (
+                exc.response is not None
+                and exc.response.status_code == 401
+                and self.api_config.auth.type == "jwt_login"
+            ):
+                # Refresh JWT and retry once
+                self._jwt_token = None
+                self._jwt_login()
+                headers = self._resolve_auth_headers()
+                return self._send_request(method, url, headers, query_params, body)
+            raise
 
     # -- SQL-like API execution ---------------------------------------------
 
@@ -900,6 +1050,16 @@ class APIConnector(FileConnector):
                     "token_env": self.api_config.auth.token_env,
                     "header_name": self.api_config.auth.header_name,
                     "param_name": self.api_config.auth.param_name,
+                    **(
+                        {
+                            "login_endpoint": self.api_config.auth.login_endpoint,
+                            "username_env": self.api_config.auth.username_env,
+                            "password_env": self.api_config.auth.password_env,
+                            "token_field": self.api_config.auth.token_field,
+                        }
+                        if self.api_config.auth.type == "jwt_login"
+                        else {}
+                    ),
                 },
                 "endpoints": [
                     {

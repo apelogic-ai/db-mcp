@@ -1,9 +1,11 @@
 """TDD tests for APIConnector — written before implementation."""
 
+import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests as requests_lib
 import yaml
 
 from db_mcp.connectors import Connector
@@ -764,11 +766,11 @@ class TestAPIConnectorPostBody:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"data": []}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=mock_resp) as mock_post:
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
             conn.query_endpoint("execute_sql", params={"query": "SELECT 1", "limit": "1"})
 
-        called_json = mock_post.call_args.kwargs["json"]
-        called_params = mock_post.call_args.kwargs["params"]
+        called_json = mock_req.call_args.kwargs["json"]
+        called_params = mock_req.call_args.kwargs["params"]
         assert called_json == {"query": "SELECT 1", "limit": "1"}
         assert called_params == {}
 
@@ -802,7 +804,7 @@ class TestAPIConnectorResponseMode:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"execution_id": "abc", "state": "PENDING"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=mock_resp):
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp):
             result = conn.query_endpoint("execute_sql", params={"query": "SELECT 1"})
 
         assert result["data"] == {"execution_id": "abc", "state": "PENDING"}
@@ -1075,3 +1077,577 @@ class TestAPIConnectorSQLExecution:
 
         # Empty/unknown format
         assert conn._extract_rows_from_response({"unknown": "format"}) == []
+
+
+# ---------------------------------------------------------------------------
+# _send_request — generalized HTTP method support (v0.5.17)
+# ---------------------------------------------------------------------------
+
+
+class TestSendRequest:
+    """Tests for the unified _send_request method."""
+
+    def test_send_request_get(self, api_connector):
+        """GET request should pass query_params, no JSON body."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            result = api_connector._send_request(
+                "GET",
+                "https://api.example.com/v1/users",
+                {"Authorization": "Bearer tok"},
+                {"limit": "10"},
+            )
+
+        mock_req.assert_called_once()
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["method"] == "GET"
+        assert call_kw["params"] == {"limit": "10"}
+        assert call_kw.get("json") is None
+        assert result == {"data": []}
+
+    def test_send_request_post_with_body(self, api_connector):
+        """POST with body sends JSON body and query params separately."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"id": 1, "name": "New Item"}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            api_connector._send_request(
+                "POST",
+                "https://api.example.com/v1/items",
+                {"Authorization": "Bearer tok"},
+                {"format": "json"},
+                body={"name": "New Item", "value": 42},
+            )
+
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["method"] == "POST"
+        assert call_kw["json"] == {"name": "New Item", "value": 42}
+        assert call_kw["params"] == {"format": "json"}
+
+    def test_send_request_put(self, api_connector):
+        """PUT request sends body as JSON."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"updated": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            api_connector._send_request(
+                "PUT",
+                "https://api.example.com/v1/items/1",
+                {},
+                {},
+                body={"name": "Updated"},
+            )
+
+        assert mock_req.call_args.kwargs["method"] == "PUT"
+        assert mock_req.call_args.kwargs["json"] == {"name": "Updated"}
+
+    def test_send_request_patch(self, api_connector):
+        """PATCH request sends partial update body."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"patched": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            api_connector._send_request(
+                "PATCH",
+                "https://api.example.com/v1/items/1",
+                {},
+                {},
+                body={"status": "active"},
+            )
+
+        assert mock_req.call_args.kwargs["method"] == "PATCH"
+        assert mock_req.call_args.kwargs["json"] == {"status": "active"}
+
+    def test_send_request_delete(self, api_connector):
+        """DELETE request works without body."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"deleted": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            result = api_connector._send_request(
+                "DELETE",
+                "https://api.example.com/v1/items/1",
+                {},
+                {},
+            )
+
+        assert mock_req.call_args.kwargs["method"] == "DELETE"
+        assert result == {"deleted": True}
+
+    def test_send_request_post_no_body(self, api_connector):
+        """POST without body sends params as query string only."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"triggered": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            api_connector._send_request(
+                "POST",
+                "https://api.example.com/v1/trigger",
+                {},
+                {"action": "run"},
+            )
+
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["method"] == "POST"
+        assert call_kw["params"] == {"action": "run"}
+
+
+# ---------------------------------------------------------------------------
+# query_endpoint with body and method_override (v0.5.17)
+# ---------------------------------------------------------------------------
+
+
+class TestQueryEndpointWriteSupport:
+    """Tests for query_endpoint body and method_override parameters."""
+
+    def test_query_endpoint_with_body_post(self, data_dir, env_file):
+        """query_endpoint with body= sends JSON body for POST."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="create_item", path="/items", method="POST")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {"id": 99, "name": "Widget"}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            conn.query_endpoint("create_item", body={"name": "Widget", "price": 9.99})
+
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["json"] == {"name": "Widget", "price": 9.99}
+        assert call_kw["method"] == "POST"
+
+    def test_query_endpoint_with_method_override(self, data_dir, env_file):
+        """method_override overrides the endpoint's default method."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="items", path="/items", method="GET")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"id": 1, "created": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            conn.query_endpoint("items", body={"name": "New"}, method_override="POST")
+
+        assert mock_req.call_args.kwargs["method"] == "POST"
+        assert mock_req.call_args.kwargs["json"] == {"name": "New"}
+
+    def test_query_endpoint_body_with_params(self, data_dir, env_file):
+        """body and params sent separately (body=JSON, params=query string)."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="items", path="/items", method="PUT")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"updated": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            conn.query_endpoint("items", params={"version": "2"}, body={"name": "Updated"})
+
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["params"]["version"] == "2"
+        assert call_kw["json"] == {"name": "Updated"}
+
+    def test_query_endpoint_raw_response_with_body(self, data_dir, env_file):
+        """POST with response_mode=raw returns full response dict."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="create",
+                    path="/resources",
+                    method="POST",
+                    response_mode="raw",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {"id": 42, "status": "created", "meta": {"v": 1}}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp):
+            result = conn.query_endpoint("create", body={"name": "test"})
+
+        assert result["data"] == {"id": 42, "status": "created", "meta": {"v": 1}}
+
+    def test_query_endpoint_delete_method_override(self, data_dir, env_file):
+        """DELETE via method_override works."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="items", path="/items/{item_id}", method="GET")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"deleted": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            conn.query_endpoint("items", params={"item_id": "42"}, method_override="DELETE")
+
+        assert mock_req.call_args.kwargs["method"] == "DELETE"
+        assert "/items/42" in mock_req.call_args.kwargs["url"]
+
+
+# ---------------------------------------------------------------------------
+# JWT login auth (v0.5.17)
+# ---------------------------------------------------------------------------
+
+
+class TestJWTLoginAuth:
+    """Tests for jwt_login authentication type."""
+
+    def _make_jwt_connector(self, data_dir, env_file):
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("JWT_USER=admin\nJWT_PASS=secret123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_endpoint="/auth/login",
+                username_env="JWT_USER",
+                password_env="JWT_PASS",
+                token_field="access_token",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        return APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+    def test_jwt_login_fetches_token(self, data_dir, env_file):
+        """First request POSTs to login endpoint and caches token."""
+        conn = self._make_jwt_connector(data_dir, env_file)
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "jwt-token-abc"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            headers = conn._resolve_auth_headers()
+
+        assert headers["Authorization"] == "Bearer jwt-token-abc"
+        mock_post.assert_called_once()
+        call_kw = mock_post.call_args
+        assert call_kw.kwargs["json"]["username"] == "admin"
+        assert call_kw.kwargs["json"]["password"] == "secret123"
+
+    def test_jwt_login_caches_token(self, data_dir, env_file):
+        """Second call reuses cached token without login."""
+        conn = self._make_jwt_connector(data_dir, env_file)
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "jwt-token-abc"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            headers1 = conn._resolve_auth_headers()
+            headers2 = conn._resolve_auth_headers()
+
+        assert headers1 == headers2
+        assert mock_post.call_count == 1
+
+    def test_jwt_login_custom_token_field(self, data_dir, env_file):
+        """Extracts token from configured token_field."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("JWT_USER=admin\nJWT_PASS=secret\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_endpoint="/login",
+                username_env="JWT_USER",
+                password_env="JWT_PASS",
+                token_field="token",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"token": "my-custom-token"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp):
+            headers = conn._resolve_auth_headers()
+
+        assert headers["Authorization"] == "Bearer my-custom-token"
+
+    def test_jwt_login_401_refresh(self, data_dir, env_file):
+        """On 401, refreshes token once and retries."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("JWT_USER=admin\nJWT_PASS=secret123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_endpoint="/auth/login",
+                username_env="JWT_USER",
+                password_env="JWT_PASS",
+                token_field="access_token",
+            ),
+            endpoints=[APIEndpointConfig(name="create_item", path="/items", method="POST")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp1 = MagicMock()
+        login_resp1.status_code = 200
+        login_resp1.json.return_value = {"access_token": "old-token"}
+
+        login_resp2 = MagicMock()
+        login_resp2.status_code = 200
+        login_resp2.json.return_value = {"access_token": "new-token"}
+
+        api_resp_401 = MagicMock()
+        api_resp_401.status_code = 401
+        api_resp_401.raise_for_status.side_effect = requests_lib.exceptions.HTTPError(
+            response=api_resp_401
+        )
+
+        api_resp_ok = MagicMock()
+        api_resp_ok.status_code = 200
+        api_resp_ok.json.return_value = {"id": 1, "name": "Created"}
+
+        with (
+            patch(
+                "db_mcp.connectors.api.requests.post",
+                side_effect=[login_resp1, login_resp2],
+            ),
+            patch(
+                "db_mcp.connectors.api.requests.request",
+                side_effect=[api_resp_401, api_resp_ok],
+            ),
+        ):
+            result = conn.query_endpoint("create_item", body={"name": "Widget"})
+
+        assert "error" not in result
+        assert result["rows_returned"] == 1
+
+    def test_jwt_login_missing_env_raises(self, data_dir, env_file):
+        """Missing username/password env vars raises ValueError."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_endpoint="/auth/login",
+                username_env="MISSING_USER",
+                password_env="MISSING_PASS",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        with pytest.raises(ValueError, match="not found"):
+            conn._resolve_auth_headers()
+
+
+# ---------------------------------------------------------------------------
+# Raw response mode for GET endpoints (v0.5.17)
+# ---------------------------------------------------------------------------
+
+
+class TestRawResponseModeGET:
+    """Tests for response_mode=raw on GET endpoints."""
+
+    def test_raw_response_get_returns_full_dict(self, data_dir, env_file):
+        """GET endpoint with response_mode=raw returns full response."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(name="status", path="/status", method="GET", response_mode="raw")
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"version": "2.1", "healthy": True, "uptime_seconds": 86400}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp):
+            result = conn.query_endpoint("status")
+
+        assert result["data"] == {"version": "2.1", "healthy": True, "uptime_seconds": 86400}
+
+
+# ---------------------------------------------------------------------------
+# api_mutate tool (v0.5.17)
+# ---------------------------------------------------------------------------
+
+
+class TestAPIMutateTool:
+    """Tests for the _api_mutate MCP tool function."""
+
+    @pytest.fixture
+    def mock_api_connector(self):
+        from db_mcp.connectors.api import APIConnector
+
+        mock = MagicMock(spec=APIConnector)
+        mock.query_endpoint.return_value = {
+            "data": {"id": 1, "created": True},
+            "rows_returned": 1,
+        }
+        return mock
+
+    def test_api_mutate_post(self, mock_api_connector):
+        """api_mutate POST calls query_endpoint correctly."""
+        from db_mcp.tools.api import _api_mutate
+
+        with patch(
+            "db_mcp.tools.api.get_connector",
+            return_value=mock_api_connector,
+        ):
+            asyncio.run(
+                _api_mutate(
+                    endpoint="items",
+                    method="POST",
+                    body={"name": "Widget"},
+                )
+            )
+
+        mock_api_connector.query_endpoint.assert_called_once_with(
+            "items", None, body={"name": "Widget"}, method_override="POST"
+        )
+
+    def test_api_mutate_rejects_get(self):
+        """api_mutate rejects GET method."""
+        from db_mcp.tools.api import _api_mutate
+
+        result = asyncio.run(_api_mutate(endpoint="items", method="GET", body={}))
+        assert "error" in result
+
+    def test_api_mutate_accepts_valid_methods(self, mock_api_connector):
+        """api_mutate accepts POST, PUT, PATCH, DELETE."""
+        from db_mcp.tools.api import _api_mutate
+
+        for method in ["POST", "PUT", "PATCH", "DELETE"]:
+            mock_api_connector.reset_mock()
+            mock_api_connector.query_endpoint.return_value = {"data": {}, "rows_returned": 0}
+            with patch("db_mcp.tools.api.get_connector", return_value=mock_api_connector):
+                result = asyncio.run(_api_mutate(endpoint="items", method=method, body={"x": 1}))
+            assert "error" not in result
+
+    def test_api_mutate_passes_params(self, mock_api_connector):
+        """api_mutate passes optional params through."""
+        from db_mcp.tools.api import _api_mutate
+
+        with patch(
+            "db_mcp.tools.api.get_connector",
+            return_value=mock_api_connector,
+        ):
+            asyncio.run(
+                _api_mutate(
+                    endpoint="items",
+                    method="POST",
+                    body={"name": "test"},
+                    params={"version": "2"},
+                )
+            )
+
+        mock_api_connector.query_endpoint.assert_called_once_with(
+            "items", {"version": "2"}, body={"name": "test"}, method_override="POST"
+        )
+
+    def test_api_mutate_non_api_connector_errors(self):
+        """api_mutate errors if connector is not APIConnector."""
+        from db_mcp.tools.api import _api_mutate
+
+        mock_sql = MagicMock()
+        mock_sql.__class__.__name__ = "SQLConnector"
+
+        with patch("db_mcp.tools.api.get_connector", return_value=mock_sql):
+            result = asyncio.run(_api_mutate(endpoint="items", method="POST", body={"x": 1}))
+        assert "error" in result
