@@ -10,6 +10,52 @@ original cli.py so that existing imports continue to work:
 """
 
 # ── Click entry point ──────────────────────────────────────────────────────────
+# ── Agent configuration ────────────────────────────────────────────────────────
+from db_mcp.cli.agent_config import (
+    _configure_agents,
+    _configure_agents_interactive,
+    _configure_claude_desktop,
+    extract_database_url_from_claude_config,
+)
+
+# ── Connection ─────────────────────────────────────────────────────────────────
+from db_mcp.cli.connection import (
+    _get_connection_env_path,
+    _load_connection_env,
+    _prompt_and_save_database_url,
+    _save_connection_env,
+    connection_exists,
+    get_active_connection,
+    get_connection_path,
+    list_connections,
+    set_active_connection,
+)
+
+# ── Schema discovery ───────────────────────────────────────────────────────────
+from db_mcp.cli.discovery import _run_discovery_with_progress
+
+# ── Git operations ─────────────────────────────────────────────────────────────
+from db_mcp.cli.git_ops import (
+    GIT_INSTALL_URL,
+    GITIGNORE_CONTENT,
+    git_clone,
+    git_init,
+    git_pull,
+    git_sync,
+    is_git_installed,
+    is_git_repo,
+    is_git_url,
+)
+
+# ── Init flows ─────────────────────────────────────────────────────────────────
+from db_mcp.cli.init_flow import (
+    _attach_repo,
+    _auto_register_collaborator,
+    _init_brownfield,
+    _init_greenfield,
+    _offer_git_setup,
+    _recover_onboarding_state,
+)
 from db_mcp.cli.main import main
 
 # ── Utils ─────────────────────────────────────────────────────────────────────
@@ -30,53 +76,6 @@ from db_mcp.cli.utils import (
     load_config,
     save_claude_desktop_config,
     save_config,
-)
-
-# ── Connection ─────────────────────────────────────────────────────────────────
-from db_mcp.cli.connection import (
-    _get_connection_env_path,
-    _load_connection_env,
-    _prompt_and_save_database_url,
-    _save_connection_env,
-    connection_exists,
-    get_active_connection,
-    get_connection_path,
-    list_connections,
-    set_active_connection,
-)
-
-# ── Git operations ─────────────────────────────────────────────────────────────
-from db_mcp.cli.git_ops import (
-    GIT_INSTALL_URL,
-    GITIGNORE_CONTENT,
-    git_clone,
-    git_init,
-    git_pull,
-    git_sync,
-    is_git_installed,
-    is_git_repo,
-    is_git_url,
-)
-
-# ── Agent configuration ────────────────────────────────────────────────────────
-from db_mcp.cli.agent_config import (
-    _configure_agents,
-    _configure_agents_interactive,
-    _configure_claude_desktop,
-    extract_database_url_from_claude_config,
-)
-
-# ── Schema discovery ───────────────────────────────────────────────────────────
-from db_mcp.cli.discovery import _run_discovery_with_progress
-
-# ── Init flows ─────────────────────────────────────────────────────────────────
-from db_mcp.cli.init_flow import (
-    _attach_repo,
-    _auto_register_collaborator,
-    _init_brownfield,
-    _init_greenfield,
-    _offer_git_setup,
-    _recover_onboarding_state,
 )
 
 __all__ = [

@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from db_mcp.cli.agent_config import (
-    _configure_claude_desktop,
     _configure_agents_interactive,
+    _configure_claude_desktop,
     extract_database_url_from_claude_config,
 )
 
@@ -126,7 +126,10 @@ class TestConfigureAgentsInteractive:
         result = _configure_agents_interactive()
         assert result == []
 
-    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop", "cursor"])
+    @patch(
+        "db_mcp.cli.agent_config.detect_installed_agents",
+        return_value=["claude-desktop", "cursor"],
+    )
     @patch("db_mcp.cli.agent_config.AGENTS", {
         "claude-desktop": MagicMock(name="Claude Desktop"),
         "cursor": MagicMock(name="Cursor"),
@@ -137,7 +140,10 @@ class TestConfigureAgentsInteractive:
         result = _configure_agents_interactive()
         assert result == ["claude-desktop", "cursor"]
 
-    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop", "cursor"])
+    @patch(
+        "db_mcp.cli.agent_config.detect_installed_agents",
+        return_value=["claude-desktop", "cursor"],
+    )
     @patch("db_mcp.cli.agent_config.AGENTS", {
         "claude-desktop": MagicMock(name="Claude Desktop"),
         "cursor": MagicMock(name="Cursor"),

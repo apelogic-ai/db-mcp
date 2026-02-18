@@ -5,9 +5,7 @@ using a mocked filesystem (no real disk I/O to ~/.db-mcp).
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from db_mcp.cli.connection import (
     _get_connection_env_path,

@@ -4,7 +4,6 @@ Handles interactive agent selection, Claude Desktop configuration,
 and extracting existing database URLs from Claude configs.
 """
 
-import click
 from rich.prompt import Confirm
 
 from db_mcp.agents import (

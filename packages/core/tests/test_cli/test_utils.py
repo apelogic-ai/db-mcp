@@ -4,16 +4,12 @@ Tests _get_cli_version, config load/save with mocked filesystem.
 """
 
 import json
-import platform
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import patch
 
-import pytest
 import yaml
 
 from db_mcp.cli.utils import (
-    CONFIG_DIR,
-    CONFIG_FILE,
     _get_cli_version,
     get_claude_desktop_config_path,
     is_claude_desktop_installed,

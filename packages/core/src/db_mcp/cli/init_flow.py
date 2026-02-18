@@ -19,7 +19,6 @@ from rich.prompt import Confirm, Prompt
 
 from db_mcp.cli.agent_config import _configure_agents
 from db_mcp.cli.connection import (
-    _load_connection_env,
     _prompt_and_save_database_url,
     get_connection_path,
 )

@@ -10,7 +10,6 @@ from rich.panel import Panel
 
 from db_mcp.cli.connection import (
     _load_connection_env,
-    get_active_connection,
     get_connection_path,
 )
 from db_mcp.cli.utils import (

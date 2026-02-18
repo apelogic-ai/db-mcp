@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm
 from rich.table import Table
 
 from db_mcp.cli.connection import (
@@ -21,21 +21,17 @@ from db_mcp.cli.connection import (
     set_active_connection,
 )
 from db_mcp.cli.git_ops import (
-    GIT_INSTALL_URL,
-    git_init,
     is_git_repo,
     is_git_url,
 )
-from db_mcp.cli.init_flow import _attach_repo, _init_brownfield, _init_greenfield
+from db_mcp.cli.init_flow import _init_brownfield, _init_greenfield
 from db_mcp.cli.utils import (
-    CONFIG_DIR,
     CONFIG_FILE,
     CONNECTIONS_DIR,
     console,
     is_claude_desktop_installed,
     load_claude_desktop_config,
     load_config,
-    save_config,
 )
 
 

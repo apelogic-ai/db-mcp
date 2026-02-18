@@ -55,8 +55,14 @@ class TestDiscoverCommand:
         """Should fail when no URL, connection, or active connection exists."""
         runner = CliRunner()
         with (
-            patch("db_mcp.cli.commands.discover_cmd.get_active_connection", return_value="default"),
-            patch("db_mcp.cli.commands.discover_cmd.get_connection_path", return_value=tmp_path / "nonexistent"),
+            patch(
+                "db_mcp.cli.commands.discover_cmd.get_active_connection",
+                return_value="default",
+            ),
+            patch(
+                "db_mcp.cli.commands.discover_cmd.get_connection_path",
+                return_value=tmp_path / "nonexistent",
+            ),
         ):
             result = runner.invoke(main, ["discover"])
         assert result.exit_code != 0
@@ -64,7 +70,10 @@ class TestDiscoverCommand:
     def test_discover_named_connection_not_found(self, tmp_path):
         """Should fail when named connection doesn't exist."""
         runner = CliRunner()
-        with patch("db_mcp.cli.commands.discover_cmd.get_connection_path", return_value=tmp_path / "nonexistent"):
+        with patch(
+                "db_mcp.cli.commands.discover_cmd.get_connection_path",
+                return_value=tmp_path / "nonexistent",
+            ):
             result = runner.invoke(main, ["discover", "-c", "bogus"])
         assert result.exit_code != 0
         assert "not found" in result.output

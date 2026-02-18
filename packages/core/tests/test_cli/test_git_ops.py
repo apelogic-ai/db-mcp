@@ -4,13 +4,11 @@ Tests is_git_url, git_init, git_clone using mocked subprocess / git_utils.
 No real git operations are performed.
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from db_mcp.cli.git_ops import (
-    GITIGNORE_CONTENT,
     git_clone,
     git_init,
     git_pull,

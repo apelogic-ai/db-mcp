@@ -5,9 +5,9 @@ import sys
 import click
 
 from db_mcp.cli.connection import (
+    _load_connection_env,
     get_active_connection,
     get_connection_path,
-    _load_connection_env,
 )
 from db_mcp.cli.discovery import _run_discovery_with_progress
 from db_mcp.cli.utils import console

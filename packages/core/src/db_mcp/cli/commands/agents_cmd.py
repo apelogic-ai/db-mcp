@@ -9,7 +9,7 @@ from db_mcp.cli.connection import (
     get_connection_path,
     list_connections,
 )
-from db_mcp.cli.utils import console, load_claude_desktop_config, load_config
+from db_mcp.cli.utils import console, load_claude_desktop_config
 
 
 @click.command()
@@ -96,6 +96,7 @@ def migrate(verbose: bool):
         db-mcp migrate -v        # Run with verbose output
     """
     from rich.panel import Panel
+
     from db_mcp.vault.migrate import (
         detect_legacy_namespace,
         is_namespace_migrated,
