@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with Chinook database
+  chinook-db:
+    image: postgres:16-alpine
+    container_name: chinook-db
+    environment:
+      POSTGRES_DB: chinook
+      POSTGRES_USER: chinook
+      POSTGRES_PASSWORD: ${CHINOOK_DB_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./chinook/init.sql:/docker-entrypoint-initdb.d/chinook.sql
+      - chinook_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chinook -d chinook"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset-trino-net
+
+  # PostgreSQL for Superset metadata
+  superset-db:
+    image: postgres:16-alpine
+    container_name: superset-db
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_METADATA_DB_PASSWORD}
+    ports:
+      - "5434:5432"
+    volumes:
+      - superset_metadata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset-trino-net
+
+  # Trino
+  trino:
+    image: trinodb/trino:latest
+    container_name: trino
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./trino/etc:/etc/trino
+    depends_on:
+      chinook-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/v1/info || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - superset-trino-net
+
+  # Superset
+  superset:
+    image: apache/superset:latest
+    container_name: superset
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_CONFIG_PATH: /app/superset_config.py
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./superset/superset_config.py:/app/superset_config.py
+      - ./superset/init-superset.sh:/app/init-superset.sh
+    depends_on:
+      superset-db:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    networks:
+      - superset-trino-net
+    command: >
+      bash -c "
+        chmod +x /app/init-superset.sh &&
+        /app/init-superset.sh &&
+        superset run -h 0.0.0.0 -p 8088 --with-threads --reload --debugger
+      "
+
+volumes:
+  chinook_data:
+  superset_metadata:
+
+networks:
+  superset-trino-net:
+    driver: bridge
