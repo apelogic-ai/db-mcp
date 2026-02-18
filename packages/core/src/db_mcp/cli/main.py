@@ -1,502 +1,58 @@
-"""dbmcp CLI - Standalone CLI for db-mcp MCP server.
+"""Click command group and all CLI commands for db-mcp.
 
-Commands:
-    db-mcp init [NAME] [GIT_URL]  - Interactive setup wizard (or clone from git)
-    dbmcp start                  - Start MCP server (stdio mode)
-    dbmcp config                 - Open config in editor
-    dbmcp status                 - Show current configuration
-    dbmcp list                   - List all connections
-    dbmcp use NAME               - Switch active connection
-    db-mcp git-init [NAME] [URL]  - Enable git sync for existing connection
-    dbmcp sync [NAME]            - Sync changes to git remote
-    dbmcp pull [NAME]            - Pull updates from git remote
-    dbmcp edit [NAME]            - Edit connection credentials (.env file)
-    dbmcp rename OLD NEW         - Rename a connection
-    dbmcp remove NAME            - Remove a connection
-
-Global options:
-    -c, --connection NAME  - Use specific connection (default: from config)
-    all                    - Apply command to all connections (where supported)
+Commands stay thin — they delegate to the other cli/ modules for
+business logic.
 """
 
-# ruff: noqa: E402
-# Suppress pydantic logfire plugin warning (must be before any pydantic imports)
-import warnings
-
-warnings.filterwarnings("ignore", message=".*logfire.*", category=UserWarning)
-
-import json
 import os
-import platform
-import re
-import shutil
 import signal
 import subprocess
 import sys
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
-import yaml
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from db_mcp.agents import (
-    AGENTS,
-    configure_multiple_agents,
-    detect_installed_agents,
+from db_mcp.agents import AGENTS, detect_installed_agents
+from db_mcp.cli.agent_config import _configure_agents, extract_database_url_from_claude_config
+from db_mcp.cli.connection import (
+    _get_connection_env_path,
+    _load_connection_env,
+    _prompt_and_save_database_url,
+    _save_connection_env,
+    connection_exists,
+    get_active_connection,
+    get_connection_path,
+    list_connections,
+    set_active_connection,
 )
-
-console = Console()
-
-
-def _get_cli_version() -> str:
-    """Get installed package version.
-
-    Falls back to "unknown" when package metadata isn't available
-    (e.g. running from a source checkout without installation).
-    """
-
-    try:
-        return version("db-mcp")
-    except PackageNotFoundError:
-        return "unknown"
-
-
-def _handle_sigint(signum, frame):
-    """Handle Ctrl-C gracefully."""
-    console.print("\n[dim]Cancelled.[/dim]")
-    sys.exit(130)
-
-
-# Register signal handler early to catch Ctrl-C before Click processes it
-signal.signal(signal.SIGINT, _handle_sigint)
-
-# Config paths
-CONFIG_DIR = Path.home() / ".db-mcp"
-CONFIG_FILE = CONFIG_DIR / "config.yaml"
-CONNECTIONS_DIR = CONFIG_DIR / "connections"
-
-# Legacy paths (for migration)
-LEGACY_VAULT_DIR = CONFIG_DIR / "vault"
-LEGACY_PROVIDERS_DIR = CONFIG_DIR / "providers"
-
-
-def get_connection_path(name: str) -> Path:
-    """Get path to a connection directory."""
-    return CONNECTIONS_DIR / name
-
-
-def list_connections() -> list[str]:
-    """List all connection names."""
-    if not CONNECTIONS_DIR.exists():
-        return []
-    return sorted([d.name for d in CONNECTIONS_DIR.iterdir() if d.is_dir()])
-
-
-def get_active_connection() -> str:
-    """Get the active connection name from config."""
-    config = load_config()
-    return config.get("active_connection", "default")
-
-
-def set_active_connection(name: str) -> None:
-    """Set the active connection in config."""
-    config = load_config()
-    config["active_connection"] = name
-    save_config(config)
-
-
-def connection_exists(name: str) -> bool:
-    """Check if a connection exists."""
-    return get_connection_path(name).exists()
-
-
-def get_claude_desktop_config_path() -> Path:
-    """Get Claude Desktop config path for current OS."""
-    system = platform.system()
-    if system == "Darwin":  # macOS
-        return (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "Claude"
-            / "claude_desktop_config.json"
-        )
-    elif system == "Windows":
-        appdata = os.environ.get("APPDATA", "")
-        return Path(appdata) / "Claude" / "claude_desktop_config.json"
-    else:  # Linux
-        return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
-
-
-def load_config() -> dict:
-    """Load config from file."""
-    if not CONFIG_FILE.exists():
-        return {}
-    with open(CONFIG_FILE) as f:
-        return yaml.safe_load(f) or {}
-
-
-def save_config(config: dict) -> None:
-    """Save config to file."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        yaml.dump(config, f, default_flow_style=False)
-
-
-def get_db_mcp_binary_path() -> str:
-    """db-mcp binary (or script in dev mode).
-
-    Re-exported from agents module for backward compatibility.
-    """
-    from db_mcp.agents import get_db_mcp_binary_path as _get_binary_path
-
-    return _get_binary_path()
-
-
-def load_claude_desktop_config() -> tuple[dict, Path]:
-    """Load Claude Desktop config.
-
-    Returns (config_dict, config_path).
-    """
-    config_path = get_claude_desktop_config_path()
-
-    if config_path.exists():
-        try:
-            with open(config_path) as f:
-                return json.load(f), config_path
-        except json.JSONDecodeError:
-            console.print(f"[red]Invalid JSON in {config_path}[/red]")
-            return {}, config_path
-
-    return {}, config_path
-
-
-def save_claude_desktop_config(config: dict, config_path: Path) -> None:
-    """Save Claude Desktop config."""
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
-
-
-def extract_database_url_from_claude_config(claude_config: dict) -> str | None:
-    """Extract DATABASE_URL from existing Claude Desktop MCP server configs."""
-    mcp_servers = claude_config.get("mcpServers", {})
-
-    # Check db-mcp entry first
-    if "db-mcp" in mcp_servers:
-        env = mcp_servers["db-mcp"].get("env", {})
-        if "DATABASE_URL" in env:
-            return env["DATABASE_URL"]
-
-    # Check legacy db-mcp entry
-    if "db-mcp" in mcp_servers:
-        env = mcp_servers["db-mcp"].get("env", {})
-        if "DATABASE_URL" in env:
-            return env["DATABASE_URL"]
-
-    return None
-
-
-def is_claude_desktop_installed() -> bool:
-    """Check if Claude Desktop is installed."""
-    system = platform.system()
-
-    if system == "Darwin":  # macOS
-        app_path = Path("/Applications/Claude.app")
-        return app_path.exists()
-    elif system == "Windows":
-        # Check common install locations
-        local_app_data = os.environ.get("LOCALAPPDATA", "")
-        if local_app_data:
-            claude_path = Path(local_app_data) / "Programs" / "Claude" / "Claude.exe"
-            if claude_path.exists():
-                return True
-        program_files = os.environ.get("PROGRAMFILES", "")
-        if program_files:
-            claude_path = Path(program_files) / "Claude" / "Claude.exe"
-            if claude_path.exists():
-                return True
-        return False
-    else:  # Linux
-        # Check common locations
-        for path in [
-            "/usr/bin/claude",
-            "/usr/local/bin/claude",
-            Path.home() / ".local" / "bin" / "claude",
-        ]:
-            if Path(path).exists():
-                return True
-        return False
-
-
-def launch_claude_desktop() -> None:
-    """Launch Claude Desktop application."""
-    system = platform.system()
-    try:
-        if system == "Darwin":  # macOS
-            subprocess.run(["open", "-a", "Claude"], check=True)
-            console.print("[green]✓ Claude Desktop launched[/green]")
-        elif system == "Windows":
-            # Try common install locations
-            subprocess.run(["start", "claude"], shell=True, check=True)
-            console.print("[green]✓ Claude Desktop launched[/green]")
-        else:
-            console.print("[dim]Please launch Claude Desktop manually.[/dim]")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        console.print("[dim]Could not auto-launch. Please start Claude Desktop manually.[/dim]")
-
-
-# =============================================================================
-# Git utilities
-# =============================================================================
-
-GIT_INSTALL_URL = "https://git-scm.com/downloads"
-
-# Default .gitignore content for connection directories
-GITIGNORE_CONTENT = """db-mcp gitignore
-# Ignore all dotfiles (local state, credentials, editor files, etc.)
-.*
-# Exceptions: keep tracked dotfiles
-!.gitignore
-!.collab.yaml
-
-# Local state (not shared)
-state.yaml
-
-# Temp/backup files
-*.tmp
-*.bak
-*~
-"""
-
-
-def is_git_installed() -> bool:
-    """Check if git is installed and available (native or dulwich fallback)."""
-    # Always returns True now since we have dulwich fallback
-    return True
-
-
-def is_git_repo(path: Path) -> bool:
-    """Check if a directory is a git repository."""
-    from db_mcp.git_utils import git
-
-    return git.is_repo(path)
-
-
-def git_init(path: Path, remote_url: str | None = None) -> bool:
-    """Initialize a git repository in the given path.
-
-    Args:
-        path: Directory to initialize
-        remote_url: Optional remote URL to add as origin
-
-    Returns:
-        True if successful
-    """
-    from db_mcp.git_utils import git
-
-    try:
-        # Initialize repo
-        git.init(path)
-
-        # Create .gitignore
-        gitignore_path = path / ".gitignore"
-        if not gitignore_path.exists():
-            gitignore_path.write_text(GITIGNORE_CONTENT)
-
-        # Initial commit
-        git.add(path, ["."])
-        git.commit(path, "Initial db-mcp connection setup")
-
-        # Add remote if provided
-        if remote_url:
-            git.remote_add(path, "origin", remote_url)
-
-        return True
-    except Exception as e:
-        console.print(f"[red]Git error: {e}[/red]")
-        return False
-
-
-def git_clone(url: str, dest: Path) -> bool:
-    """Clone a git repository.
-
-    Args:
-        url: Git URL to clone
-        dest: Destination path
-
-    Returns:
-        True if successful
-    """
-    from db_mcp.git_utils import git
-
-    try:
-        git.clone(url, dest)
-        return True
-    except NotImplementedError:
-        console.print("[red]Clone requires native git to be installed.[/red]")
-        return False
-    except Exception as e:
-        console.print(f"[red]Git clone failed: {e}[/red]")
-        return False
-
-
-def git_sync(path: Path) -> bool:
-    """Sync local changes to remote (add, commit, pull --rebase, push).
-
-    Args:
-        path: Git repository path
-
-    Returns:
-        True if successful
-    """
-    from datetime import datetime
-
-    from db_mcp.git_utils import git
-
-    try:
-        # Check for changes
-        changes = git.status(path)
-        has_changes = bool(changes)
-
-        if has_changes:
-            # Add all changes
-            git.add(path, ["."])
-
-            # Commit with timestamp
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            git.commit(path, f"dbmcp sync {timestamp}")
-            console.print("[green]✓ Changes committed[/green]")
-        else:
-            console.print("[dim]No local changes to commit.[/dim]")
-
-        # Check if remote exists
-        if not git.has_remote(path):
-            console.print(
-                "[yellow]No remote configured. Use 'git remote add origin <url>'[/yellow]"
-            )
-            return True
-
-        # Pull with rebase to get remote changes
-        console.print("[dim]Pulling remote changes...[/dim]")
-        try:
-            git.pull(path, rebase=True)
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "conflict" in error_msg:
-                console.print("[yellow]Merge conflict detected.[/yellow]")
-                console.print("[dim]Resolve conflicts manually, then run:[/dim]")
-                console.print(f"  cd {path}")
-                console.print("  git add .")
-                console.print("  git rebase --continue")
-                console.print("  dbmcp sync")
-                return False
-            elif "couldn't find remote ref" in error_msg:
-                # Remote branch doesn't exist yet, that's ok
-                pass
-            else:
-                console.print(f"[yellow]Pull warning: {e}[/yellow]")
-
-        # Push changes
-        console.print("[dim]Pushing to remote...[/dim]")
-        try:
-            git.push(path)
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "rejected" in error_msg:
-                console.print("[yellow]Push rejected. Try 'dbmcp pull' first.[/yellow]")
-                return False
-            else:
-                console.print(f"[red]Push failed: {e}[/red]")
-                return False
-
-        console.print("[green]✓ Synced with remote[/green]")
-        return True
-
-    except Exception as e:
-        console.print(f"[red]Git error: {e}[/red]")
-        return False
-
-
-def git_pull(path: Path) -> bool:
-    """Pull changes from remote.
-
-    Args:
-        path: Git repository path
-
-    Returns:
-        True if successful
-    """
-    from db_mcp.git_utils import git
-
-    try:
-        # Check for uncommitted changes
-        changes = git.status(path)
-        stashed = False
-
-        if changes:
-            console.print("[yellow]You have uncommitted changes.[/yellow]")
-            console.print("[dim]Stashing changes before pull...[/dim]")
-            try:
-                git.stash(path)
-                stashed = True
-            except NotImplementedError:
-                console.print(
-                    "[yellow]Stash requires native git. Commit your changes first.[/yellow]"
-                )
-                return False
-
-        # Pull
-        try:
-            git.pull(path, rebase=True)
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "conflict" in error_msg:
-                console.print("[yellow]Merge conflict detected.[/yellow]")
-                console.print(f"[dim]Resolve conflicts in {path}[/dim]")
-                return False
-            if "couldn't find remote ref" in error_msg:
-                console.print("[dim]Remote branch not found (may not exist yet).[/dim]")
-                return True
-            console.print(f"[yellow]Pull warning: {e}[/yellow]")
-            return False
-
-        # Pop stash if we stashed
-        if stashed:
-            try:
-                git.stash_pop(path)
-                console.print("[dim]Restored local changes.[/dim]")
-            except Exception:
-                console.print("[yellow]Conflict applying stashed changes.[/yellow]")
-                console.print("[dim]Resolve conflicts manually.[/dim]")
-                return False
-
-        console.print("[green]✓ Pulled from remote[/green]")
-        return True
-
-    except Exception as e:
-        console.print(f"[red]Git error: {e}[/red]")
-        return False
-
-
-def is_git_url(s: str) -> bool:
-    """Check if a string looks like a git URL."""
-    if not s:
-        return False
-    # Common git URL patterns
-    return (
-        s.startswith("git@")
-        or s.startswith("https://github.com/")
-        or s.startswith("https://gitlab.com/")
-        or s.startswith("https://bitbucket.org/")
-        or s.endswith(".git")
-        or "github.com" in s
-        or "gitlab.com" in s
-    )
+from db_mcp.cli.discovery import _run_discovery_with_progress
+from db_mcp.cli.git_ops import (
+    GIT_INSTALL_URL,
+    git_init,
+    git_pull,
+    git_sync,
+    is_git_repo,
+    is_git_url,
+)
+from db_mcp.cli.init_flow import _attach_repo, _auto_register_collaborator, _init_brownfield, _init_greenfield
+from db_mcp.cli.utils import (
+    CONFIG_DIR,
+    CONFIG_FILE,
+    CONNECTIONS_DIR,
+    LEGACY_PROVIDERS_DIR,
+    LEGACY_VAULT_DIR,
+    _get_cli_version,
+    _handle_sigint,
+    console,
+    is_claude_desktop_installed,
+    launch_claude_desktop,
+    load_claude_desktop_config,
+    load_config,
+    save_config,
+)
 
 
 @click.group()
@@ -542,861 +98,6 @@ def init(name: str, source: str | None):
         _init_brownfield(name, source)
     else:
         _init_greenfield(name)
-
-
-def _attach_repo(name: str, connection_path: Path, git_url: str):
-    """Attach a shared repo to an existing local connection.
-
-    Merges the master's knowledge into the local connection without
-    clobbering local files. Registers as collaborator afterward.
-    """
-    from db_mcp.collab.classify import classify_files
-    from db_mcp.collab.manifest import (
-        get_user_name_from_config,
-        set_user_name_in_config,
-    )
-    from db_mcp.git_utils import git
-
-    console.print(
-        Panel.fit(
-            f"[bold blue]Attach Shared Knowledge[/bold blue]\n\n"
-            f"Connection: [cyan]{name}[/cyan]\n"
-            f"Repo: [dim]{git_url}[/dim]\n\n"
-            "This will merge the team's knowledge into your "
-            "existing connection.",
-            border_style="blue",
-        )
-    )
-
-    # Ensure git
-    if not is_git_installed():
-        console.print("[red]Git is required.[/red]")
-        return
-
-    # Init git if not already a repo
-    if not is_git_repo(connection_path):
-        git.init(connection_path)
-        # Commit existing local files so merge has a clean base
-        git.add(connection_path, ["."])
-        try:
-            git.commit(
-                connection_path,
-                "Initial commit: local connection state",
-            )
-        except Exception:
-            pass  # Nothing to commit (empty dir)
-        console.print("[dim]Initialized git repo for existing files.[/dim]")
-
-    # Add remote
-    if git.has_remote(connection_path):
-        # Check if it's the same URL
-        import subprocess
-
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            cwd=connection_path,
-            capture_output=True,
-            text=True,
-        )
-        existing_url = result.stdout.strip()
-        if existing_url == git_url:
-            console.print("[dim]Remote already set to this URL.[/dim]")
-        else:
-            console.print(f"[yellow]Remote already set to {existing_url}[/yellow]")
-            console.print("[yellow]Remove it first: git remote remove origin[/yellow]")
-            return
-    else:
-        import subprocess
-
-        subprocess.run(
-            ["git", "remote", "add", "origin", git_url],
-            cwd=connection_path,
-            check=True,
-        )
-
-    # Fetch remote
-    console.print("[dim]Fetching shared knowledge...[/dim]")
-    try:
-        git.fetch(connection_path)
-    except Exception as e:
-        console.print(f"[red]Fetch failed: {e}[/red]")
-        return
-
-    # Merge with allow-unrelated-histories
-    console.print("[dim]Merging team knowledge...[/dim]")
-    import subprocess
-
-    merge_result = subprocess.run(
-        [
-            "git",
-            "merge",
-            "origin/main",
-            "--allow-unrelated-histories",
-            "--no-edit",
-            "-m",
-            "Merge shared knowledge from team repo",
-        ],
-        cwd=connection_path,
-        capture_output=True,
-        text=True,
-    )
-
-    if merge_result.returncode != 0:
-        stderr = merge_result.stderr.strip()
-        if "CONFLICT" in merge_result.stdout or "CONFLICT" in stderr:
-            # Show conflicts and let user resolve
-            console.print(
-                "[yellow]Merge conflicts detected. "
-                "Your local files conflict with the team repo.[/yellow]"
-            )
-            console.print("[dim]Resolve conflicts, then run:[/dim]")
-            console.print(f"  cd {connection_path}")
-            console.print("  git add . && git commit")
-            console.print("  db-mcp collab join")
-            return
-        else:
-            console.print(f"[red]Merge failed: {stderr}[/red]")
-            return
-
-    # Count what was merged
-    try:
-        diff_output = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
-            cwd=connection_path,
-            capture_output=True,
-            text=True,
-        )
-        merged_files = [f for f in diff_output.stdout.strip().split("\n") if f]
-        additive, shared = classify_files(merged_files)
-        console.print(
-            f"[green]Merged {len(additive)} example/learning files "
-            f"and {len(shared)} shared-state files.[/green]"
-        )
-    except Exception:
-        console.print("[green]Merge complete.[/green]")
-
-    # Prompt for user name if needed
-    if not get_user_name_from_config():
-        user_name = click.prompt("\nYour name (used for branch names and attribution)")
-        set_user_name_in_config(user_name)
-
-    # Register as collaborator
-    _auto_register_collaborator(connection_path)
-
-    # Push main so the remote has the merged state
-    try:
-        git.push(connection_path)
-    except Exception:
-        pass  # Collaborator may not have push to main
-
-    console.print(f"\n[green]Done! '{name}' is now connected to the team repo.[/green]")
-    console.print("[dim]Use 'db-mcp collab sync' to stay in sync.[/dim]")
-
-
-def _init_brownfield(name: str, git_url: str):
-    """Initialize connection by cloning from git (brownfield setup)."""
-    # Check git is installed
-    if not is_git_installed():
-        console.print(
-            Panel.fit(
-                "[bold red]Git Not Found[/bold red]\n\n"
-                "Git is required for cloning connection configs.\n\n"
-                f"Install from: [cyan]{GIT_INSTALL_URL}[/cyan]",
-                border_style="red",
-            )
-        )
-        return
-
-    console.print(
-        Panel.fit(
-            f"[bold blue]db-mcp Setup (Brownfield)[/bold blue]\n\n"
-            f"Clone connection: [cyan]{name}[/cyan]\n"
-            f"From: [dim]{git_url}[/dim]",
-            border_style="blue",
-        )
-    )
-
-    connection_path = get_connection_path(name)
-
-    # Connection exists + repo URL → attach (synonym for collab attach)
-    if connection_path.exists():
-        _attach_repo(name, connection_path, git_url)
-        return
-
-    # Clone the repository
-    console.print("\n[dim]Cloning repository...[/dim]")
-    if not git_clone(git_url, connection_path):
-        return
-
-    console.print(f"[green]✓ Cloned to {connection_path}[/green]")
-
-    # Show what was cloned
-    console.print("\n[bold]Cloned files:[/bold]")
-    for item in sorted(connection_path.iterdir()):
-        if item.name.startswith("."):
-            continue
-        if item.is_dir():
-            console.print(f"  [cyan]{item.name}/[/cyan]")
-        else:
-            console.print(f"  {item.name}")
-
-    # Prompt for user_name early so collaborator registration works smoothly
-    from db_mcp.collab.manifest import (
-        get_user_name_from_config,
-        set_user_name_in_config,
-    )
-
-    if not get_user_name_from_config():
-        user_name = click.prompt("\nYour name (used for branch names and attribution)")
-        set_user_name_in_config(user_name)
-
-    # Now prompt for DATABASE_URL (credentials are not in git)
-    _prompt_and_save_database_url(name)
-
-    # Recover onboarding state from cloned files
-    _recover_onboarding_state(name, connection_path)
-
-    # Auto-register as collaborator if manifest exists
-    _auto_register_collaborator(connection_path)
-
-    # Configure MCP agents
-    _configure_agents()
-
-    console.print()
-    console.print(
-        Panel.fit(
-            "[bold green]Setup Complete![/bold green]\n\n"
-            "Connection cloned from git.\n"
-            "Claude Desktop needs to restart to load the new config.\n\n"
-            "[dim]Use 'dbmcp pull' to get updates from the team.[/dim]\n"
-            "[dim]Use 'dbmcp sync' to share your changes.[/dim]",
-            border_style="green",
-        )
-    )
-
-    # Offer to launch Claude Desktop
-    console.print()
-    if Confirm.ask("Launch Claude Desktop now?", default=True):
-        launch_claude_desktop()
-    else:
-        console.print("[dim]Please restart Claude Desktop manually.[/dim]")
-
-
-def _init_greenfield(name: str):
-    """Initialize a new connection from scratch (greenfield setup)."""
-    console.print(
-        Panel.fit(
-            f"[bold blue]db-mcp Setup[/bold blue]\n\nConfigure connection: [cyan]{name}[/cyan]",
-            border_style="blue",
-        )
-    )
-
-    # Load existing Claude Desktop config
-    claude_config, claude_config_path = load_claude_desktop_config()
-    mcp_servers = claude_config.get("mcpServers", {})
-
-    # Check for existing db-mcp entry
-    existing_url = extract_database_url_from_claude_config(claude_config)
-    has_db_mcp = "db-mcp" in mcp_servers
-    has_legacy = "db-mcp" in mcp_servers
-
-    # Also check ~/.dbmcp/config.yaml for existing URL
-    if not existing_url:
-        db_mcp_config = load_config()
-        existing_url = db_mcp_config.get("database_url")
-
-    # Check if connection already exists
-    connection_path = get_connection_path(name)
-    if connection_path.exists():
-        console.print(f"\n[yellow]Connection '{name}' already exists.[/yellow]")
-        if not Confirm.ask("Update configuration?", default=True):
-            console.print("[dim]Setup cancelled.[/dim]")
-            return
-    elif has_db_mcp or has_legacy:
-        console.print("\n[yellow]Existing configuration found:[/yellow]")
-        if has_db_mcp:
-            console.print("  Entry: [cyan]db-mcp[/cyan]")
-        if has_legacy:
-            console.print("  Entry: [cyan]db-mcp[/cyan] (legacy)")
-        if existing_url:
-            # Mask password in URL for display
-            display_url = existing_url
-            if "@" in display_url:
-                # Simple password masking
-                parts = display_url.split("@")
-                prefix = parts[0]
-                if ":" in prefix:
-                    scheme_user = prefix.rsplit(":", 1)[0]
-                    display_url = f"{scheme_user}:****@{parts[1]}"
-            console.print(f"  Database: [cyan]{display_url}[/cyan]")
-        console.print()
-    else:
-        console.print(f"\n[dim]Claude Desktop config: {claude_config_path}[/dim]")
-        if not claude_config_path.exists():
-            console.print("[dim]Will create new config file.[/dim]")
-
-    # Prompt for DATABASE_URL
-    database_url = _prompt_and_save_database_url(name, existing_url)
-    if not database_url:
-        return
-
-    # Create connection directory
-    connection_path.mkdir(parents=True, exist_ok=True)
-    console.print(f"[green]✓ Connection directory created: {connection_path}[/green]")
-
-    # Configure MCP agents
-    _configure_agents()
-
-    # Run migration if legacy data exists
-    if LEGACY_VAULT_DIR.exists() or LEGACY_PROVIDERS_DIR.exists():
-        console.print("\n[yellow]Legacy data detected. Running migration...[/yellow]")
-        try:
-            from db_mcp.vault.migrate import migrate_to_connection_structure
-
-            stats = migrate_to_connection_structure(name)
-            if not stats.get("skipped"):
-                console.print("[green]✓ Legacy data migrated[/green]")
-        except Exception as e:
-            console.print(f"[yellow]Migration warning: {e}[/yellow]")
-
-    # Offer git sync setup (only for greenfield, if git is available)
-    _offer_git_setup(name, connection_path)
-
-    # Run schema discovery
-    console.print()
-    if Confirm.ask("Run schema discovery now?", default=True):
-        try:
-            from db_mcp.connectors import get_connector
-
-            connector = get_connector(str(connection_path))
-            result = _run_discovery_with_progress(connector, conn_name=name, save=True)
-            if result:
-                console.print(
-                    f"[green]✓ Discovered {len(result['tables'])} tables "
-                    f"with {result['total_columns']} columns[/green]"
-                )
-        except Exception as e:
-            console.print(f"[yellow]Discovery failed: {e}[/yellow]")
-            console.print("[dim]You can run discovery later with 'db-mcp discover'[/dim]")
-
-    console.print()
-    console.print(
-        Panel.fit(
-            "[bold green]Setup Complete![/bold green]\n\n"
-            "Claude Desktop needs to restart to load the new config.",
-            border_style="green",
-        )
-    )
-
-    # Offer to launch Claude Desktop
-    console.print()
-    if Confirm.ask("Launch Claude Desktop now?", default=True):
-        launch_claude_desktop()
-    else:
-        console.print("[dim]Please restart Claude Desktop manually.[/dim]")
-
-
-def _run_discovery_with_progress(
-    connector,
-    conn_name: str = "cli-discover",
-    save: bool = False,
-    timeout_s: int = 300,
-    schemas: list[str] | None = None,
-) -> dict | None:
-    """Run schema discovery with Rich progress indicators.
-
-    Args:
-        connector: Database connector instance
-        conn_name: Connection name (used for schema file if saving)
-        save: If True, save schema_descriptions.yaml to the connection dir
-
-    Returns:
-        Dict with discovered tables info, or None on failure
-    """
-    from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
-
-    from db_mcp.onboarding.schema_store import create_initial_schema
-
-    err_console = Console(stderr=True)
-    all_tables: list[dict] = []
-    dialect: str | None = None
-
-    # NOTE: SIGALRM cannot reliably interrupt blocking DBAPI calls (e.g., psycopg2),
-    # so we run the whole discovery in a daemon thread with a hard deadline.
-
-    err_console.print("[dim]Starting discovery...[/dim]")
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        console=err_console,
-    ) as progress:
-        # Start spinner immediately so the user sees *something* before any blocking calls.
-        task = progress.add_task("Starting discovery...", total=None)
-        progress.refresh()
-
-        result: list[dict | None] = [None]
-        error: list[Exception | None] = [None]
-
-        def run() -> None:
-            try:
-                # Phase 1: Connect
-                test_result = connector.test_connection()
-                if not test_result.get("connected"):
-                    error[0] = RuntimeError(test_result.get("error", "unknown"))
-                    return
-
-                nonlocal dialect
-                dialect = test_result.get("dialect")
-                progress.update(task, description="Connected ✓", completed=1, total=1)
-
-                # Phase 2: Catalogs
-                progress.update(
-                    task, description="Discovering catalogs...", completed=0, total=None
-                )
-                try:
-                    catalogs = connector.get_catalogs()
-                except Exception:
-                    catalogs = [None]
-                progress.update(
-                    task,
-                    description=f"Found {len([c for c in catalogs if c])} catalogs ✓",
-                    completed=1,
-                    total=1,
-                )
-
-                # Phase 3: Schemas
-                progress.update(
-                    task, description="Discovering schemas...", completed=0, total=None
-                )
-                all_schemas: list[dict] = []
-                for catalog in catalogs:
-                    try:
-                        found = connector.get_schemas(catalog=catalog)
-                    except Exception:
-                        found = []
-
-                    for schema in found:
-                        if schemas and schema not in schemas:
-                            continue
-                        all_schemas.append({"catalog": catalog, "schema": schema})
-
-                progress.update(
-                    task,
-                    description=f"Found {len(all_schemas)} schemas ✓",
-                    completed=1,
-                    total=1,
-                )
-
-                # Phase 4: Tables + columns (progress per table)
-                progress.remove_task(task)
-                table_task = progress.add_task("Scanning tables...", total=1)
-
-                total_tables = 0
-                for schema_info in all_schemas:
-                    catalog = schema_info["catalog"]
-                    schema = schema_info["schema"]
-                    label = f"{catalog}.{schema}" if catalog else (schema or "default")
-                    progress.update(
-                        table_task,
-                        description=f"Listing tables in {label}...",
-                        total=None,
-                    )
-
-                    try:
-                        tables = connector.get_tables(schema=schema, catalog=catalog)
-                    except Exception:
-                        tables = []
-
-                    # update total now that we know table count for this schema
-                    total_tables += len(tables)
-                    progress.update(table_task, total=max(total_tables, 1))
-
-                    for t in tables:
-                        progress.update(
-                            table_task,
-                            description=f"Scanning {t.get('full_name') or t.get('name')}...",
-                        )
-                        try:
-                            columns = connector.get_columns(
-                                t["name"], schema=schema, catalog=catalog
-                            )
-                        except Exception:
-                            columns = []
-                        all_tables.append(
-                            {
-                                "name": t["name"],
-                                "schema": schema,
-                                "catalog": catalog,
-                                "full_name": t.get("full_name") or t["name"],
-                                "columns": columns,
-                            }
-                        )
-                        progress.advance(table_task)
-
-                result[0] = {
-                    "tables": all_tables,
-                    "total_columns": sum(len(t["columns"]) for t in all_tables),
-                    "dialect": dialect,
-                }
-            except Exception as e:
-                error[0] = e
-
-        import threading
-        import time
-
-        t = threading.Thread(target=run, daemon=True)
-        t.start()
-
-        deadline = time.monotonic() + timeout_s if timeout_s and timeout_s > 0 else None
-
-        while True:
-            # Timeout handling
-            if deadline is not None and time.monotonic() > deadline:
-                console.print(f"[red]Discovery timed out after {timeout_s}s[/red]")
-                return None
-
-            # Allow Rich to refresh while the worker thread runs.
-            progress.refresh()
-            time.sleep(0.1)
-
-            # Exit when worker finishes
-            if not t.is_alive():
-                break
-
-        if error[0] is not None:
-            console.print(f"[red]Discovery failed: {error[0]}[/red]")
-            return None
-
-        if result[0] is None:
-            console.print("[red]Discovery failed: unknown error[/red]")
-            return None
-
-    total_columns = sum(len(t["columns"]) for t in all_tables)
-    err_console.print(
-        f"[green]Done![/green] Found [bold]{len(all_tables)}[/bold] tables "
-        f"with [bold]{total_columns}[/bold] columns."
-    )
-
-    # Build schema object
-    schema_obj = create_initial_schema(
-        provider_id=conn_name,
-        dialect=dialect,
-        tables=all_tables,
-    )
-
-    # Optionally save to connection directory
-    if save:
-        from db_mcp.onboarding.schema_store import save_schema_descriptions
-
-        schema_obj.provider_id = conn_name
-        save_result = save_schema_descriptions(schema_obj)
-        if save_result.get("saved"):
-            err_console.print(f"[green]✓ Schema saved to {save_result.get('file_path')}[/green]")
-
-    return {
-        "tables": all_tables,
-        "total_columns": total_columns,
-        "dialect": dialect,
-        "schema": schema_obj,
-    }
-
-
-def _get_connection_env_path(name: str) -> Path:
-    """Get path to connection's .env file."""
-    return get_connection_path(name) / ".env"
-
-
-def _load_connection_env(name: str) -> dict:
-    """Load environment variables from connection's .env file."""
-    env_file = _get_connection_env_path(name)
-    if not env_file.exists():
-        return {}
-
-    env_vars = {}
-    with open(env_file) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                # Remove quotes if present
-                value = value.strip().strip("\"'")
-                env_vars[key] = value
-    return env_vars
-
-
-def _save_connection_env(name: str, env_vars: dict):
-    """Save environment variables to connection's .env file."""
-    conn_path = get_connection_path(name)
-    conn_path.mkdir(parents=True, exist_ok=True)
-
-    env_file = _get_connection_env_path(name)
-    with open(env_file, "w") as f:
-        f.write("# db-mcp connection credentials\n")
-        f.write("# This file is gitignored - do not commit\n\n")
-        for key, value in env_vars.items():
-            f.write(f'{key}="{value}"\n')
-
-
-def _prompt_and_save_database_url(name: str, existing_url: str | None = None) -> str | None:
-    """Prompt for database URL and save to connection's .env file."""
-    # Try to load existing URL from connection's .env
-    if not existing_url:
-        conn_env = _load_connection_env(name)
-        existing_url = conn_env.get("DATABASE_URL")
-
-    console.print("\n[bold]Database Connection[/bold]")
-    console.print("[dim]Examples:[/dim]")
-    console.print("  trino://user:pass@host:8443/catalog/schema?http_scheme=https")
-    console.print("  clickhouse+native://user:pass@host:9000/database")
-    console.print("  postgresql://user:pass@host:5432/database")
-    console.print()
-
-    database_url = Prompt.ask(
-        "Database URL",
-        default=existing_url or "",
-    )
-
-    if not database_url:
-        console.print("[red]Database URL is required.[/red]")
-        return None
-
-    # Save DATABASE_URL to connection's .env file (gitignored)
-    _save_connection_env(name, {"DATABASE_URL": database_url})
-    console.print(f"\n[green]✓ Credentials saved to {_get_connection_env_path(name)}[/green]")
-
-    # Save non-sensitive config to global config.yaml
-    config = load_config()
-    config.update(
-        {
-            "active_connection": name,
-            "tool_mode": "shell",
-            "log_level": "INFO",
-        }
-    )
-    # Remove database_url from global config if present (migrate to per-connection)
-    config.pop("database_url", None)
-
-    save_config(config)
-    console.print(f"[green]✓ Config saved to {CONFIG_FILE}[/green]")
-
-    return database_url
-
-
-def _configure_agents_interactive(preselect_installed: bool = True) -> list[str]:
-    """Interactive agent selection.
-
-    Args:
-        preselect_installed: If True, pre-select detected agents
-
-    Returns:
-        List of agent IDs to configure
-    """
-    # Detect installed agents
-    installed = detect_installed_agents()
-
-    if not installed:
-        console.print("[yellow]No MCP agents detected on this system.[/yellow]")
-        console.print("[dim]Skipping agent configuration.[/dim]")
-        return []
-
-    # Show detected agents
-    console.print("\n[bold]Detected MCP-compatible agents:[/bold]")
-    for i, agent_id in enumerate(installed, 1):
-        agent = AGENTS[agent_id]
-        console.print(f"  [{i}] {agent.name}")
-
-    # Prompt for selection
-    console.print("\n[dim]Configure db-mcp for which agents?[/dim]")
-    console.print("[1] All detected agents")
-    console.print("[2] Select specific agents")
-    console.print("[3] Skip agent configuration")
-
-    choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
-
-    if choice == "3":
-        return []
-    elif choice == "1":
-        return installed
-    else:
-        # Individual selection
-        selected = []
-        for agent_id in installed:
-            agent = AGENTS[agent_id]
-            if Confirm.ask(f"Configure {agent.name}?", default=preselect_installed):
-                selected.append(agent_id)
-        return selected
-
-
-def _configure_agents(agent_ids: list[str] | None = None) -> None:
-    """Configure MCP agents for db-mcp.
-
-    Args:
-        agent_ids: List of agent IDs to configure. If None, uses interactive selection.
-    """
-    if agent_ids is None:
-        agent_ids = _configure_agents_interactive()
-
-    if not agent_ids:
-        console.print("[dim]No agents selected for configuration.[/dim]")
-        return
-
-    # Get binary path
-    binary_path = get_db_mcp_binary_path()
-
-    # Configure each agent
-    results = configure_multiple_agents(agent_ids, binary_path)
-
-    # Show summary
-    success_count = sum(1 for success in results.values() if success)
-    console.print(f"\n[green]✓ Configured {success_count}/{len(agent_ids)} agent(s)[/green]")
-
-
-def _configure_claude_desktop(name: str):
-    """Configure Claude Desktop for db-mcp (legacy wrapper).
-
-    Deprecated: Use _configure_agents instead.
-    """
-    binary_path = get_db_mcp_binary_path()
-    from db_mcp.agents import configure_agent_for_dbmcp
-
-    configure_agent_for_dbmcp("claude-desktop", binary_path)
-
-
-def _recover_onboarding_state(name: str, connection_path: Path):
-    """Recover onboarding state from cloned files.
-
-    When cloning from git, state.yaml is not included (gitignored).
-    This reconstructs the state based on existing schema/domain files.
-    """
-    # Set environment so state module uses correct path
-    os.environ["CONNECTION_NAME"] = name
-    os.environ["CONNECTIONS_DIR"] = str(CONNECTIONS_DIR)
-
-    # Check what files exist
-    schema_file = connection_path / "schema" / "descriptions.yaml"
-    domain_file = connection_path / "domain" / "model.md"
-
-    has_schema = schema_file.exists()
-    has_domain = domain_file.exists()
-
-    if not has_schema and not has_domain:
-        console.print("[dim]No existing schema/domain files found.[/dim]")
-        return
-
-    # Import here to avoid circular imports and ensure env is set
-    from db_mcp.onboarding.state import load_state
-
-    # load_state will auto-recover and save if files exist but state doesn't
-    state = load_state()
-
-    if state:
-        console.print(f"[green]✓ Onboarding state recovered: {state.phase.value}[/green]")
-        if has_schema:
-            console.print(f"  [dim]Schema: {state.tables_total} tables[/dim]")
-        if has_domain:
-            console.print("  [dim]Domain model: ready[/dim]")
-
-
-def _auto_register_collaborator(connection_path: Path) -> None:
-    """Auto-register as collaborator when cloning a vault with .collab.yaml.
-
-    Called during brownfield init (db-mcp init <name> <git-url>).
-    If the cloned repo has a collaboration manifest, this:
-    1. Prompts for user_name if not in config
-    2. Gets or generates user_id
-    3. Creates collaborator/{user_name} branch
-    4. Adds self to .collab.yaml and commits+pushes the branch
-    """
-    from db_mcp.collab.manifest import (
-        add_member,
-        get_member,
-        get_user_name_from_config,
-        load_manifest,
-        save_manifest,
-        set_user_name_in_config,
-    )
-    from db_mcp.git_utils import git
-    from db_mcp.traces import generate_user_id, get_user_id_from_config
-
-    manifest = load_manifest(connection_path)
-    if manifest is None:
-        return  # No collab manifest — nothing to do
-
-    # Get or prompt for user_name
-    user_name = get_user_name_from_config()
-    if not user_name:
-        user_name = click.prompt("Your name (used for branch names and attribution)")
-        set_user_name_in_config(user_name)
-
-    # Get or generate user_id
-    user_id = get_user_id_from_config()
-    if not user_id:
-        user_id = generate_user_id()
-        config = load_config()
-        config["user_id"] = user_id
-        save_config(config)
-
-    # Skip if already registered
-    if get_member(manifest, user_id) is not None:
-        console.print(f"[dim]Already registered as collaborator: {user_name}[/dim]")
-        return
-
-    # Create collaborator branch
-    branch = f"collaborator/{user_name}"
-    git.checkout(connection_path, branch, create=True)
-
-    # Add self to manifest
-    manifest = add_member(manifest, user_name, user_id, "collaborator")
-    save_manifest(connection_path, manifest)
-    git.add(connection_path, [".collab.yaml"])
-    git.commit(connection_path, f"Add collaborator: {user_name}")
-    try:
-        git.push_branch(connection_path, branch)
-        console.print(f"[green]Registered as collaborator: {user_name}[/green]")
-        console.print(f"[dim]Branch: {branch} | User ID: {user_id}[/dim]")
-    except Exception as e:
-        console.print(
-            f"[yellow]Registered locally but push failed (retry with 'collab sync'): {e}[/yellow]"
-        )
-
-
-def _offer_git_setup(name: str, connection_path: Path):
-    """Offer to set up git sync for the connection."""
-    # Skip if already a git repo (e.g., from brownfield)
-    if is_git_repo(connection_path):
-        return
-
-    # Check if git is installed
-    if not is_git_installed():
-        console.print("\n[dim]Tip: Install git to enable team sync features.[/dim]")
-        console.print(f"[dim]     {GIT_INSTALL_URL}[/dim]")
-        return
-
-    console.print("\n[bold]Git Sync (Optional)[/bold]")
-    console.print("[dim]Enable git to share your semantic layer with your team.[/dim]")
-
-    if not Confirm.ask("Enable git sync for this connection?", default=False):
-        return
-
-    # Ask for remote URL (optional)
-    console.print(
-        "\n[dim]Enter a git remote URL to sync with (or leave empty to add later).[/dim]"
-    )
-    console.print("[dim]Example: git@github.com:yourorg/db-mcp-mydb.git[/dim]")
-    remote_url = Prompt.ask("Git remote URL", default="")
-
-    # Initialize git
-    if git_init(connection_path, remote_url if remote_url else None):
-        console.print("[green]✓ Git repository initialized[/green]")
-        if remote_url:
-            console.print(f"[dim]Remote 'origin' set to {remote_url}[/dim]")
-            console.print("[dim]Use 'dbmcp sync' to push changes to the team.[/dim]")
-        else:
-            console.print("[dim]Add a remote later with: git remote add origin <url>[/dim]")
-            console.print("[dim]Then use 'dbmcp sync' to push changes.[/dim]")
 
 
 @main.command()
@@ -1840,6 +541,8 @@ def git_init_cmd(name: str | None, remote_url: str | None):
         db-mcp git-init mydb git@github.com:org/db-mcp-mydb.git
     """
     # Check git is installed
+    from db_mcp.cli.git_ops import is_git_installed
+
     if not is_git_installed():
         console.print(
             Panel.fit(
@@ -1951,6 +654,8 @@ def rename(old_name: str, new_name: str):
     This renames the connection directory and updates the active
     connection if needed.
     """
+    import re
+
     if not connection_exists(old_name):
         console.print(f"[red]Connection '{old_name}' not found.[/red]")
         console.print("[dim]Run 'db-mcp list' to see available connections.[/dim]")
@@ -1989,6 +694,8 @@ def remove(name: str, force: bool):
     NAME is the connection name to remove.
     This deletes all data associated with the connection.
     """
+    import shutil
+
     if not connection_exists(name):
         console.print(f"[red]Connection '{name}' not found.[/red]")
         sys.exit(1)
@@ -2390,8 +1097,6 @@ def collab_detach():
     Keeps all local files intact but removes the git remote.
     Your knowledge stays, you just stop syncing with the team.
     """
-    import subprocess
-
     from db_mcp.git_utils import git
 
     name = get_active_connection()
@@ -2942,6 +1647,10 @@ def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
         db-mcp ui -p 3001            # Start on port 3001
         db-mcp ui -c mydb -p 8080    # Use specific connection
     """
+    import threading
+    import urllib.request
+    import webbrowser
+
     # Create config directory if it doesn't exist (for fresh installs)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONNECTIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -3016,10 +1725,6 @@ def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
     )
 
     # Open browser once server is ready
-    import threading
-    import urllib.request
-    import webbrowser
-
     def open_browser():
         import time
 
@@ -3084,6 +1789,9 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
         db-mcp discover --connection mydb --output schema.yaml
         db-mcp discover --url postgres://... --format json
     """
+    import json as _json
+
+    import yaml as _yaml
 
     from db_mcp.connectors import Connector
     from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
@@ -3166,9 +1874,9 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
 
     # Serialize
     if fmt == "json":
-        output_str = json.dumps(schema_dict, indent=2, ensure_ascii=False)
+        output_str = _json.dumps(schema_dict, indent=2, ensure_ascii=False)
     else:
-        output_str = yaml.dump(
+        output_str = _yaml.dump(
             schema_dict, default_flow_style=False, sort_keys=False, allow_unicode=True
         )
 
@@ -3176,7 +1884,9 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
     if output:
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         Path(output).write_text(output_str)
-        Console(stderr=True).print(f"[green]Schema written to {output}[/green]")
+        from rich.console import Console as _Console
+
+        _Console(stderr=True).print(f"[green]Schema written to {output}[/green]")
     else:
         click.echo(output_str)
 
@@ -3215,7 +1925,7 @@ def playground_install():
             else:
                 console.print(f"[green]✓ Playground installed: {result['database_url']}[/green]")
         else:
-            error_msg = result.get('error', 'Unknown error')
+            error_msg = result.get("error", "Unknown error")
             console.print(f"[red]Failed to install playground: {error_msg}[/red]")
             sys.exit(1)
 
@@ -3235,9 +1945,7 @@ def playground_status():
 
         # Try to read the database URL from the connector
         try:
-            from pathlib import Path
-
-            import yaml
+            import yaml as _yaml
 
             connections_dir = Path.home() / ".db-mcp" / "connections"
             playground_dir = connections_dir / PLAYGROUND_CONNECTION_NAME
@@ -3245,8 +1953,8 @@ def playground_status():
 
             if connector_path.exists():
                 with open(connector_path) as f:
-                    config = yaml.safe_load(f) or {}
-                    db_url = config.get("database_url", "")
+                    cfg = _yaml.safe_load(f) or {}
+                    db_url = cfg.get("database_url", "")
                     if db_url:
                         console.print(f"Database: [dim]{db_url}[/dim]")
                     else:

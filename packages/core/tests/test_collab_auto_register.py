@@ -52,10 +52,10 @@ class TestAutoRegisterCollaborator:
             patch("db_mcp.collab.manifest.set_user_name_in_config") as mock_set_name,
             patch("db_mcp.traces.get_user_id_from_config", return_value=None),
             patch("db_mcp.traces.generate_user_id", return_value="alice001"),
-            patch("db_mcp.cli.load_config", return_value={"active_connection": "test"}),
-            patch("db_mcp.cli.save_config"),
-            patch("db_mcp.cli.click.prompt", return_value="alice"),
-            patch("db_mcp.cli.console"),
+            patch("db_mcp.cli.init_flow.load_config", return_value={"active_connection": "test"}),
+            patch("db_mcp.cli.init_flow.save_config"),
+            patch("db_mcp.cli.init_flow.click.prompt", return_value="alice"),
+            patch("db_mcp.cli.init_flow.console"),
         ):
             _auto_register_collaborator(tmp_path)
 
@@ -101,7 +101,7 @@ class TestAutoRegisterCollaborator:
                 return_value="alice",
             ),
             patch("db_mcp.traces.get_user_id_from_config", return_value="alice001"),
-            patch("db_mcp.cli.console"),
+            patch("db_mcp.cli.init_flow.console"),
         ):
             _auto_register_collaborator(tmp_path)
 
@@ -123,7 +123,7 @@ class TestAutoRegisterCollaborator:
                 return_value="bob",
             ),
             patch("db_mcp.traces.get_user_id_from_config", return_value="bob00001"),
-            patch("db_mcp.cli.console"),
+            patch("db_mcp.cli.init_flow.console"),
         ):
             _auto_register_collaborator(tmp_path)
 
