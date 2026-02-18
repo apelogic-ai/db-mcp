@@ -65,11 +65,28 @@ if static_dir.exists():
     datas.append((str(static_dir), "db_mcp/static"))
 
 a = Analysis(
-    [str(src_dir / "db_mcp" / "cli.py")],
+    [str(src_dir / "db_mcp" / "cli" / "__main__.py")],
     pathex=[str(src_dir)],
     binaries=binaries,
     datas=datas,
     hiddenimports=[
+        # CLI package and submodules
+        "db_mcp.cli",
+        "db_mcp.cli.main",
+        "db_mcp.cli.connection",
+        "db_mcp.cli.git_ops",
+        "db_mcp.cli.agent_config",
+        "db_mcp.cli.discovery",
+        "db_mcp.cli.init_flow",
+        "db_mcp.cli.utils",
+        "db_mcp.cli.commands",
+        "db_mcp.cli.commands.core",
+        "db_mcp.cli.commands.collab",
+        "db_mcp.cli.commands.traces",
+        "db_mcp.cli.commands.git_cmds",
+        "db_mcp.cli.commands.agents_cmd",
+        "db_mcp.cli.commands.discover_cmd",
+        "db_mcp.cli.commands.services",
         # SQLAlchemy dialects
         "sqlalchemy.dialects.postgresql",
         "sqlalchemy.dialects.mysql",
