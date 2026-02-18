@@ -118,6 +118,41 @@ async def _api_execute_sql(sql: str) -> dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+async def _api_mutate(
+    endpoint: str,
+    method: str,
+    body: dict[str, Any],
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Execute a mutating API request (POST/PUT/PATCH/DELETE).
+
+    Sends a request with a JSON body to the specified endpoint.
+    Returns the raw response from the API.
+
+    Args:
+        endpoint: Name of the endpoint to call (e.g. "users", "orders").
+        method: HTTP method — must be POST, PUT, PATCH, or DELETE.
+        body: JSON request body to send.
+        params: Optional query string parameters.
+
+    Returns:
+        Raw response from the API endpoint, or {error: "..."} on failure.
+    """
+    allowed_methods = {"POST", "PUT", "PATCH", "DELETE"}
+    method_upper = method.upper()
+    if method_upper not in allowed_methods:
+        return {
+            "error": f"Method {method} not allowed for mutate. "
+            f"Use one of: {', '.join(sorted(allowed_methods))}"
+        }
+
+    connector = get_connector()
+    if not isinstance(connector, APIConnector):
+        return {"error": "Active connection is not an API connector"}
+
+    return connector.query_endpoint(endpoint, params, body=body, method_override=method_upper)
+
+
 async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:
     """Describe an API endpoint's available query parameters.
 
@@ -154,3 +189,41 @@ async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:
             }
 
     return {"error": f"Unknown endpoint: {endpoint}"}
+
+
+async def _api_mutate(
+    endpoint: str,
+    method: str,
+    body: dict[str, Any] | None = None,
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Create, update, or delete a resource via a REST API endpoint.
+
+    Sends a mutating HTTP request (POST/PUT/PATCH/DELETE) to the specified
+    API endpoint with an optional JSON body. Returns the raw API response.
+
+    Use this for creating, updating, or deleting resources on REST APIs
+    like Superset, Metabase, Grafana, or any CRUD API.
+
+    Args:
+        endpoint: Name of the configured endpoint to call (e.g. "charts", "dashboards").
+        method: HTTP method — must be POST, PUT, PATCH, or DELETE.
+        body: JSON request body (for POST/PUT/PATCH). Optional for DELETE.
+        params: Optional query string parameters.
+
+    Returns:
+        Raw API response dict, or {error: "..."} on failure.
+    """
+    method_upper = method.upper()
+    if method_upper not in ("POST", "PUT", "PATCH", "DELETE"):
+        return {
+            "error": (
+                f"Invalid method '{method}'. api_mutate only supports POST, PUT, PATCH, DELETE."
+            )
+        }
+
+    connector = get_connector()
+    if not isinstance(connector, APIConnector):
+        return {"error": "Active connection is not an API connector"}
+
+    return connector.query_endpoint(endpoint, params, body=body, method_override=method_upper)

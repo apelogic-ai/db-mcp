@@ -15,7 +15,13 @@ from starlette.responses import JSONResponse
 from db_mcp.config import get_settings
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
-from db_mcp.tools.api import _api_describe_endpoint, _api_discover, _api_execute_sql, _api_query
+from db_mcp.tools.api import (
+    _api_describe_endpoint,
+    _api_discover,
+    _api_execute_sql,
+    _api_mutate,
+    _api_query,
+)
 from db_mcp.tools.database import (
     _describe_table,
     _detect_dialect,
@@ -325,16 +331,9 @@ def _strip_validate_sql_from_instructions(instructions: str) -> str:
             "# Validate before running\n"
             '6. run_sql(query_id="...")                    '
             "# Execute"
-        ): (
-            '5. run_sql(sql="...")                         '
-            "# Execute directly"
-        ),
-        (
-            "- validate_sql / run_sql / get_result"
-            " - Query execution (required for running SQL)"
-        ): (
-            "- run_sql / get_result"
-            " - Query execution (run_sql accepts sql= directly)"
+        ): ('5. run_sql(sql="...")                         # Execute directly'),
+        ("- validate_sql / run_sql / get_result - Query execution (required for running SQL)"): (
+            "- run_sql / get_result - Query execution (run_sql accepts sql= directly)"
         ),
         "- Query: get_data, run_sql, validate_sql, get_result, export_results": (
             "- Query: get_data, run_sql, get_result, export_results"
@@ -680,6 +679,7 @@ def _create_server() -> FastMCP:
     if is_api:
         server.tool(name="api_discover")(_api_discover)
         server.tool(name="api_query")(_api_query)
+        server.tool(name="api_mutate")(_api_mutate)
         server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
         if supports_sql:
             server.tool(name="api_execute_sql")(_api_execute_sql)
