@@ -39,6 +39,7 @@ class Query:
     sql: str
     status: QueryStatus = QueryStatus.VALIDATED
     created_at: float = field(default_factory=time.time)
+    connection: str | None = None  # Connection name for multi-connection dispatch
 
     # Validation info
     estimated_rows: int | None = None
@@ -132,6 +133,7 @@ class QueryStore:
         estimated_cost: float | None = None,
         cost_tier: str = "unknown",
         explanation: list[str] | None = None,
+        connection: str | None = None,
     ) -> Query:
         """Register a validated query.
 
@@ -143,6 +145,7 @@ class QueryStore:
             estimated_cost: Estimated cost from EXPLAIN
             cost_tier: Cost tier (auto, confirm, reject)
             explanation: EXPLAIN output lines
+            connection: Connection name for multi-connection dispatch
 
         Returns:
             Query with unique query_id in VALIDATED status
@@ -156,6 +159,7 @@ class QueryStore:
             estimated_cost=estimated_cost,
             cost_tier=cost_tier,
             explanation=explanation or [],
+            connection=connection,
         )
 
         async with self._lock:

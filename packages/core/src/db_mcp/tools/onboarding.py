@@ -33,6 +33,37 @@ from db_mcp.onboarding.state import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_onboarding_context(
+    connection: str | None = None,
+    provider_id: str | None = None,
+) -> tuple:
+    """Resolve connection/provider_id to (connector, conn_name, conn_path).
+
+    For onboarding tools that need a connector for discovery.
+
+    Returns:
+        Tuple of (connector, provider_id_str, conn_path)
+    """
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        try:
+            connector, conn_name, conn_path = resolve_connection(connection)
+            return connector, conn_name, conn_path
+        except ValueError:
+            pass  # Fall through to legacy path
+
+    # Legacy / single-connection: use settings
+    if provider_id is None:
+        settings = get_settings()
+        provider_id = settings.provider_id
+    connector = get_connector()
+    from db_mcp.onboarding.state import get_connection_path
+
+    conn_path = get_connection_path()
+    return connector, provider_id, conn_path
+
+
 def _run_schema_gap_scan(provider_id: str) -> int:
     """Run deterministic schema gap scan and save results.
 
@@ -444,20 +475,20 @@ def _build_status_guidance(state, tables_described: int) -> dict:
     }
 
 
-async def _onboarding_status(provider_id: str | None = None) -> dict:
+async def _onboarding_status(
+    provider_id: str | None = None, connection: str | None = None
+) -> dict:
     """Get current onboarding status for a provider.
 
     Args:
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Current onboarding state and next action
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
-
-    state = load_state(provider_id)
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {
@@ -509,7 +540,9 @@ async def _onboarding_status(provider_id: str | None = None) -> dict:
     }
 
 
-async def _onboarding_start(provider_id: str | None = None, force: bool = False) -> dict:
+async def _onboarding_start(
+    provider_id: str | None = None, force: bool = False, connection: str | None = None
+) -> dict:
     """Start onboarding flow for a provider.
 
     This will:
@@ -520,19 +553,18 @@ async def _onboarding_start(provider_id: str | None = None, force: bool = False)
     After reviewing patterns, call onboarding_discover to run schema discovery.
 
     Args:
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
         force: If True, restart onboarding even if already started
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Connection result with ignore patterns for review
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    connector, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
     # Check if already started - return current status instead of error
     # This makes the tool idempotent and avoids ChatGPT retrying
-    existing = load_state(provider_id)
+    existing = load_state(provider_id, connection_path=conn_path)
     if existing is not None and not force:
         # Load schema to get progress
         schema = load_schema_descriptions(provider_id)
@@ -560,18 +592,17 @@ async def _onboarding_start(provider_id: str | None = None, force: bool = False)
         from db_mcp.onboarding.schema_store import get_schema_file_path
 
         # Delete existing state
-        delete_state(provider_id)
+        delete_state(provider_id, connection_path=conn_path)
 
         # Delete existing schema descriptions
-        schema_file = get_schema_file_path(provider_id)
+        schema_file = get_schema_file_path(provider_id, connection_path=conn_path)
         if schema_file.exists():
             try:
                 schema_file.unlink()
             except Exception:
                 pass
 
-    # Test connection
-    connector = get_connector()
+    # Test connection (connector already resolved above)
     conn_result = connector.test_connection()
     if not conn_result["connected"]:
         return {
@@ -588,7 +619,7 @@ async def _onboarding_start(provider_id: str | None = None, force: bool = False)
     state.phase = OnboardingPhase.INIT
 
     # Save state
-    save_result = save_state(state)
+    save_result = save_state(state, connection_path=conn_path)
     if not save_result["saved"]:
         return {
             "started": False,
@@ -642,6 +673,7 @@ async def _onboarding_discover(
     ctx: Context | None = None,
     provider_id: str | None = None,
     phase: str = "structure",
+    connection: str | None = None,
 ) -> dict:
     """Run schema discovery after reviewing ignore patterns.
 
@@ -658,15 +690,14 @@ async def _onboarding_discover(
 
     Args:
         ctx: MCP Context for progress reporting (optional)
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
         phase: Discovery phase - "structure" (catalogs/schemas) or "tables"
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Discovery result with counts
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    connector, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
     # Validate phase parameter
     if phase not in ("structure", "tables"):
@@ -676,7 +707,7 @@ async def _onboarding_discover(
         }
 
     # Load state - must be in INIT phase
-    state = load_state(provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
     if state is None:
         return {
             "discovered": False,
@@ -718,7 +749,7 @@ async def _onboarding_discover(
     # ============================================================
     # PHASE: STRUCTURE - Discover catalogs and schemas only (fast)
     # ============================================================
-    connector = get_connector()
+    # connector already resolved by _resolve_onboarding_context
 
     if phase == "structure":
         # Discover catalogs first (for Trino 3-level hierarchy)
@@ -798,7 +829,7 @@ async def _onboarding_discover(
             state.schemas_discovered = []
 
         # Save state (still in INIT phase, waiting for tables discovery)
-        save_result = save_state(state)
+        save_result = save_state(state, connection_path=conn_path)
         if not save_result["saved"]:
             return {
                 "discovered": False,
@@ -913,7 +944,9 @@ async def _onboarding_discover(
     }
 
 
-async def _onboarding_add_ignore_pattern(pattern: str, provider_id: str | None = None) -> dict:
+async def _onboarding_add_ignore_pattern(
+    pattern: str, provider_id: str | None = None, connection: str | None = None
+) -> dict:
     """Add an ignore pattern for schema discovery.
 
     Patterns support wildcards: * matches any characters, ? matches single character.
@@ -921,14 +954,13 @@ async def _onboarding_add_ignore_pattern(pattern: str, provider_id: str | None =
 
     Args:
         pattern: Pattern to add (e.g., 'test_*', 'staging_*')
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Result with updated pattern list
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, _ = _resolve_onboarding_context(connection, provider_id)
 
     result = add_ignore_pattern(provider_id, pattern)
 
@@ -957,19 +989,20 @@ async def _onboarding_add_ignore_pattern(pattern: str, provider_id: str | None =
     return result
 
 
-async def _onboarding_remove_ignore_pattern(pattern: str, provider_id: str | None = None) -> dict:
+async def _onboarding_remove_ignore_pattern(
+    pattern: str, provider_id: str | None = None, connection: str | None = None
+) -> dict:
     """Remove an ignore pattern.
 
     Args:
         pattern: Pattern to remove
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Result with updated pattern list
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, _ = _resolve_onboarding_context(connection, provider_id)
 
     result = remove_ignore_pattern(provider_id, pattern)
 
@@ -999,7 +1032,10 @@ async def _onboarding_remove_ignore_pattern(pattern: str, provider_id: str | Non
 
 
 async def _onboarding_import_ignore_patterns(
-    patterns: list[str], replace: bool = False, provider_id: str | None = None
+    patterns: list[str],
+    replace: bool = False,
+    provider_id: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Import ignore patterns from a list (LLM extracts from uploaded file).
 
@@ -1009,14 +1045,13 @@ async def _onboarding_import_ignore_patterns(
     Args:
         patterns: List of patterns to import
         replace: If True, replace all patterns. If False, merge with existing.
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Result with updated pattern list
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, _ = _resolve_onboarding_context(connection, provider_id)
 
     result = import_ignore_patterns(provider_id, patterns, replace=replace)
 
@@ -1046,21 +1081,22 @@ async def _onboarding_import_ignore_patterns(
     return result
 
 
-async def _onboarding_reset(provider_id: str | None = None, hard: bool = False) -> dict:
+async def _onboarding_reset(
+    provider_id: str | None = None, hard: bool = False, connection: str | None = None
+) -> dict:
     """Reset onboarding state for a provider.
 
     Args:
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
         hard: If True, also delete schema_descriptions.yaml (full reset)
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Reset result
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    result = delete_state(provider_id)
+    result = delete_state(provider_id, connection_path=conn_path)
     state_deleted = result.get("deleted", False)
     schema_deleted = False
 
@@ -1068,7 +1104,7 @@ async def _onboarding_reset(provider_id: str | None = None, hard: bool = False) 
     if hard:
         from db_mcp.onboarding.schema_store import get_schema_file_path
 
-        schema_file = get_schema_file_path(provider_id)
+        schema_file = get_schema_file_path(provider_id, connection_path=conn_path)
         if schema_file.exists():
             try:
                 schema_file.unlink()
@@ -1103,22 +1139,23 @@ async def _onboarding_reset(provider_id: str | None = None, hard: bool = False) 
         }
 
 
-async def _onboarding_next(provider_id: str | None = None) -> dict:
+async def _onboarding_next(
+    provider_id: str | None = None, connection: str | None = None
+) -> dict:
     """Get the next table to describe in the onboarding flow.
 
     Returns table schema and sample data to help generate a description.
 
     Args:
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Next table info with columns and sample data
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    connector, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    state = load_state(provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {
@@ -1144,7 +1181,7 @@ async def _onboarding_next(provider_id: str | None = None) -> dict:
     if next_table is None:
         # All tables described, move to next phase
         state.phase = OnboardingPhase.DOMAIN
-        save_state(state)
+        save_state(state, connection_path=conn_path)
 
         # Run deterministic schema gap scan
         gaps_found = _run_schema_gap_scan(provider_id)
@@ -1184,11 +1221,10 @@ async def _onboarding_next(provider_id: str | None = None) -> dict:
 
     # Update current table in state
     state.current_table = next_table.full_name
-    save_state(state)
+    save_state(state, connection_path=conn_path)
 
-    # Get sample data
+    # Get sample data (connector already resolved)
     try:
-        connector = get_connector()
         sample = connector.get_table_sample(
             next_table.name,
             schema=next_table.schema_name,
@@ -1248,22 +1284,22 @@ async def _onboarding_approve(
     description: str,
     column_descriptions: dict[str, str] | None = None,
     provider_id: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Approve and save a table description.
 
     Args:
         description: Description of the table
         column_descriptions: Optional dict of column_name -> description
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Approval result
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    state = load_state(provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {"error": "Onboarding not started."}
@@ -1293,7 +1329,7 @@ async def _onboarding_approve(
     # Clear current table
     approved_table = state.current_table
     state.current_table = None
-    save_state(state)
+    save_state(state, connection_path=conn_path)
 
     counts = schema.count_by_status()
     tables_described = counts.get("approved", 0) + counts.get("skipped", 0)
@@ -1302,7 +1338,7 @@ async def _onboarding_approve(
     # If all tables described, advance to domain phase
     if remaining == 0:
         state.phase = OnboardingPhase.DOMAIN
-        save_state(state)
+        save_state(state, connection_path=conn_path)
         gaps_found = _run_schema_gap_scan(provider_id)
 
         next_steps = [
@@ -1356,20 +1392,21 @@ async def _onboarding_approve(
     }
 
 
-async def _onboarding_skip(provider_id: str | None = None) -> dict:
+async def _onboarding_skip(
+    provider_id: str | None = None, connection: str | None = None
+) -> dict:
     """Skip the current table without describing it.
 
     Args:
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Skip result
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    state = load_state(provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {"error": "Onboarding not started."}
@@ -1400,7 +1437,7 @@ async def _onboarding_skip(provider_id: str | None = None) -> dict:
 
     # Clear current table
     state.current_table = None
-    save_state(state)
+    save_state(state, connection_path=conn_path)
 
     counts = schema.count_by_status()
     tables_described = counts.get("approved", 0) + counts.get("skipped", 0)
@@ -1409,7 +1446,7 @@ async def _onboarding_skip(provider_id: str | None = None) -> dict:
     # If all tables described, advance to domain phase
     if remaining == 0:
         state.phase = OnboardingPhase.DOMAIN
-        save_state(state)
+        save_state(state, connection_path=conn_path)
         gaps_found = _run_schema_gap_scan(provider_id)
 
         next_steps = [
@@ -1464,6 +1501,7 @@ async def _onboarding_skip(provider_id: str | None = None) -> dict:
 async def _onboarding_bulk_approve(
     generate_descriptions: bool = True,
     provider_id: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Bulk approve all remaining tables.
 
@@ -1474,16 +1512,15 @@ async def _onboarding_bulk_approve(
     Args:
         generate_descriptions: If True, generate placeholder descriptions
             from table and column names. If False, leave descriptions empty.
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Bulk approval result with count of tables approved
     """
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    state = load_state(provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {"error": "Onboarding not started. Call onboarding_start first."}
@@ -1539,6 +1576,7 @@ async def _onboarding_bulk_approve(
 
     # Clear current table if set
     state.current_table = None
+    # (will be saved below after bulk approval)
 
     # Approve all pending tables
     approved_count = 0
@@ -1574,7 +1612,7 @@ async def _onboarding_bulk_approve(
 
     # Move to next phase
     state.phase = OnboardingPhase.DOMAIN
-    save_state(state)
+    save_state(state, connection_path=conn_path)
 
     # Run deterministic schema gap scan
     gaps_found = _run_schema_gap_scan(provider_id)
@@ -1621,6 +1659,7 @@ async def _onboarding_bulk_approve(
 async def _onboarding_import_descriptions(
     descriptions: str,
     provider_id: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Import table and column descriptions from JSON, YAML, or freeform text.
 
@@ -1636,19 +1675,18 @@ async def _onboarding_import_descriptions(
             - Key-value pairs: "table_name: description"
             - Indented columns: "schema.table\n  col1: description"
             - Markdown tables, CSV-like format, etc.
-        provider_id: Provider ID. Uses configured default if not provided.
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Import result with counts, summary, and any parsing warnings
     """
     from db_mcp.onboarding.description_parser import parse_descriptions
 
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
     # Load current state
-    state = load_state(provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
     if state is None:
         return {
             "imported": False,

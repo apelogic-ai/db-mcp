@@ -166,3 +166,45 @@ class ConnectionRegistry:
         connector = get_connector(str(path))
         self._connectors[cache_key] = connector
         return connector
+
+    # =========================================================================
+    # New multi-connection helpers
+    # =========================================================================
+
+    def get_capabilities(self, name: str | None = None) -> dict[str, Any]:
+        """Get normalized capabilities for a connection (via connector).
+
+        Args:
+            name: Connection name. If None, uses the default.
+        """
+        from db_mcp.connectors import get_connector_capabilities
+
+        connector = self.get_connector(name)
+        return get_connector_capabilities(connector)
+
+    def get_connections_by_type(self, conn_type: str) -> list[ConnectionInfo]:
+        """Return all connections of a given type (sql, api, file, metabase).
+
+        Args:
+            conn_type: Connector type string.
+        """
+        if not self._discovered:
+            self.discover()
+        return [info for info in self._connections.values() if info.type == conn_type]
+
+    def has_capability(self, name: str, capability: str) -> bool:
+        """Check if a connection has a specific capability.
+
+        Args:
+            name: Connection name.
+            capability: Capability key (e.g. 'supports_sql').
+        """
+        try:
+            caps = self.get_capabilities(name)
+            return bool(caps.get(capability, False))
+        except Exception:
+            return False
+
+    def get_default_name(self) -> str:
+        """Return the configured default connection name."""
+        return self._settings.connection_name or self._settings.provider_id or "default"

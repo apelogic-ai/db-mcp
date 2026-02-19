@@ -14,15 +14,20 @@ from db_mcp_models import (
 from db_mcp.onboarding.state import get_connection_path
 
 
-def get_schema_file_path(provider_id: str | None = None) -> Path:
+def get_schema_file_path(
+    provider_id: str | None = None, connection_path: Path | None = None
+) -> Path:
     """Get path to the schema descriptions file.
 
     Args:
         provider_id: Ignored in v2 (kept for backward compatibility)
+        connection_path: Optional explicit connection directory path.
 
     Returns:
         Path to schema/descriptions.yaml
     """
+    if connection_path is not None:
+        return connection_path / "schema" / "descriptions.yaml"
     return get_connection_path() / "schema" / "descriptions.yaml"
 
 

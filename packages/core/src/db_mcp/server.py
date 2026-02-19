@@ -345,28 +345,52 @@ def _strip_validate_sql_from_instructions(instructions: str) -> str:
     return instructions
 
 
+def _build_connection_instructions(all_connections: dict) -> str:
+    """Build instructions section listing all available connections."""
+    if not all_connections:
+        return ""
+
+    lines = ["\n## Available Connections\n"]
+    for name, info in all_connections.items():
+        parts = [f"- **{name}**"]
+        details = []
+        if info.type:
+            details.append(info.type)
+        if info.dialect:
+            details.append(info.dialect)
+        if details:
+            parts.append(f"({', '.join(details)})")
+        if info.is_default:
+            parts.append("← default")
+        if info.description:
+            parts.append(f"— {info.description}")
+        lines.append(" ".join(parts))
+
+    lines.append(
+        "\n**Usage:** Add `connection=\"name\"` to any tool call to target a specific connection."
+    )
+    lines.append(
+        "If omitted and only one connection of the required type exists, it is used automatically."
+    )
+    return "\n".join(lines)
+
+
 def _create_server() -> FastMCP:
     """Create and configure the MCP server based on tool_mode setting."""
+    import yaml as _yaml
+
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
 
-    # Detect connector type + capabilities from connector.yaml
-    # Use the same defaulting logic as get_connector_capabilities() to avoid
-    # registration-time vs runtime mismatches (e.g. API connectors default
-    # supports_validate_sql=False but server.py was defaulting to True).
-    try:
-        from db_mcp.connectors import ConnectorConfig
+    # =========================================================================
+    # Registry-based aggregate capability detection
+    # =========================================================================
+    from db_mcp.registry import ConnectionRegistry
 
-        conn_path = Path(settings.get_effective_connection_path())
-        yaml_path = conn_path / "connector.yaml"
-        _connector_config = ConnectorConfig.from_yaml(yaml_path)
-        connector_type = getattr(_connector_config, "type", "sql")
-        raw_caps = getattr(_connector_config, "capabilities", {}) or {}
-    except Exception:
-        connector_type = "sql"
-        raw_caps = {}
+    registry = ConnectionRegistry.get_instance()
+    all_connections = registry.discover()
 
-    # Apply connector-type-specific defaults (mirrors get_connector_capabilities)
+    # Type-specific capability defaults (mirrors get_connector_capabilities)
     _type_defaults: dict[str, dict[str, Any]] = {
         "sql": {
             "supports_sql": True,
@@ -393,19 +417,81 @@ def _create_server() -> FastMCP:
             "sql_mode": None,
         },
     }
-    connector_caps = dict(_type_defaults.get(connector_type, {}))
-    connector_caps.update(raw_caps)
 
-    is_api = connector_type == "api"
-    supports_sql = connector_caps.get("supports_sql", False)
-    supports_validate = connector_caps.get("supports_validate_sql", False)
-    supports_async_jobs = connector_caps.get("supports_async_jobs", False)
+    if all_connections:
+        # Scan all connections for aggregate capabilities
+        has_sql = False
+        has_api = False
+        has_validate = False
+        has_async_jobs = False
+        has_api_sql = False  # API connectors that support SQL (for api_execute_sql)
+
+        for name, info in all_connections.items():
+            yaml_path = info.path / "connector.yaml"
+            try:
+                with open(yaml_path) as _f:
+                    _yaml_data = _yaml.safe_load(_f) or {}
+            except Exception:
+                _yaml_data = {}
+
+            conn_type = _yaml_data.get("type", "sql")
+            raw_caps = dict(_yaml_data.get("capabilities", {}) or {})
+            merged = dict(_type_defaults.get(conn_type, {}))
+            merged.update(raw_caps)
+
+            if conn_type == "api":
+                has_api = True
+                if merged.get("supports_sql"):
+                    has_api_sql = True
+            if merged.get("supports_sql"):
+                if conn_type != "api":
+                    has_sql = True
+            if merged.get("supports_validate_sql"):
+                has_validate = True
+            if merged.get("supports_async_jobs"):
+                has_async_jobs = True
+
+        # Legacy variables for compat
+        is_api = has_api and not has_sql  # pure API mode (no SQL connections)
+        supports_sql = has_sql
+        supports_validate = has_validate
+        supports_async_jobs = has_async_jobs
+    else:
+        # Legacy single-connection mode: read directly from connector.yaml
+        try:
+            from db_mcp.connectors import ConnectorConfig
+
+            conn_path = Path(settings.get_effective_connection_path())
+            yaml_path = conn_path / "connector.yaml"
+            _connector_config = ConnectorConfig.from_yaml(yaml_path)
+            connector_type = getattr(_connector_config, "type", "sql")
+            raw_caps = getattr(_connector_config, "capabilities", {}) or {}
+        except Exception:
+            connector_type = "sql"
+            raw_caps = {}
+
+        connector_caps = dict(_type_defaults.get(connector_type, {}))
+        connector_caps.update(raw_caps)
+
+        is_api = connector_type == "api"
+        has_api = is_api
+        has_sql = connector_caps.get("supports_sql", False)
+        has_validate = connector_caps.get("supports_validate_sql", False)
+        has_async_jobs = connector_caps.get("supports_async_jobs", False)
+        has_api_sql = is_api and has_sql
+        supports_sql = has_sql
+        supports_validate = has_validate
+        supports_async_jobs = has_async_jobs
 
     instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
 
     # Adapt instructions when validate_sql is not supported
     if not supports_validate:
         instructions = _strip_validate_sql_from_instructions(instructions)
+
+    # Append multi-connection section when multiple connections are configured
+    if len(all_connections) > 1:
+        instructions = instructions + _build_connection_instructions(all_connections)
 
     server = FastMCP(
         name="db-mcp",
@@ -707,15 +793,15 @@ def _create_server() -> FastMCP:
         server.tool(name="export_results")(_export_results)
 
     # =========================================================================
-    # API connector tools - API connectors only
+    # API connector tools - registered when ANY connection is API type
     # =========================================================================
 
-    if is_api:
+    if has_api:
         server.tool(name="api_discover")(_api_discover)
         server.tool(name="api_query")(_api_query)
         server.tool(name="api_mutate")(_api_mutate)
         server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
-        if supports_sql:
+        if has_api_sql:
             server.tool(name="api_execute_sql")(_api_execute_sql)
 
     # =========================================================================
@@ -751,7 +837,7 @@ def _create_server() -> FastMCP:
     # Detailed mode ONLY - schema discovery and query helper tools
     # =========================================================================
 
-    if not is_shell_mode and supports_sql:
+    if not is_shell_mode and (has_sql or has_api):
         # Database introspection tools
         server.tool(name="test_connection")(_test_connection)
         server.tool(name="detect_dialect")(_detect_dialect)

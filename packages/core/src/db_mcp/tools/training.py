@@ -3,9 +3,9 @@
 from db_mcp_models import FeedbackType
 from opentelemetry import trace
 
-from db_mcp.config import get_settings
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.onboarding.state import load_state
+from db_mcp.tools.utils import get_resolved_provider_id
 from db_mcp.training.store import (
     add_example,
     add_feedback,
@@ -16,14 +16,16 @@ from db_mcp.training.store import (
 )
 
 
-async def _query_status() -> dict:
+async def _query_status(connection: str | None = None) -> dict:
     """Get query training status - examples, feedback, and rules counts.
+
+    Args:
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with training phase status
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     # Load current state
     state = load_state(provider_id)
@@ -80,6 +82,7 @@ async def _query_status() -> dict:
 async def _query_generate(
     natural_language: str,
     tables_hint: list[str] | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Generate SQL from natural language query.
 
@@ -90,12 +93,12 @@ async def _query_generate(
     Args:
         natural_language: Natural language description of the query
         tables_hint: Optional list of tables to focus on
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with generated SQL and context
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     # Load schema for context
     schema = load_schema_descriptions(provider_id)
@@ -158,6 +161,7 @@ async def _query_approve(
     tables_used: list[str] | None = None,
     tags: list[str] | None = None,
     notes: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Approve a query and save it as an example.
 
@@ -170,12 +174,12 @@ async def _query_approve(
         tables_used: Tables referenced in the query
         tags: Tags for categorization (e.g., "aggregation", "join", "filter")
         notes: Additional notes about this example
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with approval status
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     result = add_example(
         provider_id=provider_id,
@@ -240,6 +244,7 @@ async def _query_feedback(
     corrected_sql: str | None = None,
     feedback_text: str | None = None,
     tables_involved: list[str] | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Provide feedback on generated SQL.
 
@@ -253,12 +258,12 @@ async def _query_feedback(
         corrected_sql: The correct SQL (required if feedback_type is "corrected")
         feedback_text: Explanation of what was wrong
         tables_involved: Tables referenced
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with feedback status
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     # Validate feedback type
     try:
@@ -330,6 +335,7 @@ async def _query_feedback(
 async def _query_add_rule(
     rule: str,
     category: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Add a business rule to the prompt instructions.
 
@@ -339,12 +345,12 @@ async def _query_add_rule(
     Args:
         rule: The business rule in plain English
         category: Optional category (e.g., "naming", "filter", "join")
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with rule addition status
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     result = add_rule(provider_id, rule)
 
@@ -387,18 +393,19 @@ async def _query_add_rule(
 async def _query_list_examples(
     limit: int = 10,
     tags: list[str] | None = None,
+    connection: str | None = None,
 ) -> dict:
     """List saved query examples.
 
     Args:
         limit: Maximum number of examples to return
         tags: Filter by tags
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with examples list
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     examples = load_examples(provider_id)
 
@@ -426,14 +433,16 @@ async def _query_list_examples(
     }
 
 
-async def _query_list_rules() -> dict:
+async def _query_list_rules(connection: str | None = None) -> dict:
     """List business rules for SQL generation.
+
+    Args:
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with rules list
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     instructions = load_instructions(provider_id)
 
@@ -458,7 +467,7 @@ async def _query_list_rules() -> dict:
 # =============================================================================
 
 
-async def _import_instructions(rules: list[str]) -> dict:
+async def _import_instructions(rules: list[str], connection: str | None = None) -> dict:
     """Import business rules/instructions.
 
     The LLM should read the uploaded file (any format), extract, dedupe,
@@ -466,12 +475,12 @@ async def _import_instructions(rules: list[str]) -> dict:
 
     Args:
         rules: List of business rule strings extracted by the LLM
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with import status and counts
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     if not rules:
         return {"status": "error", "error": "No rules provided"}
@@ -540,7 +549,7 @@ async def _import_instructions(rules: list[str]) -> dict:
         return {"status": "error", "error": result.get("error", "Save failed")}
 
 
-async def _import_examples(examples: list[dict]) -> dict:
+async def _import_examples(examples: list[dict], connection: str | None = None) -> dict:
     """Import query examples.
 
     The LLM should read the uploaded file (any format), extract and dedupe
@@ -554,12 +563,12 @@ async def _import_examples(examples: list[dict]) -> dict:
 
     Args:
         examples: List of example dicts extracted by the LLM
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with import status and counts
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    provider_id = get_resolved_provider_id(connection)
 
     if not examples:
         return {"status": "error", "error": "No examples provided"}

@@ -32,7 +32,6 @@ from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 from sqlalchemy import text
 
-from db_mcp.config import get_settings
 from db_mcp.connectors import get_connector
 from db_mcp.connectors.sql import SQLConnector
 from db_mcp.onboarding.schema_store import load_schema_descriptions
@@ -207,13 +206,23 @@ def _generate_query_uuid(sql: str) -> str:
 
 
 def _execute_query(
-    sql: str, limit: int | None = 1000, query_id: str | None = None
+    sql: str,
+    limit: int | None = 1000,
+    query_id: str | None = None,
+    connection: str | None = None,
 ) -> dict[str, Any]:
     """Execute a SQL query and return results.
 
     Uses OpenTelemetry spans for tracing.
+
+    Args:
+        sql: SQL query to execute.
+        limit: Maximum rows to return.
+        query_id: Optional query ID for tracing.
+        connection: Optional connection name for multi-connection dispatch.
     """
-    settings = get_settings()
+    from db_mcp.tools.utils import resolve_connection
+
     qid = query_id[:8] if query_id else "adhoc"
     sql_preview = sql[:200] + "..." if len(sql) > 200 else sql
 
@@ -228,10 +237,10 @@ def _execute_query(
         start_time = time.time()
 
         try:
-            # Get connector
+            # Resolve connector
             with tracer.start_as_current_span("db_connect") as conn_span:
-                connector = get_connector()
-                conn_span.set_attribute("db.provider", settings.provider_id)
+                connector, conn_name, conn_path = resolve_connection(connection)
+                conn_span.set_attribute("db.provider", conn_name)
 
             # Execute query — branch on connector type
             if isinstance(connector, SQLConnector):
@@ -281,7 +290,7 @@ def _execute_query(
                 "columns": columns,
                 "rows_returned": len(rows),
                 "duration_ms": round(total_duration_ms, 2),
-                "provider_id": settings.provider_id,
+                "provider_id": conn_name,
             }
 
         except Exception as e:
@@ -293,11 +302,18 @@ def _execute_query(
             raise
 
 
-async def _execute_query_background(query_id: str, sql: str) -> None:
+async def _execute_query_background(
+    query_id: str, sql: str, connection: str | None = None
+) -> None:
     """Execute query in background and update query store.
 
     This runs in an asyncio task, allowing the MCP tool to return immediately
     while the query executes.
+
+    Args:
+        query_id: Query identifier in the store.
+        sql: SQL to execute.
+        connection: Connection name for multi-connection dispatch.
     """
     store = get_query_store()
 
@@ -309,7 +325,9 @@ async def _execute_query_background(query_id: str, sql: str) -> None:
         loop = asyncio.get_event_loop()
         from functools import partial
 
-        result = await loop.run_in_executor(None, partial(_execute_query, sql, 1000, query_id))
+        result = await loop.run_in_executor(
+            None, partial(_execute_query, sql, 1000, query_id, connection)
+        )
 
         await store.update_status(
             query_id,
@@ -359,6 +377,7 @@ async def _get_data(
     ctx: Context,
     intent: str,
     tables_hint: list[str] | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Generate and execute SQL from natural language intent.
 
@@ -378,12 +397,14 @@ async def _get_data(
         ctx: MCP Context for sampling and elicitation
         intent: Natural language query description
         tables_hint: Optional tables to focus on
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with query results, or context for client-side generation
     """
-    settings = get_settings()
-    provider_id = settings.provider_id
+    from db_mcp.tools.utils import get_resolved_provider_id
+
+    provider_id = get_resolved_provider_id(connection)
 
     # Check if schema is available
     schema = load_schema_descriptions(provider_id)
@@ -597,7 +618,7 @@ Generate the SQL query that implements this plan.
     # ==========================================================================
     try:
         query_uuid = _generate_query_uuid(generated_sql)
-        result = _execute_query(generated_sql, query_id=query_uuid)
+        result = _execute_query(generated_sql, query_id=query_uuid, connection=connection)
 
         return {
             "status": "success",
@@ -673,7 +694,7 @@ async def _run_sql(
             }
         )
 
-    from db_mcp.connectors import get_connector, get_connector_capabilities
+    from db_mcp.connectors import get_connector_capabilities
     from db_mcp.tools.utils import _resolve_connection_path
 
     connector = get_connector(connection_path=_resolve_connection_path(connection))
@@ -863,8 +884,10 @@ async def _run_sql(
                 }
             )
 
-        # Start background execution
-        asyncio.create_task(_execute_query_background(query_id, sql))
+        # Start background execution (pass stored connection name)
+        asyncio.create_task(
+            _execute_query_background(query_id, sql, connection=query.connection)
+        )
 
         return inject_protocol(
             {
@@ -894,7 +917,7 @@ async def _run_sql(
         await store.update_status(query_id, QueryStatus.RUNNING)
         await _report_progress(ctx, 10, 100)  # 10% - Starting
 
-        result = _execute_query(sql, query_id=query_id)
+        result = _execute_query(sql, query_id=query_id, connection=query.connection)
         await _report_progress(ctx, 80, 100)  # 80% - Query done, processing
 
         # Mark as complete
@@ -968,7 +991,7 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
     Returns:
         Dict with validation results and query_id (if valid)
     """
-    from db_mcp.connectors import get_connector, get_connector_capabilities
+    from db_mcp.connectors import get_connector_capabilities
     from db_mcp.tasks.store import get_query_store
     from db_mcp.tools.utils import _resolve_connection_path
 
@@ -1015,7 +1038,7 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
             }
         )
 
-    # Register validated query
+    # Register validated query (store connection for background execution)
     store = get_query_store()
     query = await store.register_validated(
         sql=sql,
@@ -1023,6 +1046,7 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
         estimated_cost=explain_result.estimated_cost,
         cost_tier=explain_result.cost_tier.value,
         explanation=explain_result.explanation[:5] if explain_result.explanation else [],
+        connection=connection,
     )
 
     return inject_protocol(
@@ -1212,9 +1236,9 @@ async def _export_results(
             "error": error,
         }
 
-    # Execute query
+    # Execute query (pass connection for multi-connection dispatch)
     try:
-        result = _execute_query(sql, limit=10000)  # Higher limit for exports
+        result = _execute_query(sql, limit=10000, connection=connection)
     except Exception as e:
         return {
             "status": "error",

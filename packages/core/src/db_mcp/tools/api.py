@@ -2,11 +2,28 @@
 
 from typing import Any
 
-from db_mcp.config import get_settings
-from db_mcp.connectors import APIConnector, get_connector, get_connector_capabilities
+from db_mcp.connectors import APIConnector, get_connector_capabilities
+from db_mcp.tools.utils import resolve_connection
 
 
-async def _api_sync(endpoint: str | None = None) -> dict:
+def _get_api_connector(connection: str | None) -> tuple[APIConnector | None, dict | None]:
+    """Resolve and validate an API connector.
+
+    Returns:
+        (APIConnector, None) on success, or (None, error_dict) on failure.
+    """
+    try:
+        connector, conn_name, conn_path = resolve_connection(connection, require_type="api")
+    except ValueError as exc:
+        return None, {"error": str(exc)}
+
+    if not isinstance(connector, APIConnector):
+        return None, {"error": "Resolved connection is not an API connector"}
+
+    return connector, None
+
+
+async def _api_sync(endpoint: str | None = None, connection: str | None = None) -> dict:
     """Sync data from API endpoints.
 
     Fetches latest data from configured API endpoints and stores
@@ -14,37 +31,45 @@ async def _api_sync(endpoint: str | None = None) -> dict:
 
     Args:
         endpoint: Optional endpoint name to sync. If not provided, syncs all endpoints.
+        connection: Optional connection name for multi-connection support.
+            If omitted and only one API connection exists, it is used automatically.
 
     Returns:
         Sync results including rows fetched per endpoint and any errors.
     """
-    connector = get_connector()
-    if not isinstance(connector, APIConnector):
-        return {"error": "Active connection is not an API connector"}
+    connector, err = _get_api_connector(connection)
+    if err:
+        return err
     return connector.sync(endpoint_name=endpoint)
 
 
-async def _api_discover() -> dict:
+async def _api_discover(connection: str | None = None) -> dict:
     """Discover API endpoints, pagination, and schema.
 
     Automatically discovers what endpoints are available on the configured API
     by trying OpenAPI/Swagger spec discovery, then falling back to endpoint probing.
     Updates the connection's connector.yaml with discovered endpoints.
 
+    Args:
+        connection: Optional connection name for multi-connection support.
+            If omitted and only one API connection exists, it is used automatically.
+
     Returns:
         Discovery results including endpoints found, strategy used, and any errors.
     """
-    connector = get_connector()
+    try:
+        connector, conn_name, conn_path = resolve_connection(connection, require_type="api")
+    except ValueError as exc:
+        return {"error": str(exc)}
+
     if not isinstance(connector, APIConnector):
-        return {"error": "Active connection is not an API connector"}
+        return {"error": "Resolved connection is not an API connector"}
 
     result = connector.discover()
 
     # Persist updated config to connector.yaml
     if result.get("endpoints_found", 0) > 0:
-        settings = get_settings()
-        conn_path = settings.get_effective_connection_path()
-        yaml_path = f"{conn_path}/connector.yaml"
+        yaml_path = str(conn_path / "connector.yaml")
         connector.save_connector_yaml(yaml_path)
 
     return result
@@ -55,6 +80,7 @@ async def _api_query(
     params: dict[str, str] | None = None,
     max_pages: int = 1,
     id: str | list[str] | None = None,
+    connection: str | None = None,
 ) -> dict[str, Any]:
     """Query a REST API endpoint with parameters.
 
@@ -69,17 +95,19 @@ async def _api_query(
         max_pages: Maximum pages to fetch. Default 1 (single page, fast).
         id: Fetch specific record(s) by ID. Hits the detail endpoint /{id}.
             Pass a single ID string or a list of ID strings.
+        connection: Optional connection name for multi-connection support.
+            If omitted and only one API connection exists, it is used automatically.
 
     Returns:
         {data: [...], rows_returned: int} or {error: "..."}.
     """
-    connector = get_connector()
-    if not isinstance(connector, APIConnector):
-        return {"error": "Active connection is not an API connector"}
+    connector, err = _get_api_connector(connection)
+    if err:
+        return err
     return connector.query_endpoint(endpoint, params, max_pages, id=id)
 
 
-async def _api_execute_sql(sql: str) -> dict[str, Any]:
+async def _api_execute_sql(sql: str, connection: str | None = None) -> dict[str, Any]:
     """Execute SQL on a SQL-like API (Dune, Trino-based services, etc.).
 
     Use this for API connectors with supports_sql=true. The SQL is sent to the
@@ -90,13 +118,15 @@ async def _api_execute_sql(sql: str) -> dict[str, Any]:
 
     Args:
         sql: SQL query to execute (e.g. "SELECT * FROM dex_solana.trades LIMIT 10")
+        connection: Optional connection name for multi-connection support.
+            If omitted and only one API connection exists, it is used automatically.
 
     Returns:
         {status: "success", data: [...], rows_returned: int} or {status: "error", error: "..."}
     """
-    connector = get_connector()
-    if not isinstance(connector, APIConnector):
-        return {"status": "error", "error": "Active connection is not an API connector"}
+    connector, err = _get_api_connector(connection)
+    if err:
+        return {"status": "error", "error": err.get("error", "Unknown error")}
 
     caps = get_connector_capabilities(connector)
     if not caps.get("supports_sql"):
@@ -118,7 +148,7 @@ async def _api_execute_sql(sql: str) -> dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:
+async def _api_describe_endpoint(endpoint: str, connection: str | None = None) -> dict[str, Any]:
     """Describe an API endpoint's available query parameters.
 
     Returns endpoint metadata including available filters, sorts,
@@ -126,13 +156,15 @@ async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:
 
     Args:
         endpoint: Name of the endpoint to describe (e.g. "markets", "events").
+        connection: Optional connection name for multi-connection support.
+            If omitted and only one API connection exists, it is used automatically.
 
     Returns:
         Endpoint metadata including name, path, method, and query_params.
     """
-    connector = get_connector()
-    if not isinstance(connector, APIConnector):
-        return {"error": "Active connection is not an API connector"}
+    connector, err = _get_api_connector(connection)
+    if err:
+        return err
 
     for ep in connector.api_config.endpoints:
         if ep.name == endpoint:
@@ -161,6 +193,7 @@ async def _api_mutate(
     method: str,
     body: dict[str, Any] | None = None,
     params: dict[str, str] | None = None,
+    connection: str | None = None,
 ) -> dict[str, Any]:
     """Create, update, or delete a resource via a REST API endpoint.
 
@@ -175,6 +208,8 @@ async def _api_mutate(
         method: HTTP method — must be POST, PUT, PATCH, or DELETE.
         body: JSON request body (for POST/PUT/PATCH). Optional for DELETE.
         params: Optional query string parameters.
+        connection: Optional connection name for multi-connection support.
+            If omitted and only one API connection exists, it is used automatically.
 
     Returns:
         Raw API response dict, or {error: "..."} on failure.
@@ -187,8 +222,8 @@ async def _api_mutate(
             )
         }
 
-    connector = get_connector()
-    if not isinstance(connector, APIConnector):
-        return {"error": "Active connection is not an API connector"}
+    connector, err = _get_api_connector(connection)
+    if err:
+        return err
 
     return connector.query_endpoint(endpoint, params, body=body, method_override=method_upper)
