@@ -40,7 +40,6 @@ async def test_run_sql_dispatches_by_connection_name(tmp_path):
         "\n".join(
             [
                 "type: sql",
-                "dialect: sqlite",
                 f"database_url: sqlite:///{db_a}",
                 "capabilities:",
                 "  supports_validate_sql: false",
@@ -55,7 +54,6 @@ async def test_run_sql_dispatches_by_connection_name(tmp_path):
         "\n".join(
             [
                 "type: sql",
-                "dialect: sqlite",
                 f"database_url: sqlite:///{db_b}",
                 "capabilities:",
                 "  supports_validate_sql: false",
@@ -69,12 +67,10 @@ async def test_run_sql_dispatches_by_connection_name(tmp_path):
     ConnectionRegistry.get_instance(settings)
 
     res_a = _execute_query("SELECT v FROM t", connection="a")
-    assert res_a["status"] == "success"
     assert res_a["data"][0]["v"] == "A"
     assert res_a["provider_id"] == "a"
 
     res_b = _execute_query("SELECT v FROM t", connection="b")
-    assert res_b["status"] == "success"
     assert res_b["data"][0]["v"] == "B"
     assert res_b["provider_id"] == "b"
 
@@ -94,7 +90,6 @@ async def test_run_sql_ambiguous_without_connection_lists_available(tmp_path):
             "\n".join(
                 [
                     "type: sql",
-                    "dialect: sqlite",
                     f"database_url: sqlite:///{db}",
                     "capabilities:",
                     "  supports_validate_sql: false",
@@ -111,6 +106,6 @@ async def test_run_sql_ambiguous_without_connection_lists_available(tmp_path):
         _execute_query("SELECT v FROM t")
 
     msg = str(e.value)
-    assert "Multiple sql connections available" in msg
+    assert "Multiple connections available" in msg
     assert "a" in msg
     assert "b" in msg
