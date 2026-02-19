@@ -1970,3 +1970,138 @@ class TestAPIMutateTool:
         with patch("db_mcp.tools.api.get_connector", return_value=mock_sql):
             result = asyncio.run(_api_mutate(endpoint="items", method="POST", body={"x": 1}))
         assert "error" in result
+
+
+class TestJWTLoginBody:
+    """Tests for login_body support in jwt_login auth handler."""
+
+    def _make_jwt_connector(self, data_dir, env_file, login_body=None):
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("JWT_USER=admin\nJWT_PASS=secret123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_endpoint="/auth/login",
+                username_env="JWT_USER",
+                password_env="JWT_PASS",
+                token_field="access_token",
+                login_body=login_body,
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        return APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+    def test_login_body_none_by_default(self, data_dir, env_file):
+        """login_body is None by default — backward compat."""
+        from db_mcp.connectors.api import APIAuthConfig
+
+        auth = APIAuthConfig(type="jwt_login", login_endpoint="/auth/login")
+        assert auth.login_body is None
+
+    def test_login_body_merges_extra_fields(self, data_dir, env_file):
+        """login_body fields are merged into the POST payload."""
+        conn = self._make_jwt_connector(
+            data_dir, env_file, login_body={"provider": "db", "refresh": True}
+        )
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "jwt-token-xyz"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            conn._resolve_auth_headers()
+
+        call_kw = mock_post.call_args
+        payload = call_kw.kwargs["json"]
+        assert payload["username"] == "admin"
+        assert payload["password"] == "secret123"
+        assert payload["provider"] == "db"
+        assert payload["refresh"] is True
+
+    def test_login_body_does_not_override_credentials(self, data_dir, env_file):
+        """login_body fields cannot override username or password."""
+        conn = self._make_jwt_connector(
+            data_dir,
+            env_file,
+            login_body={"username": "hacker", "password": "pwned", "provider": "db"},
+        )
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "jwt-token-xyz"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            conn._resolve_auth_headers()
+
+        call_kw = mock_post.call_args
+        payload = call_kw.kwargs["json"]
+        # Credentials must come from config/env, not login_body
+        assert payload["username"] == "admin"
+        assert payload["password"] == "secret123"
+        # Extra field is still present
+        assert payload["provider"] == "db"
+
+    def test_login_body_none_sends_only_credentials(self, data_dir, env_file):
+        """Without login_body, only username and password are sent (no extras)."""
+        conn = self._make_jwt_connector(data_dir, env_file, login_body=None)
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "jwt-token-abc"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            conn._resolve_auth_headers()
+
+        call_kw = mock_post.call_args
+        payload = call_kw.kwargs["json"]
+        assert set(payload.keys()) == {"username", "password"}
+
+    def test_login_body_superset_style(self, data_dir, env_file):
+        """Full Superset-style login with provider and refresh fields."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("SUPERSET_PASSWORD=supersecret\n")
+
+        config = APIConnectorConfig(
+            base_url="https://superset.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_endpoint="/api/v1/security/login",
+                username="admin",
+                password_env="SUPERSET_PASSWORD",
+                token_field="access_token",
+                login_body={"provider": "db", "refresh": True},
+            ),
+            endpoints=[APIEndpointConfig(name="charts", path="/api/v1/chart/")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "superset-jwt-token"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            headers = conn._resolve_auth_headers()
+
+        assert headers["Authorization"] == "Bearer superset-jwt-token"
+        call_kw = mock_post.call_args
+        payload = call_kw.kwargs["json"]
+        assert payload == {
+            "username": "admin",
+            "password": "supersecret",
+            "provider": "db",
+            "refresh": True,
+        }
