@@ -1527,14 +1527,15 @@ class TestJWTLoginAuth:
             conn._resolve_auth_headers()
 
     def test_jwt_login_alias_fields_normalized(self, data_dir, env_file):
-        """login_url/username/password aliases are normalized to canonical fields."""
+        """login_url alias normalised; ${VAR} aliases extract var name into *_env fields."""
         from db_mcp.connectors.api import APIAuthConfig
 
+        # ${VAR} syntax → var name extracted into canonical *_env fields.
         auth = APIAuthConfig(
             type="jwt_login",
             login_url="/auth/token",
-            username="JWT_USER",
-            password="JWT_PASS",
+            username="${JWT_USER}",
+            password="${JWT_PASS}",
         )
 
         assert auth.login_endpoint == "/auth/token"
@@ -1542,8 +1543,26 @@ class TestJWTLoginAuth:
         assert auth.password_env == "JWT_PASS"
         # Alias fields remain set (not cleared)
         assert auth.login_url == "/auth/token"
-        assert auth.username == "JWT_USER"
-        assert auth.password == "JWT_PASS"
+        assert auth.username == "${JWT_USER}"
+        assert auth.password == "${JWT_PASS}"
+
+    def test_jwt_login_alias_literal_leaves_env_empty(self, data_dir, env_file):
+        """Plain literal alias values leave *_env fields empty (no env lookup needed)."""
+        from db_mcp.connectors.api import APIAuthConfig
+
+        auth = APIAuthConfig(
+            type="jwt_login",
+            login_url="/auth/token",
+            username="admin",
+            password="s3cret",
+        )
+
+        assert auth.login_endpoint == "/auth/token"
+        # Literal values are NOT copied to *_env — they will be used as-is.
+        assert auth.username_env == ""
+        assert auth.password_env == ""
+        assert auth.username == "admin"
+        assert auth.password == "s3cret"
 
     def test_jwt_login_alias_fields_do_not_override_canonical(self, data_dir, env_file):
         """Canonical fields take precedence when both are supplied."""
@@ -1564,7 +1583,7 @@ class TestJWTLoginAuth:
         assert auth.password_env == "REAL_PASS"
 
     def test_jwt_login_via_alias_fields_fetches_token(self, data_dir, env_file):
-        """Full auth flow works when connector.yaml uses alias field names."""
+        """Full auth flow works when connector.yaml uses ${VAR} alias field names."""
         from db_mcp.connectors.api import (
             APIAuthConfig,
             APIConnector,
@@ -1579,8 +1598,8 @@ class TestJWTLoginAuth:
             auth=APIAuthConfig(
                 type="jwt_login",
                 login_url="/auth/login",  # alias
-                username="JWT_USER",  # alias
-                password="JWT_PASS",  # alias
+                username="${JWT_USER}",  # ${VAR} alias — resolved from env
+                password="${JWT_PASS}",  # ${VAR} alias — resolved from env
             ),
             endpoints=[APIEndpointConfig(name="items", path="/items")],
         )
@@ -1590,13 +1609,17 @@ class TestJWTLoginAuth:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "tok-xyz"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp):
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
             headers = conn._resolve_auth_headers()
 
         assert headers["Authorization"] == "Bearer tok-xyz"
+        # Verify env vars were actually resolved to their values.
+        call_kw = mock_post.call_args
+        assert call_kw.kwargs["json"]["username"] == "admin"
+        assert call_kw.kwargs["json"]["password"] == "secret123"
 
     def test_load_api_config_accepts_login_url_alias(self):
-        """_load_api_config round-trips a connector.yaml with login_url alias."""
+        """_load_api_config round-trips connector.yaml with ${VAR} alias fields."""
         from db_mcp.connectors import _load_api_config
 
         data = {
@@ -1605,8 +1628,8 @@ class TestJWTLoginAuth:
             "auth": {
                 "type": "jwt_login",
                 "login_url": "/auth/token",
-                "username": "JWT_USER",
-                "password": "JWT_PASS",
+                "username": "${JWT_USER}",
+                "password": "${JWT_PASS}",
                 "token_field": "token",
             },
             "endpoints": [],
@@ -1614,9 +1637,213 @@ class TestJWTLoginAuth:
 
         config = _load_api_config(data)
         assert config.auth.login_endpoint == "/auth/token"
+        # ${VAR} aliases extracted to canonical *_env fields.
         assert config.auth.username_env == "JWT_USER"
         assert config.auth.password_env == "JWT_PASS"
         assert config.auth.token_field == "token"
+
+    def test_load_api_config_literal_username_password(self):
+        """_load_api_config: literal username/password leave *_env empty."""
+        from db_mcp.connectors import _load_api_config
+
+        data = {
+            "type": "api",
+            "base_url": "https://example.com",
+            "auth": {
+                "type": "jwt_login",
+                "login_url": "/auth/token",
+                "username": "admin",
+                "password": "s3cret",
+            },
+            "endpoints": [],
+        }
+
+        config = _load_api_config(data)
+        assert config.auth.username == "admin"
+        assert config.auth.password == "s3cret"
+        # Literal values never get pushed into *_env fields.
+        assert config.auth.username_env == ""
+        assert config.auth.password_env == ""
+
+
+# ---------------------------------------------------------------------------
+# JWT login — literal values vs ${VAR} env references (bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestJWTLoginLiteralValues:
+    """Verify that literal username/password values are used as-is, while
+    ``${VAR_NAME}`` references are resolved from the ``.env`` file."""
+
+    def test_literal_username_and_password(self, data_dir, env_file):
+        """username: admin / password: s3cret — passed straight to login POST."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        # .env has NO 'admin' or 's3cret' keys — should NOT be consulted.
+        env_file.write_text("UNRELATED=value\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_url="/security/login",
+                username="admin",
+                password="s3cret",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "tok-lit"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            headers = conn._resolve_auth_headers()
+
+        assert headers["Authorization"] == "Bearer tok-lit"
+        call_kw = mock_post.call_args
+        # Literal values used verbatim — NOT looked up in env.
+        assert call_kw.kwargs["json"]["username"] == "admin"
+        assert call_kw.kwargs["json"]["password"] == "s3cret"
+
+    def test_mixed_literal_username_and_env_password(self, data_dir, env_file):
+        """username: admin (literal) + password: ${SUPERSET_PASSWORD} (env var)."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("SUPERSET_PASSWORD=supersecret\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_url="/security/login",
+                username="admin",
+                password="${SUPERSET_PASSWORD}",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "tok-mixed"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            conn._resolve_auth_headers()
+
+        call_kw = mock_post.call_args
+        assert call_kw.kwargs["json"]["username"] == "admin"
+        assert call_kw.kwargs["json"]["password"] == "supersecret"
+
+    def test_env_var_reference_resolved_correctly(self, data_dir, env_file):
+        """${VAR} syntax resolves to the env var value, not the literal string."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("MY_USER=alice\nMY_PASS=hunter2\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_url="/auth/token",
+                username="${MY_USER}",
+                password="${MY_PASS}",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "tok-env"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+            conn._resolve_auth_headers()
+
+        call_kw = mock_post.call_args
+        assert call_kw.kwargs["json"]["username"] == "alice"
+        assert call_kw.kwargs["json"]["password"] == "hunter2"
+
+    def test_missing_env_var_in_braces_raises(self, data_dir, env_file):
+        """${MISSING} that is absent from .env raises ValueError."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("")  # empty — no vars at all
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_url="/auth/login",
+                username="admin",
+                password="${MISSING_PASSWORD}",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        with pytest.raises(ValueError, match="MISSING_PASSWORD"):
+            conn._resolve_auth_headers()
+
+    def test_bearer_token_literal(self, data_dir, env_file):
+        """bearer auth supports a literal token via the ``token`` alias field."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+        )
+
+        # No .env needed — token is inline literal.
+        env_file.write_text("")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token="sk-literal-abc123"),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+        headers = conn._resolve_auth_headers()
+
+        assert headers["Authorization"] == "Bearer sk-literal-abc123"
+
+    def test_bearer_token_env_var_reference(self, data_dir, env_file):
+        """bearer auth: ``token: ${MY_TOKEN}`` resolves from env."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+        )
+
+        env_file.write_text("MY_TOKEN=sk-from-env\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token="${MY_TOKEN}"),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+        headers = conn._resolve_auth_headers()
+
+        assert headers["Authorization"] == "Bearer sk-from-env"
 
 
 # ---------------------------------------------------------------------------
