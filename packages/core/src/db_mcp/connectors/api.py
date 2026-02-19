@@ -71,10 +71,10 @@ class APIAuthConfig:
     token_field: str = "access_token"
     # jwt_login alias fields — accepted from connector.yaml for user convenience.
     # __post_init__ normalizes these into the canonical fields above.
-    login_url: str | None = None    # alias for login_endpoint
-    username: str | None = None     # alias for username_env
-    password: str | None = None     # alias for password_env
-    refresh: str | None = None      # reserved: refresh-token endpoint path
+    login_url: str | None = None  # alias for login_endpoint
+    username: str | None = None  # alias for username_env
+    password: str | None = None  # alias for password_env
+    refresh: str | None = None  # reserved: refresh-token endpoint path
 
     def __post_init__(self) -> None:
         """Normalize jwt_login alias fields into their canonical counterparts."""

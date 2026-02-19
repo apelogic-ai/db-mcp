@@ -1551,9 +1551,9 @@ class TestJWTLoginAuth:
 
         auth = APIAuthConfig(
             type="jwt_login",
-            login_endpoint="/auth/login",   # canonical wins
+            login_endpoint="/auth/login",  # canonical wins
             login_url="/should/be/ignored",
-            username_env="REAL_USER",       # canonical wins
+            username_env="REAL_USER",  # canonical wins
             username="IGNORED_USER",
             password_env="REAL_PASS",
             password="IGNORED_PASS",
@@ -1578,9 +1578,9 @@ class TestJWTLoginAuth:
             base_url="https://api.example.com",
             auth=APIAuthConfig(
                 type="jwt_login",
-                login_url="/auth/login",   # alias
-                username="JWT_USER",       # alias
-                password="JWT_PASS",       # alias
+                login_url="/auth/login",  # alias
+                username="JWT_USER",  # alias
+                password="JWT_PASS",  # alias
             ),
             endpoints=[APIEndpointConfig(name="items", path="/items")],
         )
