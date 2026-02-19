@@ -64,11 +64,26 @@ class APIAuthConfig:
     token_env: str = ""  # env var name for the token
     header_name: str = "Authorization"
     param_name: str = "api_key"
-    # jwt_login fields
+    # jwt_login fields (canonical names)
     login_endpoint: str = ""
     username_env: str = ""
     password_env: str = ""
     token_field: str = "access_token"
+    # jwt_login alias fields — accepted from connector.yaml for user convenience.
+    # __post_init__ normalizes these into the canonical fields above.
+    login_url: str | None = None    # alias for login_endpoint
+    username: str | None = None     # alias for username_env
+    password: str | None = None     # alias for password_env
+    refresh: str | None = None      # reserved: refresh-token endpoint path
+
+    def __post_init__(self) -> None:
+        """Normalize jwt_login alias fields into their canonical counterparts."""
+        if self.login_url is not None and not self.login_endpoint:
+            self.login_endpoint = self.login_url
+        if self.username is not None and not self.username_env:
+            self.username_env = self.username
+        if self.password is not None and not self.password_env:
+            self.password_env = self.password
 
 
 @dataclass

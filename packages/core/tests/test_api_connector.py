@@ -1526,6 +1526,98 @@ class TestJWTLoginAuth:
         with pytest.raises(ValueError, match="not found"):
             conn._resolve_auth_headers()
 
+    def test_jwt_login_alias_fields_normalized(self, data_dir, env_file):
+        """login_url/username/password aliases are normalized to canonical fields."""
+        from db_mcp.connectors.api import APIAuthConfig
+
+        auth = APIAuthConfig(
+            type="jwt_login",
+            login_url="/auth/token",
+            username="JWT_USER",
+            password="JWT_PASS",
+        )
+
+        assert auth.login_endpoint == "/auth/token"
+        assert auth.username_env == "JWT_USER"
+        assert auth.password_env == "JWT_PASS"
+        # Alias fields remain set (not cleared)
+        assert auth.login_url == "/auth/token"
+        assert auth.username == "JWT_USER"
+        assert auth.password == "JWT_PASS"
+
+    def test_jwt_login_alias_fields_do_not_override_canonical(self, data_dir, env_file):
+        """Canonical fields take precedence when both are supplied."""
+        from db_mcp.connectors.api import APIAuthConfig
+
+        auth = APIAuthConfig(
+            type="jwt_login",
+            login_endpoint="/auth/login",   # canonical wins
+            login_url="/should/be/ignored",
+            username_env="REAL_USER",       # canonical wins
+            username="IGNORED_USER",
+            password_env="REAL_PASS",
+            password="IGNORED_PASS",
+        )
+
+        assert auth.login_endpoint == "/auth/login"
+        assert auth.username_env == "REAL_USER"
+        assert auth.password_env == "REAL_PASS"
+
+    def test_jwt_login_via_alias_fields_fetches_token(self, data_dir, env_file):
+        """Full auth flow works when connector.yaml uses alias field names."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("JWT_USER=admin\nJWT_PASS=secret123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_url="/auth/login",   # alias
+                username="JWT_USER",       # alias
+                password="JWT_PASS",       # alias
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "tok-xyz"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp):
+            headers = conn._resolve_auth_headers()
+
+        assert headers["Authorization"] == "Bearer tok-xyz"
+
+    def test_load_api_config_accepts_login_url_alias(self):
+        """_load_api_config round-trips a connector.yaml with login_url alias."""
+        from db_mcp.connectors import _load_api_config
+
+        data = {
+            "type": "api",
+            "base_url": "https://example.com",
+            "auth": {
+                "type": "jwt_login",
+                "login_url": "/auth/token",
+                "username": "JWT_USER",
+                "password": "JWT_PASS",
+                "token_field": "token",
+            },
+            "endpoints": [],
+        }
+
+        config = _load_api_config(data)
+        assert config.auth.login_endpoint == "/auth/token"
+        assert config.auth.username_env == "JWT_USER"
+        assert config.auth.password_env == "JWT_PASS"
+        assert config.auth.token_field == "token"
+
 
 # ---------------------------------------------------------------------------
 # Raw response mode for GET endpoints (v0.5.17)
