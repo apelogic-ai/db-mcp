@@ -11,6 +11,11 @@ members = ["packages/core", "packages/models"]
 db-mcp = { workspace = true }
 db-mcp-models = { workspace = true }
 
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=0.24.0",
+]
+
 [tool.ruff]
 line-length = 99
 target-version = "py313"
