@@ -620,7 +620,7 @@ wheels = [
 
 [[package]]
 name = "db-mcp"
-version = "0.5.18"
+version = "0.5.20"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "bicp-agent" },
@@ -715,6 +715,16 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.0.0" }]
 name = "db-mcp-workspace"
 version = "0.3.0"
 source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest-asyncio", specifier = ">=0.24.0" }]
 
 [[package]]
 name = "diskcache"
