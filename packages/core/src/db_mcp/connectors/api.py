@@ -114,6 +114,7 @@ class APIAuthConfig:
     login_url: str | None = None  # alias for login_endpoint
     username: str | None = None  # literal value OR ${VAR_NAME} reference
     password: str | None = None  # literal value OR ${VAR_NAME} reference
+    login_body: dict[str, Any] | None = None  # Extra fields merged into JWT login payload
     # bearer / header token convenience alias — same literal-or-${VAR} semantics.
     token: str | None = None  # alias for token_env; supports literal or ${VAR_NAME}
     refresh: str | None = None  # reserved: refresh-token endpoint path
@@ -285,9 +286,15 @@ class APIConnector(FileConnector):
             password = auth.password or ""
 
         login_url = self.api_config.base_url.rstrip("/") + auth.login_endpoint
+        payload: dict[str, Any] = {"username": username, "password": password}
+        if auth.login_body:
+            payload.update(auth.login_body)
+            # Ensure username/password are not overridden by login_body
+            payload["username"] = username
+            payload["password"] = password
         resp = requests.post(
             login_url,
-            json={"username": username, "password": password},
+            json=payload,
             timeout=30,
         )
         resp.raise_for_status()
