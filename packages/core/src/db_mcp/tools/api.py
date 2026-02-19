@@ -118,41 +118,6 @@ async def _api_execute_sql(sql: str) -> dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-async def _api_mutate(
-    endpoint: str,
-    method: str,
-    body: dict[str, Any],
-    params: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Execute a mutating API request (POST/PUT/PATCH/DELETE).
-
-    Sends a request with a JSON body to the specified endpoint.
-    Returns the raw response from the API.
-
-    Args:
-        endpoint: Name of the endpoint to call (e.g. "users", "orders").
-        method: HTTP method — must be POST, PUT, PATCH, or DELETE.
-        body: JSON request body to send.
-        params: Optional query string parameters.
-
-    Returns:
-        Raw response from the API endpoint, or {error: "..."} on failure.
-    """
-    allowed_methods = {"POST", "PUT", "PATCH", "DELETE"}
-    method_upper = method.upper()
-    if method_upper not in allowed_methods:
-        return {
-            "error": f"Method {method} not allowed for mutate. "
-            f"Use one of: {', '.join(sorted(allowed_methods))}"
-        }
-
-    connector = get_connector()
-    if not isinstance(connector, APIConnector):
-        return {"error": "Active connection is not an API connector"}
-
-    return connector.query_endpoint(endpoint, params, body=body, method_override=method_upper)
-
-
 async def _api_describe_endpoint(endpoint: str) -> dict[str, Any]:
     """Describe an API endpoint's available query parameters.
 
