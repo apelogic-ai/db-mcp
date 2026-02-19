@@ -39,15 +39,21 @@ def get_provider_dir(provider_id: str | None = None) -> Path:
     return get_connection_path()
 
 
-def get_state_file_path(provider_id: str | None = None) -> Path:
+def get_state_file_path(
+    provider_id: str | None = None, connection_path: Path | None = None
+) -> Path:
     """Get path to the onboarding state file.
 
     Args:
         provider_id: Ignored in v2 (kept for backward compatibility)
+        connection_path: Optional explicit connection directory path.
+            When provided, overrides the active settings path.
 
     Returns:
         Path to state YAML file
     """
+    if connection_path is not None:
+        return connection_path / "state.yaml"
     return get_connection_path() / "state.yaml"
 
 
@@ -67,18 +73,20 @@ def create_initial_state(provider_id: str) -> OnboardingState:
     )
 
 
-def save_state(state: OnboardingState) -> dict:
+def save_state(state: OnboardingState, connection_path: Path | None = None) -> dict:
     """Save onboarding state to YAML file.
 
     Args:
         state: OnboardingState to save
+        connection_path: Optional explicit connection directory path.
+            When provided, overrides the active settings path.
 
     Returns:
         Dict with save status
     """
     try:
         # Ensure connection directory exists
-        conn_path = get_connection_path()
+        conn_path = connection_path or get_connection_path()
         conn_path.mkdir(parents=True, exist_ok=True)
 
         # Update timestamp
@@ -88,7 +96,7 @@ def save_state(state: OnboardingState) -> dict:
         state_dict = state.model_dump(mode="json")
 
         # Write to file
-        state_file = get_state_file_path()
+        state_file = get_state_file_path(connection_path=conn_path)
         with open(state_file, "w") as f:
             yaml.dump(state_dict, f, default_flow_style=False, sort_keys=False)
 
@@ -107,7 +115,9 @@ def save_state(state: OnboardingState) -> dict:
         }
 
 
-def load_state(provider_id: str | None = None) -> OnboardingState | None:
+def load_state(
+    provider_id: str | None = None, connection_path: Path | None = None
+) -> OnboardingState | None:
     """Load onboarding state from YAML file.
 
     If state file doesn't exist but schema/domain files do (e.g., after
@@ -115,18 +125,20 @@ def load_state(provider_id: str | None = None) -> OnboardingState | None:
 
     Args:
         provider_id: Ignored in v2 (kept for backward compatibility)
+        connection_path: Optional explicit connection directory path.
+            When provided, overrides the active settings path.
 
     Returns:
         OnboardingState if found or recovered, None otherwise
     """
-    state_file = get_state_file_path()
+    state_file = get_state_file_path(connection_path=connection_path)
 
     if not state_file.exists():
         # Try to recover state from existing files (e.g., after git clone)
-        recovered = _recover_state_from_files()
+        recovered = _recover_state_from_files(connection_path=connection_path)
         if recovered:
             # Save the recovered state
-            save_state(recovered)
+            save_state(recovered, connection_path=connection_path)
             logger.info("Recovered onboarding state from existing files")
         return recovered
 
@@ -139,16 +151,21 @@ def load_state(provider_id: str | None = None) -> OnboardingState | None:
         return None
 
 
-def _recover_state_from_files() -> OnboardingState | None:
+def _recover_state_from_files(
+    connection_path: Path | None = None,
+) -> OnboardingState | None:
     """Attempt to recover onboarding state from existing files.
 
     This handles the case where a connection was cloned from git
     (state.yaml is gitignored) but schema/domain files exist.
 
+    Args:
+        connection_path: Optional explicit connection directory path.
+
     Returns:
         Recovered OnboardingState or None if no files found
     """
-    conn_path = get_connection_path()
+    conn_path = connection_path or get_connection_path()
 
     # Check what files exist
     schema_file = conn_path / "schema" / "descriptions.yaml"
@@ -208,17 +225,20 @@ def _recover_state_from_files() -> OnboardingState | None:
     )
 
 
-def delete_state(provider_id: str | None = None) -> dict:
+def delete_state(
+    provider_id: str | None = None, connection_path: Path | None = None
+) -> dict:
     """Delete onboarding state file.
 
     Args:
         provider_id: Ignored in v2 (kept for backward compatibility)
+        connection_path: Optional explicit connection directory path.
 
     Returns:
         Dict with delete status
     """
-    state_file = get_state_file_path()
-    conn_path = get_connection_path()
+    state_file = get_state_file_path(connection_path=connection_path)
+    conn_path = connection_path or get_connection_path()
 
     if not state_file.exists():
         return {

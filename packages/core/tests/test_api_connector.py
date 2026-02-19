@@ -1903,11 +1903,13 @@ class TestAPIMutateTool:
 
     def test_api_mutate_post(self, mock_api_connector):
         """api_mutate POST calls query_endpoint correctly."""
+        from pathlib import Path
+
         from db_mcp.tools.api import _api_mutate
 
         with patch(
-            "db_mcp.tools.api.get_connector",
-            return_value=mock_api_connector,
+            "db_mcp.tools.api.resolve_connection",
+            return_value=(mock_api_connector, "test-api", Path("/tmp/test")),
         ):
             asyncio.run(
                 _api_mutate(
@@ -1930,22 +1932,29 @@ class TestAPIMutateTool:
 
     def test_api_mutate_accepts_valid_methods(self, mock_api_connector):
         """api_mutate accepts POST, PUT, PATCH, DELETE."""
+        from pathlib import Path
+
         from db_mcp.tools.api import _api_mutate
 
         for method in ["POST", "PUT", "PATCH", "DELETE"]:
             mock_api_connector.reset_mock()
             mock_api_connector.query_endpoint.return_value = {"data": {}, "rows_returned": 0}
-            with patch("db_mcp.tools.api.get_connector", return_value=mock_api_connector):
+            with patch(
+                "db_mcp.tools.api.resolve_connection",
+                return_value=(mock_api_connector, "test-api", Path("/tmp/test")),
+            ):
                 result = asyncio.run(_api_mutate(endpoint="items", method=method, body={"x": 1}))
             assert "error" not in result
 
     def test_api_mutate_passes_params(self, mock_api_connector):
         """api_mutate passes optional params through."""
+        from pathlib import Path
+
         from db_mcp.tools.api import _api_mutate
 
         with patch(
-            "db_mcp.tools.api.get_connector",
-            return_value=mock_api_connector,
+            "db_mcp.tools.api.resolve_connection",
+            return_value=(mock_api_connector, "test-api", Path("/tmp/test")),
         ):
             asyncio.run(
                 _api_mutate(
@@ -1961,13 +1970,15 @@ class TestAPIMutateTool:
         )
 
     def test_api_mutate_non_api_connector_errors(self):
-        """api_mutate errors if connector is not APIConnector."""
+        """api_mutate errors if connector is not APIConnector (resolve_connection fails)."""
         from db_mcp.tools.api import _api_mutate
 
-        mock_sql = MagicMock()
-        mock_sql.__class__.__name__ = "SQLConnector"
-
-        with patch("db_mcp.tools.api.get_connector", return_value=mock_sql):
+        # In the new design, resolve_connection(require_type="api") raises ValueError
+        # if no API connection is available
+        with patch(
+            "db_mcp.tools.api.resolve_connection",
+            side_effect=ValueError("No connections of type 'api' found."),
+        ):
             result = asyncio.run(_api_mutate(endpoint="items", method="POST", body={"x": 1}))
         assert "error" in result
 

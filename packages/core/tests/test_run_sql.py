@@ -31,7 +31,7 @@ async def test_run_sql_requires_validate_when_supported():
 @pytest.mark.asyncio
 async def test_run_sql_allows_direct_sql_for_api_sync():
     with (
-        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
         patch(
             "db_mcp.connectors.get_connector_capabilities",
             return_value={
@@ -53,7 +53,7 @@ async def test_run_sql_allows_direct_sql_for_api_sync():
 async def test_run_sql_allows_direct_sql_for_standard_connector():
     """Standard SQL connectors (no sql_mode) should support direct SQL when validate disabled."""
     with (
-        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
         patch(
             "db_mcp.connectors.get_connector_capabilities",
             return_value={
@@ -75,7 +75,7 @@ async def test_run_sql_allows_direct_sql_for_standard_connector():
 async def test_run_sql_allows_direct_sql_for_engine_mode():
     """Engine mode SQL connectors should support direct SQL when validate disabled."""
     with (
-        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
         patch(
             "db_mcp.connectors.get_connector_capabilities",
             return_value={
@@ -97,7 +97,7 @@ async def test_run_sql_allows_direct_sql_for_engine_mode():
 async def test_run_sql_direct_sql_response_no_validate_mention():
     """Success response must not tell user to call validate_sql."""
     with (
-        patch("db_mcp.connectors.get_connector", return_value=_FakeSQLConnector()),
+        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
         patch(
             "db_mcp.connectors.get_connector_capabilities",
             return_value={

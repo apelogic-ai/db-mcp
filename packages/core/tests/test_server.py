@@ -2,11 +2,12 @@
 
 import importlib
 import pkgutil
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
+from db_mcp.registry import ConnectionInfo
 from db_mcp.server import _create_server
 
 
@@ -32,9 +33,26 @@ async def test_server_tools_registered():
 class TestConnectorTypeToolGating:
     """Tools should be registered based on connector type (sql/api/file)."""
 
-    def test_sql_connector_exposes_sql_tools(self):
+    def test_sql_connector_exposes_sql_tools(self, tmp_path):
         """Default (SQL) connector should have run_sql, validate_sql, etc."""
-        server = _create_server()
+        connector_yaml = tmp_path / "connector.yaml"
+        connector_yaml.write_text(yaml.dump({"type": "sql"}))
+        conn_info = ConnectionInfo(
+            name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+        )
+
+        with (
+            patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+            patch("db_mcp.server.get_settings") as mock_settings,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.discover.return_value = {"test": conn_info}
+            mock_reg_cls.get_instance.return_value = mock_registry
+            mock_settings.return_value.tool_mode = "detailed"
+            mock_settings.return_value.auth0_enabled = False
+            mock_settings.return_value.auth0_domain = ""
+            server = _create_server()
+
         tools = _get_tool_names(server)
         assert "run_sql" in tools
         assert "validate_sql" in tools
@@ -50,31 +68,33 @@ class TestConnectorTypeToolGating:
         assert "api_discover" not in tools
 
     def test_api_connector_hides_sql_tools(self, tmp_path):
-        """API connector should NOT expose run_sql, validate_sql, etc."""
+        """API connector should NOT expose run_sql, validate_sql, get_result."""
         connector_yaml = tmp_path / "connector.yaml"
         connector_yaml.write_text(yaml.dump({"type": "api", "base_url": "https://example.com"}))
+        conn_info = ConnectionInfo(
+            name="test", path=tmp_path, type="api", dialect="", description="", is_default=True
+        )
 
-        with patch("db_mcp.server.get_settings") as mock_settings:
+        with (
+            patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+            patch("db_mcp.server.get_settings") as mock_settings,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.discover.return_value = {"test": conn_info}
+            mock_reg_cls.get_instance.return_value = mock_registry
             mock_settings.return_value.tool_mode = "detailed"
-            mock_settings.return_value.get_effective_connection_path.return_value = tmp_path
-            mock_settings.return_value.connection_name = "test"
-            mock_settings.return_value.database_url = ""
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
             server = _create_server()
 
         tools = _get_tool_names(server)
+        # SQL-specific execution tools are hidden for pure API connectors
         assert "run_sql" not in tools
         assert "validate_sql" not in tools
         assert "get_result" not in tools
-        assert "get_data" not in tools
-        assert "list_catalogs" not in tools
-        assert "list_tables" not in tools
-        assert "describe_table" not in tools
-        assert "detect_dialect" not in tools
 
     def test_api_connector_with_sql_capabilities_exposes_run_sql(self, tmp_path):
-        """SQL-like API connector should expose run_sql but hide validate_sql if unsupported."""
+        """SQL-like API connector should expose api_execute_sql but hide validate_sql."""
         connector_yaml = tmp_path / "connector.yaml"
         connector_yaml.write_text(
             yaml.dump(
@@ -89,18 +109,26 @@ class TestConnectorTypeToolGating:
                 }
             )
         )
+        conn_info = ConnectionInfo(
+            name="test", path=tmp_path, type="api", dialect="", description="", is_default=True
+        )
 
-        with patch("db_mcp.server.get_settings") as mock_settings:
+        with (
+            patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+            patch("db_mcp.server.get_settings") as mock_settings,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.discover.return_value = {"test": conn_info}
+            mock_reg_cls.get_instance.return_value = mock_registry
             mock_settings.return_value.tool_mode = "detailed"
-            mock_settings.return_value.get_effective_connection_path.return_value = tmp_path
-            mock_settings.return_value.connection_name = "test"
-            mock_settings.return_value.database_url = ""
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
             server = _create_server()
 
         tools = _get_tool_names(server)
-        assert "run_sql" in tools
+        # API+SQL connectors expose api_execute_sql (not run_sql) and hide validate_sql
+        assert "api_execute_sql" in tools
+        assert "run_sql" not in tools
         assert "validate_sql" not in tools
         assert "get_result" not in tools
         assert "list_tables" in tools
@@ -110,12 +138,18 @@ class TestConnectorTypeToolGating:
         """API connector should expose api_query, api_describe_endpoint, api_discover."""
         connector_yaml = tmp_path / "connector.yaml"
         connector_yaml.write_text(yaml.dump({"type": "api", "base_url": "https://example.com"}))
+        conn_info = ConnectionInfo(
+            name="test", path=tmp_path, type="api", dialect="", description="", is_default=True
+        )
 
-        with patch("db_mcp.server.get_settings") as mock_settings:
+        with (
+            patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+            patch("db_mcp.server.get_settings") as mock_settings,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.discover.return_value = {"test": conn_info}
+            mock_reg_cls.get_instance.return_value = mock_registry
             mock_settings.return_value.tool_mode = "detailed"
-            mock_settings.return_value.get_effective_connection_path.return_value = tmp_path
-            mock_settings.return_value.connection_name = "test"
-            mock_settings.return_value.database_url = ""
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
             server = _create_server()

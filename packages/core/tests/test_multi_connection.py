@@ -19,21 +19,21 @@ class TestResolveConnectionPath:
     def test_resolves_with_connections_dir_setting(self):
         mock_settings = MagicMock()
         mock_settings.connections_dir = "/custom/connections"
-        with patch("db_mcp.config.get_settings", return_value=mock_settings):
+        with patch("db_mcp.tools.utils.get_settings", return_value=mock_settings):
             result = _resolve_connection_path("prod")
         assert result == str(Path("/custom/connections/prod"))
 
     def test_resolves_with_default_base(self):
         mock_settings = MagicMock()
         mock_settings.connections_dir = ""
-        with patch("db_mcp.config.get_settings", return_value=mock_settings):
+        with patch("db_mcp.tools.utils.get_settings", return_value=mock_settings):
             result = _resolve_connection_path("staging")
         assert result == str(Path.home() / ".db-mcp" / "connections" / "staging")
 
     def test_resolves_with_none_connections_dir(self):
         mock_settings = MagicMock()
         mock_settings.connections_dir = None
-        with patch("db_mcp.config.get_settings", return_value=mock_settings):
+        with patch("db_mcp.tools.utils.get_settings", return_value=mock_settings):
             result = _resolve_connection_path("dev")
         assert result == str(Path.home() / ".db-mcp" / "connections" / "dev")
 
@@ -128,7 +128,7 @@ class TestDatabaseToolsConnection:
 class TestGenerationToolsConnection:
     """Test that generation tools pass connection_path through."""
 
-    @patch("db_mcp.connectors.get_connector")
+    @patch("db_mcp.tools.generation.get_connector")
     @patch("db_mcp.connectors.get_connector_capabilities")
     @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
     @patch("db_mcp.tools.generation.explain_sql")

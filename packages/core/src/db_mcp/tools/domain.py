@@ -357,22 +357,36 @@ def _generate_domain_model_content(schema: SchemaDescriptions) -> str:
     return "\n".join(lines)
 
 
-async def _domain_status(provider_id: str | None = None) -> dict:
+async def _domain_status(
+    provider_id: str | None = None, connection: str | None = None
+) -> dict:
     """Get current domain model status.
 
     Args:
-        provider_id: Provider ID (deprecated, kept for compatibility).
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Domain model status and content if available
     """
-    state = load_state(provider_id)
+    from db_mcp.tools.utils import get_resolved_provider_id
+
+    if connection is not None:
+        provider_id = get_resolved_provider_id(connection)
+        from db_mcp.registry import ConnectionRegistry
+
+        registry = ConnectionRegistry.get_instance()
+        conn_path = registry.get_connection_path(connection)
+    else:
+        conn_path = None
+
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {"error": "Onboarding not started."}
 
     # Check if domain model file exists
-    domain_file = get_connection_path() / "domain" / "model.md"
+    domain_file = (conn_path or get_connection_path()) / "domain" / "model.md"
 
     settings = get_settings()
     result = {
@@ -392,19 +406,33 @@ async def _domain_status(provider_id: str | None = None) -> dict:
     return result
 
 
-async def _domain_generate(provider_id: str | None = None) -> dict:
+async def _domain_generate(
+    provider_id: str | None = None, connection: str | None = None
+) -> dict:
     """Generate domain model from schema descriptions.
 
     Creates a markdown document describing the business domain based on
     the schema descriptions file.
 
     Args:
-        provider_id: Provider ID (deprecated, kept for compatibility).
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Generated domain model content for review
     """
-    state = load_state(provider_id)
+    from db_mcp.tools.utils import get_resolved_provider_id
+
+    if connection is not None:
+        provider_id = get_resolved_provider_id(connection)
+        from db_mcp.registry import ConnectionRegistry
+
+        registry = ConnectionRegistry.get_instance()
+        conn_path = registry.get_connection_path(connection)
+    else:
+        conn_path = None
+
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {"error": "Onboarding not started. Call onboarding_start first."}
@@ -430,7 +458,7 @@ async def _domain_generate(provider_id: str | None = None) -> dict:
     # Store as pending for approval
     state.pending_domain_model = content
     state.domain_model_generated = True
-    save_state(state)
+    save_state(state, connection_path=conn_path)
 
     counts = schema.count_by_status()
     settings = get_settings()
@@ -448,23 +476,37 @@ async def _domain_generate(provider_id: str | None = None) -> dict:
 async def _domain_approve(
     content: str | None = None,
     provider_id: str | None = None,
+    connection: str | None = None,
 ) -> dict:
     """Approve and save the domain model.
 
     Args:
         content: Optional edited content. If not provided, uses the pending content.
-        provider_id: Provider ID (deprecated, kept for compatibility).
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Approval result with file path
     """
-    state = load_state(provider_id)
+    from db_mcp.tools.utils import get_resolved_provider_id
+
+    if connection is not None:
+        provider_id = get_resolved_provider_id(connection)
+        from db_mcp.registry import ConnectionRegistry
+
+        registry = ConnectionRegistry.get_instance()
+        conn_path = registry.get_connection_path(connection)
+    else:
+        conn_path = None
+
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {"error": "Onboarding not started."}
 
     settings = get_settings()
-    domain_dir = get_connection_path() / "domain"
+    base_path = conn_path or get_connection_path()
+    domain_dir = base_path / "domain"
     domain_file = domain_dir / "model.md"
 
     # Idempotency check: if already approved and no new content, return success
@@ -491,7 +533,7 @@ async def _domain_approve(
     state.pending_domain_model = None
     state.domain_model_approved = True
     state.phase = OnboardingPhase.BUSINESS_RULES
-    save_state(state)
+    save_state(state, connection_path=conn_path)
 
     return {
         "approved": True,
@@ -503,16 +545,28 @@ async def _domain_approve(
     }
 
 
-async def _domain_skip(provider_id: str | None = None) -> dict:
+async def _domain_skip(provider_id: str | None = None, connection: str | None = None) -> dict:
     """Skip domain model generation and move to next phase.
 
     Args:
-        provider_id: Provider ID (deprecated, kept for compatibility).
+        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Optional connection name for multi-connection support.
 
     Returns:
         Skip result
     """
-    state = load_state(provider_id)
+    from db_mcp.tools.utils import get_resolved_provider_id
+
+    if connection is not None:
+        provider_id = get_resolved_provider_id(connection)
+        from db_mcp.registry import ConnectionRegistry
+
+        registry = ConnectionRegistry.get_instance()
+        conn_path = registry.get_connection_path(connection)
+    else:
+        conn_path = None
+
+    state = load_state(provider_id, connection_path=conn_path)
 
     if state is None:
         return {"error": "Onboarding not started."}
@@ -523,7 +577,7 @@ async def _domain_skip(provider_id: str | None = None) -> dict:
     # Skip to next phase
     state.pending_domain_model = None
     state.phase = OnboardingPhase.BUSINESS_RULES
-    save_state(state)
+    save_state(state, connection_path=conn_path)
 
     settings = get_settings()
     return {
