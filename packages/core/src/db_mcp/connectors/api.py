@@ -15,6 +15,41 @@ import yaml
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig
 
 # ---------------------------------------------------------------------------
+# Auth value resolution
+# ---------------------------------------------------------------------------
+
+# Matches ${VAR_NAME} — the only syntax that triggers env var lookup.
+_ENV_VAR_RE = re.compile(r"^\$\{([^}]+)\}$")
+
+
+def _resolve_env_value(raw: str, env: dict[str, str]) -> str:
+    """Resolve an auth config value: literal string or ``${VAR_NAME}`` env reference.
+
+    Rules:
+    - If *raw* matches ``${VAR_NAME}``, look up ``VAR_NAME`` in *env* and return
+      its value (raises ``ValueError`` when the variable is missing).
+    - Otherwise, return *raw* as-is — it is treated as a literal string.
+
+    Examples::
+
+        _resolve_env_value("admin", env)              # → "admin"  (literal)
+        _resolve_env_value("${SUPERSET_PASSWORD}", env)  # → env["SUPERSET_PASSWORD"]
+    """
+    if not raw:
+        return ""
+    m = _ENV_VAR_RE.match(raw)
+    if m:
+        var_name = m.group(1)
+        if var_name not in env:
+            raise ValueError(
+                f"Auth env var '{var_name}' not found in .env file. "
+                f"Add {var_name}=<value> to your .env file."
+            )
+        return env[var_name]
+    return raw  # literal — use as-is
+
+
+# ---------------------------------------------------------------------------
 # Config dataclasses
 # ---------------------------------------------------------------------------
 
@@ -61,29 +96,56 @@ class APIAuthConfig:
     """Authentication configuration."""
 
     type: str = "bearer"  # bearer | header | query_param | jwt_login
-    token_env: str = ""  # env var name for the token
+    token_env: str = ""  # env var name for the token (always resolved as env var name)
     header_name: str = "Authorization"
     param_name: str = "api_key"
     # jwt_login fields (canonical names)
     login_endpoint: str = ""
-    username_env: str = ""
-    password_env: str = ""
+    username_env: str = ""  # explicit env var name for username (always resolved as env var name)
+    password_env: str = ""  # explicit env var name for password (always resolved as env var name)
     token_field: str = "access_token"
-    # jwt_login alias fields — accepted from connector.yaml for user convenience.
-    # __post_init__ normalizes these into the canonical fields above.
+    # Alias / convenience fields — accepted from connector.yaml.
+    # __post_init__ normalizes login_url → login_endpoint.
+    # username / password support BOTH literal values and ${VAR_NAME} references:
+    #   username: admin            → literal "admin"
+    #   username: ${MY_USER_ENV}   → resolved from .env at login time
+    # If the value matches ${VAR_NAME}, __post_init__ extracts the var name into
+    # username_env / password_env so the canonical lookup path is used.
     login_url: str | None = None  # alias for login_endpoint
-    username: str | None = None  # alias for username_env
-    password: str | None = None  # alias for password_env
+    username: str | None = None  # literal value OR ${VAR_NAME} reference
+    password: str | None = None  # literal value OR ${VAR_NAME} reference
+    # bearer / header token convenience alias — same literal-or-${VAR} semantics.
+    token: str | None = None  # alias for token_env; supports literal or ${VAR_NAME}
     refresh: str | None = None  # reserved: refresh-token endpoint path
 
     def __post_init__(self) -> None:
-        """Normalize jwt_login alias fields into their canonical counterparts."""
+        """Normalize alias fields.
+
+        - ``login_url`` is always copied to ``login_endpoint`` (it is a URL, never
+          an env var reference).
+        - ``username`` / ``password`` / ``token``: if the value matches ``${VAR}``,
+          extract the var name into the canonical ``*_env`` field so the existing
+          env-lookup path is used.  If the value is a plain string (literal), leave
+          the ``*_env`` field empty — ``_jwt_login`` / ``_resolve_auth_headers`` will
+          fall back to the alias field directly.
+        - Canonical fields (``username_env``, ``password_env``, ``token_env``) always
+          win; alias fields never override them.
+        """
         if self.login_url is not None and not self.login_endpoint:
             self.login_endpoint = self.login_url
-        if self.username is not None and not self.username_env:
-            self.username_env = self.username
-        if self.password is not None and not self.password_env:
-            self.password_env = self.password
+
+        for alias_attr, env_attr in (
+            ("username", "username_env"),
+            ("password", "password_env"),
+            ("token", "token_env"),
+        ):
+            alias_val = getattr(self, alias_attr)
+            if alias_val is not None and not getattr(self, env_attr):
+                m = _ENV_VAR_RE.match(alias_val)
+                if m:
+                    # ${VAR_NAME} → extract and store as env var name
+                    setattr(self, env_attr, m.group(1))
+                # else: plain literal — leave *_env empty, use alias field directly
 
 
 @dataclass
@@ -159,20 +221,25 @@ class APIConnector(FileConnector):
             return {"Authorization": f"Bearer {self._jwt_token}"}
 
         env = self._load_env()
-        token_env = self.api_config.auth.token_env
+        auth = self.api_config.auth
+        token_env = auth.token_env
 
-        if token_env and token_env not in env:
-            raise ValueError(
-                f"Auth token env var '{token_env}' not found in .env file. "
-                f"Add {token_env}=<your-token> to your .env file."
-            )
-
-        token = env.get(token_env, "")
+        if token_env:
+            # Explicit env var name — validate and look up.
+            if token_env not in env:
+                raise ValueError(
+                    f"Auth token env var '{token_env}' not found in .env file. "
+                    f"Add {token_env}=<your-token> to your .env file."
+                )
+            token = env[token_env]
+        else:
+            # Fall back to ``token`` alias field (literal or already-resolved by __post_init__).
+            token = auth.token or ""
 
         if auth_type == "bearer":
             return {"Authorization": f"Bearer {token}"}
         elif auth_type == "header":
-            return {self.api_config.auth.header_name: token}
+            return {auth.header_name: token}
         elif auth_type == "query_param":
             # Query params handled in _build_params, not headers
             return {}
@@ -180,23 +247,42 @@ class APIConnector(FileConnector):
             return {}
 
     def _jwt_login(self) -> None:
-        """Perform JWT login: POST creds to login endpoint, cache token."""
+        """Perform JWT login: POST creds to login endpoint, cache token.
+
+        Credential resolution follows these rules (same for username and password):
+
+        1. If ``username_env`` is set (either directly in config or extracted from a
+           ``${VAR}`` alias by ``__post_init__``), treat it as an env var *name* and
+           look it up in the ``.env`` file.
+        2. Otherwise fall back to the ``username`` field itself as a *literal* string.
+
+        This means ``username: admin`` in connector.yaml passes "admin" directly,
+        while ``username: ${SUPERSET_USER}`` resolves to the env var value.
+        """
         auth = self.api_config.auth
         env = self._load_env()
 
-        if auth.username_env and auth.username_env not in env:
-            raise ValueError(
-                f"JWT username env var '{auth.username_env}' not found in .env file. "
-                f"Add {auth.username_env}=<username> to your .env file."
-            )
-        if auth.password_env and auth.password_env not in env:
-            raise ValueError(
-                f"JWT password env var '{auth.password_env}' not found in .env file. "
-                f"Add {auth.password_env}=<password> to your .env file."
-            )
+        # -- resolve username --
+        if auth.username_env:
+            if auth.username_env not in env:
+                raise ValueError(
+                    f"JWT username env var '{auth.username_env}' not found in .env file. "
+                    f"Add {auth.username_env}=<username> to your .env file."
+                )
+            username = env[auth.username_env]
+        else:
+            username = auth.username or ""
 
-        username = env.get(auth.username_env, "")
-        password = env.get(auth.password_env, "")
+        # -- resolve password --
+        if auth.password_env:
+            if auth.password_env not in env:
+                raise ValueError(
+                    f"JWT password env var '{auth.password_env}' not found in .env file. "
+                    f"Add {auth.password_env}=<password> to your .env file."
+                )
+            password = env[auth.password_env]
+        else:
+            password = auth.password or ""
 
         login_url = self.api_config.base_url.rstrip("/") + auth.login_endpoint
         resp = requests.post(
@@ -226,9 +312,13 @@ class APIConnector(FileConnector):
         """Build auth query params (for query_param auth type)."""
         if self.api_config.auth.type != "query_param":
             return {}
+        auth = self.api_config.auth
         env = self._load_env()
-        token = env.get(self.api_config.auth.token_env, "")
-        return {self.api_config.auth.param_name: token}
+        if auth.token_env:
+            token = env.get(auth.token_env, "")
+        else:
+            token = auth.token or ""
+        return {auth.param_name: token}
 
     # -- Unified HTTP dispatch ----------------------------------------------
 
