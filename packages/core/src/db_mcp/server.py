@@ -6,6 +6,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastmcp import FastMCP
 from pydantic_ai import Agent
@@ -350,6 +351,9 @@ def _create_server() -> FastMCP:
     is_shell_mode = settings.tool_mode == "shell"
 
     # Detect connector type + capabilities from connector.yaml
+    # Use the same defaulting logic as get_connector_capabilities() to avoid
+    # registration-time vs runtime mismatches (e.g. API connectors default
+    # supports_validate_sql=False but server.py was defaulting to True).
     try:
         from db_mcp.connectors import ConnectorConfig
 
@@ -357,15 +361,45 @@ def _create_server() -> FastMCP:
         yaml_path = conn_path / "connector.yaml"
         _connector_config = ConnectorConfig.from_yaml(yaml_path)
         connector_type = getattr(_connector_config, "type", "sql")
-        connector_caps = getattr(_connector_config, "capabilities", {}) or {}
+        raw_caps = getattr(_connector_config, "capabilities", {}) or {}
     except Exception:
         connector_type = "sql"
-        connector_caps = {}
+        raw_caps = {}
+
+    # Apply connector-type-specific defaults (mirrors get_connector_capabilities)
+    _type_defaults: dict[str, dict[str, Any]] = {
+        "sql": {
+            "supports_sql": True,
+            "supports_validate_sql": True,
+            "supports_async_jobs": True,
+            "sql_mode": "engine",
+        },
+        "file": {
+            "supports_sql": True,
+            "supports_validate_sql": True,
+            "supports_async_jobs": True,
+            "sql_mode": "engine",
+        },
+        "metabase": {
+            "supports_sql": True,
+            "supports_validate_sql": False,
+            "supports_async_jobs": False,
+            "sql_mode": "api_sync",
+        },
+        "api": {
+            "supports_sql": False,
+            "supports_validate_sql": False,
+            "supports_async_jobs": False,
+            "sql_mode": None,
+        },
+    }
+    connector_caps = dict(_type_defaults.get(connector_type, {}))
+    connector_caps.update(raw_caps)
 
     is_api = connector_type == "api"
-    supports_sql = connector_type != "api" or connector_caps.get("supports_sql") is True
-    supports_validate = connector_caps.get("supports_validate_sql", True)
-    supports_async_jobs = connector_caps.get("supports_async_jobs", connector_type != "api")
+    supports_sql = connector_caps.get("supports_sql", False)
+    supports_validate = connector_caps.get("supports_validate_sql", False)
+    supports_async_jobs = connector_caps.get("supports_async_jobs", False)
 
     instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
 

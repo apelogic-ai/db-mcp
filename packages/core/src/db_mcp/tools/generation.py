@@ -745,10 +745,38 @@ async def _run_sql(
                 }
             )
 
+        # Fallback: try execute_sql for any other sql_mode (connector may support it)
+        if hasattr(connector, "execute_sql"):
+            try:
+                rows = connector.execute_sql(sql)
+                columns = list(rows[0].keys()) if rows else []
+                return inject_protocol(
+                    {
+                        "status": "success",
+                        "mode": "sync",
+                        "query_id": _generate_query_uuid(sql),
+                        "sql": sql,
+                        "data": rows,
+                        "columns": columns,
+                        "rows_returned": len(rows),
+                        "duration_ms": None,
+                        "provider_id": None,
+                        "cost_tier": "unknown",
+                    }
+                )
+            except Exception as exc:
+                return inject_protocol(
+                    {
+                        "status": "error",
+                        "error": f"Execution failed (sql_mode={sql_mode!r}): {exc}",
+                        "sql": sql,
+                    }
+                )
+
         return inject_protocol(
             {
                 "status": "error",
-                "error": "Unsupported sql_mode for direct SQL execution.",
+                "error": f"Unsupported sql_mode {sql_mode!r} for direct SQL execution.",
             }
         )
 
