@@ -128,7 +128,7 @@ class TestDatabaseToolsConnection:
 class TestGenerationToolsConnection:
     """Test that generation tools pass connection_path through."""
 
-    @patch("db_mcp.connectors.get_connector")
+    @patch("db_mcp.tools.generation.get_connector")
     @patch("db_mcp.connectors.get_connector_capabilities")
     @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
     @patch("db_mcp.tools.generation.explain_sql")
