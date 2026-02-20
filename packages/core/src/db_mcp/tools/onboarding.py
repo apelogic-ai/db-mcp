@@ -47,11 +47,8 @@ def _resolve_onboarding_context(
     from db_mcp.tools.utils import resolve_connection
 
     if connection is not None:
-        try:
-            connector, conn_name, conn_path = resolve_connection(connection)
-            return connector, conn_name, conn_path
-        except ValueError:
-            pass  # Fall through to legacy path
+        connector, conn_name, conn_path = resolve_connection(connection)
+        return connector, conn_name, conn_path
 
     # Legacy / single-connection: use settings
     if provider_id is None:

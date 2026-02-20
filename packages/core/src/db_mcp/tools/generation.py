@@ -402,9 +402,16 @@ async def _get_data(
     Returns:
         Dict with query results, or context for client-side generation
     """
-    from db_mcp.tools.utils import get_resolved_provider_id
+    from db_mcp.tools.utils import resolve_connection
 
-    provider_id = get_resolved_provider_id(connection)
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        from db_mcp.tools.utils import get_resolved_provider_id
+        provider_id = get_resolved_provider_id(None)
 
     # Check if schema is available
     schema = load_schema_descriptions(provider_id)

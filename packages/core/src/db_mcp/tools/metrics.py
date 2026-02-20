@@ -27,12 +27,13 @@ async def _metrics_discover(connection: str | None = None) -> dict:
         Dict with metric_candidates, dimension_candidates grouped by category,
         and a summary.
     """
-    if connection is not None:
-        from db_mcp.registry import ConnectionRegistry
+    from db_mcp.tools.utils import resolve_connection
 
-        registry = ConnectionRegistry.get_instance()
-        connection_path = registry.get_connection_path(connection)
+    if connection is not None:
+        # Use resolve_connection for proper validation
+        _, _, connection_path = resolve_connection(connection)
     else:
+        # Legacy fallback when no connection specified
         connection_path = get_connection_path()
     result = await mine_metrics_and_dimensions(connection_path)
 
@@ -104,7 +105,15 @@ async def _metrics_list(connection: str | None = None) -> dict:
     Returns:
         Dict with metrics list, dimensions list, and summary.
     """
-    provider_id = get_resolved_provider_id(connection)
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     metrics_catalog = load_metrics(provider_id)
     dimensions_catalog = load_dimensions(provider_id)
@@ -185,7 +194,15 @@ async def _metrics_approve(
     Returns:
         Dict with approval status.
     """
-    provider_id = get_resolved_provider_id(connection)
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     if type == "metric":
         if not description or not sql:
@@ -320,7 +337,15 @@ async def _metrics_remove(type: str, name: str, connection: str | None = None) -
     Returns:
         Dict with removal status.
     """
-    provider_id = get_resolved_provider_id(connection)
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     if type == "metric":
         result = delete_metric(provider_id, name)

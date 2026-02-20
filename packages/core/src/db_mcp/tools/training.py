@@ -25,7 +25,16 @@ async def _query_status(connection: str | None = None) -> dict:
     Returns:
         Dict with training phase status
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     # Load current state
     state = load_state(provider_id)
@@ -98,7 +107,16 @@ async def _query_generate(
     Returns:
         Dict with generated SQL and context
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     # Load schema for context
     schema = load_schema_descriptions(provider_id)
@@ -179,7 +197,16 @@ async def _query_approve(
     Returns:
         Dict with approval status
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     result = add_example(
         provider_id=provider_id,
@@ -263,7 +290,16 @@ async def _query_feedback(
     Returns:
         Dict with feedback status
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     # Validate feedback type
     try:
@@ -350,7 +386,16 @@ async def _query_add_rule(
     Returns:
         Dict with rule addition status
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     result = add_rule(provider_id, rule)
 
@@ -405,7 +450,16 @@ async def _query_list_examples(
     Returns:
         Dict with examples list
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     examples = load_examples(provider_id)
 
@@ -442,7 +496,16 @@ async def _query_list_rules(connection: str | None = None) -> dict:
     Returns:
         Dict with rules list
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     instructions = load_instructions(provider_id)
 
@@ -480,7 +543,16 @@ async def _import_instructions(rules: list[str], connection: str | None = None) 
     Returns:
         Dict with import status and counts
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     if not rules:
         return {"status": "error", "error": "No rules provided"}
@@ -568,7 +640,16 @@ async def _import_examples(examples: list[dict], connection: str | None = None) 
     Returns:
         Dict with import status and counts
     """
-    provider_id = get_resolved_provider_id(connection)
+    # For store-based operations, we need to resolve the connection to get the provider_id
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     if not examples:
         return {"status": "error", "error": "No examples provided"}
