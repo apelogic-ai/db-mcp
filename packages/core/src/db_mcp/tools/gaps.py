@@ -35,7 +35,15 @@ async def _get_knowledge_gaps(connection: str | None = None) -> dict:
     Args:
         connection: Optional connection name for multi-connection support.
     """
-    provider_id = get_resolved_provider_id(connection)
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     # Auto-resolve first so stats are current
     auto_resolve_gaps(provider_id)
@@ -96,7 +104,15 @@ async def _dismiss_knowledge_gap(
     Returns:
         Status dict with count of dismissed gaps.
     """
-    provider_id = get_resolved_provider_id(connection)
+    from db_mcp.tools.utils import resolve_connection
+
+    if connection is not None:
+        # Use resolve_connection for proper validation, then use connection name as provider_id
+        resolve_connection(connection)  # Validates connection exists
+        provider_id = connection
+    else:
+        # Legacy fallback when no connection specified
+        provider_id = get_resolved_provider_id(None)
 
     result = dismiss_gap(provider_id, gap_id, reason or None)
 

@@ -369,15 +369,16 @@ async def _domain_status(
     Returns:
         Domain model status and content if available
     """
-    from db_mcp.tools.utils import get_resolved_provider_id
+    from db_mcp.tools.utils import resolve_connection
 
     if connection is not None:
-        provider_id = get_resolved_provider_id(connection)
-        from db_mcp.registry import ConnectionRegistry
-
-        registry = ConnectionRegistry.get_instance()
-        conn_path = registry.get_connection_path(connection)
+        # Use resolve_connection for proper validation
+        _, provider_id, conn_path = resolve_connection(connection)
     else:
+        # Legacy fallback when no connection specified
+        if provider_id is None:
+            from db_mcp.tools.utils import get_resolved_provider_id
+            provider_id = get_resolved_provider_id(None)
         conn_path = None
 
     state = load_state(provider_id, connection_path=conn_path)
@@ -421,15 +422,16 @@ async def _domain_generate(
     Returns:
         Generated domain model content for review
     """
-    from db_mcp.tools.utils import get_resolved_provider_id
+    from db_mcp.tools.utils import resolve_connection
 
     if connection is not None:
-        provider_id = get_resolved_provider_id(connection)
-        from db_mcp.registry import ConnectionRegistry
-
-        registry = ConnectionRegistry.get_instance()
-        conn_path = registry.get_connection_path(connection)
+        # Use resolve_connection for proper validation
+        _, provider_id, conn_path = resolve_connection(connection)
     else:
+        # Legacy fallback when no connection specified
+        if provider_id is None:
+            from db_mcp.tools.utils import get_resolved_provider_id
+            provider_id = get_resolved_provider_id(None)
         conn_path = None
 
     state = load_state(provider_id, connection_path=conn_path)
@@ -488,15 +490,16 @@ async def _domain_approve(
     Returns:
         Approval result with file path
     """
-    from db_mcp.tools.utils import get_resolved_provider_id
+    from db_mcp.tools.utils import resolve_connection
 
     if connection is not None:
-        provider_id = get_resolved_provider_id(connection)
-        from db_mcp.registry import ConnectionRegistry
-
-        registry = ConnectionRegistry.get_instance()
-        conn_path = registry.get_connection_path(connection)
+        # Use resolve_connection for proper validation
+        _, provider_id, conn_path = resolve_connection(connection)
     else:
+        # Legacy fallback when no connection specified
+        if provider_id is None:
+            from db_mcp.tools.utils import get_resolved_provider_id
+            provider_id = get_resolved_provider_id(None)
         conn_path = None
 
     state = load_state(provider_id, connection_path=conn_path)
@@ -555,15 +558,16 @@ async def _domain_skip(provider_id: str | None = None, connection: str | None = 
     Returns:
         Skip result
     """
-    from db_mcp.tools.utils import get_resolved_provider_id
+    from db_mcp.tools.utils import resolve_connection
 
     if connection is not None:
-        provider_id = get_resolved_provider_id(connection)
-        from db_mcp.registry import ConnectionRegistry
-
-        registry = ConnectionRegistry.get_instance()
-        conn_path = registry.get_connection_path(connection)
+        # Use resolve_connection for proper validation
+        _, provider_id, conn_path = resolve_connection(connection)
     else:
+        # Legacy fallback when no connection specified
+        if provider_id is None:
+            from db_mcp.tools.utils import get_resolved_provider_id
+            provider_id = get_resolved_provider_id(None)
         conn_path = None
 
     state = load_state(provider_id, connection_path=conn_path)
