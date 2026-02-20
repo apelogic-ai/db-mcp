@@ -135,10 +135,16 @@ def get_connector(connection_path: str | None = None) -> Connector:
 
 
 def _load_sql_config(data: dict[str, Any]) -> SQLConnectorConfig:
-    return SQLConnectorConfig(
-        **{k: v for k, v in data.items() if k not in {"type", "capabilities"}},
-        capabilities=data.get("capabilities", {}) or {},
-    )
+    from dataclasses import fields
+
+    # Get valid field names from the dataclass (excluding init=False fields)
+    valid_fields = {f.name for f in fields(SQLConnectorConfig) if f.init}
+
+    # Filter to only known fields, plus capabilities which is handled separately
+    filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+    filtered_data["capabilities"] = data.get("capabilities", {}) or {}
+
+    return SQLConnectorConfig(**filtered_data)
 
 
 def _load_file_config(data: dict[str, Any]) -> FileConnectorConfig:
@@ -148,6 +154,7 @@ def _load_file_config(data: dict[str, Any]) -> FileConnectorConfig:
     return FileConnectorConfig(
         sources=sources,
         directory=directory,
+        description=data.get("description", ""),
         capabilities=data.get("capabilities", {}) or {},
     )
 

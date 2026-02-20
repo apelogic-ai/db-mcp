@@ -15,6 +15,37 @@ from db_mcp.config import Settings, get_settings
 from db_mcp.connectors import Connector, get_connector
 
 
+def _detect_dialect_from_database_url(database_url: str) -> str:
+    """Extract SQL dialect from a database URL.
+
+    Args:
+        database_url: Database connection string
+
+    Returns:
+        Dialect name (e.g., "postgresql", "mysql", "sqlite")
+    """
+    if not database_url:
+        return ""
+
+    # Extract scheme from URL (part before ://)
+    scheme = database_url.split("://")[0].lower() if "://" in database_url else ""
+
+    # Map URL schemes to dialect names
+    dialect_map = {
+        "postgresql": "postgresql",
+        "postgres": "postgresql",
+        "mysql": "mysql",
+        "sqlite": "sqlite",
+        "clickhouse": "clickhouse",
+        "trino": "trino",
+        "mssql": "mssql",
+        "sqlserver": "mssql",
+        "oracle": "oracle",
+    }
+
+    return dialect_map.get(scheme, "")
+
+
 class ConnectionInfo:
     """Metadata about a discovered connection."""
 
@@ -99,23 +130,55 @@ class ConnectionRegistry:
         for entry in sorted(connections_dir.iterdir()):
             if not entry.is_dir():
                 continue
-            yaml_path = entry / "connector.yaml"
-            if not yaml_path.exists():
-                continue
 
             name = entry.name
-            try:
-                with open(yaml_path) as f:
-                    data = yaml.safe_load(f) or {}
-            except Exception:
-                data = {}
+            yaml_path = entry / "connector.yaml"
+            state_yaml_path = entry / "state.yaml"
+
+            # Check if this is a real connection directory
+            # Must have either connector.yaml or state.yaml to be considered valid
+            if not yaml_path.exists() and not state_yaml_path.exists():
+                continue
+
+            # Default values
+            conn_type = "sql"
+            dialect = ""
+            description = ""
+
+            # Try to load from connector.yaml if it exists
+            if yaml_path.exists():
+                try:
+                    with open(yaml_path) as f:
+                        data = yaml.safe_load(f) or {}
+                    conn_type = data.get("type", "sql")
+                    dialect = data.get("dialect", "")
+                    description = data.get("description", "")
+                except Exception:
+                    # If connector.yaml exists but is malformed, use defaults
+                    pass
+
+            # If no connector.yaml or no dialect specified, try to detect from .env
+            if not dialect:
+                env_file = entry / ".env"
+                if env_file.exists():
+                    try:
+                        with open(env_file) as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith("DATABASE_URL="):
+                                    database_url = line.split("=", 1)[1].strip().strip("\"'")
+                                    dialect = _detect_dialect_from_database_url(database_url)
+                                    break
+                    except Exception:
+                        # If .env exists but can't be read, dialect remains empty
+                        pass
 
             self._connections[name] = ConnectionInfo(
                 name=name,
                 path=entry,
-                type=data.get("type", "sql"),
-                dialect=data.get("dialect", ""),
-                description=data.get("description", ""),
+                type=conn_type,
+                dialect=dialect,
+                description=description,
                 is_default=(name == default_name),
             )
 

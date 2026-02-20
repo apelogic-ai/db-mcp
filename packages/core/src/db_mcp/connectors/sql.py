@@ -36,6 +36,7 @@ class SQLConnectorConfig:
 
     type: str = field(default="sql", init=False)
     database_url: str = ""
+    description: str = ""
     capabilities: dict[str, Any] = field(default_factory=dict)
 
 
