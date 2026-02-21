@@ -79,8 +79,8 @@ def test_delete_state(temp_connection_dir):
     # Verify exists
     assert load_state("test-provider") is not None
 
-    # Delete
-    result = delete_state("test-provider")
+    # Delete (use legacy behavior for unit test)
+    result = delete_state("test-provider", preserve_connection=False)
     assert result["deleted"] is True
 
     # Verify deleted

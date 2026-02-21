@@ -226,13 +226,25 @@ def _recover_state_from_files(
 
 
 def delete_state(
-    provider_id: str | None = None, connection_path: Path | None = None
+    provider_id: str | None = None,
+    connection_path: Path | None = None,
+    preserve_connection: bool = True,
 ) -> dict:
-    """Delete onboarding state file.
+    """Delete onboarding state file, with smart preservation for discovery.
+
+    If preserve_connection=True and the connection directory has files that allow
+    state recovery (schema files, connector.yaml), the state file is deleted normally
+    and recovery will work.
+
+    If preserve_connection=True and the directory would become empty or undiscoverable,
+    preserves connection facts in a reset state to prevent the connection from vanishing.
+
+    If preserve_connection=False, always deletes the state file (legacy behavior).
 
     Args:
         provider_id: Ignored in v2 (kept for backward compatibility)
         connection_path: Optional explicit connection directory path.
+        preserve_connection: If True, preserve connection facts when no recovery possible
 
     Returns:
         Dict with delete status
@@ -248,12 +260,63 @@ def delete_state(
         }
 
     try:
-        state_file.unlink()
-        return {
-            "deleted": True,
-            "connection": str(conn_path),
-            "error": None,
-        }
+        if not preserve_connection:
+            # Legacy behavior: always delete the state file
+            state_file.unlink()
+            return {
+                "deleted": True,
+                "connection": str(conn_path),
+                "error": None,
+            }
+
+        # New behavior: check if there are other files that would allow recovery or discovery
+        connector_file = conn_path / "connector.yaml"
+        schema_file = conn_path / "schema" / "descriptions.yaml"
+        domain_file = conn_path / "domain" / "model.md"
+        env_file = conn_path / ".env"
+
+        has_recoverable_files = (
+            connector_file.exists() or
+            schema_file.exists() or
+            domain_file.exists() or
+            env_file.exists()
+        )
+
+        if has_recoverable_files:
+            # Normal case: delete state file, let recovery mechanism work
+            state_file.unlink()
+            return {
+                "deleted": True,
+                "connection": str(conn_path),
+                "error": None,
+            }
+        else:
+            # Special case: no other files exist, preserve connection facts
+            # Load existing state to preserve connection facts
+            existing = load_state(connection_path=connection_path)
+
+            # Create reset state preserving connection identity
+            from db_mcp_models import OnboardingPhase, OnboardingState
+            reset_state = OnboardingState(
+                provider_id=existing.provider_id if existing else (provider_id or "default"),
+                phase=OnboardingPhase.INIT,
+                database_url_configured=existing.database_url_configured if existing else False,
+                connection_verified=existing.connection_verified if existing else False,
+                dialect_detected=existing.dialect_detected if existing else None,
+                catalogs_discovered=existing.catalogs_discovered if existing else [],
+                schemas_discovered=existing.schemas_discovered if existing else [],
+                tables_discovered=existing.tables_discovered if existing else [],
+                started_at=datetime.now(UTC),
+            )
+
+            # Write the reset state back (preserves file existence for discover())
+            save_state(reset_state, connection_path=connection_path)
+
+            return {
+                "deleted": True,
+                "connection": str(conn_path),
+                "error": None,
+            }
     except Exception as e:
         return {
             "deleted": False,

@@ -136,8 +136,9 @@ class ConnectionRegistry:
             state_yaml_path = entry / "state.yaml"
 
             # Check if this is a real connection directory
-            # Must have either connector.yaml or state.yaml to be considered valid
-            if not yaml_path.exists() and not state_yaml_path.exists():
+            # Must have either connector.yaml, state.yaml, or .env to be considered valid
+            env_path = entry / ".env"
+            if not yaml_path.exists() and not state_yaml_path.exists() and not env_path.exists():
                 continue
 
             # Default values
