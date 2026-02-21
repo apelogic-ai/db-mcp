@@ -152,14 +152,16 @@ class TestGenerationToolsConnection:
     @patch("db_mcp.connectors.get_connector_capabilities")
     @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
     @patch("db_mcp.tools.generation.explain_sql")
-    async def test_validate_sql_passes_connection_to_explain(self, mock_explain, mock_ro, mock_caps, mock_gc):
-        """Verify explain_sql receives connection_path when _validate_sql is called with connection."""
+    async def test_validate_sql_passes_connection_to_explain(
+        self, mock_explain, mock_ro, mock_caps, mock_gc,
+    ):
+        """Verify explain_sql receives connection_path."""
         from db_mcp.tools.generation import _validate_sql
 
         mock_connector = MagicMock()
         mock_gc.return_value = mock_connector
         mock_caps.return_value = {"supports_validate_sql": True}
-        from db_mcp.validation.explain import ExplainResult, CostTier
+        from db_mcp.validation.explain import CostTier, ExplainResult
         mock_explain_result = ExplainResult(
             valid=True,
             estimated_rows=10,
