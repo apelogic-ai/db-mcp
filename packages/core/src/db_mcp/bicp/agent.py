@@ -143,7 +143,13 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["schema/validate-link"] = self._handle_schema_validate_link
 
     def _detect_dialect(self) -> str:
-        """Detect the database dialect from configuration."""
+        """Detect the database dialect from configuration.
+
+        TODO: All BICP agent methods (including _detect_dialect, execute_query,
+        list_schemas, list_tables, and _handle_schema_* methods) call
+        get_connector() without connection_path. When multi-connection BICP
+        support is implemented, these should accept and pass connection_path.
+        """
         try:
             connector = get_connector()
             return connector.get_dialect()
@@ -258,7 +264,7 @@ class DBMCPAgent(BICPAgent):
 
             # Get cost estimate
             try:
-                explain_result: ExplainResult = explain_sql(candidate_sql)
+                explain_result: ExplainResult = explain_sql(candidate_sql)  # TODO: pass connection_path when BICP supports multi-connection
                 if explain_result.valid:
                     cost = QueryCost(
                         estimated_rows=explain_result.estimated_rows,

@@ -437,7 +437,7 @@ def _explain_duckdb(connector: "FileConnector", sql: str, span: Any) -> ExplainR
     )
 
 
-def explain_sql(sql: str, database_url: str | None = None) -> ExplainResult:
+def explain_sql(sql: str, database_url: str | None = None, *, connection_path: str | None = None) -> ExplainResult:
     """Validate SQL using EXPLAIN and evaluate cost tier.
 
     Args:
@@ -452,7 +452,7 @@ def explain_sql(sql: str, database_url: str | None = None) -> ExplainResult:
         attributes={"sql.preview": sql[:200] + "..." if len(sql) > 200 else sql},
     ) as span:
         try:
-            connector = get_connector()
+            connector = get_connector(connection_path=connection_path)
 
             # FileConnector (DuckDB): use DuckDB's own EXPLAIN
             if isinstance(connector, FileConnector):

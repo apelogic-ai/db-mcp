@@ -49,4 +49,6 @@ htmlcov/
 .env.local
 
 
+node_modules/
+
 .claude/
