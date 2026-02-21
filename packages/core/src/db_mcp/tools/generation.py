@@ -402,7 +402,7 @@ async def _get_data(
     Returns:
         Dict with query results, or context for client-side generation
     """
-    from db_mcp.tools.utils import resolve_connection
+    from db_mcp.tools.utils import _resolve_connection_path, resolve_connection
 
     if connection is not None:
         # Use resolve_connection for proper validation, then use connection name as provider_id
@@ -561,7 +561,10 @@ Generate the SQL query that implements this plan.
             "plan": plan.model_dump(),
         }
 
-    explain_result: ExplainResult = explain_sql(generated_sql)
+    conn_path = _resolve_connection_path(connection)
+    explain_result: ExplainResult = explain_sql(
+        generated_sql, connection_path=conn_path
+    )
 
     if not explain_result.valid:
         return {
@@ -1033,7 +1036,7 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
         )
 
     # Run EXPLAIN
-    explain_result = explain_sql(sql)
+    explain_result = explain_sql(sql, connection_path=_resolve_connection_path(connection))
 
     if not explain_result.valid:
         return inject_protocol(

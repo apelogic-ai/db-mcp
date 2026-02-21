@@ -59,7 +59,10 @@ class Metric(BaseModel):
     notes: str | None = Field(default=None, description="Additional notes or gotchas")
     status: str = Field(
         default="approved",
-        description="Lifecycle status: 'candidate' (discovered, needs review) or 'approved' (verified, in catalog)",
+        description=(
+            "Lifecycle status: 'candidate' (discovered, needs review)"
+            " or 'approved' (verified, in catalog)"
+        ),
     )
     created_at: datetime | None = Field(default=None, description="When the metric was created")
     created_by: str | None = Field(default=None, description="Who created the metric")
@@ -148,7 +151,10 @@ class Dimension(BaseModel):
     )
     status: str = Field(
         default="approved",
-        description="Lifecycle status: 'candidate' (discovered, needs review) or 'approved' (verified, in catalog)",
+        description=(
+            "Lifecycle status: 'candidate' (discovered, needs review)"
+            " or 'approved' (verified, in catalog)"
+        ),
     )
     created_at: datetime | None = Field(default=None, description="When the dimension was created")
     created_by: str | None = Field(

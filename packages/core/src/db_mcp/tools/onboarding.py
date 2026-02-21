@@ -103,7 +103,12 @@ def _run_schema_gap_scan(provider_id: str) -> int:
 _discovery_tasks: dict[str, dict] = {}
 
 
-async def _discover_tables_background(discovery_id: str, provider_id: str) -> None:
+async def _discover_tables_background(
+    discovery_id: str,
+    provider_id: str,
+    *,
+    connection_path: str | None = None,
+) -> None:
     """Background task to discover tables asynchronously.
 
     Updates _discovery_tasks[discovery_id] with progress and results.
@@ -117,7 +122,7 @@ async def _discover_tables_background(discovery_id: str, provider_id: str) -> No
             return
 
         ignore = load_ignore_patterns(provider_id)
-        connector = get_connector()
+        connector = get_connector(connection_path=connection_path)
 
         # Re-filter schemas
         all_schemas_filtered = []
@@ -904,7 +909,7 @@ async def _onboarding_discover(
 
     # Run synchronously when no MCP context (tests) to keep deterministic behavior
     if ctx is None:
-        await _discover_tables_background(discovery_id, provider_id)
+        await _discover_tables_background(discovery_id, provider_id, connection_path=conn_path)
         task = _discovery_tasks.get(discovery_id, {})
         if task.get("status") == "complete":
             result = task.get("result", {})
@@ -915,7 +920,11 @@ async def _onboarding_discover(
             _discovery_tasks.pop(discovery_id, None)
             return {"discovered": False, "error": error}
 
-    asyncio.create_task(_discover_tables_background(discovery_id, provider_id))
+    asyncio.create_task(
+        _discover_tables_background(
+            discovery_id, provider_id, connection_path=conn_path
+        )
+    )
 
     return {
         "status": "submitted",

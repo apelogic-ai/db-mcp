@@ -24,7 +24,7 @@ async def _list_connections() -> dict:
     }
 
 
-async def _test_connection(database_url: str | None = None) -> dict:
+async def _test_connection(database_url: str | None = None, connection: str | None = None) -> dict:
     """Test database connection.
 
     Args:
@@ -38,7 +38,7 @@ async def _test_connection(database_url: str | None = None) -> dict:
         from db_mcp.db.connection import test_connection
 
         return test_connection(database_url)
-    connector = get_connector()
+    connector = get_connector(connection_path=_resolve_connection_path(connection))
     return connector.test_connection()
 
 

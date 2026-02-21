@@ -148,6 +148,64 @@ class TestGenerationToolsConnection:
 
         mock_gc.assert_called_once_with(connection_path="/p/prod")
 
+    @patch("db_mcp.tools.generation.get_connector")
+    @patch("db_mcp.connectors.get_connector_capabilities")
+    @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
+    @patch("db_mcp.tools.generation.explain_sql")
+    async def test_validate_sql_passes_connection_to_explain(
+        self, mock_explain, mock_ro, mock_caps, mock_gc,
+    ):
+        """Verify explain_sql receives connection_path."""
+        from db_mcp.tools.generation import _validate_sql
+
+        mock_connector = MagicMock()
+        mock_gc.return_value = mock_connector
+        mock_caps.return_value = {"supports_validate_sql": True}
+        from db_mcp.validation.explain import CostTier, ExplainResult
+        mock_explain_result = ExplainResult(
+            valid=True,
+            estimated_rows=10,
+            estimated_cost=1.0,
+            cost_tier=CostTier.AUTO,
+            tier_reason="test",
+        )
+        mock_explain.return_value = mock_explain_result
+
+        with patch("db_mcp.tools.utils._resolve_connection_path", return_value="/p/prod"):
+            await _validate_sql(sql="SELECT 1", connection="prod")
+
+        mock_explain.assert_called_once_with("SELECT 1", connection_path="/p/prod")
+
+
+@pytest.mark.asyncio
+class TestTestConnectionMultiConn:
+    """Test that _test_connection passes connection_path through."""
+
+    @patch("db_mcp.tools.database.get_connector")
+    async def test_test_connection_with_connection(self, mock_gc):
+        from db_mcp.tools.database import _test_connection
+
+        mock_connector = MagicMock()
+        mock_connector.test_connection.return_value = {"status": "ok"}
+        mock_gc.return_value = mock_connector
+
+        with patch("db_mcp.tools.database._resolve_connection_path", return_value="/p/staging"):
+            await _test_connection(connection="staging")
+
+        mock_gc.assert_called_once_with(connection_path="/p/staging")
+
+    @patch("db_mcp.tools.database.get_connector")
+    async def test_test_connection_without_connection(self, mock_gc):
+        from db_mcp.tools.database import _test_connection
+
+        mock_connector = MagicMock()
+        mock_connector.test_connection.return_value = {"status": "ok"}
+        mock_gc.return_value = mock_connector
+
+        await _test_connection()
+
+        mock_gc.assert_called_once_with(connection_path=None)
+
 
 @pytest.mark.asyncio
 class TestShellToolConnection:
