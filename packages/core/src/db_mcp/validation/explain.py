@@ -437,7 +437,12 @@ def _explain_duckdb(connector: "FileConnector", sql: str, span: Any) -> ExplainR
     )
 
 
-def explain_sql(sql: str, database_url: str | None = None, *, connection_path: str | None = None) -> ExplainResult:
+def explain_sql(
+    sql: str,
+    database_url: str | None = None,
+    *,
+    connection_path: str | None = None,
+) -> ExplainResult:
     """Validate SQL using EXPLAIN and evaluate cost tier.
 
     Args:

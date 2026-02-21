@@ -264,7 +264,8 @@ class DBMCPAgent(BICPAgent):
 
             # Get cost estimate
             try:
-                explain_result: ExplainResult = explain_sql(candidate_sql)  # TODO: pass connection_path when BICP supports multi-connection
+                # TODO: pass connection_path when BICP supports multi-connection
+                explain_result: ExplainResult = explain_sql(candidate_sql)
                 if explain_result.valid:
                     cost = QueryCost(
                         estimated_rows=explain_result.estimated_rows,
