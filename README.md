@@ -228,6 +228,28 @@ bunx playwright test
 
 All tests run in CI via GitHub Actions on every push and PR. See [docs/testing.md](docs/testing.md) for the full testing guide.
 
+#### Tool Coverage Check
+
+Verify that 100% of MCP tools implemented in the codebase are exposed by the MCP server at runtime:
+
+```bash
+# Run the tool coverage audit (default SQL mode)
+python scripts/tool_coverage_audit.py
+
+# Test different configuration modes
+python scripts/tool_coverage_audit.py --config api
+python scripts/tool_coverage_audit.py --config shell
+python scripts/tool_coverage_audit.py --config metabase
+
+# Verbose output with all tool names
+python scripts/tool_coverage_audit.py --verbose
+
+# JSON output for CI integration
+python scripts/tool_coverage_audit.py --json
+```
+
+The audit returns exit code 0 on success (100% coverage) and 1 on failure.
+
 ### Project Structure
 
 ```
