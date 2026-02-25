@@ -833,11 +833,12 @@ def _create_server() -> FastMCP:
             "database_configured": bool(settings.database_url),
         }
 
-    async def _get_config() -> dict:
+    async def _get_config(connection: str | None = None) -> dict:
         """Get current server configuration (non-sensitive)."""
-        connection_path = get_connection_path()
+        connection_path = registry.get_connection_path(connection)
+        resolved_connection = connection or settings.connection_name
         return {
-            "connection": settings.connection_name,
+            "connection": resolved_connection,
             "connection_path": str(connection_path),
             "tool_mode": settings.tool_mode,
             "database_configured": bool(settings.database_url),

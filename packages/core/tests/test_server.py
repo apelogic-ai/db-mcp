@@ -113,6 +113,40 @@ async def test_mcp_suggest_improvement_returns_none_when_empty(tmp_path, monkeyp
         assert payload == {"status": "none", "improvement": None}
 
 
+@pytest.mark.asyncio
+async def test_get_config_accepts_connection_argument(tmp_path):
+    """get_config should accept optional connection for multi-connection clients."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_registry.get_connection_path.return_value = tmp_path
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "detailed"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "default"
+        mock_settings.return_value.database_url = ""
+
+        server = _create_server()
+        async with Client(server) as client:
+            result = (await client.call_tool("get_config", {"connection": "test"})).data
+            payload = _tool_payload(result)
+
+    assert payload["connection"] == "test"
+    assert payload["connection_path"] == str(tmp_path)
+    mock_registry.get_connection_path.assert_called_with("test")
+
+
 class TestConnectorTypeToolGating:
     """Tools should be registered based on connector type (sql/api/file)."""
 
