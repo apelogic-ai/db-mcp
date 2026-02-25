@@ -33,6 +33,13 @@ def extract_database_url_from_claude_config(claude_config: dict) -> str | None:
     return None
 
 
+def _print_configure_later_hint() -> None:
+    """Show how to configure MCP clients after init."""
+    console.print("\n[dim]You can configure MCP clients later with:[/dim]")
+    console.print("  [cyan]db-mcp agents[/cyan]  [dim](interactive CLI setup)[/dim]")
+    console.print("  [cyan]db-mcp ui[/cyan]      [dim](open setup in the web UI)[/dim]")
+
+
 def _configure_agents_interactive(preselect_installed: bool = True) -> list[str]:
     """Interactive agent selection.
 
@@ -45,28 +52,31 @@ def _configure_agents_interactive(preselect_installed: bool = True) -> list[str]
     # Detect installed agents
     installed = detect_installed_agents()
 
+    # Show all supported agents and detection status
+    console.print("\n[bold]Supported MCP clients:[/bold]")
+    for i, (agent_id, agent) in enumerate(AGENTS.items(), 1):
+        status = "[green]detected[/green]" if agent_id in installed else "[dim]not detected[/dim]"
+        console.print(f"  [{i}] {agent.name} ({agent_id}) - {status}")
+
     if not installed:
-        console.print("[yellow]No MCP agents detected on this system.[/yellow]")
-        console.print("[dim]Skipping agent configuration.[/dim]")
+        console.print(
+            "\n[yellow]No supported MCP clients were auto-detected on this system.[/yellow]"
+        )
+        _print_configure_later_hint()
         return []
 
-    # Show detected agents
-    console.print("\n[bold]Detected MCP-compatible agents:[/bold]")
-    for i, agent_id in enumerate(installed, 1):
-        agent = AGENTS[agent_id]
-        console.print(f"  [{i}] {agent.name}")
-
     # Prompt for selection
-    console.print("\n[dim]Configure db-mcp for which agents?[/dim]")
-    console.print("[1] All detected agents")
-    console.print("[2] Select specific agents")
-    console.print("[3] Skip agent configuration")
+    console.print("\n[dim]Configure db-mcp for which clients?[/dim]")
+    console.print("[1] Configure all detected clients")
+    console.print("[2] Select one or more detected clients")
+    console.print("[3] Configure later")
 
     from rich.prompt import Prompt
 
     choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
 
     if choice == "3":
+        _print_configure_later_hint()
         return []
     elif choice == "1":
         return installed
@@ -77,6 +87,8 @@ def _configure_agents_interactive(preselect_installed: bool = True) -> list[str]
             agent = AGENTS[agent_id]
             if Confirm.ask(f"Configure {agent.name}?", default=preselect_installed):
                 selected.append(agent_id)
+        if not selected:
+            _print_configure_later_hint()
         return selected
 
 
@@ -91,6 +103,7 @@ def _configure_agents(agent_ids: list[str] | None = None) -> None:
 
     if not agent_ids:
         console.print("[dim]No agents selected for configuration.[/dim]")
+        _print_configure_later_hint()
         return
 
     # Get binary path

@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+from fastmcp.client import Client
 
+from db_mcp.config import reset_settings
+from db_mcp.insights.detector import Insight, InsightStore, load_insights, save_insights
 from db_mcp.registry import ConnectionInfo
 from db_mcp.server import _create_server
 
@@ -14,6 +17,11 @@ from db_mcp.server import _create_server
 def _get_tool_names(server):
     """Extract registered tool names from a FastMCP server."""
     return set(server._tool_manager._tools.keys())
+
+
+def _tool_payload(result_data: dict) -> dict:
+    """Return structuredContent when present, otherwise raw result data."""
+    return result_data.get("structuredContent", result_data)
 
 
 def test_mcp_server_created():
@@ -28,6 +36,81 @@ async def test_server_tools_registered():
     server = _create_server()
     # Basic sanity check - server should have tools registered
     assert server is not None
+
+
+def test_server_exposes_improvement_tools():
+    """Backward-compat improvement tools should be exposed."""
+    server = _create_server()
+    tools = _get_tool_names(server)
+    assert "mcp_suggest_improvement" in tools
+    assert "mcp_list_improvements" in tools
+    assert "mcp_approve_improvement" in tools
+
+
+@pytest.mark.asyncio
+async def test_improvement_tools_behavior_with_pending_insights(tmp_path, monkeypatch):
+    """Improvement tools should list/suggest/approve pending insights."""
+    monkeypatch.setenv("CONNECTION_PATH", str(tmp_path))
+    reset_settings()
+
+    store = InsightStore(
+        insights=[
+            Insight(
+                id="info-1",
+                category="knowledge",
+                severity="info",
+                title="Info insight",
+                summary="Low-priority insight",
+                detected_at=100.0,
+            ),
+            Insight(
+                id="action-1",
+                category="pattern",
+                severity="action",
+                title="Action insight",
+                summary="High-priority insight",
+                detected_at=200.0,
+            ),
+        ]
+    )
+    save_insights(tmp_path, store)
+
+    server = _create_server()
+    async with Client(server) as client:
+        listed = (await client.call_tool("mcp_list_improvements", {})).data
+        listed_payload = _tool_payload(listed)
+        assert listed_payload["count"] == 2
+        assert {i["id"] for i in listed_payload["improvements"]} == {"info-1", "action-1"}
+
+        suggested = (await client.call_tool("mcp_suggest_improvement", {})).data
+        suggested_payload = _tool_payload(suggested)
+        assert suggested_payload["status"] == "ok"
+        assert suggested_payload["improvement"]["id"] == "action-1"
+
+        approved = (
+            await client.call_tool("mcp_approve_improvement", {"improvement_id": "action-1"})
+        ).data
+        approved_payload = _tool_payload(approved)
+        assert approved_payload["status"] == "approved"
+        assert approved_payload["remaining"] == 1
+
+    # Persisted state should reflect approval (dismissed insight no longer pending).
+    remaining_ids = {i.id for i in load_insights(tmp_path).pending()}
+    assert remaining_ids == {"info-1"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_suggest_improvement_returns_none_when_empty(tmp_path, monkeypatch):
+    """Suggest improvement should return status=none when no pending insights exist."""
+    monkeypatch.setenv("CONNECTION_PATH", str(tmp_path))
+    reset_settings()
+    save_insights(tmp_path, InsightStore(insights=[]))
+
+    server = _create_server()
+    async with Client(server) as client:
+        result = (await client.call_tool("mcp_suggest_improvement", {})).data
+        payload = _tool_payload(result)
+        assert payload == {"status": "none", "improvement": None}
 
 
 class TestConnectorTypeToolGating:

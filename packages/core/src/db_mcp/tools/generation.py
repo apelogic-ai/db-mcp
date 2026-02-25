@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import Any
 
 from db_mcp_models import QueryPlan
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent

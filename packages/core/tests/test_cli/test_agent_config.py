@@ -4,7 +4,8 @@ Tests extract_database_url_from_claude_config, _configure_agents_interactive,
 and _configure_claude_desktop with mocked dependencies.
 """
 
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -92,9 +93,7 @@ class TestExtractDatabaseUrlFromClaudeConfig:
         config = {
             "mcpServers": {
                 "some-other": {"command": "/bin/other"},
-                "db-mcp": {
-                    "env": {"DATABASE_URL": "sqlite:///path/to/db.sqlite"}
-                },
+                "db-mcp": {"env": {"DATABASE_URL": "sqlite:///path/to/db.sqlite"}},
             }
         }
         result = extract_database_url_from_claude_config(config)
@@ -103,24 +102,38 @@ class TestExtractDatabaseUrlFromClaudeConfig:
 
 class TestConfigureAgentsInteractive:
     @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=[])
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+            "claude-code": SimpleNamespace(name="Claude Code"),
+            "codex": SimpleNamespace(name="OpenAI Codex"),
+        },
+    )
     def test_returns_empty_list_when_no_agents_detected(self, mock_detect):
         result = _configure_agents_interactive()
         assert result == []
         mock_detect.assert_called_once()
 
     @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
-    @patch("db_mcp.cli.agent_config.AGENTS", {
-        "claude-desktop": MagicMock(name="Claude Desktop"),
-    })
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+        },
+    )
     @patch("rich.prompt.Prompt.ask", return_value="1")
     def test_returns_all_agents_when_choice_is_1(self, mock_ask, mock_detect):
         result = _configure_agents_interactive()
         assert result == ["claude-desktop"]
 
     @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
-    @patch("db_mcp.cli.agent_config.AGENTS", {
-        "claude-desktop": MagicMock(name="Claude Desktop"),
-    })
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+        },
+    )
     @patch("rich.prompt.Prompt.ask", return_value="3")
     def test_returns_empty_list_when_choice_is_skip(self, mock_ask, mock_detect):
         result = _configure_agents_interactive()
@@ -130,10 +143,13 @@ class TestConfigureAgentsInteractive:
         "db_mcp.cli.agent_config.detect_installed_agents",
         return_value=["claude-desktop", "cursor"],
     )
-    @patch("db_mcp.cli.agent_config.AGENTS", {
-        "claude-desktop": MagicMock(name="Claude Desktop"),
-        "cursor": MagicMock(name="Cursor"),
-    })
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+            "cursor": SimpleNamespace(name="Cursor"),
+        },
+    )
     @patch("rich.prompt.Confirm.ask", return_value=True)
     @patch("rich.prompt.Prompt.ask", return_value="2")
     def test_individual_selection_all_confirmed(self, mock_ask, mock_confirm, mock_detect):
@@ -144,10 +160,13 @@ class TestConfigureAgentsInteractive:
         "db_mcp.cli.agent_config.detect_installed_agents",
         return_value=["claude-desktop", "cursor"],
     )
-    @patch("db_mcp.cli.agent_config.AGENTS", {
-        "claude-desktop": MagicMock(name="Claude Desktop"),
-        "cursor": MagicMock(name="Cursor"),
-    })
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+            "cursor": SimpleNamespace(name="Cursor"),
+        },
+    )
     @patch("rich.prompt.Confirm.ask", side_effect=[True, False])
     @patch("rich.prompt.Prompt.ask", return_value="2")
     def test_individual_selection_partial(self, mock_ask, mock_confirm, mock_detect):
@@ -155,14 +174,63 @@ class TestConfigureAgentsInteractive:
         assert result == ["claude-desktop"]
 
     @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
-    @patch("db_mcp.cli.agent_config.AGENTS", {
-        "claude-desktop": MagicMock(name="Claude Desktop"),
-    })
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+        },
+    )
     @patch("rich.prompt.Prompt.ask", return_value="1")
     def test_preselect_installed_parameter_accepted(self, mock_ask, mock_detect):
         # Verify the preselect_installed param doesn't cause errors
         result = _configure_agents_interactive(preselect_installed=False)
         assert isinstance(result, list)
+
+    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+            "claude-code": SimpleNamespace(name="Claude Code"),
+        },
+    )
+    @patch("db_mcp.cli.agent_config.console.print")
+    @patch("rich.prompt.Prompt.ask", return_value="3")
+    def test_configure_later_displays_relaunch_hints(
+        self, mock_ask, mock_console_print, mock_detect
+    ):
+        result = _configure_agents_interactive()
+        assert result == []
+        rendered = "\n".join(
+            str(call.args[0]) for call in mock_console_print.call_args_list if call.args
+        )
+        assert "db-mcp agents" in rendered
+        assert "db-mcp ui" in rendered
+
+    @patch(
+        "db_mcp.cli.agent_config.detect_installed_agents",
+        return_value=["claude-desktop", "claude-code"],
+    )
+    @patch(
+        "db_mcp.cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+            "claude-code": SimpleNamespace(name="Claude Code"),
+        },
+    )
+    @patch("db_mcp.cli.agent_config.console.print")
+    @patch("rich.prompt.Confirm.ask", side_effect=[False, False])
+    @patch("rich.prompt.Prompt.ask", return_value="2")
+    def test_select_specific_none_selected_displays_relaunch_hints(
+        self, mock_choice, mock_confirm, mock_console_print, mock_detect
+    ):
+        result = _configure_agents_interactive()
+        assert result == []
+        rendered = "\n".join(
+            str(call.args[0]) for call in mock_console_print.call_args_list if call.args
+        )
+        assert "db-mcp agents" in rendered
+        assert "db-mcp ui" in rendered
 
 
 class TestConfigureClaudeDesktop:
