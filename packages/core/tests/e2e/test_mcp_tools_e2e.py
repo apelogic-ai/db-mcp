@@ -99,6 +99,11 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
 
         # insights: create a fake insight file via shell to have something to dismiss
         calls["mark_insights_processed"] = await _call(client, "mark_insights_processed", {})
+        calls["mcp_list_improvements"] = await _call(client, "mcp_list_improvements", {})
+        calls["mcp_suggest_improvement"] = await _call(client, "mcp_suggest_improvement", {})
+        calls["mcp_approve_improvement"] = await _call(
+            client, "mcp_approve_improvement", {"improvement_id": "nope"}
+        )
         # dismiss_insight: use deterministic non-existent id.
         # Happy path currently returns "not_found".
         calls["dismiss_insight"] = await _call(client, "dismiss_insight", {"insight_id": "nope"})

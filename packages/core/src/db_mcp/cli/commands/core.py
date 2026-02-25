@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
 
+from db_mcp.agents import AGENTS, detect_installed_agents
 from db_mcp.cli.connection import (
     _get_connection_env_path,
     _load_connection_env,
@@ -29,7 +30,6 @@ from db_mcp.cli.utils import (
     CONFIG_FILE,
     CONNECTIONS_DIR,
     console,
-    is_claude_desktop_installed,
     load_claude_desktop_config,
     load_config,
 )
@@ -88,17 +88,20 @@ def init(name: str, source: str | None):
         db-mcp init mydb                      # New connection "mydb"
         db-mcp init mydb git@github.com:org/db-mcp-mydb.git  # Clone from git
     """
-    # Check if Claude Desktop is installed
-    if not is_claude_desktop_installed():
+    # MCP client setup is optional for initialization; warn but continue.
+    if not detect_installed_agents():
+        supported_clients = ", ".join(agent.name for agent in AGENTS.values())
         console.print(
             Panel.fit(
-                "[bold red]Claude Desktop Not Found[/bold red]\n\n"
-                "db-mcp requires Claude Desktop to be installed.\n\n"
-                "Download from: [cyan]https://claude.ai/download[/cyan]",
-                border_style="red",
+                "[bold yellow]No MCP Clients Auto-Detected[/bold yellow]\n\n"
+                f"db-mcp supports: {supported_clients}.\n"
+                "Setup will continue now.\n"
+                "You can choose one or several clients during agent setup,\n"
+                "or select 'Configure later' and run [cyan]db-mcp agents[/cyan]\n"
+                "or [cyan]db-mcp ui[/cyan] afterward.",
+                border_style="yellow",
             )
         )
-        return
 
     # Determine if this is brownfield (git clone) or greenfield (new setup)
     is_brownfield = source and is_git_url(source)

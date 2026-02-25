@@ -9,9 +9,7 @@ import sys
 from pathlib import Path
 
 # Path to the audit script
-AUDIT_SCRIPT = (
-    Path(__file__).parent.parent.parent.parent / "scripts" / "tool_coverage_audit.py"
-)
+AUDIT_SCRIPT = Path(__file__).parent.parent.parent.parent / "scripts" / "tool_coverage_audit.py"
 
 
 class TestToolCoverageAudit:
@@ -28,23 +26,20 @@ class TestToolCoverageAudit:
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, (
-            f"SQL mode audit failed:\n{result.stdout}\n{result.stderr}"
-        )
+        assert result.returncode == 0, f"SQL mode audit failed:\n{result.stdout}\n{result.stderr}"
         assert "100.0%" in result.stdout
         assert "PASS" in result.stdout
 
-    def test_audit_api_mode_fails(self):
-        """API mode should show mismatches (expected behavior)."""
+    def test_audit_api_mode_passes(self):
+        """API mode should also have 100% coverage."""
         result = subprocess.run(
             [sys.executable, str(AUDIT_SCRIPT), "--config", "api"],
             capture_output=True,
             text=True,
         )
-        # API mode has expected mismatches - this is correct behavior
-        # The test verifies the script runs and produces expected output
-        assert "api_discover" in result.stdout
-        assert "api_query" in result.stdout
+        assert result.returncode == 0, f"API mode audit failed:\n{result.stdout}\n{result.stderr}"
+        assert "100.0%" in result.stdout
+        assert "PASS" in result.stdout
 
     def test_audit_json_output(self):
         """JSON output should be valid."""
@@ -78,9 +73,7 @@ class TestToolRegistrationCompleteness:
         import re
 
         registered_tools = set(
-            re.findall(
-                r'server\.tool\(\s*name\s*=\s*["\']([^"\']+)["\']', server_content
-            )
+            re.findall(r'server\.tool\(\s*name\s*=\s*["\']([^"\']+)["\']', server_content)
         )
 
         # All registered tools should be discoverable at runtime
@@ -97,6 +90,4 @@ class TestToolRegistrationCompleteness:
             "mark_insights_processed",
         }
         missing_core = core_tools - registered_tools
-        assert core_tools.issubset(registered_tools), (
-            f"Missing core tools: {missing_core}"
-        )
+        assert core_tools.issubset(registered_tools), f"Missing core tools: {missing_core}"

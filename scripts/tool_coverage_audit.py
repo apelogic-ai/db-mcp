@@ -18,8 +18,11 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +30,7 @@ from typing import Any
 SERVER_PY_PATH = (
     Path(__file__).parent.parent / "packages" / "core" / "src" / "db_mcp" / "server.py"
 )
-TOOLS_DIR = (
-    Path(__file__).parent.parent / "packages" / "core" / "src" / "db_mcp" / "tools"
-)
+TOOLS_DIR = Path(__file__).parent.parent / "packages" / "core" / "src" / "db_mcp" / "tools"
 
 
 def extract_tool_registrations_from_server() -> set[str]:
@@ -117,15 +118,20 @@ def get_expected_tools_for_config(
     tools: set[str] = set()
 
     # Core tools - always available
-    tools.update([
-        "dismiss_insight",
-        "mark_insights_processed",
-        "ping",
-        "get_config",
-        "list_connections",
-        "shell",
-        "protocol",
-    ])
+    tools.update(
+        [
+            "dismiss_insight",
+            "mark_insights_processed",
+            "mcp_list_improvements",
+            "mcp_suggest_improvement",
+            "mcp_approve_improvement",
+            "ping",
+            "get_config",
+            "list_connections",
+            "shell",
+            "protocol",
+        ]
+    )
 
     # SQL execution tools
     if supports_sql:
@@ -138,73 +144,177 @@ def get_expected_tools_for_config(
 
     # API connector tools
     if has_api:
-        tools.update([
-            "api_discover",
-            "api_query",
-            "api_mutate",
-            "api_describe_endpoint",
-        ])
+        tools.update(
+            [
+                "api_discover",
+                "api_query",
+                "api_mutate",
+                "api_describe_endpoint",
+            ]
+        )
         if has_api_sql:
             tools.add("api_execute_sql")
 
     # Admin/Setup tools - always available
-    tools.update([
-        "mcp_setup_status",
-        "mcp_setup_start",
-        "mcp_setup_add_ignore_pattern",
-        "mcp_setup_remove_ignore_pattern",
-        "mcp_setup_import_ignore_patterns",
-        "mcp_setup_discover",
-        "mcp_setup_discover_status",
-        "mcp_setup_reset",
-        "mcp_setup_next",
-        "mcp_setup_approve",
-        "mcp_setup_skip",
-        "mcp_setup_bulk_approve",
-        "mcp_setup_import_descriptions",
-        "mcp_domain_status",
-        "mcp_domain_generate",
-        "mcp_domain_approve",
-        "mcp_domain_skip",
-        "import_instructions",
-        "import_examples",
-    ])
+    tools.update(
+        [
+            "mcp_setup_status",
+            "mcp_setup_start",
+            "mcp_setup_add_ignore_pattern",
+            "mcp_setup_remove_ignore_pattern",
+            "mcp_setup_import_ignore_patterns",
+            "mcp_setup_discover",
+            "mcp_setup_discover_status",
+            "mcp_setup_reset",
+            "mcp_setup_next",
+            "mcp_setup_approve",
+            "mcp_setup_skip",
+            "mcp_setup_bulk_approve",
+            "mcp_setup_import_descriptions",
+            "mcp_domain_status",
+            "mcp_domain_generate",
+            "mcp_domain_approve",
+            "mcp_domain_skip",
+            "import_instructions",
+            "import_examples",
+        ]
+    )
 
     # Detailed mode ONLY - schema discovery and query helper tools
     if not is_shell_mode and (supports_sql or has_api):
-        tools.update([
-            "test_connection",
-            "detect_dialect",
-            "list_catalogs",
-            "list_schemas",
-            "list_tables",
-            "describe_table",
-            "sample_table",
-            "get_dialect_rules",
-            "get_connection_dialect",
-            "query_status",
-            "query_generate",
-            "query_approve",
-            "query_feedback",
-            "query_add_rule",
-            "query_list_examples",
-            "query_list_rules",
-            "get_knowledge_gaps",
-            "dismiss_knowledge_gap",
-            "metrics_discover",
-            "metrics_list",
-            "metrics_approve",
-            "metrics_add",
-            "metrics_remove",
-            "get_data",
-            "test_elicitation",
-            "test_sampling",
-        ])
+        tools.update(
+            [
+                "test_connection",
+                "detect_dialect",
+                "list_catalogs",
+                "list_schemas",
+                "list_tables",
+                "describe_table",
+                "sample_table",
+                "get_dialect_rules",
+                "get_connection_dialect",
+                "query_status",
+                "query_generate",
+                "query_approve",
+                "query_feedback",
+                "query_add_rule",
+                "query_list_examples",
+                "query_list_rules",
+                "get_knowledge_gaps",
+                "dismiss_knowledge_gap",
+                "metrics_discover",
+                "metrics_list",
+                "metrics_approve",
+                "metrics_add",
+                "metrics_remove",
+                "get_data",
+                "test_elicitation",
+                "test_sampling",
+            ]
+        )
 
     return tools
 
 
-def discover_runtime_tools() -> set[str]:
+def _write_connector_yaml(
+    connections_dir: Path,
+    name: str,
+    connection_type: str,
+    capabilities: dict[str, Any],
+) -> None:
+    """Create a minimal connector.yaml for capability-based tool registration."""
+    connection_path = connections_dir / name
+    connection_path.mkdir(parents=True, exist_ok=True)
+
+    lines = [f"type: {connection_type}", "capabilities:"]
+    for key, value in capabilities.items():
+        if isinstance(value, bool):
+            rendered = "true" if value else "false"
+        else:
+            rendered = value
+        lines.append(f"  {key}: {rendered}")
+    (connection_path / "connector.yaml").write_text("\n".join(lines) + "\n")
+
+
+@contextmanager
+def _temp_server_env(config: str):
+    """Set up a temporary connection config environment for server creation."""
+    with tempfile.TemporaryDirectory(prefix="db-mcp-tool-audit-") as tmpdir:
+        root = Path(tmpdir)
+        connections_dir = root / "connections"
+        connection_name = "audit"
+
+        config_map: dict[str, tuple[str, dict[str, Any], str]] = {
+            "sql": (
+                "sql",
+                {
+                    "supports_sql": True,
+                    "supports_validate_sql": True,
+                    "supports_async_jobs": True,
+                },
+                "detailed",
+            ),
+            "api": (
+                "api",
+                {
+                    "supports_sql": False,
+                    "supports_validate_sql": False,
+                    "supports_async_jobs": False,
+                },
+                "detailed",
+            ),
+            "metabase": (
+                "metabase",
+                {
+                    "supports_sql": True,
+                    "supports_validate_sql": False,
+                    "supports_async_jobs": False,
+                },
+                "detailed",
+            ),
+            "file": (
+                "file",
+                {
+                    "supports_sql": True,
+                    "supports_validate_sql": True,
+                    "supports_async_jobs": True,
+                },
+                "detailed",
+            ),
+            "shell": (
+                "sql",
+                {
+                    "supports_sql": True,
+                    "supports_validate_sql": True,
+                    "supports_async_jobs": True,
+                },
+                "shell",
+            ),
+        }
+
+        connection_type, capabilities, tool_mode = config_map[config]
+        _write_connector_yaml(connections_dir, connection_name, connection_type, capabilities)
+
+        env_overrides = {
+            "CONNECTIONS_DIR": str(connections_dir),
+            "CONNECTION_NAME": connection_name,
+            "CONNECTION_PATH": str(connections_dir / connection_name),
+            "DB_MCP_CONNECTION_PATH": str(connections_dir / connection_name),
+            "DB_MCP_TOOL_MODE": tool_mode,
+        }
+        original = {k: os.environ.get(k) for k in env_overrides}
+        os.environ.update(env_overrides)
+        try:
+            yield
+        finally:
+            for key, old_value in original.items():
+                if old_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_value
+
+
+def discover_runtime_tools(config: str) -> set[str]:
     """
     Discover tools exposed by a running MCP server.
 
@@ -224,12 +334,17 @@ def discover_runtime_tools() -> set[str]:
         sys.path.insert(0, src_path)
 
     try:
-        # Import the mcp server instance
-        from db_mcp.server import mcp
+        with _temp_server_env(config):
+            from db_mcp.config import reset_settings
+            from db_mcp.registry import ConnectionRegistry
+            from db_mcp.server import _create_server
 
-        # Get tools from the tool manager
-        tools = mcp._tool_manager._tools
-        return set(tools.keys())
+            reset_settings()
+            ConnectionRegistry.reset()
+
+            server = _create_server()
+            tools = server._tool_manager._tools
+            return set(tools.keys())
     except Exception as e:
         print(f"Warning: Could not discover runtime tools: {e}", file=sys.stderr)
         return set()
@@ -248,11 +363,7 @@ def generate_report(
     matched_tools = declared_tools & runtime_tools
 
     # Calculate coverage percentage safely
-    coverage = (
-        round(len(matched_tools) / len(declared_tools) * 100, 2)
-        if declared_tools
-        else 0
-    )
+    coverage = round(len(matched_tools) / len(declared_tools) * 100, 2) if declared_tools else 0
 
     report = {
         "summary": {
@@ -274,9 +385,7 @@ def generate_report(
     return report
 
 
-def print_report(
-    report: dict[str, Any], verbose: bool = False, json_output: bool = False
-):
+def print_report(report: dict[str, Any], verbose: bool = False, json_output: bool = False):
     """Print the coverage report in human-readable or JSON format."""
 
     if json_output:
@@ -346,8 +455,7 @@ def print_report(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Audit MCP tool coverage - verify all implemented tools "
-            "are exposed at runtime"
+            "Audit MCP tool coverage - verify all implemented tools are exposed at runtime"
         )
     )
     parser.add_argument(
@@ -425,7 +533,7 @@ def main():
     expected_tools = get_expected_tools_for_config(**config_map[args.config])
 
     # Discover runtime tools
-    runtime_tools = discover_runtime_tools()
+    runtime_tools = discover_runtime_tools(args.config)
 
     if args.verbose:
         print(

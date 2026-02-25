@@ -367,7 +367,7 @@ def _build_connection_instructions(all_connections: dict) -> str:
         lines.append(" ".join(parts))
 
     lines.append(
-        "\n**Usage:** Add `connection=\"name\"` to any tool call to target a specific connection."
+        '\n**Usage:** Add `connection="name"` to any tool call to target a specific connection.'
     )
     lines.append(
         "If omitted and only one connection of the required type exists, it is used automatically."
@@ -746,6 +746,83 @@ def _create_server() -> FastMCP:
         return {"status": "processed", "message": "Insights processing timestamp updated"}
 
     server.tool(name="mark_insights_processed")(_mark_insights_processed)
+
+    async def _mcp_list_improvements() -> dict:
+        """List pending improvements (backward-compatible alias for insights)."""
+        from db_mcp.insights.detector import load_insights
+
+        store = load_insights(get_connection_path())
+        improvements = [
+            {
+                "id": insight.id,
+                "category": insight.category,
+                "severity": insight.severity,
+                "title": insight.title,
+                "summary": insight.summary,
+                "details": insight.details,
+                "detected_at": insight.detected_at,
+            }
+            for insight in store.pending()
+        ]
+        return {
+            "improvements": improvements,
+            "count": len(improvements),
+        }
+
+    server.tool(name="mcp_list_improvements")(_mcp_list_improvements)
+
+    async def _mcp_suggest_improvement() -> dict:
+        """Suggest the highest-priority pending improvement.
+
+        This tool is a compatibility alias over the insights subsystem.
+        """
+        from db_mcp.insights.detector import load_insights
+
+        severity_rank = {"action": 3, "warning": 2, "info": 1}
+        pending = load_insights(get_connection_path()).pending()
+        if not pending:
+            return {"status": "none", "improvement": None}
+
+        best = sorted(
+            pending,
+            key=lambda i: (severity_rank.get(i.severity, 0), i.detected_at),
+            reverse=True,
+        )[0]
+        return {
+            "status": "ok",
+            "improvement": {
+                "id": best.id,
+                "category": best.category,
+                "severity": best.severity,
+                "title": best.title,
+                "summary": best.summary,
+                "details": best.details,
+                "detected_at": best.detected_at,
+            },
+        }
+
+    server.tool(name="mcp_suggest_improvement")(_mcp_suggest_improvement)
+
+    async def _mcp_approve_improvement(improvement_id: str) -> dict:
+        """Approve (resolve) an improvement by ID.
+
+        For compatibility this maps to dismissing a pending insight.
+        """
+        from db_mcp.insights.detector import load_insights, save_insights
+
+        connection_path = get_connection_path()
+        store = load_insights(connection_path)
+        if not store.dismiss(improvement_id):
+            return {"status": "not_found", "improvement_id": improvement_id}
+
+        save_insights(connection_path, store)
+        return {
+            "status": "approved",
+            "improvement_id": improvement_id,
+            "remaining": len(store.pending()),
+        }
+
+    server.tool(name="mcp_approve_improvement")(_mcp_approve_improvement)
 
     async def _ping() -> dict:
         """Health check - verify server is running."""
