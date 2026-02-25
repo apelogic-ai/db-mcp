@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import sqlite3
 from pathlib import Path
 
 import pytest
+from fastmcp.client import Client
 
 from db_mcp.config import Settings, reset_settings
 from db_mcp.registry import ConnectionRegistry
 from db_mcp.server import _create_server
-from fastmcp.client import Client
 
 
 def _init_sqlite(db_path: Path) -> None:
@@ -100,7 +99,8 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
 
         # insights: create a fake insight file via shell to have something to dismiss
         calls["mark_insights_processed"] = await _call(client, "mark_insights_processed", {})
-        # dismiss_insight: use a deterministic non-existent id (happy path currently returns not_found)
+        # dismiss_insight: use deterministic non-existent id.
+        # Happy path currently returns "not_found".
         calls["dismiss_insight"] = await _call(client, "dismiss_insight", {"insight_id": "nope"})
 
         # Shell (reads/writes in connection dir)
@@ -109,7 +109,9 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         # ------------------------------------------------------------------
         # SQL execution
         # ------------------------------------------------------------------
-        calls["validate_sql"] = await _call(client, "validate_sql", {"sql": "SELECT COUNT(*) AS n FROM t"})
+        calls["validate_sql"] = await _call(
+            client, "validate_sql", {"sql": "SELECT COUNT(*) AS n FROM t"}
+        )
         validate_res = calls["validate_sql"].get("structuredContent")
         assert isinstance(validate_res, dict) and validate_res.get("valid") is True
         query_id = validate_res.get("query_id")
@@ -117,10 +119,18 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
 
         calls["run_sql"] = await _call(client, "run_sql", {"query_id": query_id})
         run_res = calls["run_sql"].get("structuredContent")
-        assert isinstance(run_res, dict) and run_res.get("status") in {"success", "submitted", "complete"}
+        assert isinstance(run_res, dict) and run_res.get("status") in {
+            "success",
+            "submitted",
+            "complete",
+        }
 
         calls["get_result"] = await _call(client, "get_result", {"query_id": query_id})
-        calls["export_results"] = await _call(client, "export_results", {"sql": "SELECT COUNT(*) AS n FROM t", "format": "csv"})
+        calls["export_results"] = await _call(
+            client,
+            "export_results",
+            {"sql": "SELECT COUNT(*) AS n FROM t", "format": "csv"},
+        )
 
         # ------------------------------------------------------------------
         # Setup / onboarding
@@ -140,18 +150,22 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         )
         calls["mcp_setup_discover"] = await _call(client, "mcp_setup_discover", {})
         # mcp_setup_discover_status requires discovery_id; use a fake one to test the tool
-        calls["mcp_setup_discover_status"] = await _call(client, "mcp_setup_discover_status", {"discovery_id": "fake-id"})
+        calls["mcp_setup_discover_status"] = await _call(
+            client,
+            "mcp_setup_discover_status",
+            {"discovery_id": "fake-id"},
+        )
         calls["mcp_setup_next"] = await _call(client, "mcp_setup_next", {})
         calls["mcp_setup_skip"] = await _call(client, "mcp_setup_skip", {})
-        calls["mcp_setup_bulk_approve"] = await _call(
-            client, "mcp_setup_bulk_approve", {}
-        )
+        calls["mcp_setup_bulk_approve"] = await _call(client, "mcp_setup_bulk_approve", {})
         calls["mcp_setup_import_descriptions"] = await _call(
             client,
             "mcp_setup_import_descriptions",
             {"descriptions": "tables: {}\n"},
         )
-        calls["mcp_setup_approve"] = await _call(client, "mcp_setup_approve", {"description": "Test description"})
+        calls["mcp_setup_approve"] = await _call(
+            client, "mcp_setup_approve", {"description": "Test description"}
+        )
         calls["mcp_setup_reset"] = await _call(client, "mcp_setup_reset", {})
 
         # ------------------------------------------------------------------
@@ -181,7 +195,9 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         # ------------------------------------------------------------------
         calls["test_connection"] = await _call(client, "test_connection", {})
         db_path = mcp_env["db_path"]
-        calls["detect_dialect"] = await _call(client, "detect_dialect", {"database_url": f"sqlite:///{db_path}"})
+        calls["detect_dialect"] = await _call(
+            client, "detect_dialect", {"database_url": f"sqlite:///{db_path}"}
+        )
         calls["list_catalogs"] = await _call(client, "list_catalogs", {})
         calls["list_schemas"] = await _call(client, "list_schemas", {"catalog": None})
         calls["list_tables"] = await _call(
@@ -197,7 +213,9 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
             "sample_table",
             {"catalog": None, "schema": None, "table_name": "t", "limit": 2},
         )
-        calls["get_dialect_rules"] = await _call(client, "get_dialect_rules", {"dialect": "postgresql"})
+        calls["get_dialect_rules"] = await _call(
+            client, "get_dialect_rules", {"dialect": "postgresql"}
+        )
         calls["get_connection_dialect"] = await _call(client, "get_connection_dialect", {})
 
         calls["query_status"] = await _call(client, "query_status", {})
@@ -237,7 +255,9 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         calls["metrics_discover"] = await _call(client, "metrics_discover", {})
         calls["metrics_list"] = await _call(client, "metrics_list", {})
         calls["metrics_add"] = await _call(
-            client, "metrics_add", {"type": "dimension", "name": "x", "description": "Test dimension"}
+            client,
+            "metrics_add",
+            {"type": "dimension", "name": "x", "description": "Test dimension"},
         )
         calls["metrics_approve"] = await _call(
             client, "metrics_approve", {"type": "dimension", "name": "x"}
@@ -246,7 +266,9 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
             client, "metrics_remove", {"type": "dimension", "name": "x"}
         )
 
-        calls["get_data"] = await _call(client, "get_data", {"intent": "show all rows from table t"})
+        calls["get_data"] = await _call(
+            client, "get_data", {"intent": "show all rows from table t"}
+        )
         calls["test_elicitation"] = await _call(client, "test_elicitation", {})
         calls["test_sampling"] = await _call(client, "test_sampling", {})
 
