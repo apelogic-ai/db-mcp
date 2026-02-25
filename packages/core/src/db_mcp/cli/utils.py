@@ -71,6 +71,32 @@ def save_config(config: dict) -> None:
         yaml.dump(config, f, default_flow_style=False)
 
 
+def _windows_roaming_appdata() -> Path:
+    """Resolve Windows roaming AppData directory with sensible fallbacks."""
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata)
+
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        return Path(user_profile) / "AppData" / "Roaming"
+
+    return Path.home() / "AppData" / "Roaming"
+
+
+def _windows_local_appdata() -> Path:
+    """Resolve Windows local AppData directory with sensible fallbacks."""
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata)
+
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        return Path(user_profile) / "AppData" / "Local"
+
+    return Path.home() / "AppData" / "Local"
+
+
 def get_claude_desktop_config_path() -> Path:
     """Get Claude Desktop config path for current OS."""
     system = platform.system()
@@ -83,8 +109,7 @@ def get_claude_desktop_config_path() -> Path:
             / "claude_desktop_config.json"
         )
     elif system == "Windows":
-        appdata = os.environ.get("APPDATA", "")
-        return Path(appdata) / "Claude" / "claude_desktop_config.json"
+        return _windows_roaming_appdata() / "Claude" / "claude_desktop_config.json"
     else:  # Linux
         return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
 
@@ -133,14 +158,13 @@ def is_claude_desktop_installed() -> bool:
         return app_path.exists()
     elif system == "Windows":
         # Check common install locations
-        local_app_data = os.environ.get("LOCALAPPDATA", "")
-        if local_app_data:
-            claude_path = Path(local_app_data) / "Programs" / "Claude" / "Claude.exe"
-            if claude_path.exists():
-                return True
-        program_files = os.environ.get("PROGRAMFILES", "")
-        if program_files:
-            claude_path = Path(program_files) / "Claude" / "Claude.exe"
+        program_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
+        program_files_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
+        for claude_path in [
+            _windows_local_appdata() / "Programs" / "Claude" / "Claude.exe",
+            Path(program_files) / "Claude" / "Claude.exe",
+            Path(program_files_x86) / "Claude" / "Claude.exe",
+        ]:
             if claude_path.exists():
                 return True
         return False

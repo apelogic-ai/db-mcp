@@ -17,6 +17,7 @@ from db_mcp.agents import (
     detect_codex,
     detect_installed_agents,
     detect_openclaw,
+    get_claude_desktop_config_path,
     get_db_mcp_binary_path,
     load_agent_config,
     remove_dbmcp_from_agent,
@@ -49,6 +50,28 @@ class TestAgentDetection:
             with patch("pathlib.Path.exists", return_value=False):
                 with patch("platform.system", return_value="Linux"):
                     assert detect_claude_desktop() is False
+
+    def test_detect_claude_desktop_by_app_windows_local_app_data(self):
+        """Test detecting Claude Desktop by per-user Windows install location."""
+        with (
+            patch("db_mcp.agents.platform.system", return_value="Windows"),
+            patch.dict(
+                "os.environ",
+                {
+                    "APPDATA": "C:\\Users\\user\\AppData\\Roaming",
+                    "LOCALAPPDATA": "C:\\Users\\user\\AppData\\Local",
+                    "PROGRAMFILES": "C:\\Program Files",
+                    "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
+                },
+                clear=True,
+            ),
+        ):
+            with patch("pathlib.Path.exists", autospec=True) as mock_exists:
+                mock_exists.side_effect = lambda path: str(path) in {
+                    "C:\\Users\\user\\AppData\\Local/Programs/Claude/Claude.exe",
+                    "C:\\Users\\user\\AppData\\Local\\Programs\\Claude\\Claude.exe",
+                }
+                assert detect_claude_desktop() is True
 
     def test_detect_claude_code_by_config(self):
         """Test detecting Claude Code by config file."""
@@ -130,6 +153,15 @@ class TestAgentDetection:
                         assert "claude-code" not in installed
                         assert "codex" in installed
                         assert "openclaw" not in installed
+
+    def test_get_claude_desktop_config_path_windows_fallbacks_without_appdata(self):
+        """Test Windows fallback path when APPDATA is missing."""
+        with (
+            patch("db_mcp.agents.platform.system", return_value="Windows"),
+            patch.dict("os.environ", {"USERPROFILE": "C:\\Users\\user"}, clear=True),
+        ):
+            path = get_claude_desktop_config_path()
+        assert str(path) == "C:\\Users\\user/AppData/Roaming/Claude/claude_desktop_config.json"
 
 
 class TestAgentConfig:
@@ -423,7 +455,7 @@ class TestAgentConfiguration:
             # Create existing config with imports
             existing_config = {
                 "imports": ["./other-config.json"],
-                "mcpServers": {"github": {"command": "npx", "args": ["@github/mcp"]}}
+                "mcpServers": {"github": {"command": "npx", "args": ["@github/mcp"]}},
             }
 
             with open(config_path, "w") as f:
@@ -568,7 +600,7 @@ class TestRemoveAgent:
                 "mcpServers": {
                     "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
                     "github": {"command": "npx", "args": ["@github/mcp"]},
-                }
+                },
             }
             with open(config_path, "w") as f:
                 json.dump(existing, f)
