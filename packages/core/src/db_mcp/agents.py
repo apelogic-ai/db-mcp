@@ -26,6 +26,32 @@ class MCPAgent:
     detect_fn: Callable[[], bool] | None = None  # Optional custom detection
 
 
+def _windows_roaming_appdata() -> Path:
+    """Resolve Windows roaming AppData directory with sensible fallbacks."""
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata)
+
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        return Path(user_profile) / "AppData" / "Roaming"
+
+    return Path.home() / "AppData" / "Roaming"
+
+
+def _windows_local_appdata() -> Path:
+    """Resolve Windows local AppData directory with sensible fallbacks."""
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata)
+
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        return Path(user_profile) / "AppData" / "Local"
+
+    return Path.home() / "AppData" / "Local"
+
+
 def get_claude_desktop_config_path() -> Path:
     """Get Claude Desktop config path for current OS."""
     system = platform.system()
@@ -38,8 +64,7 @@ def get_claude_desktop_config_path() -> Path:
             / "claude_desktop_config.json"
         )
     elif system == "Windows":
-        appdata = os.environ.get("APPDATA", "")
-        return Path(appdata) / "Claude" / "claude_desktop_config.json"
+        return _windows_roaming_appdata() / "Claude" / "claude_desktop_config.json"
     else:  # Linux
         return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
 
@@ -73,10 +98,15 @@ def detect_claude_desktop() -> bool:
         app_path = Path("/Applications/Claude.app")
         return app_path.exists()
     elif system == "Windows":
-        # Check common install locations
+        # Check common per-user and system install locations.
         program_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
-        app_path = Path(program_files) / "Claude" / "Claude.exe"
-        return app_path.exists()
+        program_files_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
+        app_paths = [
+            _windows_local_appdata() / "Programs" / "Claude" / "Claude.exe",
+            Path(program_files) / "Claude" / "Claude.exe",
+            Path(program_files_x86) / "Claude" / "Claude.exe",
+        ]
+        return any(app_path.exists() for app_path in app_paths)
     # Linux - rely on config path
     return False
 
@@ -90,8 +120,6 @@ def detect_claude_code() -> bool:
         return True
 
     # Check if claude CLI is available
-    import shutil
-
     return shutil.which("claude") is not None
 
 
@@ -104,8 +132,6 @@ def detect_codex() -> bool:
         return True
 
     # Check if codex CLI is available
-    import shutil
-
     return shutil.which("codex") is not None
 
 

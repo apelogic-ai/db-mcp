@@ -43,9 +43,7 @@ class TestLoadConfig:
 
     def test_loads_yaml_from_file(self, tmp_path):
         fake_config = tmp_path / "config.yaml"
-        fake_config.write_text(
-            yaml.dump({"active_connection": "mydb", "tool_mode": "shell"})
-        )
+        fake_config.write_text(yaml.dump({"active_connection": "mydb", "tool_mode": "shell"}))
         with patch("db_mcp.cli.utils.CONFIG_FILE", fake_config):
             result = load_config()
         assert result["active_connection"] == "mydb"
@@ -108,6 +106,14 @@ class TestGetClaudeDesktopConfigPath:
             result = get_claude_desktop_config_path()
         assert "Claude" in str(result)
         assert "claude_desktop_config.json" in str(result)
+
+    def test_windows_path_fallback_without_appdata(self):
+        with (
+            patch("db_mcp.cli.utils.platform.system", return_value="Windows"),
+            patch.dict("os.environ", {"USERPROFILE": "C:\\Users\\user"}, clear=True),
+        ):
+            result = get_claude_desktop_config_path()
+        assert str(result) == "C:\\Users\\user/AppData/Roaming/Claude/claude_desktop_config.json"
 
     def test_linux_path(self):
         with patch("db_mcp.cli.utils.platform.system", return_value="Linux"):

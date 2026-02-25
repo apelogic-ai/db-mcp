@@ -142,9 +142,26 @@ class TestConnectorTypeToolGating:
         assert "list_tables" in tools
         assert "describe_table" in tools
 
-    def test_sql_connector_hides_api_tools(self):
+    def test_sql_connector_hides_api_tools(self, tmp_path):
         """SQL connector should NOT expose api_query, api_describe_endpoint."""
-        server = _create_server()
+        connector_yaml = tmp_path / "connector.yaml"
+        connector_yaml.write_text(yaml.dump({"type": "sql"}))
+        conn_info = ConnectionInfo(
+            name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+        )
+
+        with (
+            patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+            patch("db_mcp.server.get_settings") as mock_settings,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.discover.return_value = {"test": conn_info}
+            mock_reg_cls.get_instance.return_value = mock_registry
+            mock_settings.return_value.tool_mode = "detailed"
+            mock_settings.return_value.auth0_enabled = False
+            mock_settings.return_value.auth0_domain = ""
+            server = _create_server()
+
         tools = _get_tool_names(server)
         assert "api_query" not in tools
         assert "api_describe_endpoint" not in tools
