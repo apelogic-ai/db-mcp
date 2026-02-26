@@ -108,8 +108,8 @@ class Connector(Protocol):
 def get_connector(connection_path: str | None = None) -> Connector:
     """Factory: create a Connector from the current connection config.
 
-    Reads connector.yaml from the connection directory. Falls back to
-    SQLConnector with DATABASE_URL from settings.
+    Reads connector.yaml from the connection directory. For SQL connectors,
+    falls back to connection-local `.env` DATABASE_URL, then settings DATABASE_URL.
 
     Args:
         connection_path: Optional path to connection directory.
@@ -132,6 +132,27 @@ def get_connector(connection_path: str | None = None) -> Connector:
     if factory is None:
         raise ValueError(f"Cannot create connector for config type: {config.type}")
     return factory(config, conn_path, settings)
+
+
+def _load_database_url_from_env(conn_path: Path) -> str:
+    """Load DATABASE_URL from a connection-local .env file."""
+    env_path = conn_path / ".env"
+    if not env_path.exists():
+        return ""
+
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip() == "DATABASE_URL":
+                    return value.strip().strip("\"'")
+    except Exception:
+        return ""
+
+    return ""
 
 
 def _load_sql_config(data: dict[str, Any]) -> SQLConnectorConfig:
@@ -205,7 +226,11 @@ def _load_metabase_config(data: dict[str, Any]) -> MetabaseConnectorConfig:
 def _build_sql_connector(
     config: SQLConnectorConfig, conn_path: Path, settings: Any
 ) -> SQLConnector:
-    if not config.database_url:
+    env_database_url = _load_database_url_from_env(conn_path)
+    if env_database_url:
+        # Connection-local .env is the highest precedence source for secrets.
+        config.database_url = env_database_url
+    elif not config.database_url:
         config.database_url = settings.database_url
     return SQLConnector(config)
 

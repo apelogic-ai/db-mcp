@@ -147,6 +147,80 @@ async def test_get_config_accepts_connection_argument(tmp_path):
     mock_registry.get_connection_path.assert_called_with("test")
 
 
+@pytest.mark.asyncio
+async def test_get_config_database_configured_from_resolved_connection(tmp_path):
+    """get_config should derive database_configured from the selected connection connector."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    mock_connector = MagicMock()
+    mock_connector.config.database_url = "trino://user:pass@host:8443/catalog/schema"
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_registry.get_connection_path.return_value = tmp_path
+        mock_registry.get_connector.return_value = mock_connector
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "detailed"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "default"
+        mock_settings.return_value.database_url = ""
+
+        server = _create_server()
+        async with Client(server) as client:
+            result = (await client.call_tool("get_config", {"connection": "test"})).data
+            payload = _tool_payload(result)
+
+    assert payload["database_configured"] is True
+    mock_registry.get_connector.assert_called_with("test")
+
+
+@pytest.mark.asyncio
+async def test_ping_database_configured_from_default_connection(tmp_path):
+    """ping should derive database_configured from the default connection connector."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql"}))
+    conn_info = ConnectionInfo(
+        name="default", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    mock_connector = MagicMock()
+    mock_connector.config.database_url = "trino://user:pass@host:8443/catalog/schema"
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"default": conn_info}
+        mock_registry.get_connection_path.return_value = tmp_path
+        mock_registry.get_connector.return_value = mock_connector
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "detailed"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "default"
+        mock_settings.return_value.database_url = ""
+
+        server = _create_server()
+        async with Client(server) as client:
+            result = (await client.call_tool("ping", {})).data
+            payload = _tool_payload(result)
+
+    assert payload["database_configured"] is True
+    mock_registry.get_connector.assert_called_with("default")
+
+
 class TestConnectorTypeToolGating:
     """Tools should be registered based on connector type (sql/api/file)."""
 

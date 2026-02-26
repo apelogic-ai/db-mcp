@@ -248,6 +248,45 @@ class TestGetConnector:
             connector = get_connector()
             assert isinstance(connector, SQLConnector)
 
+    def test_get_connector_uses_connection_env_database_url(self, tmp_path):
+        """SQL connector should prefer DATABASE_URL from connection-local .env."""
+        from db_mcp.connectors import get_connector
+
+        (tmp_path / ".env").write_text(
+            'DATABASE_URL="trino://user:pass@host:8443/catalog/schema"\n'
+        )
+        (tmp_path / "connector.yaml").write_text("type: sql\n")
+
+        with patch("db_mcp.connectors.get_settings") as mock_settings:
+            mock_settings.return_value.database_url = "postgresql://wrong-host/wrong-db"
+            mock_settings.return_value.get_effective_connection_path.return_value = str(tmp_path)
+
+            connector = get_connector()
+            assert isinstance(connector, SQLConnector)
+            assert connector.config.database_url == "trino://user:pass@host:8443/catalog/schema"
+
+    def test_get_connector_env_overrides_connector_yaml_database_url(self, tmp_path):
+        """Connection-local .env DATABASE_URL should override connector.yaml URL."""
+        from db_mcp.connectors import get_connector
+
+        (tmp_path / ".env").write_text(
+            'DATABASE_URL="trino://env-user:env-pass@env-host:8443/env/catalog"\n'
+        )
+        (tmp_path / "connector.yaml").write_text(
+            "type: sql\ndatabase_url: postgresql://yaml-user:yaml-pass@yaml-host:5432/yaml_db\n"
+        )
+
+        with patch("db_mcp.connectors.get_settings") as mock_settings:
+            mock_settings.return_value.database_url = "postgresql://settings-host/settings-db"
+            mock_settings.return_value.get_effective_connection_path.return_value = str(tmp_path)
+
+            connector = get_connector()
+            assert isinstance(connector, SQLConnector)
+            assert (
+                connector.config.database_url
+                == "trino://env-user:env-pass@env-host:8443/env/catalog"
+            )
+
     def test_get_connector_metabase(self, tmp_path):
         """get_connector returns MetabaseConnector for type: metabase."""
         from db_mcp.connectors import get_connector
