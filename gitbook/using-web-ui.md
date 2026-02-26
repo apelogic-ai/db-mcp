@@ -1,6 +1,6 @@
 # Using the Web UI
 
-The Web UI gives you an operator console for connections, context, metrics, insights, and traces.
+The Web UI is your operator console — a single place to manage connections, inspect what your agents have learned, track query patterns, and debug tool calls.
 
 ## Start the UI
 
@@ -11,62 +11,79 @@ db-mcp ui
 Optional flags:
 
 ```bash
-db-mcp ui -p 8080
-db-mcp ui -c mydb
-db-mcp ui -v
+db-mcp ui -p 8080       # custom port
+db-mcp ui -c mydb        # open with a specific connection
+db-mcp ui -v             # verbose logging
 ```
 
 ## Main screens
 
-## Config (`/config`)
+### Config (`/config`)
+
+Manage everything about your connections and agent integrations in one place.
+
+![Config screen — manage connections and agents](assets/ui-config.jpg)
+
+From here you can:
+
+- Create, edit, and delete database, file, and API connections
+- Test connectivity and run schema discovery
+- Set the active connection
+- Configure which agents (Claude Desktop, Claude Code, Codex, OpenClaw) have db-mcp access
+
+### Context (`/context`)
+
+Browse and edit the knowledge artifacts that db-mcp and your agents have built up over time — this is the institutional memory that makes every query smarter than the last.
+
+![Context viewer — browse schema, domain, examples, and rules](assets/ui-context.jpg)
+
+The tree view organizes artifacts by connection:
+
+- **Schema** — table and column descriptions
+- **Domain** — business domain model
+- **Examples** — approved NL→SQL pairs that guide future generation
+- **Instructions/Rules** — business logic constraints
+- **Learnings** — patterns captured from past failures and refinements
+
+### Metrics (`/metrics`)
+
+Define and manage your business metric catalog. db-mcp can also mine the knowledge vault to discover metric candidates automatically.
+
+![Metrics — define business metrics and discover candidates](assets/ui-metrics.jpg)
 
 Use this to:
 
-- create/edit/delete connections
-- test connectivity
-- sync/discover API connections
-- set active connection
-- configure agents from UI dialogs
+- List approved metrics and dimensions
+- Discover candidates from vault artifacts
+- Approve, edit, or remove entries
 
-## Context (`/context`)
+### Traces (`/traces`)
 
-Use this to browse and edit connection knowledge artifacts:
+A built-in OpenTelemetry trace viewer for every MCP tool call your agents make.
 
-- schema descriptions
-- domain model
-- examples
-- instructions/rules
-- learnings
+![Traces — OpenTelemetry viewer for MCP operations](assets/ui-traces.jpg)
 
-This is the fastest way to inspect what db-mcp and your agents have learned.
+Traces give you full visibility into:
 
-## Insights (`/insights`)
+- Live and historical tool call lists
+- Span drill-down with timing and error inspection
+- Which queries succeeded, failed, or needed refinement
 
-Shows patterns derived from traces and usage:
+### Insights (`/insights`)
 
-- knowledge capture trends
-- vocabulary gaps
-- repeated query opportunities
-- validation and quality signals
+The insights dashboard connects traces to knowledge gaps — showing you where your semantic layer is strong and where it needs work.
 
-## Metrics (`/metrics`)
+![Insights — semantic layer gaps and usage patterns](assets/ui-insights.jpg)
 
-Manage metric and dimension catalogs:
+Key panels:
 
-- list approved metrics/dimensions
-- discover candidates from vault artifacts
-- approve/edit/remove entries
-
-## Traces (`/traces`)
-
-OpenTelemetry trace viewer:
-
-- live and historical trace lists
-- span drill-down for tool calls
-- timing and error inspection
+- **Semantic Layer completeness** — schema descriptions, domain model, training examples, business rules, metrics
+- **Tool Usage** — which tools agents call most
+- **Knowledge Capture** — examples saved and feedback given
+- **Trace analysis** — patterns from recent agent activity
 
 ## Operational notes
 
-- `db-mcp ui` starts a local FastAPI service and opens browser automatically.
-- UI actions operate on the same connection state used by CLI and MCP server.
+- `db-mcp ui` starts a local FastAPI service and opens your browser automatically.
+- UI actions operate on the same connection state used by CLI and MCP server — changes are reflected everywhere.
 - For clean shutdown, stop with `Ctrl+C`.
