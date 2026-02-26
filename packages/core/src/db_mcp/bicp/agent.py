@@ -35,11 +35,15 @@ from bicp_agent.session import QueryState
 from sqlalchemy import text
 
 from db_mcp.config import get_settings
-from db_mcp.connectors import get_connector
+from db_mcp.connectors import get_connector, get_connector_capabilities
 from db_mcp.connectors.sql import SQLConnector
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.training.store import load_examples
-from db_mcp.validation.explain import ExplainResult, explain_sql, validate_read_only
+from db_mcp.validation.explain import (
+    ExplainResult,
+    explain_sql,
+    validate_sql_permissions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -267,24 +271,29 @@ class DBMCPAgent(BICPAgent):
         cost: QueryCost | None = None
 
         if not candidate_sql.startswith("--"):
-            is_valid, error = validate_read_only(candidate_sql)
+            connector = get_connector(connection_path=conn_path)
+            caps = get_connector_capabilities(connector)
+            is_valid, error, statement_type, is_write = validate_sql_permissions(
+                candidate_sql, capabilities=caps
+            )
             if not is_valid:
                 warnings.append(f"Validation warning: {error}")
 
-            # Get cost estimate
-            try:
-                explain_result: ExplainResult = explain_sql(
-                    candidate_sql, connection_path=conn_path
-                )
-                if explain_result.valid:
-                    cost = QueryCost(
-                        estimated_rows=explain_result.estimated_rows,
-                        cost_units=explain_result.estimated_cost,
+            # Get cost estimate for read queries only.
+            if not is_write and statement_type not in {"SHOW", "DESCRIBE", "DESC", "EXPLAIN"}:
+                try:
+                    explain_result: ExplainResult = explain_sql(
+                        candidate_sql, connection_path=conn_path
                     )
-                else:
-                    warnings.append(f"Cost estimation failed: {explain_result.error}")
-            except Exception as e:
-                warnings.append(f"Cost estimation error: {e}")
+                    if explain_result.valid:
+                        cost = QueryCost(
+                            estimated_rows=explain_result.estimated_rows,
+                            cost_units=explain_result.estimated_cost,
+                        )
+                    else:
+                        warnings.append(f"Cost estimation failed: {explain_result.error}")
+                except Exception as e:
+                    warnings.append(f"Cost estimation error: {e}")
 
         candidate = QueryCandidate(
             candidate_id=str(uuid.uuid4())[:8],
@@ -316,28 +325,44 @@ class DBMCPAgent(BICPAgent):
         if not sql:
             raise ValueError("No SQL to execute")
 
-        # Validate read-only
-        is_valid, error = validate_read_only(sql)
-        if not is_valid:
-            raise ValueError(f"Query validation failed: {error}")
-
         start_time = time.time()
 
         try:
             _, conn_path = self._resolve_connection_context()
             connector = get_connector(connection_path=conn_path)
+            caps = get_connector_capabilities(connector)
+            is_valid, error, _, is_write = validate_sql_permissions(sql, capabilities=caps)
+            if not is_valid:
+                raise ValueError(f"Query validation failed: {error}")
 
             if isinstance(connector, SQLConnector):
                 engine = connector.get_engine()
-                with engine.connect() as conn:
-                    result = conn.execute(text(sql))
-                    column_names = list(result.keys())
-                    columns = [{"name": name, "dataType": "VARCHAR"} for name in column_names]
-                    rows = []
-                    for i, row in enumerate(result):
-                        if i >= 10000:
-                            break
-                        rows.append(list(row))
+                if is_write:
+                    with engine.begin() as conn:
+                        result = conn.execute(text(sql))
+                        if result.returns_rows:
+                            column_names = list(result.keys())
+                            columns = [
+                                {"name": name, "dataType": "VARCHAR"} for name in column_names
+                            ]
+                            rows = []
+                            for i, row in enumerate(result):
+                                if i >= 10000:
+                                    break
+                                rows.append(list(row))
+                        else:
+                            columns = []
+                            rows = []
+                else:
+                    with engine.connect() as conn:
+                        result = conn.execute(text(sql))
+                        column_names = list(result.keys())
+                        columns = [{"name": name, "dataType": "VARCHAR"} for name in column_names]
+                        rows = []
+                        for i, row in enumerate(result):
+                            if i >= 10000:
+                                break
+                            rows.append(list(row))
             else:
                 # FileConnector / APIConnector — use execute_sql
                 result_rows = connector.execute_sql(sql)
