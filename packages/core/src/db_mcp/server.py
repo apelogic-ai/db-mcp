@@ -824,24 +824,58 @@ def _create_server() -> FastMCP:
 
     server.tool(name="mcp_approve_improvement")(_mcp_approve_improvement)
 
+    def _connection_is_configured(connection: str | None = None) -> bool:
+        """Check whether the selected connection has required source config."""
+        try:
+            connector = registry.get_connector(connection)
+        except Exception:
+            return False
+
+        # SQL connector path
+        config = getattr(connector, "config", None)
+        database_url = getattr(config, "database_url", None)
+        if isinstance(database_url, str):
+            return bool(database_url.strip())
+
+        # Metabase/file connector path
+        base_url = getattr(config, "base_url", None)
+        if isinstance(base_url, str):
+            return bool(base_url.strip())
+        directory = getattr(config, "directory", None)
+        if isinstance(directory, str) and directory.strip():
+            return True
+        sources = getattr(config, "sources", None)
+        if isinstance(sources, list):
+            return len(sources) > 0
+
+        # API connector path
+        api_config = getattr(connector, "api_config", None)
+        api_base_url = getattr(api_config, "base_url", None)
+        if isinstance(api_base_url, str):
+            return bool(api_base_url.strip())
+
+        # If the connector resolves and we can't infer fields, treat as configured.
+        return True
+
     async def _ping() -> dict:
         """Health check - verify server is running."""
+        resolved_connection = settings.connection_name or registry.get_default_name()
         return {
             "status": "ok",
-            "connection": settings.connection_name,
+            "connection": resolved_connection,
             "tool_mode": settings.tool_mode,
-            "database_configured": bool(settings.database_url),
+            "database_configured": _connection_is_configured(resolved_connection),
         }
 
     async def _get_config(connection: str | None = None) -> dict:
         """Get current server configuration (non-sensitive)."""
-        connection_path = registry.get_connection_path(connection)
-        resolved_connection = connection or settings.connection_name
+        resolved_connection = connection or settings.connection_name or registry.get_default_name()
+        connection_path = registry.get_connection_path(resolved_connection)
         return {
             "connection": resolved_connection,
             "connection_path": str(connection_path),
             "tool_mode": settings.tool_mode,
-            "database_configured": bool(settings.database_url),
+            "database_configured": _connection_is_configured(resolved_connection),
         }
 
     server.tool(name="ping")(_ping)
