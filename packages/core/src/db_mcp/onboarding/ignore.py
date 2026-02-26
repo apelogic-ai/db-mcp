@@ -142,7 +142,9 @@ class IgnorePatterns:
         return result
 
 
-def load_ignore_patterns(provider_id: str | None = None) -> IgnorePatterns:
+def load_ignore_patterns(
+    provider_id: str | None = None, connection_path: Path | None = None
+) -> IgnorePatterns:
     """Load ignore patterns from .db-mcpignore file.
 
     Searches for .db-mcpignore in:
@@ -153,6 +155,7 @@ def load_ignore_patterns(provider_id: str | None = None) -> IgnorePatterns:
 
     Args:
         provider_id: Provider ID. Uses configured default if not provided.
+        connection_path: Optional explicit connection directory path.
 
     Returns:
         IgnorePatterns instance
@@ -168,8 +171,8 @@ def load_ignore_patterns(provider_id: str | None = None) -> IgnorePatterns:
     custom_content = None
 
     # Check connection-specific file first (new v2 structure)
-    connection_path = settings.get_effective_connection_path()
-    connection_ignore = connection_path / ".db-mcpignore"
+    conn_path = connection_path or settings.get_effective_connection_path()
+    connection_ignore = conn_path / ".db-mcpignore"
     if connection_ignore.exists():
         custom_content = connection_ignore.read_text()
 
@@ -214,12 +217,15 @@ def get_default_ignore_content() -> str:
     )
 
 
-def save_ignore_patterns(provider_id: str, patterns: list[str]) -> dict:
+def save_ignore_patterns(
+    provider_id: str, patterns: list[str], connection_path: Path | None = None
+) -> dict:
     """Save ignore patterns to .db-mcpignore file.
 
     Args:
         provider_id: Provider ID (unused in v2, kept for compatibility)
         patterns: List of patterns to save
+        connection_path: Optional explicit connection directory path.
 
     Returns:
         Dict with save status
@@ -227,10 +233,10 @@ def save_ignore_patterns(provider_id: str, patterns: list[str]) -> dict:
     settings = get_settings()
 
     # Use new connection path structure
-    connection_path = settings.get_effective_connection_path()
-    connection_path.mkdir(parents=True, exist_ok=True)
+    conn_path = connection_path or settings.get_effective_connection_path()
+    conn_path.mkdir(parents=True, exist_ok=True)
 
-    ignore_file = connection_path / ".db-mcpignore"
+    ignore_file = conn_path / ".db-mcpignore"
 
     try:
         # Only save user-added patterns (exclude defaults)
@@ -256,7 +262,9 @@ def save_ignore_patterns(provider_id: str, patterns: list[str]) -> dict:
         }
 
 
-def add_ignore_pattern(provider_id: str, pattern: str) -> dict:
+def add_ignore_pattern(
+    provider_id: str, pattern: str, connection_path: Path | None = None
+) -> dict:
     """Add a pattern to the ignore file.
 
     Args:
@@ -266,7 +274,7 @@ def add_ignore_pattern(provider_id: str, pattern: str) -> dict:
     Returns:
         Dict with result
     """
-    ignore = load_ignore_patterns(provider_id)
+    ignore = load_ignore_patterns(provider_id, connection_path=connection_path)
     pattern = pattern.strip()
 
     if not pattern or pattern.startswith("#"):
@@ -276,7 +284,7 @@ def add_ignore_pattern(provider_id: str, pattern: str) -> dict:
         return {"added": False, "error": "Pattern already exists", "patterns": ignore.patterns}
 
     ignore.patterns.append(pattern)
-    result = save_ignore_patterns(provider_id, ignore.patterns)
+    result = save_ignore_patterns(provider_id, ignore.patterns, connection_path=connection_path)
 
     if result.get("saved"):
         return {
@@ -288,7 +296,9 @@ def add_ignore_pattern(provider_id: str, pattern: str) -> dict:
     return {"added": False, "error": result.get("error")}
 
 
-def remove_ignore_pattern(provider_id: str, pattern: str) -> dict:
+def remove_ignore_pattern(
+    provider_id: str, pattern: str, connection_path: Path | None = None
+) -> dict:
     """Remove a pattern from the ignore file.
 
     Args:
@@ -298,14 +308,14 @@ def remove_ignore_pattern(provider_id: str, pattern: str) -> dict:
     Returns:
         Dict with result
     """
-    ignore = load_ignore_patterns(provider_id)
+    ignore = load_ignore_patterns(provider_id, connection_path=connection_path)
     pattern = pattern.strip()
 
     if pattern not in ignore.patterns:
         return {"removed": False, "error": "Pattern not found", "patterns": ignore.patterns}
 
     ignore.patterns.remove(pattern)
-    result = save_ignore_patterns(provider_id, ignore.patterns)
+    result = save_ignore_patterns(provider_id, ignore.patterns, connection_path=connection_path)
 
     if result.get("saved"):
         return {
@@ -317,7 +327,12 @@ def remove_ignore_pattern(provider_id: str, pattern: str) -> dict:
     return {"removed": False, "error": result.get("error")}
 
 
-def import_ignore_patterns(provider_id: str, patterns: list[str], replace: bool = False) -> dict:
+def import_ignore_patterns(
+    provider_id: str,
+    patterns: list[str],
+    replace: bool = False,
+    connection_path: Path | None = None,
+) -> dict:
     """Import patterns (from LLM extraction of uploaded file).
 
     Args:
@@ -331,7 +346,7 @@ def import_ignore_patterns(provider_id: str, patterns: list[str], replace: bool 
     if replace:
         new_patterns = [p.strip() for p in patterns if p.strip() and not p.startswith("#")]
     else:
-        ignore = load_ignore_patterns(provider_id)
+        ignore = load_ignore_patterns(provider_id, connection_path=connection_path)
         existing = set(ignore.patterns)
         new_patterns = list(ignore.patterns)
         for p in patterns:
@@ -340,7 +355,7 @@ def import_ignore_patterns(provider_id: str, patterns: list[str], replace: bool 
                 new_patterns.append(p)
                 existing.add(p)
 
-    result = save_ignore_patterns(provider_id, new_patterns)
+    result = save_ignore_patterns(provider_id, new_patterns, connection_path=connection_path)
 
     if result.get("saved"):
         return {

@@ -702,19 +702,29 @@ def _create_server() -> FastMCP:
     # Core tools - always available
     # =========================================================================
 
-    async def _dismiss_insight(insight_id: str) -> dict:
+    def _resolve_tool_connection_path(connection: str | None = None):
+        """Resolve optional connection arg to a concrete connection path."""
+        if connection is None:
+            return get_connection_path()
+        from db_mcp.tools.utils import resolve_connection
+
+        _, _, conn_path = resolve_connection(connection)
+        return conn_path
+
+    async def _dismiss_insight(insight_id: str, connection: str | None = None) -> dict:
         """Dismiss a pending insight after reviewing or resolving it.
 
         Args:
             insight_id: The ID of the insight to dismiss
                 (shown in insights/pending resource).
+            connection: Optional connection name for multi-connection support.
         """
         from db_mcp.insights.detector import (
             load_insights,
             save_insights,
         )
 
-        connection_path = get_connection_path()
+        connection_path = _resolve_tool_connection_path(connection)
         store = load_insights(connection_path)
         if store.dismiss(insight_id):
             save_insights(connection_path, store)
@@ -731,7 +741,7 @@ def _create_server() -> FastMCP:
 
     server.tool(name="dismiss_insight")(_dismiss_insight)
 
-    async def _mark_insights_processed() -> dict:
+    async def _mark_insights_processed(connection: str | None = None) -> dict:
         """Mark insights as processed to update the timestamp.
 
         Call this when you've reviewed insights with the user, either through
@@ -740,18 +750,18 @@ def _create_server() -> FastMCP:
         """
         from db_mcp.insights.detector import mark_insights_processed
 
-        connection_path = get_connection_path()
+        connection_path = _resolve_tool_connection_path(connection)
         mark_insights_processed(connection_path)
 
         return {"status": "processed", "message": "Insights processing timestamp updated"}
 
     server.tool(name="mark_insights_processed")(_mark_insights_processed)
 
-    async def _mcp_list_improvements() -> dict:
+    async def _mcp_list_improvements(connection: str | None = None) -> dict:
         """List pending improvements (backward-compatible alias for insights)."""
         from db_mcp.insights.detector import load_insights
 
-        store = load_insights(get_connection_path())
+        store = load_insights(_resolve_tool_connection_path(connection))
         improvements = [
             {
                 "id": insight.id,
@@ -771,7 +781,7 @@ def _create_server() -> FastMCP:
 
     server.tool(name="mcp_list_improvements")(_mcp_list_improvements)
 
-    async def _mcp_suggest_improvement() -> dict:
+    async def _mcp_suggest_improvement(connection: str | None = None) -> dict:
         """Suggest the highest-priority pending improvement.
 
         This tool is a compatibility alias over the insights subsystem.
@@ -779,7 +789,7 @@ def _create_server() -> FastMCP:
         from db_mcp.insights.detector import load_insights
 
         severity_rank = {"action": 3, "warning": 2, "info": 1}
-        pending = load_insights(get_connection_path()).pending()
+        pending = load_insights(_resolve_tool_connection_path(connection)).pending()
         if not pending:
             return {"status": "none", "improvement": None}
 
@@ -803,14 +813,14 @@ def _create_server() -> FastMCP:
 
     server.tool(name="mcp_suggest_improvement")(_mcp_suggest_improvement)
 
-    async def _mcp_approve_improvement(improvement_id: str) -> dict:
+    async def _mcp_approve_improvement(improvement_id: str, connection: str | None = None) -> dict:
         """Approve (resolve) an improvement by ID.
 
         For compatibility this maps to dismissing a pending insight.
         """
         from db_mcp.insights.detector import load_insights, save_insights
 
-        connection_path = get_connection_path()
+        connection_path = _resolve_tool_connection_path(connection)
         store = load_insights(connection_path)
         if not store.dismiss(improvement_id):
             return {"status": "not_found", "improvement_id": improvement_id}

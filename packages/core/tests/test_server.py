@@ -10,7 +10,7 @@ from fastmcp.client import Client
 
 from db_mcp.config import reset_settings
 from db_mcp.insights.detector import Insight, InsightStore, load_insights, save_insights
-from db_mcp.registry import ConnectionInfo
+from db_mcp.registry import ConnectionInfo, ConnectionRegistry
 from db_mcp.server import _create_server
 
 
@@ -111,6 +111,85 @@ async def test_mcp_suggest_improvement_returns_none_when_empty(tmp_path, monkeyp
         result = (await client.call_tool("mcp_suggest_improvement", {})).data
         payload = _tool_payload(result)
         assert payload == {"status": "none", "improvement": None}
+
+
+@pytest.mark.asyncio
+async def test_improvement_tools_accept_connection_argument(tmp_path, monkeypatch):
+    """Improvement tools should route by explicit connection when provided."""
+    connections_dir = tmp_path / "connections"
+    one_path = connections_dir / "one"
+    two_path = connections_dir / "two"
+    one_path.mkdir(parents=True)
+    two_path.mkdir(parents=True)
+
+    # Make directories discoverable as connections.
+    (one_path / "state.yaml").write_text("phase: schema\n")
+    (two_path / "state.yaml").write_text("phase: schema\n")
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
+    monkeypatch.setenv("CONNECTION_NAME", "one")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    save_insights(
+        one_path,
+        InsightStore(
+            insights=[
+                Insight(
+                    id="one-1",
+                    category="pattern",
+                    severity="info",
+                    title="One",
+                    summary="One summary",
+                    detected_at=100.0,
+                )
+            ]
+        ),
+    )
+    save_insights(
+        two_path,
+        InsightStore(
+            insights=[
+                Insight(
+                    id="two-1",
+                    category="pattern",
+                    severity="action",
+                    title="Two",
+                    summary="Two summary",
+                    detected_at=200.0,
+                )
+            ]
+        ),
+    )
+
+    try:
+        server = _create_server()
+        async with Client(server) as client:
+            listed = (await client.call_tool("mcp_list_improvements", {"connection": "two"})).data
+            listed_payload = _tool_payload(listed)
+            assert listed_payload["count"] == 1
+            assert listed_payload["improvements"][0]["id"] == "two-1"
+
+            suggested = (
+                await client.call_tool("mcp_suggest_improvement", {"connection": "two"})
+            ).data
+            suggested_payload = _tool_payload(suggested)
+            assert suggested_payload["improvement"]["id"] == "two-1"
+
+            approved = (
+                await client.call_tool(
+                    "mcp_approve_improvement",
+                    {"improvement_id": "two-1", "connection": "two"},
+                )
+            ).data
+            approved_payload = _tool_payload(approved)
+            assert approved_payload["status"] == "approved"
+    finally:
+        ConnectionRegistry.reset()
+
+    assert [i.id for i in load_insights(two_path).pending()] == []
+    assert [i.id for i in load_insights(one_path).pending()] == ["one-1"]
 
 
 @pytest.mark.asyncio

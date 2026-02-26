@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 import uuid
+from pathlib import Path
 
 from db_mcp_models import OnboardingPhase, TableDescriptionStatus
 from mcp.server.fastmcp import Context
@@ -61,14 +62,14 @@ def _resolve_onboarding_context(
     return connector, provider_id, conn_path
 
 
-def _run_schema_gap_scan(provider_id: str) -> int:
+def _run_schema_gap_scan(provider_id: str, connection_path: Path | None = None) -> int:
     """Run deterministic schema gap scan and save results.
 
     Called at the SCHEMA→DOMAIN transition to seed the knowledge_gaps.yaml file.
     Returns the number of new gaps detected.
     """
     try:
-        schema = load_schema_descriptions(provider_id)
+        schema = load_schema_descriptions(provider_id, connection_path=connection_path)
         if schema is None:
             return 0
 
@@ -107,22 +108,23 @@ async def _discover_tables_background(
     discovery_id: str,
     provider_id: str,
     *,
-    connection_path: str | None = None,
+    connection_path: str | Path | None = None,
 ) -> None:
     """Background task to discover tables asynchronously.
 
     Updates _discovery_tasks[discovery_id] with progress and results.
     """
     task = _discovery_tasks[discovery_id]
+    conn_path = Path(connection_path) if isinstance(connection_path, str) else connection_path
     try:
-        state = load_state(provider_id)
+        state = load_state(provider_id, connection_path=conn_path)
         if state is None:
             task["status"] = "error"
             task["error"] = "Onboarding state not found"
             return
 
-        ignore = load_ignore_patterns(provider_id)
-        connector = get_connector(connection_path=connection_path)
+        ignore = load_ignore_patterns(provider_id, connection_path=conn_path)
+        connector = get_connector(connection_path=conn_path)
 
         # Re-filter schemas
         all_schemas_filtered = []
@@ -167,9 +169,7 @@ async def _discover_tables_background(
 
                 for t in tables:
                     try:
-                        columns = connector.get_columns(
-                            t["name"], schema=schema, catalog=catalog
-                        )
+                        columns = connector.get_columns(t["name"], schema=schema, catalog=catalog)
                     except Exception as e:
                         print(
                             f"[DISCOVERY] Async: Error getting columns for {t['name']}: {e}",
@@ -211,7 +211,7 @@ async def _discover_tables_background(
             dialect=state.dialect_detected,
             tables=all_tables,
         )
-        schema_result = save_schema_descriptions(schema)
+        schema_result = save_schema_descriptions(schema, connection_path=conn_path)
         if not schema_result["saved"]:
             task["status"] = "error"
             task["error"] = f"Failed to save schema descriptions: {schema_result['error']}"
@@ -219,7 +219,7 @@ async def _discover_tables_background(
 
         # Move to schema phase
         state.phase = OnboardingPhase.SCHEMA
-        save_result = save_state(state)
+        save_result = save_state(state, connection_path=conn_path)
         if not save_result["saved"]:
             task["status"] = "error"
             task["error"] = f"Failed to save state: {save_result['error']}"
@@ -297,9 +297,7 @@ async def _onboarding_discover_status(discovery_id: str) -> dict:
         schemas_processed = task.get("schemas_processed", 0)
         schemas_total = task.get("schemas_total", 0)
         tables_found = task.get("tables_found_so_far", 0)
-        progress_pct = (
-            round(100 * schemas_processed / schemas_total) if schemas_total > 0 else 0
-        )
+        progress_pct = round(100 * schemas_processed / schemas_total) if schemas_total > 0 else 0
         return {
             "status": "running",
             "discovery_id": discovery_id,
@@ -517,7 +515,7 @@ async def _onboarding_status(
         }
 
     # Load schema descriptions to get counts
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     tables_described = 0
     if schema:
         counts = schema.count_by_status()
@@ -569,7 +567,7 @@ async def _onboarding_start(
     existing = load_state(provider_id, connection_path=conn_path)
     if existing is not None and not force:
         # Load schema to get progress
-        schema = load_schema_descriptions(provider_id)
+        schema = load_schema_descriptions(provider_id, connection_path=conn_path)
         tables_described = 0
         if schema:
             counts = schema.count_by_status()
@@ -630,7 +628,7 @@ async def _onboarding_start(
         }
 
     # Load ignore patterns for review
-    ignore = load_ignore_patterns(provider_id)
+    ignore = load_ignore_patterns(provider_id, connection_path=conn_path)
     patterns_display = "\n".join([f"  - {p}" for p in ignore.patterns[:20]])
     if len(ignore.patterns) > 20:
         patterns_display += f"\n  ... and {len(ignore.patterns) - 20} more"
@@ -743,7 +741,7 @@ async def _onboarding_discover(
         }
 
     # Load ignore patterns
-    ignore = load_ignore_patterns(provider_id)
+    ignore = load_ignore_patterns(provider_id, connection_path=conn_path)
     print(
         f"[DISCOVERY] Loaded {len(ignore.patterns)} ignore patterns", file=sys.stderr, flush=True
     )
@@ -921,9 +919,7 @@ async def _onboarding_discover(
             return {"discovered": False, "error": error}
 
     asyncio.create_task(
-        _discover_tables_background(
-            discovery_id, provider_id, connection_path=conn_path
-        )
+        _discover_tables_background(discovery_id, provider_id, connection_path=conn_path)
     )
 
     return {
@@ -966,9 +962,9 @@ async def _onboarding_add_ignore_pattern(
     Returns:
         Result with updated pattern list
     """
-    _, provider_id, _ = _resolve_onboarding_context(connection, provider_id)
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    result = add_ignore_pattern(provider_id, pattern)
+    result = add_ignore_pattern(provider_id, pattern, connection_path=conn_path)
 
     if result.get("added"):
         patterns_display = "\n".join([f"  - {p}" for p in result["patterns"][:15]])
@@ -1008,9 +1004,9 @@ async def _onboarding_remove_ignore_pattern(
     Returns:
         Result with updated pattern list
     """
-    _, provider_id, _ = _resolve_onboarding_context(connection, provider_id)
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    result = remove_ignore_pattern(provider_id, pattern)
+    result = remove_ignore_pattern(provider_id, pattern, connection_path=conn_path)
 
     if result.get("removed"):
         patterns_display = "\n".join([f"  - {p}" for p in result["patterns"][:15]])
@@ -1057,9 +1053,11 @@ async def _onboarding_import_ignore_patterns(
     Returns:
         Result with updated pattern list
     """
-    _, provider_id, _ = _resolve_onboarding_context(connection, provider_id)
+    _, provider_id, conn_path = _resolve_onboarding_context(connection, provider_id)
 
-    result = import_ignore_patterns(provider_id, patterns, replace=replace)
+    result = import_ignore_patterns(
+        provider_id, patterns, replace=replace, connection_path=conn_path
+    )
 
     if result.get("imported"):
         patterns_display = "\n".join([f"  - {p}" for p in result["patterns"][:15]])
@@ -1145,9 +1143,7 @@ async def _onboarding_reset(
         }
 
 
-async def _onboarding_next(
-    provider_id: str | None = None, connection: str | None = None
-) -> dict:
+async def _onboarding_next(provider_id: str | None = None, connection: str | None = None) -> dict:
     """Get the next table to describe in the onboarding flow.
 
     Returns table schema and sample data to help generate a description.
@@ -1175,7 +1171,7 @@ async def _onboarding_next(
         }
 
     # Load schema descriptions
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if schema is None:
         return {
             "error": "Schema descriptions not found. Call onboarding_start first.",
@@ -1190,7 +1186,7 @@ async def _onboarding_next(
         save_state(state, connection_path=conn_path)
 
         # Run deterministic schema gap scan
-        gaps_found = _run_schema_gap_scan(provider_id)
+        gaps_found = _run_schema_gap_scan(provider_id, connection_path=conn_path)
 
         counts = schema.count_by_status()
         result: dict = {
@@ -1314,7 +1310,7 @@ async def _onboarding_approve(
         return {"error": "No table pending. Call onboarding_next first."}
 
     # Load and update schema descriptions
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if schema is None:
         return {"error": "Schema descriptions not found."}
 
@@ -1330,7 +1326,7 @@ async def _onboarding_approve(
         return {"error": f"Table {state.current_table} not found in schema."}
 
     # Save schema descriptions
-    save_schema_descriptions(schema)
+    save_schema_descriptions(schema, connection_path=conn_path)
 
     # Clear current table
     approved_table = state.current_table
@@ -1345,7 +1341,7 @@ async def _onboarding_approve(
     if remaining == 0:
         state.phase = OnboardingPhase.DOMAIN
         save_state(state, connection_path=conn_path)
-        gaps_found = _run_schema_gap_scan(provider_id)
+        gaps_found = _run_schema_gap_scan(provider_id, connection_path=conn_path)
 
         next_steps = [
             "Generate domain model with mcp_domain_generate",
@@ -1398,9 +1394,7 @@ async def _onboarding_approve(
     }
 
 
-async def _onboarding_skip(
-    provider_id: str | None = None, connection: str | None = None
-) -> dict:
+async def _onboarding_skip(provider_id: str | None = None, connection: str | None = None) -> dict:
     """Skip the current table without describing it.
 
     Args:
@@ -1421,7 +1415,7 @@ async def _onboarding_skip(
         return {"error": "No table pending. Call onboarding_next first."}
 
     # Load and update schema descriptions
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if schema is None:
         return {"error": "Schema descriptions not found."}
 
@@ -1439,7 +1433,7 @@ async def _onboarding_skip(
         return {"error": f"Table {state.current_table} not found in schema."}
 
     # Save schema descriptions
-    save_schema_descriptions(schema)
+    save_schema_descriptions(schema, connection_path=conn_path)
 
     # Clear current table
     state.current_table = None
@@ -1453,7 +1447,7 @@ async def _onboarding_skip(
     if remaining == 0:
         state.phase = OnboardingPhase.DOMAIN
         save_state(state, connection_path=conn_path)
-        gaps_found = _run_schema_gap_scan(provider_id)
+        gaps_found = _run_schema_gap_scan(provider_id, connection_path=conn_path)
 
         next_steps = [
             "Generate domain model with mcp_domain_generate",
@@ -1538,7 +1532,7 @@ async def _onboarding_bulk_approve(
         }
 
     # Load schema descriptions
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if schema is None:
         return {"error": "Schema descriptions not found."}
 
@@ -1549,8 +1543,8 @@ async def _onboarding_bulk_approve(
     if pending_count == 0:
         # All tables already described — advance phase to DOMAIN
         state.phase = OnboardingPhase.DOMAIN
-        save_state(state)
-        gaps_found = _run_schema_gap_scan(provider_id)
+        save_state(state, connection_path=conn_path)
+        gaps_found = _run_schema_gap_scan(provider_id, connection_path=conn_path)
 
         next_steps = [
             "Generate domain model with mcp_domain_generate",
@@ -1614,14 +1608,14 @@ async def _onboarding_bulk_approve(
         approved_count += 1
 
     # Save schema descriptions
-    schema_result = save_schema_descriptions(schema)
+    schema_result = save_schema_descriptions(schema, connection_path=conn_path)
 
     # Move to next phase
     state.phase = OnboardingPhase.DOMAIN
     save_state(state, connection_path=conn_path)
 
     # Run deterministic schema gap scan
-    gaps_found = _run_schema_gap_scan(provider_id)
+    gaps_found = _run_schema_gap_scan(provider_id, connection_path=conn_path)
 
     counts_after = schema.count_by_status()
 
@@ -1707,7 +1701,7 @@ async def _onboarding_import_descriptions(
         }
 
     # Load existing schema descriptions
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if schema is None:
         return {
             "imported": False,
@@ -1779,7 +1773,7 @@ async def _onboarding_import_descriptions(
         tables_updated += 1
 
     # Save the updated schema
-    save_result = save_schema_descriptions(schema)
+    save_result = save_schema_descriptions(schema, connection_path=conn_path)
     if not save_result["saved"]:
         return {
             "imported": False,
@@ -1793,10 +1787,10 @@ async def _onboarding_import_descriptions(
     if pending_count == 0:
         # All tables processed, advance to domain phase
         state.phase = OnboardingPhase.DOMAIN
-        save_state(state)
+        save_state(state, connection_path=conn_path)
 
         # Run deterministic schema gap scan
-        gaps_found = _run_schema_gap_scan(provider_id)
+        gaps_found = _run_schema_gap_scan(provider_id, connection_path=conn_path)
 
         next_steps = [
             "Add business rules for SQL generation",

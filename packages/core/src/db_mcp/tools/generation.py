@@ -22,6 +22,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from db_mcp_models import QueryPlan
@@ -121,9 +122,13 @@ Always include a LIMIT clause if not specified (default to 100).
 # =============================================================================
 
 
-def _build_schema_context(provider_id: str, tables_hint: list[str] | None = None) -> str:
+def _build_schema_context(
+    provider_id: str,
+    tables_hint: list[str] | None = None,
+    connection_path: Path | None = None,
+) -> str:
     """Build schema context string for LLM prompts."""
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=connection_path)
     if not schema:
         return ""
 
@@ -405,16 +410,17 @@ async def _get_data(
     from db_mcp.tools.utils import _resolve_connection_path, resolve_connection
 
     if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
+        # Use resolve_connection for proper validation and path resolution.
+        _, provider_id, conn_path = resolve_connection(connection)
     else:
         # Legacy fallback when no connection specified
         from db_mcp.tools.utils import get_resolved_provider_id
+
         provider_id = get_resolved_provider_id(None)
+        conn_path = None
 
     # Check if schema is available
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if not schema:
         return {
             "status": "error",
@@ -426,7 +432,7 @@ async def _get_data(
     examples_store = load_examples(provider_id)
     instructions_store = load_instructions(provider_id)
 
-    schema_context = _build_schema_context(provider_id, tables_hint)
+    schema_context = _build_schema_context(provider_id, tables_hint, connection_path=conn_path)
     examples_context = _build_examples_context(provider_id)
     rules_context = _build_rules_context(provider_id)
 
@@ -562,9 +568,7 @@ Generate the SQL query that implements this plan.
         }
 
     conn_path = _resolve_connection_path(connection)
-    explain_result: ExplainResult = explain_sql(
-        generated_sql, connection_path=conn_path
-    )
+    explain_result: ExplainResult = explain_sql(generated_sql, connection_path=conn_path)
 
     if not explain_result.valid:
         return {
@@ -895,9 +899,7 @@ async def _run_sql(
             )
 
         # Start background execution (pass stored connection name)
-        asyncio.create_task(
-            _execute_query_background(query_id, sql, connection=query.connection)
-        )
+        asyncio.create_task(_execute_query_background(query_id, sql, connection=query.connection))
 
         return inject_protocol(
             {

@@ -111,15 +111,15 @@ async def _query_generate(
     from db_mcp.tools.utils import resolve_connection
 
     if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
+        # Use resolve_connection for proper validation and path resolution.
+        _, provider_id, conn_path = resolve_connection(connection)
     else:
         # Legacy fallback when no connection specified
         provider_id = get_resolved_provider_id(None)
+        conn_path = None
 
     # Load schema for context
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if not schema:
         return {
             "error": "No schema descriptions found. Complete the schema phase first.",

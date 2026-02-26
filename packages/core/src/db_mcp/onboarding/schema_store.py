@@ -31,16 +31,19 @@ def get_schema_file_path(
     return get_connection_path() / "schema" / "descriptions.yaml"
 
 
-def load_schema_descriptions(provider_id: str) -> SchemaDescriptions | None:
+def load_schema_descriptions(
+    provider_id: str, connection_path: Path | None = None
+) -> SchemaDescriptions | None:
     """Load schema descriptions from YAML file.
 
     Args:
         provider_id: Provider identifier
+        connection_path: Optional explicit connection directory path.
 
     Returns:
         SchemaDescriptions if found, None otherwise
     """
-    schema_file = get_schema_file_path(provider_id)
+    schema_file = get_schema_file_path(provider_id, connection_path=connection_path)
 
     if not schema_file.exists():
         return None
@@ -54,18 +57,22 @@ def load_schema_descriptions(provider_id: str) -> SchemaDescriptions | None:
         return None
 
 
-def save_schema_descriptions(schema: SchemaDescriptions) -> dict:
+def save_schema_descriptions(
+    schema: SchemaDescriptions, connection_path: Path | None = None
+) -> dict:
     """Save schema descriptions to YAML file.
 
     Args:
         schema: SchemaDescriptions to save
+        connection_path: Optional explicit connection directory path.
 
     Returns:
         Dict with save status
     """
     try:
         # Ensure schema directory exists
-        schema_dir = get_connection_path() / "schema"
+        conn_path = connection_path or get_connection_path()
+        schema_dir = conn_path / "schema"
         schema_dir.mkdir(parents=True, exist_ok=True)
 
         schema.generated_at = datetime.now(UTC)
@@ -73,7 +80,7 @@ def save_schema_descriptions(schema: SchemaDescriptions) -> dict:
         # Convert to dict for YAML serialization
         schema_dict = schema.model_dump(mode="json", by_alias=True)
 
-        schema_file = get_schema_file_path()
+        schema_file = get_schema_file_path(connection_path=conn_path)
         with open(schema_file, "w") as f:
             yaml.dump(
                 schema_dict,

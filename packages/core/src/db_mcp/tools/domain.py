@@ -357,9 +357,7 @@ def _generate_domain_model_content(schema: SchemaDescriptions) -> str:
     return "\n".join(lines)
 
 
-async def _domain_status(
-    provider_id: str | None = None, connection: str | None = None
-) -> dict:
+async def _domain_status(provider_id: str | None = None, connection: str | None = None) -> dict:
     """Get current domain model status.
 
     Args:
@@ -378,6 +376,7 @@ async def _domain_status(
         # Legacy fallback when no connection specified
         if provider_id is None:
             from db_mcp.tools.utils import get_resolved_provider_id
+
             provider_id = get_resolved_provider_id(None)
         conn_path = None
 
@@ -407,9 +406,7 @@ async def _domain_status(
     return result
 
 
-async def _domain_generate(
-    provider_id: str | None = None, connection: str | None = None
-) -> dict:
+async def _domain_generate(provider_id: str | None = None, connection: str | None = None) -> dict:
     """Generate domain model from schema descriptions.
 
     Creates a markdown document describing the business domain based on
@@ -431,6 +428,7 @@ async def _domain_generate(
         # Legacy fallback when no connection specified
         if provider_id is None:
             from db_mcp.tools.utils import get_resolved_provider_id
+
             provider_id = get_resolved_provider_id(None)
         conn_path = None
 
@@ -447,7 +445,7 @@ async def _domain_generate(
         }
 
     # Load schema descriptions
-    schema = load_schema_descriptions(provider_id)
+    schema = load_schema_descriptions(provider_id, connection_path=conn_path)
     if schema is None:
         return {"error": "Schema descriptions not found. Complete schema phase first."}
 
@@ -499,6 +497,7 @@ async def _domain_approve(
         # Legacy fallback when no connection specified
         if provider_id is None:
             from db_mcp.tools.utils import get_resolved_provider_id
+
             provider_id = get_resolved_provider_id(None)
         conn_path = None
 
@@ -567,6 +566,7 @@ async def _domain_skip(provider_id: str | None = None, connection: str | None = 
         # Legacy fallback when no connection specified
         if provider_id is None:
             from db_mcp.tools.utils import get_resolved_provider_id
+
             provider_id = get_resolved_provider_id(None)
         conn_path = None
 

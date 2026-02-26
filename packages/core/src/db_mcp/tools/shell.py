@@ -349,7 +349,7 @@ async def _shell(command: str, connection: str | None = None) -> dict:
     return result
 
 
-async def _protocol() -> str:
+async def _protocol(connection: str | None = None) -> str:
     """Re-read the knowledge vault protocol.
 
     Use this if you need a reminder about:
@@ -360,7 +360,15 @@ async def _protocol() -> str:
     Returns:
         The full PROTOCOL.md content
     """
-    protocol_path = get_connection_path() / "PROTOCOL.md"
+    if connection is not None:
+        from db_mcp.tools.utils import _resolve_connection_path
+
+        resolved = _resolve_connection_path(connection)
+        base_path = Path(resolved) if resolved else get_connection_path()
+    else:
+        base_path = get_connection_path()
+
+    protocol_path = base_path / "PROTOCOL.md"
 
     if protocol_path.exists():
         return protocol_path.read_text()
