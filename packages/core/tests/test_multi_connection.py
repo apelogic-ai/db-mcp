@@ -153,7 +153,11 @@ class TestGenerationToolsConnection:
     @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
     @patch("db_mcp.tools.generation.explain_sql")
     async def test_validate_sql_passes_connection_to_explain(
-        self, mock_explain, mock_ro, mock_caps, mock_gc,
+        self,
+        mock_explain,
+        mock_ro,
+        mock_caps,
+        mock_gc,
     ):
         """Verify explain_sql receives connection_path."""
         from db_mcp.tools.generation import _validate_sql
@@ -162,6 +166,7 @@ class TestGenerationToolsConnection:
         mock_gc.return_value = mock_connector
         mock_caps.return_value = {"supports_validate_sql": True}
         from db_mcp.validation.explain import CostTier, ExplainResult
+
         mock_explain_result = ExplainResult(
             valid=True,
             estimated_rows=10,
@@ -248,3 +253,18 @@ class TestShellToolConnection:
 
         mock_run.assert_called_once()
         assert mock_run.call_args[0][1] == default_path
+
+    @patch("db_mcp.tools.utils._resolve_connection_path")
+    async def test_protocol_with_connection_uses_resolved_path(self, mock_resolve):
+        from db_mcp.tools.shell import _protocol
+
+        mock_resolve.return_value = "/custom/connections/prod"
+        with (
+            patch("db_mcp.tools.shell.Path.exists", return_value=True),
+            patch("db_mcp.tools.shell.Path.read_text", return_value="rules") as mock_read,
+        ):
+            content = await _protocol(connection="prod")
+
+        assert content == "rules"
+        mock_read.assert_called_once()
+        mock_resolve.assert_called_once_with("prod")

@@ -143,18 +143,27 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["schema/validate-link"] = self._handle_schema_validate_link
 
     def _detect_dialect(self) -> str:
-        """Detect the database dialect from configuration.
-
-        TODO: All BICP agent methods (including _detect_dialect, execute_query,
-        list_schemas, list_tables, and _handle_schema_* methods) call
-        get_connector() without connection_path. When multi-connection BICP
-        support is implemented, these should accept and pass connection_path.
-        """
+        """Detect the database dialect from configuration."""
         try:
-            connector = get_connector()
+            _, connection_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=connection_path)
             return connector.get_dialect()
         except Exception:
             return "unknown"
+
+    def _resolve_connection_context(self) -> tuple[str, Path]:
+        """Resolve the connection context used by BICP methods.
+
+        Priority:
+        1. Active connection from ~/.db-mcp/config.yaml (UI-managed)
+        2. Process settings effective connection
+        """
+        active_path = self._get_active_connection_path()
+        if active_path is not None:
+            return active_path.name, active_path
+
+        settings = getattr(self, "_settings", None) or get_settings()
+        return settings.get_effective_provider_id(), settings.get_effective_connection_path()
 
     # ========== Required Methods ==========
 
@@ -174,11 +183,11 @@ class DBMCPAgent(BICPAgent):
         Returns:
             List of QueryCandidate objects
         """
-        provider_id = self._settings.provider_id
+        provider_id, conn_path = self._resolve_connection_context()
         intent = query.natural_language
 
         # Load schema context
-        schema = load_schema_descriptions(provider_id)
+        schema = load_schema_descriptions(provider_id, connection_path=conn_path)
         if not schema:
             # Return empty candidate list if no schema
             return [
@@ -264,8 +273,9 @@ class DBMCPAgent(BICPAgent):
 
             # Get cost estimate
             try:
-                # TODO: pass connection_path when BICP supports multi-connection
-                explain_result: ExplainResult = explain_sql(candidate_sql)
+                explain_result: ExplainResult = explain_sql(
+                    candidate_sql, connection_path=conn_path
+                )
                 if explain_result.valid:
                     cost = QueryCost(
                         estimated_rows=explain_result.estimated_rows,
@@ -314,7 +324,8 @@ class DBMCPAgent(BICPAgent):
         start_time = time.time()
 
         try:
-            connector = get_connector()
+            _, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
 
             if isinstance(connector, SQLConnector):
                 engine = connector.get_engine()
@@ -353,7 +364,8 @@ class DBMCPAgent(BICPAgent):
         Uses db-mcp's introspection to list catalogs and schemas.
         """
         try:
-            connector = get_connector()
+            _, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
             catalog = params.catalog
             schemas_list = []
 
@@ -406,13 +418,13 @@ class DBMCPAgent(BICPAgent):
         include_columns = params.include_columns
 
         try:
-            connector = get_connector()
+            provider_id, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
             # Get tables from database
             tables = connector.get_tables(schema=schema_name, catalog=catalog)
 
             # Load schema descriptions if available
-            provider_id = self._settings.provider_id
-            schema_desc = load_schema_descriptions(provider_id)
+            schema_desc = load_schema_descriptions(provider_id, connection_path=conn_path)
             desc_by_name = {}
             if schema_desc:
                 for t in schema_desc.tables:
@@ -486,12 +498,12 @@ class DBMCPAgent(BICPAgent):
         object_types = params.object_types
         limit = params.limit
 
-        provider_id = self._settings.provider_id
+        provider_id, conn_path = self._resolve_connection_context()
         results: list[SemanticSearchMatch] = []
 
         # Search tables and columns
         if SemanticObjectType.TABLE in object_types or SemanticObjectType.COLUMN in object_types:
-            schema = load_schema_descriptions(provider_id)
+            schema = load_schema_descriptions(provider_id, connection_path=conn_path)
             if schema:
                 for table in schema.tables:
                     # Search table names and descriptions
@@ -2390,14 +2402,14 @@ This knowledge helps the AI generate better queries over time.
 
         # Scan all user_id subdirectories under traces/
         import time
+
         cutoff_time = time.time() - (days * 86400)  # days ago
 
         traces_dir = conn_path / "traces"
         user_ids = []
         if traces_dir.exists():
             user_ids = [
-                d.name for d in traces_dir.iterdir()
-                if d.is_dir() and not d.name.startswith(".")
+                d.name for d in traces_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
             ]
         if not user_ids:
             user_ids = ["default"]
@@ -2413,15 +2425,14 @@ This knowledge helps the AI generate better queries over time.
                 # Parse date to check if within window
                 try:
                     from datetime import datetime
+
                     date_obj = datetime.strptime(date_str, "%Y-%m-%d")
                     if date_obj.timestamp() < cutoff_time:
                         continue
                 except ValueError:
                     continue
 
-                trace_file = (
-                    conn_path / "traces" / user_id / f"{date_str}.jsonl"
-                )
+                trace_file = conn_path / "traces" / user_id / f"{date_str}.jsonl"
                 if not trace_file.exists():
                     continue
 
@@ -2433,17 +2444,19 @@ This knowledge helps the AI generate better queries over time.
                         span_timestamp = span.get("start_time", 0)
 
                         ctx_dirs = (
-                            "schema", "examples",
-                            "instructions", "domain",
-                            "data", "learnings", "metrics",
+                            "schema",
+                            "examples",
+                            "instructions",
+                            "domain",
+                            "data",
+                            "learnings",
+                            "metrics",
                         )
 
                         def _track(file_key: str) -> None:
                             file_counts[file_key] += 1
                             prev = file_last_used.get(file_key, 0)
-                            file_last_used[file_key] = max(
-                                prev, span_timestamp
-                            )
+                            file_last_used[file_key] = max(prev, span_timestamp)
 
                         # Source 1: Shell commands that reference
                         # actual context file paths
@@ -2453,19 +2466,16 @@ This knowledge helps the AI generate better queries over time.
                             # Match paths like schema/foo.yaml,
                             # examples/bar.md, domain/model.md
                             import re as _re
+
                             for m in _re.finditer(
-                                r"(?:^|[\s/])("
-                                + "|".join(ctx_dirs)
-                                + r")/([^\s;|>&]+)",
+                                r"(?:^|[\s/])(" + "|".join(ctx_dirs) + r")/([^\s;|>&]+)",
                                 command,
                             ):
                                 fk = f"{m.group(1)}/{m.group(2)}"
                                 _track(fk)
 
                         # Source 2: Knowledge file loads
-                        files_used = attrs.get(
-                            "knowledge.files_used"
-                        )
+                        files_used = attrs.get("knowledge.files_used")
                         if files_used:
                             for fp in files_used:
                                 _track(fp)
@@ -2475,16 +2485,13 @@ This knowledge helps the AI generate better queries over time.
                             uri = attrs.get("resource.uri")
                             if uri and uri.startswith("file://"):
                                 import urllib.parse
-                                fp = urllib.parse.unquote(
-                                    uri.replace("file://", "")
-                                )
+
+                                fp = urllib.parse.unquote(uri.replace("file://", ""))
                                 for cd in ctx_dirs:
                                     if cd in fp:
                                         parts = fp.split(cd, 1)
                                         if len(parts) > 1:
-                                            _track(
-                                                f"{cd}{parts[1]}"
-                                            )
+                                            _track(f"{cd}{parts[1]}")
                                             break
 
         # Aggregate folder counts
@@ -2507,7 +2514,7 @@ This knowledge helps the AI generate better queries over time.
             "folders": {
                 path: {"count": count, "lastUsed": int(folder_last_used.get(path, 0))}
                 for path, count in folder_counts.items()
-            }
+            },
         }
 
     # ========== Knowledge Gaps Methods ==========
@@ -3451,7 +3458,8 @@ This knowledge helps the AI generate better queries over time.
             }
         """
         try:
-            connector = get_connector()
+            _, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
             catalogs = connector.get_catalogs()
             return {"success": True, "catalogs": catalogs}
         except Exception as e:
@@ -3476,7 +3484,8 @@ This knowledge helps the AI generate better queries over time.
         catalog = params.get("catalog")
 
         try:
-            connector = get_connector()
+            _, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
             schemas_list = []
             schema_names = connector.get_schemas(catalog=catalog)
 
@@ -3526,12 +3535,12 @@ This knowledge helps the AI generate better queries over time.
             return {"success": False, "tables": [], "error": "schema is required"}
 
         try:
-            connector = get_connector()
+            provider_id, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
             tables = connector.get_tables(schema=schema, catalog=catalog)
 
             # Load schema descriptions if available
-            provider_id = self._settings.provider_id
-            schema_desc = load_schema_descriptions(provider_id)
+            schema_desc = load_schema_descriptions(provider_id, connection_path=conn_path)
             desc_by_name: dict[str, str | None] = {}
             if schema_desc:
                 for t in schema_desc.tables:
@@ -3587,12 +3596,12 @@ This knowledge helps the AI generate better queries over time.
             return {"success": False, "columns": [], "error": "table is required"}
 
         try:
-            connector = get_connector()
+            provider_id, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
             columns = connector.get_columns(table, schema=schema, catalog=catalog)
 
             # Load schema descriptions if available
-            provider_id = self._settings.provider_id
-            schema_desc = load_schema_descriptions(provider_id)
+            schema_desc = load_schema_descriptions(provider_id, connection_path=conn_path)
             col_descs: dict[str, str | None] = {}
             if schema_desc:
                 for t in schema_desc.tables:
@@ -3672,7 +3681,8 @@ This knowledge helps the AI generate better queries over time.
         }
 
         try:
-            connector = get_connector()
+            _, conn_path = self._resolve_connection_context()
+            connector = get_connector(connection_path=conn_path)
             # Validate table exists
             if table and schema:
                 tables = connector.get_tables(schema=schema, catalog=catalog)
