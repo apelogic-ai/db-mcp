@@ -63,7 +63,12 @@ class SQLConnector:
 
     def test_connection(self) -> dict[str, Any]:
         """Test database connectivity."""
-        return db_test_connection(self.config.database_url)
+        connect_args = self.config.capabilities.get("connect_args")
+        if not isinstance(connect_args, dict):
+            connect_args = None
+        if connect_args is None:
+            return db_test_connection(self.config.database_url)
+        return db_test_connection(self.config.database_url, connect_args=connect_args)
 
     def get_dialect(self) -> str:
         """Return the SQL dialect name."""
