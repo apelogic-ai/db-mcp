@@ -148,6 +148,22 @@ class TestSQLConnector:
             assert result["connected"] is True
             mock_test.assert_called_once_with(connector.config.database_url)
 
+    def test_test_connection_passes_connect_args(self):
+        """SQLConnector.test_connection should pass configured connect_args."""
+        config = SQLConnectorConfig(
+            database_url="trino://user:pass@host:8080/catalog",
+            capabilities={"connect_args": {"http_scheme": "http", "verify": False}},
+        )
+        connector = SQLConnector(config)
+
+        with patch("db_mcp.connectors.sql.db_test_connection") as mock_test:
+            mock_test.return_value = {"connected": False}
+            connector.test_connection()
+            mock_test.assert_called_once_with(
+                connector.config.database_url,
+                connect_args={"http_scheme": "http", "verify": False},
+            )
+
     def test_get_catalogs_delegates(self, connector):
         """SQLConnector.get_catalogs delegates to db.introspection.get_catalogs."""
         with patch("db_mcp.connectors.sql.db_get_catalogs") as mock:

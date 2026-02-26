@@ -142,17 +142,18 @@ def get_engine(database_url: str | None = None, *, connect_args: dict | None = N
         raise DatabaseError(f"Failed to create database engine: {e}") from e
 
 
-def test_connection(database_url: str | None = None) -> dict:
+def test_connection(database_url: str | None = None, *, connect_args: dict | None = None) -> dict:
     """Test database connection.
 
     Args:
         database_url: Optional database URL. If not provided, uses settings.
+        connect_args: Optional SQLAlchemy connect args.
 
     Returns:
         Dict with connection status and info
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         dialect = detect_dialect_from_url(str(engine.url))
 
         with engine.connect() as conn:
