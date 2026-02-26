@@ -55,7 +55,11 @@ async def test_execute_query_uses_active_connection_for_connector():
     with (
         patch.object(agent, "_get_active_connection_path", return_value=active_path),
         patch("db_mcp.bicp.agent.get_connector", return_value=connector) as mock_get_connector,
-        patch("db_mcp.bicp.agent.validate_read_only", return_value=(True, None)),
+        patch("db_mcp.bicp.agent.get_connector_capabilities", return_value={}),
+        patch(
+            "db_mcp.bicp.agent.validate_sql_permissions",
+            return_value=(True, None, "SELECT", False),
+        ),
     ):
         await agent.execute_query(MagicMock(), query)
 
@@ -84,3 +88,30 @@ async def test_schema_tables_handler_uses_active_connection_context():
     assert mock_get_connector.call_args.kwargs["connection_path"] == active_path
     assert mock_load_schema.call_args.kwargs["connection_path"] == active_path
     assert mock_load_schema.call_args.args[0] == "wifimetrics-trino"
+
+
+@pytest.mark.asyncio
+async def test_execute_query_allows_write_when_connection_policy_enables_it():
+    agent = _make_agent()
+    active_path = Path("/tmp/connections/wifimetrics-trino")
+
+    query = SimpleNamespace(final_sql="INSERT INTO events(id) VALUES (1)")
+    connector = MagicMock()
+    connector.execute_sql.return_value = []
+
+    with (
+        patch.object(agent, "_get_active_connection_path", return_value=active_path),
+        patch("db_mcp.bicp.agent.get_connector", return_value=connector),
+        patch(
+            "db_mcp.bicp.agent.get_connector_capabilities",
+            return_value={
+                "allow_sql_writes": True,
+                "allowed_write_statements": ["INSERT"],
+                "require_write_confirmation": False,
+            },
+        ),
+    ):
+        columns, rows = await agent.execute_query(MagicMock(), query)
+
+    assert columns == []
+    assert rows == []

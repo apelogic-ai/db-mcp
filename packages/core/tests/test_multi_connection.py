@@ -129,10 +129,9 @@ class TestGenerationToolsConnection:
     """Test that generation tools pass connection_path through."""
 
     @patch("db_mcp.tools.generation.get_connector")
-    @patch("db_mcp.connectors.get_connector_capabilities")
-    @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
+    @patch("db_mcp.tools.generation.get_connector_capabilities")
     @patch("db_mcp.tools.generation.explain_sql")
-    async def test_validate_sql_passes_connection(self, mock_explain, mock_ro, mock_caps, mock_gc):
+    async def test_validate_sql_passes_connection(self, mock_explain, mock_caps, mock_gc):
         from db_mcp.tools.generation import _validate_sql
 
         mock_connector = MagicMock()
@@ -149,13 +148,11 @@ class TestGenerationToolsConnection:
         mock_gc.assert_called_once_with(connection_path="/p/prod")
 
     @patch("db_mcp.tools.generation.get_connector")
-    @patch("db_mcp.connectors.get_connector_capabilities")
-    @patch("db_mcp.tools.generation.validate_read_only", return_value=(True, None))
+    @patch("db_mcp.tools.generation.get_connector_capabilities")
     @patch("db_mcp.tools.generation.explain_sql")
     async def test_validate_sql_passes_connection_to_explain(
         self,
         mock_explain,
-        mock_ro,
         mock_caps,
         mock_gc,
     ):

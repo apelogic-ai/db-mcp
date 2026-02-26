@@ -33,7 +33,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 from sqlalchemy import text
 
-from db_mcp.connectors import get_connector
+from db_mcp.connectors import get_connector, get_connector_capabilities
 from db_mcp.connectors.sql import SQLConnector
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.tasks.store import QueryStatus, get_query_store
@@ -42,8 +42,12 @@ from db_mcp.training.store import load_examples, load_instructions
 from db_mcp.validation.explain import (
     CostTier,
     ExplainResult,
+    analyze_sql_statement,
     explain_sql,
+    get_write_policy,
+    should_explain_statement,
     validate_read_only,
+    validate_sql_permissions,
 )
 
 logger = logging.getLogger(__name__)
@@ -210,6 +214,40 @@ def _generate_query_uuid(sql: str) -> str:
     return str(uuid.UUID(bytes=hash_bytes))
 
 
+def _execute_sql_on_engine(
+    connector: SQLConnector,
+    sql: str,
+    *,
+    is_write: bool,
+    limit: int | None = None,
+) -> tuple[list[str], list[dict[str, Any]], int | None]:
+    """Execute SQL on SQLAlchemy engine with write-safe transaction handling."""
+    engine = connector.get_engine()
+
+    if is_write:
+        with engine.begin() as conn:
+            result = conn.execute(text(sql))
+            rows_affected = result.rowcount if result.rowcount >= 0 else None
+            if result.returns_rows:
+                columns = list(result.keys())
+                rows = [dict(zip(columns, row)) for row in result]
+            else:
+                columns = []
+                rows = []
+        return columns, rows, rows_affected
+
+    with engine.connect() as conn:
+        result = conn.execute(text(sql))
+        columns = list(result.keys())
+        rows = []
+        for i, row in enumerate(result):
+            if limit and i >= limit:
+                break
+            rows.append(dict(zip(columns, row)))
+
+    return columns, rows, None
+
+
 def _execute_query(
     sql: str,
     limit: int | None = 1000,
@@ -230,6 +268,7 @@ def _execute_query(
 
     qid = query_id[:8] if query_id else "adhoc"
     sql_preview = sql[:200] + "..." if len(sql) > 200 else sql
+    statement_type, is_write = analyze_sql_statement(sql)
 
     with tracer.start_as_current_span(
         "execute_query",
@@ -237,6 +276,8 @@ def _execute_query(
             "query.id": qid,
             "query.limit": limit or 0,
             "sql.preview": sql_preview,
+            "statement.type": statement_type,
+            "statement.is_write": is_write,
         },
     ) as span:
         start_time = time.time()
@@ -249,25 +290,17 @@ def _execute_query(
 
             # Execute query — branch on connector type
             if isinstance(connector, SQLConnector):
-                # SQLConnector: use SQLAlchemy engine
-                engine = connector.get_engine()
                 with tracer.start_as_current_span("db_execute") as exec_span:
-                    with engine.connect() as conn:
-                        result = conn.execute(text(sql))
-                        columns = list(result.keys())
-                        exec_span.set_attribute("columns.count", len(columns))
-
-                        with tracer.start_as_current_span("fetch_rows") as fetch_span:
-                            rows = []
-                            for i, row in enumerate(result):
-                                if limit and i >= limit:
-                                    fetch_span.set_attribute("limit_reached", True)
-                                    break
-                                rows.append(dict(zip(columns, row)))
-
-                            fetch_span.set_attribute("rows.fetched", len(rows))
+                    columns, rows, rows_affected = _execute_sql_on_engine(
+                        connector, sql, is_write=is_write, limit=limit
+                    )
+                    exec_span.set_attribute("columns.count", len(columns))
+                    exec_span.set_attribute("rows.fetched", len(rows))
+                    if rows_affected is not None:
+                        exec_span.set_attribute("rows.affected", rows_affected)
             else:
                 # FileConnector / APIConnector: use execute_sql (DuckDB)
+                rows_affected = None
                 with tracer.start_as_current_span("db_execute") as exec_span:
                     all_rows = connector.execute_sql(sql)
                     if all_rows:
@@ -296,6 +329,9 @@ def _execute_query(
                 "rows_returned": len(rows),
                 "duration_ms": round(total_duration_ms, 2),
                 "provider_id": conn_name,
+                "statement_type": statement_type,
+                "is_write": is_write,
+                "rows_affected": rows_affected,
             }
 
         except Exception as e:
@@ -708,13 +744,12 @@ async def _run_sql(
             }
         )
 
-    from db_mcp.connectors import get_connector_capabilities
     from db_mcp.tools.utils import _resolve_connection_path
 
-    connector = get_connector(connection_path=_resolve_connection_path(connection))
-    caps = get_connector_capabilities(connector)
-
     if query_id is None and sql is not None:
+        connector = get_connector(connection_path=_resolve_connection_path(connection))
+        caps = get_connector_capabilities(connector)
+
         if not caps.get("supports_sql"):
             return inject_protocol(
                 {
@@ -737,12 +772,48 @@ async def _run_sql(
                 }
             )
 
+        is_allowed, error, statement_type, is_write = validate_sql_permissions(
+            sql, capabilities=caps
+        )
+        if not is_allowed:
+            return inject_protocol(
+                {
+                    "status": "error",
+                    "error": error,
+                    "sql": sql,
+                    "statement_type": statement_type,
+                    "is_write": is_write,
+                }
+            )
+
+        _, _, require_write_confirmation = get_write_policy(caps)
+        if is_write and require_write_confirmation and not confirmed:
+            return inject_protocol(
+                {
+                    "status": "confirm_required",
+                    "query_id": None,
+                    "sql": sql,
+                    "statement_type": statement_type,
+                    "is_write": True,
+                    "message": (
+                        "Write statement requires confirmation. "
+                        "Re-run with confirmed=true to execute."
+                    ),
+                }
+            )
+
         sql_mode = caps.get("sql_mode")
         if sql_mode is None or sql_mode == "api_sync" or sql_mode == "engine":
             # Standard SQL connector (no sql_mode), sync API, or direct engine access
             try:
-                rows = connector.execute_sql(sql)
-                columns = list(rows[0].keys()) if rows else []
+                rows_affected = None
+                if isinstance(connector, SQLConnector):
+                    columns, rows, rows_affected = _execute_sql_on_engine(
+                        connector, sql, is_write=is_write, limit=None
+                    )
+                else:
+                    rows = connector.execute_sql(sql)
+                    columns = list(rows[0].keys()) if rows else []
                 return inject_protocol(
                     {
                         "status": "success",
@@ -755,6 +826,9 @@ async def _run_sql(
                         "duration_ms": None,
                         "provider_id": None,
                         "cost_tier": "unknown",
+                        "statement_type": statement_type,
+                        "is_write": is_write,
+                        "rows_affected": rows_affected,
                     }
                 )
             except Exception as exc:
@@ -783,8 +857,14 @@ async def _run_sql(
         # Fallback: try execute_sql for any other sql_mode (connector may support it)
         if hasattr(connector, "execute_sql"):
             try:
-                rows = connector.execute_sql(sql)
-                columns = list(rows[0].keys()) if rows else []
+                rows_affected = None
+                if isinstance(connector, SQLConnector):
+                    columns, rows, rows_affected = _execute_sql_on_engine(
+                        connector, sql, is_write=is_write, limit=None
+                    )
+                else:
+                    rows = connector.execute_sql(sql)
+                    columns = list(rows[0].keys()) if rows else []
                 return inject_protocol(
                     {
                         "status": "success",
@@ -797,6 +877,9 @@ async def _run_sql(
                         "duration_ms": None,
                         "provider_id": None,
                         "cost_tier": "unknown",
+                        "statement_type": statement_type,
+                        "is_write": is_write,
+                        "rows_affected": rows_affected,
                     }
                 )
             except Exception as exc:
@@ -862,6 +945,36 @@ async def _run_sql(
         )
 
     sql = query.sql
+    policy_connection = query.connection if query.connection is not None else connection
+    policy_connector = get_connector(connection_path=_resolve_connection_path(policy_connection))
+    policy_caps = get_connector_capabilities(policy_connector)
+    is_allowed, error, statement_type, is_write = validate_sql_permissions(
+        sql, capabilities=policy_caps
+    )
+    if not is_allowed:
+        return inject_protocol(
+            {
+                "status": "error",
+                "error": error,
+                "query_id": query_id,
+                "sql": sql,
+                "statement_type": statement_type,
+                "is_write": is_write,
+            }
+        )
+
+    _, _, require_write_confirmation = get_write_policy(policy_caps)
+    if is_write and require_write_confirmation and not confirmed:
+        return inject_protocol(
+            {
+                "status": "confirm_required",
+                "query_id": query_id,
+                "sql": sql,
+                "statement_type": statement_type,
+                "is_write": True,
+                "message": "Write statement requires confirmation. Re-run with confirmed=true.",
+            }
+        )
 
     # Step 2: Check cost tier
     if query.cost_tier == "reject" and not confirmed:
@@ -955,6 +1068,9 @@ async def _run_sql(
                 "duration_ms": result["duration_ms"],
                 "provider_id": result["provider_id"],
                 "cost_tier": query.cost_tier,
+                "statement_type": result.get("statement_type"),
+                "is_write": result.get("is_write", False),
+                "rows_affected": result.get("rows_affected"),
                 "presentation_hints": {
                     "downloadable": True,
                     "suggested_filename": f"query_{query_id[:8]}_{datetime.now():%Y%m%d_%H%M%S}",
@@ -1003,11 +1119,11 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
     Returns:
         Dict with validation results and query_id (if valid)
     """
-    from db_mcp.connectors import get_connector_capabilities
     from db_mcp.tasks.store import get_query_store
     from db_mcp.tools.utils import _resolve_connection_path
 
-    connector = get_connector(connection_path=_resolve_connection_path(connection))
+    connection_path = _resolve_connection_path(connection)
+    connector = get_connector(connection_path=connection_path)
     caps = get_connector_capabilities(connector)
     if not caps.get("supports_validate_sql", True):
         return inject_protocol(
@@ -1025,29 +1141,53 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
             }
         )
 
-    # Check read-only
-    is_read_only, error = validate_read_only(sql)
-    if not is_read_only:
+    is_allowed, error, statement_type, is_write = validate_sql_permissions(sql, capabilities=caps)
+    if not is_allowed:
         return inject_protocol(
             {
                 "valid": False,
                 "error": error,
                 "sql": sql,
                 "query_id": None,
+                "statement_type": statement_type,
+                "is_write": is_write,
             }
         )
 
-    # Run EXPLAIN
-    explain_result = explain_sql(sql, connection_path=_resolve_connection_path(connection))
+    _, _, require_write_confirmation = get_write_policy(caps)
 
-    if not explain_result.valid:
-        return inject_protocol(
-            {
-                "valid": False,
-                "error": explain_result.error,
-                "sql": sql,
-                "query_id": None,
-            }
+    if should_explain_statement(statement_type, is_write=is_write):
+        explain_result = explain_sql(sql, connection_path=connection_path)
+        if not explain_result.valid:
+            return inject_protocol(
+                {
+                    "valid": False,
+                    "error": explain_result.error,
+                    "sql": sql,
+                    "query_id": None,
+                    "statement_type": statement_type,
+                    "is_write": is_write,
+                }
+            )
+    else:
+        explain_result = ExplainResult(
+            valid=True,
+            explanation=[],
+            estimated_rows=None,
+            estimated_cost=None,
+            estimated_size_gb=None,
+            cost_tier=CostTier.CONFIRM
+            if is_write and require_write_confirmation
+            else CostTier.AUTO,
+            tier_reason=(
+                "Write statement requires explicit execution confirmation."
+                if is_write and require_write_confirmation
+                else (
+                    f"{statement_type} statements are validated without EXPLAIN."
+                    if statement_type in {"SHOW", "DESCRIBE", "DESC", "EXPLAIN"}
+                    else "Statement validated."
+                )
+            ),
         )
 
     # Register validated query (store connection for background execution)
@@ -1072,6 +1212,9 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
             "estimated_cost": explain_result.estimated_cost,
             "estimated_size_gb": explain_result.estimated_size_gb,
             "explanation": query.explanation,
+            "statement_type": statement_type,
+            "is_write": is_write,
+            "write_confirmation_required": is_write and require_write_confirmation,
             "message": (
                 f"Query validated successfully. "
                 f"Use run_sql(query_id='{query.query_id}') to execute. "
@@ -1079,9 +1222,21 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
             ),
             "guidance": {
                 "next_steps": [
-                    f"Execute with: run_sql(query_id='{query.query_id}')",
-                    "Review the cost_tier and estimated_rows before executing",
-                    "If cost_tier is 'confirm' or 'reject', consider adding filters",
+                    (
+                        f"Execute with: run_sql(query_id='{query.query_id}', confirmed=true)"
+                        if is_write and require_write_confirmation
+                        else f"Execute with: run_sql(query_id='{query.query_id}')"
+                    ),
+                    (
+                        "Write statements require explicit confirmation on this connection."
+                        if is_write and require_write_confirmation
+                        else "Review the cost_tier and estimated_rows before executing"
+                    ),
+                    (
+                        "If cost_tier is 'confirm' or 'reject', consider adding filters"
+                        if not is_write
+                        else "Double-check affected tables/filters before execution."
+                    ),
                 ],
             },
         }

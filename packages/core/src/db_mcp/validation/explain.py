@@ -8,6 +8,7 @@ from typing import Any
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlglot import parse as sqlglot_parse
 
 from db_mcp.connectors import get_connector
 from db_mcp.connectors.file import FileConnector
@@ -61,6 +62,142 @@ def _get_cost_thresholds() -> dict[str, int | float]:
 
 # For backwards compatibility
 COST_THRESHOLDS = _get_cost_thresholds()
+
+_WRITE_STATEMENT_TYPES = {
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "DROP",
+    "CREATE",
+    "ALTER",
+    "TRUNCATE",
+    "GRANT",
+    "REVOKE",
+    "EXEC",
+    "EXECUTE",
+    "MERGE",
+    "UPSERT",
+}
+
+_READ_STATEMENT_TYPES = {"SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN"}
+
+_NON_EXPLAINABLE_READ_TYPES = {"SHOW", "DESCRIBE", "DESC", "EXPLAIN"}
+
+_STATEMENT_TYPE_ALIASES = {"TRUNCATETABLE": "TRUNCATE"}
+
+
+def _normalize_statement_type(statement_type: str) -> str:
+    normalized = statement_type.strip().upper().replace("_", "")
+    return _STATEMENT_TYPE_ALIASES.get(normalized, normalized)
+
+
+def _fallback_statement_type(sql: str) -> str:
+    match = re.match(r"^\s*([A-Za-z_]+)", sql or "")
+    if not match:
+        return "UNKNOWN"
+    return _normalize_statement_type(match.group(1))
+
+
+def _extract_statement_types(sql: str) -> list[str]:
+    """Best-effort statement type extraction for one or more SQL statements."""
+    if not sql or not sql.strip():
+        return []
+
+    try:
+        parsed = sqlglot_parse(sql)
+        statement_types = []
+        for statement in parsed:
+            raw_type = statement.key
+            if raw_type == "command":
+                raw_type = str(statement.args.get("this", "")).strip() or raw_type
+            statement_types.append(_normalize_statement_type(raw_type))
+        return statement_types
+    except Exception:
+        return [_fallback_statement_type(sql)]
+
+
+def analyze_sql_statement(sql: str) -> tuple[str, bool]:
+    """Return `(statement_type, is_write)` for the SQL batch."""
+    statement_types = _extract_statement_types(sql)
+    if not statement_types:
+        return "UNKNOWN", False
+
+    for statement_type in statement_types:
+        if statement_type in _WRITE_STATEMENT_TYPES:
+            return statement_type, True
+
+    return statement_types[0], False
+
+
+def get_write_policy(capabilities: dict[str, Any] | None) -> tuple[bool, set[str], bool]:
+    """Resolve per-connection write policy from connector capabilities."""
+    caps = capabilities or {}
+    allow_writes = bool(caps.get("allow_sql_writes", False))
+    require_confirmation = bool(caps.get("require_write_confirmation", True))
+
+    allowed_raw = caps.get("allowed_write_statements")
+    allowed_set: set[str] = set()
+
+    if isinstance(allowed_raw, (list, tuple, set)):
+        for item in allowed_raw:
+            if isinstance(item, str) and item.strip():
+                allowed_set.add(_normalize_statement_type(item))
+
+    if allow_writes and not allowed_set:
+        allowed_set = set(_WRITE_STATEMENT_TYPES)
+
+    return allow_writes, allowed_set, require_confirmation
+
+
+def validate_sql_permissions(
+    sql: str, capabilities: dict[str, Any] | None = None
+) -> tuple[bool, str | None, str, bool]:
+    """Validate SQL against read/write policy and return classification metadata."""
+    statement_types = _extract_statement_types(sql)
+    if not statement_types:
+        return False, "Query is empty.", "UNKNOWN", False
+
+    allow_writes, allowed_write_types, _ = get_write_policy(capabilities)
+    first_write_statement: str | None = None
+
+    for statement_type in statement_types:
+        if statement_type in _WRITE_STATEMENT_TYPES:
+            if first_write_statement is None:
+                first_write_statement = statement_type
+            if not allow_writes:
+                return (
+                    False,
+                    f"Statement type '{statement_type}' is not allowed (write mode disabled).",
+                    statement_type,
+                    True,
+                )
+            if statement_type not in allowed_write_types:
+                allowed = ", ".join(sorted(allowed_write_types)) if allowed_write_types else "none"
+                return (
+                    False,
+                    (
+                        f"Statement type '{statement_type}' is not enabled for this connection. "
+                        f"Allowed write statements: {allowed}."
+                    ),
+                    statement_type,
+                    True,
+                )
+
+    if first_write_statement is not None:
+        return True, None, first_write_statement, True
+
+    for statement_type in statement_types:
+        if statement_type not in _READ_STATEMENT_TYPES:
+            return False, "Query must be a SELECT statement", statement_type, False
+
+    return True, None, statement_types[0], False
+
+
+def should_explain_statement(statement_type: str, *, is_write: bool) -> bool:
+    """Return whether SQL should be passed through EXPLAIN."""
+    if is_write:
+        return False
+    return statement_type not in _NON_EXPLAINABLE_READ_TYPES
 
 
 def get_explain_command(dialect: str) -> str:
@@ -556,47 +693,16 @@ def validate_read_only(sql: str) -> tuple[bool, str | None]:
         (is_valid, error_message)
     """
     with tracer.start_as_current_span("validate_read_only") as span:
-        # Normalize and check for non-SELECT statements
-        sql_upper = sql.strip().upper()
+        is_valid, error, statement_type, is_write = validate_sql_permissions(
+            sql, capabilities={"allow_sql_writes": False}
+        )
 
-        # List of disallowed statement types
-        disallowed = [
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "DROP",
-            "CREATE",
-            "ALTER",
-            "TRUNCATE",
-            "GRANT",
-            "REVOKE",
-            "EXEC",
-            "EXECUTE",
-            "MERGE",
-            "UPSERT",
-        ]
+        span.set_attribute("statement.type", statement_type)
+        span.set_attribute("statement.is_write", is_write)
 
-        for keyword in disallowed:
-            # Check if statement starts with disallowed keyword
-            if sql_upper.startswith(keyword):
-                span.set_attribute("validation.rejected", keyword)
-                return False, f"Statement type '{keyword}' is not allowed (read-only mode)"
-
-            # Also check for these within CTEs or subqueries
-            # Pattern: keyword followed by whitespace or opening paren
-            if re.search(rf"\b{keyword}\s", sql_upper):
-                # Allow SELECT ... INTO for temp tables in some contexts
-                if keyword == "INTO" and "SELECT" in sql_upper:
-                    continue
-                span.set_attribute("validation.rejected", keyword)
-                return False, f"Statement contains '{keyword}' which is not allowed"
-
-        # Must start with SELECT, WITH (CTE), or EXPLAIN
-        if not any(
-            sql_upper.startswith(kw) for kw in ["SELECT", "WITH", "EXPLAIN", "SHOW", "DESCRIBE"]
-        ):
-            span.set_attribute("validation.rejected", "not_select")
-            return False, "Query must be a SELECT statement"
+        if not is_valid:
+            span.set_attribute("validation.rejected", statement_type)
+            return False, error
 
         span.set_attribute("validation.passed", True)
         return True, None
