@@ -1,8 +1,10 @@
 # db-mcp Docs
 
-db-mcp is a local MCP server that connects AI agents to your data sources and builds a reusable knowledge layer over time.
+Your AI agent doesn't know your data. It hallucinates column names, misses business logic, and forgets everything between sessions. db-mcp fixes that — it sits between your agent and your databases, building a reusable knowledge layer that makes every query smarter than the last.
 
-This documentation is a practical operator guide for:
+db-mcp is a local MCP server that gives AI agents structured access to your data sources — with schema awareness, domain context, query validation, and a learning loop that accumulates institutional knowledge over time.
+
+This documentation covers:
 
 - installing and configuring db-mcp
 - running it via CLI and Web UI
