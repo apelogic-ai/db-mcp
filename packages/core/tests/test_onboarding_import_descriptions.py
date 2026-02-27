@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -97,11 +98,23 @@ def mock_connector():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def mock_resolve_connection(temp_connection_dir, mock_connector):
+    """Route resolve_connection to the temp connection path."""
+    conn_path = Path(temp_connection_dir)
+
+    def _resolve(name, **kwargs):
+        return mock_connector, name, conn_path
+
+    with patch("db_mcp.tools.utils.resolve_connection", side_effect=_resolve):
+        yield
+
+
 async def _setup_schema_phase(provider_id: str, mock_connector):
     """Helper: set up schema phase with discovered tables."""
-    await _onboarding_start(provider_id=provider_id)
-    await _onboarding_discover(provider_id=provider_id, phase="structure")
-    await _onboarding_discover(provider_id=provider_id, phase="tables")
+    await _onboarding_start(connection=provider_id, provider_id=provider_id)
+    await _onboarding_discover(connection=provider_id, provider_id=provider_id, phase="structure")
+    await _onboarding_discover(connection=provider_id, provider_id=provider_id, phase="tables")
 
     # Verify we're in schema phase
     state = load_state(provider_id)
@@ -110,6 +123,15 @@ async def _setup_schema_phase(provider_id: str, mock_connector):
     assert state.tables_total == 3
 
     return state
+
+
+async def _import_descriptions(provider_id: str, **kwargs):
+    """Helper: import descriptions with required connection."""
+    return await _onboarding_import_descriptions(
+        connection=provider_id,
+        provider_id=provider_id,
+        **kwargs,
+    )
 
 
 class TestImportDescriptions:
@@ -141,7 +163,7 @@ class TestImportDescriptions:
         }
 
         # Import descriptions
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -202,7 +224,7 @@ class TestImportDescriptions:
         }
 
         # Import descriptions
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -237,7 +259,7 @@ class TestImportDescriptions:
             },
         }
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -267,7 +289,7 @@ class TestImportDescriptions:
             },
         }
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -297,7 +319,7 @@ class TestImportDescriptions:
             },
         }
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -327,7 +349,7 @@ class TestImportDescriptions:
         await _setup_schema_phase(provider_id, mock_connector)
 
         # Text that can't be parsed as any format
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions="random text without any structure",
             provider_id=provider_id,
         )
@@ -343,7 +365,7 @@ class TestImportDescriptions:
         await _setup_schema_phase(provider_id, mock_connector)
 
         # JSON array instead of object - should generate warnings but not crash
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions='["not", "an", "object"]',
             provider_id=provider_id,
         )
@@ -357,13 +379,15 @@ class TestImportDescriptions:
     async def test_import_descriptions_wrong_phase(self, temp_connection_dir, mock_connector):
         """Test importing when not in schema phase."""
         provider_id = "test-provider"
-        await _onboarding_start(provider_id=provider_id)  # Still in init phase
+        await _onboarding_start(
+            connection=provider_id, provider_id=provider_id
+        )  # Still in init phase
 
         descriptions_data = {
             "public.users": {"description": "User table"},
         }
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -381,7 +405,7 @@ class TestImportDescriptions:
             "public.users": {"description": "User table"},
         }
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -395,7 +419,7 @@ class TestImportDescriptions:
         provider_id = "test-provider"
 
         # Start and set phase to schema, but don't discover (no schema file created)
-        await _onboarding_start(provider_id=provider_id)
+        await _onboarding_start(connection=provider_id, provider_id=provider_id)
         state = load_state(provider_id)
         state.phase = OnboardingPhase.SCHEMA
         from db_mcp.onboarding.state import save_state
@@ -406,7 +430,7 @@ class TestImportDescriptions:
             "public.users": {"description": "User table"},
         }
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -423,7 +447,7 @@ class TestImportDescriptions:
         await _setup_schema_phase(provider_id, mock_connector)
 
         # Empty descriptions
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions="{}",
             provider_id=provider_id,
         )
@@ -449,7 +473,7 @@ class TestImportDescriptions:
             },
         }
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=json.dumps(descriptions_data),
             provider_id=provider_id,
         )
@@ -480,7 +504,7 @@ public.orders:
     user_id: Reference to users table
 """
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=yaml_descriptions,
             provider_id=provider_id,
         )
@@ -501,7 +525,7 @@ public.orders: Customer order records
 public.products: Product catalog
 """
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=text_descriptions,
             provider_id=provider_id,
         )
@@ -528,7 +552,7 @@ public.orders -> Customer order records
 some garbage text without separator
 """
 
-        result = await _onboarding_import_descriptions(
+        result = await _import_descriptions(
             descriptions=messy_descriptions,
             provider_id=provider_id,
         )

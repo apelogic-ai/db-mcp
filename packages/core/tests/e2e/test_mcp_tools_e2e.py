@@ -88,6 +88,7 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         # Coverage harness: each exposed tool must be called exactly once.
         # If a new tool is added, this test must be updated with a new call.
         calls: dict[str, object] = {}
+        connection = "playground"
 
         # ------------------------------------------------------------------
         # Core
@@ -95,34 +96,48 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         calls["ping"] = await _call(client, "ping", {})
         calls["get_config"] = await _call(client, "get_config", {})
         calls["list_connections"] = await _call(client, "list_connections", {})
-        calls["protocol"] = await _call(client, "protocol", {})
+        calls["protocol"] = await _call(client, "protocol", {"connection": connection})
 
         # insights: create a fake insight file via shell to have something to dismiss
-        calls["mark_insights_processed"] = await _call(client, "mark_insights_processed", {})
-        calls["mcp_list_improvements"] = await _call(client, "mcp_list_improvements", {})
-        calls["mcp_suggest_improvement"] = await _call(client, "mcp_suggest_improvement", {})
+        calls["mark_insights_processed"] = await _call(
+            client, "mark_insights_processed", {"connection": connection}
+        )
+        calls["mcp_list_improvements"] = await _call(
+            client, "mcp_list_improvements", {"connection": connection}
+        )
+        calls["mcp_suggest_improvement"] = await _call(
+            client, "mcp_suggest_improvement", {"connection": connection}
+        )
         calls["mcp_approve_improvement"] = await _call(
-            client, "mcp_approve_improvement", {"improvement_id": "nope"}
+            client,
+            "mcp_approve_improvement",
+            {"improvement_id": "nope", "connection": connection},
         )
         # dismiss_insight: use deterministic non-existent id.
         # Happy path currently returns "not_found".
-        calls["dismiss_insight"] = await _call(client, "dismiss_insight", {"insight_id": "nope"})
+        calls["dismiss_insight"] = await _call(
+            client, "dismiss_insight", {"insight_id": "nope", "connection": connection}
+        )
 
         # Shell (reads/writes in connection dir)
-        calls["shell"] = await _call(client, "shell", {"command": "ls"})
+        calls["shell"] = await _call(client, "shell", {"command": "ls", "connection": connection})
 
         # ------------------------------------------------------------------
         # SQL execution
         # ------------------------------------------------------------------
         calls["validate_sql"] = await _call(
-            client, "validate_sql", {"sql": "SELECT COUNT(*) AS n FROM t"}
+            client,
+            "validate_sql",
+            {"sql": "SELECT COUNT(*) AS n FROM t", "connection": connection},
         )
         validate_res = calls["validate_sql"].get("structuredContent")
         assert isinstance(validate_res, dict) and validate_res.get("valid") is True
         query_id = validate_res.get("query_id")
         assert query_id, "validate_sql must return query_id"
 
-        calls["run_sql"] = await _call(client, "run_sql", {"query_id": query_id})
+        calls["run_sql"] = await _call(
+            client, "run_sql", {"query_id": query_id, "connection": connection}
+        )
         run_res = calls["run_sql"].get("structuredContent")
         assert isinstance(run_res, dict) and run_res.get("status") in {
             "success",
@@ -130,104 +145,145 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
             "complete",
         }
 
-        calls["get_result"] = await _call(client, "get_result", {"query_id": query_id})
+        calls["get_result"] = await _call(
+            client, "get_result", {"query_id": query_id, "connection": connection}
+        )
         calls["export_results"] = await _call(
             client,
             "export_results",
-            {"sql": "SELECT COUNT(*) AS n FROM t", "format": "csv"},
+            {"sql": "SELECT COUNT(*) AS n FROM t", "format": "csv", "connection": connection},
         )
 
         # ------------------------------------------------------------------
         # Setup / onboarding
         # ------------------------------------------------------------------
-        calls["mcp_setup_status"] = await _call(client, "mcp_setup_status", {})
-        calls["mcp_setup_start"] = await _call(client, "mcp_setup_start", {})
+        calls["mcp_setup_status"] = await _call(
+            client, "mcp_setup_status", {"connection": connection}
+        )
+        calls["mcp_setup_start"] = await _call(
+            client, "mcp_setup_start", {"connection": connection}
+        )
         calls["mcp_setup_add_ignore_pattern"] = await _call(
-            client, "mcp_setup_add_ignore_pattern", {"pattern": "tmp_*"}
+            client,
+            "mcp_setup_add_ignore_pattern",
+            {"pattern": "tmp_*", "connection": connection},
         )
         calls["mcp_setup_remove_ignore_pattern"] = await _call(
-            client, "mcp_setup_remove_ignore_pattern", {"pattern": "tmp_*"}
+            client,
+            "mcp_setup_remove_ignore_pattern",
+            {"pattern": "tmp_*", "connection": connection},
         )
         calls["mcp_setup_import_ignore_patterns"] = await _call(
             client,
             "mcp_setup_import_ignore_patterns",
-            {"patterns": ["foo*", "bar*"]},
+            {"patterns": ["foo*", "bar*"], "connection": connection},
         )
-        calls["mcp_setup_discover"] = await _call(client, "mcp_setup_discover", {})
+        calls["mcp_setup_discover"] = await _call(
+            client, "mcp_setup_discover", {"connection": connection}
+        )
         # mcp_setup_discover_status requires discovery_id; use a fake one to test the tool
         calls["mcp_setup_discover_status"] = await _call(
             client,
             "mcp_setup_discover_status",
-            {"discovery_id": "fake-id"},
+            {"discovery_id": "fake-id", "connection": connection},
         )
-        calls["mcp_setup_next"] = await _call(client, "mcp_setup_next", {})
-        calls["mcp_setup_skip"] = await _call(client, "mcp_setup_skip", {})
-        calls["mcp_setup_bulk_approve"] = await _call(client, "mcp_setup_bulk_approve", {})
+        calls["mcp_setup_next"] = await _call(client, "mcp_setup_next", {"connection": connection})
+        calls["mcp_setup_skip"] = await _call(client, "mcp_setup_skip", {"connection": connection})
+        calls["mcp_setup_bulk_approve"] = await _call(
+            client, "mcp_setup_bulk_approve", {"connection": connection}
+        )
         calls["mcp_setup_import_descriptions"] = await _call(
             client,
             "mcp_setup_import_descriptions",
-            {"descriptions": "tables: {}\n"},
+            {"descriptions": "tables: {}\n", "connection": connection},
         )
         calls["mcp_setup_approve"] = await _call(
-            client, "mcp_setup_approve", {"description": "Test description"}
+            client,
+            "mcp_setup_approve",
+            {"description": "Test description", "connection": connection},
         )
-        calls["mcp_setup_reset"] = await _call(client, "mcp_setup_reset", {})
+        calls["mcp_setup_reset"] = await _call(
+            client, "mcp_setup_reset", {"connection": connection}
+        )
 
         # ------------------------------------------------------------------
         # Domain
         # ------------------------------------------------------------------
-        calls["mcp_domain_status"] = await _call(client, "mcp_domain_status", {})
-        calls["mcp_domain_generate"] = await _call(client, "mcp_domain_generate", {})
-        calls["mcp_domain_skip"] = await _call(client, "mcp_domain_skip", {})
-        calls["mcp_domain_approve"] = await _call(client, "mcp_domain_approve", {})
+        calls["mcp_domain_status"] = await _call(
+            client, "mcp_domain_status", {"connection": connection}
+        )
+        calls["mcp_domain_generate"] = await _call(
+            client, "mcp_domain_generate", {"connection": connection}
+        )
+        calls["mcp_domain_skip"] = await _call(
+            client, "mcp_domain_skip", {"connection": connection}
+        )
+        calls["mcp_domain_approve"] = await _call(
+            client, "mcp_domain_approve", {"connection": connection}
+        )
 
         # ------------------------------------------------------------------
         # Import
         # ------------------------------------------------------------------
         calls["import_instructions"] = await _call(
-            client, "import_instructions", {"rules": ["Be nice", "Be accurate"]}
+            client,
+            "import_instructions",
+            {"rules": ["Be nice", "Be accurate"], "connection": connection},
         )
         calls["import_examples"] = await _call(
             client,
             "import_examples",
             {
                 "examples": [{"natural_language": "count rows", "sql": "select count(*) from t"}],
+                "connection": connection,
             },
         )
 
         # ------------------------------------------------------------------
         # Detailed-mode tools
         # ------------------------------------------------------------------
-        calls["test_connection"] = await _call(client, "test_connection", {})
+        calls["test_connection"] = await _call(
+            client, "test_connection", {"connection": connection}
+        )
         db_path = mcp_env["db_path"]
         calls["detect_dialect"] = await _call(
             client, "detect_dialect", {"database_url": f"sqlite:///{db_path}"}
         )
-        calls["list_catalogs"] = await _call(client, "list_catalogs", {})
-        calls["list_schemas"] = await _call(client, "list_schemas", {"catalog": None})
+        calls["list_catalogs"] = await _call(client, "list_catalogs", {"connection": connection})
+        calls["list_schemas"] = await _call(
+            client, "list_schemas", {"catalog": None, "connection": connection}
+        )
         calls["list_tables"] = await _call(
-            client, "list_tables", {"catalog": None, "schema": None}
+            client, "list_tables", {"catalog": None, "schema": None, "connection": connection}
         )
         calls["describe_table"] = await _call(
             client,
             "describe_table",
-            {"catalog": None, "schema": None, "table_name": "t"},
+            {"catalog": None, "schema": None, "table_name": "t", "connection": connection},
         )
         calls["sample_table"] = await _call(
             client,
             "sample_table",
-            {"catalog": None, "schema": None, "table_name": "t", "limit": 2},
+            {
+                "catalog": None,
+                "schema": None,
+                "table_name": "t",
+                "limit": 2,
+                "connection": connection,
+            },
         )
         calls["get_dialect_rules"] = await _call(
             client, "get_dialect_rules", {"dialect": "postgresql"}
         )
-        calls["get_connection_dialect"] = await _call(client, "get_connection_dialect", {})
+        calls["get_connection_dialect"] = await _call(
+            client, "get_connection_dialect", {"connection": connection}
+        )
 
-        calls["query_status"] = await _call(client, "query_status", {})
+        calls["query_status"] = await _call(client, "query_status", {"connection": connection})
         calls["query_generate"] = await _call(
             client,
             "query_generate",
-            {"natural_language": "count rows"},
+            {"natural_language": "count rows", "connection": connection},
         )
         calls["query_feedback"] = await _call(
             client,
@@ -237,42 +293,62 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
                 "generated_sql": "select count(*) from t",
                 "feedback_type": "correction",
                 "corrected_sql": "select count(*) from t",
+                "connection": connection,
             },
         )
         calls["query_add_rule"] = await _call(
             client,
             "query_add_rule",
-            {"rule": "Always use COUNT(*) for counts."},
+            {"rule": "Always use COUNT(*) for counts.", "connection": connection},
         )
-        calls["query_list_examples"] = await _call(client, "query_list_examples", {})
-        calls["query_list_rules"] = await _call(client, "query_list_rules", {})
+        calls["query_list_examples"] = await _call(
+            client, "query_list_examples", {"connection": connection}
+        )
+        calls["query_list_rules"] = await _call(
+            client, "query_list_rules", {"connection": connection}
+        )
         calls["query_approve"] = await _call(
             client,
             "query_approve",
-            {"natural_language": "count rows", "sql": "select count(*) from t"},
+            {
+                "natural_language": "count rows",
+                "sql": "select count(*) from t",
+                "connection": connection,
+            },
         )
 
-        calls["get_knowledge_gaps"] = await _call(client, "get_knowledge_gaps", {})
+        calls["get_knowledge_gaps"] = await _call(
+            client, "get_knowledge_gaps", {"connection": connection}
+        )
         calls["dismiss_knowledge_gap"] = await _call(
-            client, "dismiss_knowledge_gap", {"gap_id": "nope", "reason": "n/a"}
+            client,
+            "dismiss_knowledge_gap",
+            {"gap_id": "nope", "reason": "n/a", "connection": connection},
         )
 
-        calls["metrics_discover"] = await _call(client, "metrics_discover", {})
-        calls["metrics_list"] = await _call(client, "metrics_list", {})
+        calls["metrics_discover"] = await _call(
+            client, "metrics_discover", {"connection": connection}
+        )
+        calls["metrics_list"] = await _call(client, "metrics_list", {"connection": connection})
         calls["metrics_add"] = await _call(
             client,
             "metrics_add",
-            {"type": "dimension", "name": "x", "description": "Test dimension"},
+            {
+                "type": "dimension",
+                "name": "x",
+                "description": "Test dimension",
+                "connection": connection,
+            },
         )
         calls["metrics_approve"] = await _call(
-            client, "metrics_approve", {"type": "dimension", "name": "x"}
+            client, "metrics_approve", {"type": "dimension", "name": "x", "connection": connection}
         )
         calls["metrics_remove"] = await _call(
-            client, "metrics_remove", {"type": "dimension", "name": "x"}
+            client, "metrics_remove", {"type": "dimension", "name": "x", "connection": connection}
         )
 
         calls["get_data"] = await _call(
-            client, "get_data", {"intent": "show all rows from table t"}
+            client, "get_data", {"intent": "show all rows from table t", "connection": connection}
         )
         calls["test_elicitation"] = await _call(client, "test_elicitation", {})
         calls["test_sampling"] = await _call(client, "test_sampling", {})

@@ -1,5 +1,7 @@
 """Tests for metrics MCP tools."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from db_mcp.tools.metrics import (
@@ -9,6 +11,8 @@ from db_mcp.tools.metrics import (
     _metrics_list,
     _metrics_remove,
 )
+
+CONNECTION = "test-conn"
 
 
 @pytest.fixture
@@ -29,8 +33,11 @@ def conn_path(tmp_path, monkeypatch):
     monkeypatch.setattr("db_mcp.metrics.store._get_connection_dir", lambda provider_id=None: conn)
     monkeypatch.setattr("db_mcp.onboarding.state.get_provider_dir", lambda provider_id=None: conn)
     monkeypatch.setattr("db_mcp.onboarding.state.get_connection_path", lambda: conn)
-    # Patch the imported reference in the tools module
-    monkeypatch.setattr("db_mcp.tools.metrics.get_connection_path", lambda: conn)
+    # tools module now uses resolve_connection for path resolution
+    monkeypatch.setattr(
+        "db_mcp.tools.metrics.resolve_connection",
+        lambda connection: (MagicMock(), CONNECTION, conn),
+    )
 
     return conn
 
@@ -38,7 +45,7 @@ def conn_path(tmp_path, monkeypatch):
 class TestMetricsList:
     @pytest.mark.asyncio
     async def test_empty_catalog(self, conn_path):
-        result = await _metrics_list()
+        result = await _metrics_list(connection=CONNECTION)
         assert result["metrics"] == []
         assert result["dimensions"] == []
         assert "0 metric(s)" in result["summary"]
@@ -51,8 +58,9 @@ class TestMetricsList:
             name="dau",
             description="Daily active users",
             sql="SELECT COUNT(DISTINCT user_id) FROM sessions",
+            connection=CONNECTION,
         )
-        result = await _metrics_list()
+        result = await _metrics_list(connection=CONNECTION)
         assert len(result["metrics"]) == 1
         assert result["metrics"][0]["name"] == "dau"
         assert "1 metric(s)" in result["summary"]
@@ -64,8 +72,9 @@ class TestMetricsList:
             name="carrier",
             column="cdr.carrier",
             description="Mobile carrier",
+            connection=CONNECTION,
         )
-        result = await _metrics_list()
+        result = await _metrics_list(connection=CONNECTION)
         assert len(result["dimensions"]) == 1
         assert result["dimensions"][0]["name"] == "carrier"
         assert result["dimensions"][0]["type"] == "categorical"
@@ -81,6 +90,7 @@ class TestMetricsAdd:
             sql="SELECT SUM(amount) FROM orders",
             tables=["orders"],
             tags=["finance"],
+            connection=CONNECTION,
         )
         assert result["added"] is True
 
@@ -91,6 +101,7 @@ class TestMetricsAdd:
             name="bad",
             description="",
             sql="",
+            connection=CONNECTION,
         )
         assert result.get("added") is False
         assert "error" in result
@@ -102,6 +113,7 @@ class TestMetricsAdd:
             name="region",
             column="users.region",
             dim_type="geographic",
+            connection=CONNECTION,
         )
         assert result["added"] is True
 
@@ -111,12 +123,13 @@ class TestMetricsAdd:
             type="dimension",
             name="bad",
             column="",
+            connection=CONNECTION,
         )
         assert result.get("added") is False
 
     @pytest.mark.asyncio
     async def test_add_invalid_type(self, conn_path):
-        result = await _metrics_add(type="widget", name="x")
+        result = await _metrics_add(type="widget", name="x", connection=CONNECTION)
         assert result.get("added") is False
         assert "Invalid type" in result["error"]
 
@@ -129,13 +142,14 @@ class TestMetricsApprove:
             name="count_sessions",
             description="Count all sessions",
             sql="SELECT COUNT(*) FROM sessions",
+            connection=CONNECTION,
         )
         assert result["approved"] is True
         assert result["type"] == "metric"
         assert result["name"] == "count_sessions"
 
         # Verify it shows up in the catalog
-        catalog = await _metrics_list()
+        catalog = await _metrics_list(connection=CONNECTION)
         assert len(catalog["metrics"]) == 1
 
     @pytest.mark.asyncio
@@ -145,11 +159,12 @@ class TestMetricsApprove:
             name="city",
             column="events.city",
             dim_type="geographic",
+            connection=CONNECTION,
         )
         assert result["approved"] is True
         assert result["type"] == "dimension"
 
-        catalog = await _metrics_list()
+        catalog = await _metrics_list(connection=CONNECTION)
         assert len(catalog["dimensions"]) == 1
 
 
@@ -161,16 +176,17 @@ class TestMetricsRemove:
             name="to_delete",
             description="temp",
             sql="SELECT 1",
+            connection=CONNECTION,
         )
-        result = await _metrics_remove(type="metric", name="to_delete")
+        result = await _metrics_remove(type="metric", name="to_delete", connection=CONNECTION)
         assert result["removed"] is True
 
-        catalog = await _metrics_list()
+        catalog = await _metrics_list(connection=CONNECTION)
         assert len(catalog["metrics"]) == 0
 
     @pytest.mark.asyncio
     async def test_remove_nonexistent(self, conn_path):
-        result = await _metrics_remove(type="metric", name="nope")
+        result = await _metrics_remove(type="metric", name="nope", connection=CONNECTION)
         assert result["removed"] is False
 
     @pytest.mark.asyncio
@@ -179,20 +195,21 @@ class TestMetricsRemove:
             type="dimension",
             name="to_delete",
             column="t.col",
+            connection=CONNECTION,
         )
-        result = await _metrics_remove(type="dimension", name="to_delete")
+        result = await _metrics_remove(type="dimension", name="to_delete", connection=CONNECTION)
         assert result["removed"] is True
 
     @pytest.mark.asyncio
     async def test_remove_invalid_type(self, conn_path):
-        result = await _metrics_remove(type="widget", name="x")
+        result = await _metrics_remove(type="widget", name="x", connection=CONNECTION)
         assert result["removed"] is False
 
 
 class TestMetricsDiscover:
     @pytest.mark.asyncio
     async def test_discover_empty_vault(self, conn_path):
-        result = await _metrics_discover()
+        result = await _metrics_discover(connection=CONNECTION)
         assert result["metric_candidates"] == []
         assert result["dimension_candidates_by_category"] == {}
         assert "0 metric" in result["summary"]
@@ -209,7 +226,7 @@ class TestMetricsDiscover:
         with open(conn_path / "training" / "examples" / "ex1.yaml", "w") as f:
             yaml.dump(example, f)
 
-        result = await _metrics_discover()
+        result = await _metrics_discover(connection=CONNECTION)
         assert len(result["metric_candidates"]) >= 1
         assert result["metric_candidates"][0]["name"] == "count_records"
 
@@ -229,7 +246,7 @@ class TestMetricsDiscover:
         with open(conn_path / "training" / "examples" / "ex1.yaml", "w") as f:
             yaml.dump(example, f)
 
-        result = await _metrics_discover()
+        result = await _metrics_discover(connection=CONNECTION)
         assert "metric candidate" in result["summary"]
         assert "dimension candidate" in result["summary"]
         assert "categor" in result["summary"]

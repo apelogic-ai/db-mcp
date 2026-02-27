@@ -95,9 +95,9 @@ class TestExecuteQueryWithFileConnector:
         """SELECT * should return all rows from a file connector."""
         monkeypatch.setattr(
             "db_mcp.tools.utils.resolve_connection",
-            lambda connection=None, **kw: (file_connector, "test", "/test"),
+            lambda connection, **kw: (file_connector, "test", "/test"),
         )
-        result = _execute_query("SELECT * FROM users")
+        result = _execute_query("SELECT * FROM users", connection="test")
         assert result["rows_returned"] == 3
         assert "id" in result["columns"]
         assert "name" in result["columns"]
@@ -107,9 +107,9 @@ class TestExecuteQueryWithFileConnector:
         """SELECT with WHERE should filter rows."""
         monkeypatch.setattr(
             "db_mcp.tools.utils.resolve_connection",
-            lambda connection=None, **kw: (file_connector, "test", "/test"),
+            lambda connection, **kw: (file_connector, "test", "/test"),
         )
-        result = _execute_query("SELECT name FROM users WHERE age > 25")
+        result = _execute_query("SELECT name FROM users WHERE age > 25", connection="test")
         assert result["rows_returned"] == 2
         names = [row["name"] for row in result["data"]]
         assert "Alice" in names
@@ -119,9 +119,9 @@ class TestExecuteQueryWithFileConnector:
         """Aggregation queries should work with file connector."""
         monkeypatch.setattr(
             "db_mcp.tools.utils.resolve_connection",
-            lambda connection=None, **kw: (file_connector, "test", "/test"),
+            lambda connection, **kw: (file_connector, "test", "/test"),
         )
-        result = _execute_query("SELECT COUNT(*) as cnt FROM users")
+        result = _execute_query("SELECT COUNT(*) as cnt FROM users", connection="test")
         assert result["rows_returned"] == 1
         assert result["data"][0]["cnt"] == 3
 
@@ -129,35 +129,35 @@ class TestExecuteQueryWithFileConnector:
         """Limit parameter should cap the number of returned rows."""
         monkeypatch.setattr(
             "db_mcp.tools.utils.resolve_connection",
-            lambda connection=None, **kw: (file_connector, "test", "/test"),
+            lambda connection, **kw: (file_connector, "test", "/test"),
         )
-        result = _execute_query("SELECT * FROM users", limit=2)
+        result = _execute_query("SELECT * FROM users", connection="test", limit=2)
         assert result["rows_returned"] == 2
 
     def test_invalid_sql_raises(self, file_connector, monkeypatch):
         """Invalid SQL should raise an exception."""
         monkeypatch.setattr(
             "db_mcp.tools.utils.resolve_connection",
-            lambda connection=None, **kw: (file_connector, "test", "/test"),
+            lambda connection, **kw: (file_connector, "test", "/test"),
         )
         with pytest.raises(Exception):
-            _execute_query("SELECT * FROM nonexistent_table")
+            _execute_query("SELECT * FROM nonexistent_table", connection="test")
 
     def test_returns_columns(self, file_connector, monkeypatch):
         """Result should include column names."""
         monkeypatch.setattr(
             "db_mcp.tools.utils.resolve_connection",
-            lambda connection=None, **kw: (file_connector, "test", "/test"),
+            lambda connection, **kw: (file_connector, "test", "/test"),
         )
-        result = _execute_query("SELECT id, name FROM users LIMIT 1")
+        result = _execute_query("SELECT id, name FROM users LIMIT 1", connection="test")
         assert result["columns"] == ["id", "name"]
 
     def test_returns_duration(self, file_connector, monkeypatch):
         """Result should include duration_ms."""
         monkeypatch.setattr(
             "db_mcp.tools.utils.resolve_connection",
-            lambda connection=None, **kw: (file_connector, "test", "/test"),
+            lambda connection, **kw: (file_connector, "test", "/test"),
         )
-        result = _execute_query("SELECT * FROM users")
+        result = _execute_query("SELECT * FROM users", connection="test")
         assert "duration_ms" in result
         assert result["duration_ms"] >= 0

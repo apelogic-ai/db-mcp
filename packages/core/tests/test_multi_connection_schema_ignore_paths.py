@@ -44,7 +44,7 @@ async def test_query_generate_loads_schema_from_resolved_connection_path():
 
     with (
         patch(
-            "db_mcp.tools.utils.resolve_connection",
+            "db_mcp.tools.training.resolve_connection",
             return_value=(MagicMock(), "wifimetrics-trino", conn_path),
         ),
         patch(

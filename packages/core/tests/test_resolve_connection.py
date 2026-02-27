@@ -274,9 +274,7 @@ class TestResolveConnectionCapabilityValidation:
             ),
         ):
             mock_cr_cls.get_instance.return_value = mock_registry
-            connector, name, path = resolve_connection(
-                "my-sql", require_capability="supports_sql"
-            )
+            connector, name, path = resolve_connection("my-sql", require_capability="supports_sql")
 
         assert name == "my-sql"
 
@@ -408,15 +406,11 @@ class TestServerMultiConnectionRegistration:
         # Create two connections: one SQL, one API
         sql_dir = tmp_path / "my-sql"
         sql_dir.mkdir()
-        (sql_dir / "connector.yaml").write_text(
-            yaml.dump({"type": "sql", "dialect": "trino"})
-        )
+        (sql_dir / "connector.yaml").write_text(yaml.dump({"type": "sql", "dialect": "trino"}))
 
         api_dir = tmp_path / "my-api"
         api_dir.mkdir()
-        (api_dir / "connector.yaml").write_text(
-            yaml.dump({"type": "api", "dialect": ""})
-        )
+        (api_dir / "connector.yaml").write_text(yaml.dump({"type": "api", "dialect": ""}))
 
         mock_settings = MagicMock()
         mock_settings.connections_dir = str(tmp_path)
@@ -499,42 +493,17 @@ class TestAPIToolConnectionDispatch:
         mock_resolve.assert_called_once_with("my-api", require_type="api")
         mock_api_connector.query_endpoint.assert_called_once()
 
-    def test_api_query_without_connection_auto_resolves(self):
-        """api_query without connection auto-resolves when single API exists."""
-        from pathlib import Path
-
-        mock_api_connector = _make_mock_api_connector()
-        mock_api_connector.query_endpoint.return_value = {"data": [], "rows_returned": 0}
-
-        with patch(
-            "db_mcp.tools.api.resolve_connection",
-            return_value=(mock_api_connector, "my-api", Path("/tmp/my-api")),
-        ) as mock_resolve:
-            asyncio.run(
-                __import__("db_mcp.tools.api", fromlist=["_api_query"])._api_query(
-                    endpoint="users",
-                )
+    def test_api_query_without_connection_errors(self):
+        """api_query without connection param errors."""
+        result = asyncio.run(
+            __import__("db_mcp.tools.api", fromlist=["_api_query"])._api_query(
+                endpoint="users",
+                connection=None,
             )
-
-        mock_resolve.assert_called_once_with(None, require_type="api")
-
-    def test_api_query_multiple_api_connections_no_param_errors(self):
-        """api_query without connection param when multiple APIs exist → error."""
-        with patch(
-            "db_mcp.tools.api.resolve_connection",
-            side_effect=ValueError(
-                "Multiple api connections available: api1, api2. "
-                "Specify connection=<name> to select one."
-            ),
-        ):
-            result = asyncio.run(
-                __import__("db_mcp.tools.api", fromlist=["_api_query"])._api_query(
-                    endpoint="users",
-                )
-            )
+        )
 
         assert "error" in result
-        assert "api1" in result["error"] or "api2" in result["error"]
+        assert "requires connection" in result["error"]
 
 
 # ============================================================================

@@ -1915,6 +1915,7 @@ class TestAPIMutateTool:
                 _api_mutate(
                     endpoint="items",
                     method="POST",
+                    connection="test-api",
                     body={"name": "Widget"},
                 )
             )
@@ -1927,7 +1928,9 @@ class TestAPIMutateTool:
         """api_mutate rejects GET method."""
         from db_mcp.tools.api import _api_mutate
 
-        result = asyncio.run(_api_mutate(endpoint="items", method="GET", body={}))
+        result = asyncio.run(
+            _api_mutate(endpoint="items", method="GET", body={}, connection="test-api")
+        )
         assert "error" in result
 
     def test_api_mutate_accepts_valid_methods(self, mock_api_connector):
@@ -1943,7 +1946,11 @@ class TestAPIMutateTool:
                 "db_mcp.tools.api.resolve_connection",
                 return_value=(mock_api_connector, "test-api", Path("/tmp/test")),
             ):
-                result = asyncio.run(_api_mutate(endpoint="items", method=method, body={"x": 1}))
+                result = asyncio.run(
+                    _api_mutate(
+                        endpoint="items", method=method, body={"x": 1}, connection="test-api"
+                    )
+                )
             assert "error" not in result
 
     def test_api_mutate_passes_params(self, mock_api_connector):
@@ -1960,6 +1967,7 @@ class TestAPIMutateTool:
                 _api_mutate(
                     endpoint="items",
                     method="POST",
+                    connection="test-api",
                     body={"name": "test"},
                     params={"version": "2"},
                 )
@@ -1979,7 +1987,9 @@ class TestAPIMutateTool:
             "db_mcp.tools.api.resolve_connection",
             side_effect=ValueError("No connections of type 'api' found."),
         ):
-            result = asyncio.run(_api_mutate(endpoint="items", method="POST", body={"x": 1}))
+            result = asyncio.run(
+                _api_mutate(endpoint="items", method="POST", body={"x": 1}, connection="test-api")
+            )
         assert "error" in result
 
 

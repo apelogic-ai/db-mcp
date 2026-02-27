@@ -11,8 +11,6 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from db_mcp.onboarding.state import get_connection_path
-
 logger = logging.getLogger(__name__)
 
 # Critical reminder injected into every tool response
@@ -306,15 +304,12 @@ Returns:
 """
 
 
-async def _shell(command: str, connection: str | None = None) -> dict:
+async def _shell(command: str, connection: str) -> dict:
     """Run bash command in the connection directory - see SHELL_DESCRIPTION_* for docs."""
-    if connection is not None:
-        from db_mcp.tools.utils import _resolve_connection_path
+    from db_mcp.tools.utils import _resolve_connection_path
 
-        resolved = _resolve_connection_path(connection)
-        connection_path = Path(resolved) if resolved else get_connection_path()
-    else:
-        connection_path = get_connection_path()
+    resolved = _resolve_connection_path(connection)
+    connection_path = Path(resolved)
 
     # Validate command
     validation = validate_command(command)
@@ -349,7 +344,7 @@ async def _shell(command: str, connection: str | None = None) -> dict:
     return result
 
 
-async def _protocol(connection: str | None = None) -> str:
+async def _protocol(connection: str) -> str:
     """Re-read the knowledge vault protocol.
 
     Use this if you need a reminder about:
@@ -360,13 +355,10 @@ async def _protocol(connection: str | None = None) -> str:
     Returns:
         The full PROTOCOL.md content
     """
-    if connection is not None:
-        from db_mcp.tools.utils import _resolve_connection_path
+    from db_mcp.tools.utils import _resolve_connection_path
 
-        resolved = _resolve_connection_path(connection)
-        base_path = Path(resolved) if resolved else get_connection_path()
-    else:
-        base_path = get_connection_path()
+    resolved = _resolve_connection_path(connection)
+    base_path = Path(resolved)
 
     protocol_path = base_path / "PROTOCOL.md"
 

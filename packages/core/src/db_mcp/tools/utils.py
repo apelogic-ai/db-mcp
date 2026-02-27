@@ -7,18 +7,42 @@ from db_mcp.connectors import get_connector, get_connector_capabilities
 from db_mcp.registry import ConnectionRegistry
 
 
-def _resolve_connection_path(connection: str | None) -> str | None:
+def require_connection(connection: str | None, tool_name: str | None = None) -> str:
+    """Require an explicit connection name.
+
+    Args:
+        connection: Connection name passed to the tool.
+        tool_name: Optional tool name for error context.
+
+    Returns:
+        The non-null connection name.
+
+    Raises:
+        ValueError: If connection is missing.
+    """
+    if connection is None:
+        if tool_name:
+            raise ValueError(
+                f"{tool_name} requires connection=<name>. "
+                "Use list_connections to see available connections."
+            )
+        raise ValueError(
+            "connection is required for this tool. "
+            "Use list_connections to see available connections."
+        )
+    return connection
+
+
+def _resolve_connection_path(connection: str) -> str:
     """Resolve a connection name to its filesystem path.
 
     Args:
         connection: Connection name (e.g., 'prod', 'staging').
-            If None, returns None (use default connection).
 
     Returns:
-        Absolute path to the connection directory, or None.
+        Absolute path to the connection directory.
     """
-    if connection is None:
-        return None
+    connection = require_connection(connection)
     settings = get_settings()
     base = settings.connections_dir or str(Path.home() / ".db-mcp" / "connections")
     return str(Path(base) / connection)
@@ -102,9 +126,7 @@ def resolve_connection(
         if require_capability is not None:
             caps = get_connector_capabilities(connector)
             if not caps.get(require_capability, False):
-                raise ValueError(
-                    f"The active connection does not support '{require_capability}'."
-                )
+                raise ValueError(f"The active connection does not support '{require_capability}'.")
 
         if require_type is not None:
             from db_mcp.connectors import (
@@ -113,6 +135,7 @@ def resolve_connection(
                 MetabaseConnector,
                 SQLConnector,
             )
+
             type_map = {
                 "sql": SQLConnector,
                 "file": FileConnector,
@@ -121,9 +144,7 @@ def resolve_connection(
             }
             expected_cls = type_map.get(require_type)
             if expected_cls is not None and not isinstance(connector, expected_cls):
-                raise ValueError(
-                    f"The active connection is not of type '{require_type}'."
-                )
+                raise ValueError(f"The active connection is not of type '{require_type}'.")
 
         return connector, conn_name, conn_path
 

@@ -5,7 +5,7 @@ from opentelemetry import trace
 
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.onboarding.state import load_state
-from db_mcp.tools.utils import get_resolved_provider_id
+from db_mcp.tools.utils import resolve_connection
 from db_mcp.training.store import (
     add_example,
     add_feedback,
@@ -16,25 +16,17 @@ from db_mcp.training.store import (
 )
 
 
-async def _query_status(connection: str | None = None) -> dict:
+async def _query_status(connection: str) -> dict:
     """Get query training status - examples, feedback, and rules counts.
 
     Args:
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with training phase status
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     # Load current state
     state = load_state(provider_id)
@@ -90,8 +82,8 @@ async def _query_status(connection: str | None = None) -> dict:
 
 async def _query_generate(
     natural_language: str,
+    connection: str,
     tables_hint: list[str] | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Generate SQL from natural language query.
 
@@ -101,22 +93,14 @@ async def _query_generate(
 
     Args:
         natural_language: Natural language description of the query
+        connection: Connection name for multi-connection support.
         tables_hint: Optional list of tables to focus on
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with generated SQL and context
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation and path resolution.
-        _, provider_id, conn_path = resolve_connection(connection)
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
-        conn_path = None
+    # Resolve connection for proper validation and path resolution.
+    _, provider_id, conn_path = resolve_connection(connection)
 
     # Load schema for context
     schema = load_schema_descriptions(provider_id, connection_path=conn_path)
@@ -176,10 +160,10 @@ async def _query_generate(
 async def _query_approve(
     natural_language: str,
     sql: str,
+    connection: str,
     tables_used: list[str] | None = None,
     tags: list[str] | None = None,
     notes: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Approve a query and save it as an example.
 
@@ -189,24 +173,16 @@ async def _query_approve(
     Args:
         natural_language: Natural language description
         sql: The correct SQL query
+        connection: Connection name for multi-connection support.
         tables_used: Tables referenced in the query
         tags: Tags for categorization (e.g., "aggregation", "join", "filter")
         notes: Additional notes about this example
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with approval status
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     result = add_example(
         provider_id=provider_id,
@@ -268,10 +244,10 @@ async def _query_feedback(
     natural_language: str,
     generated_sql: str,
     feedback_type: str,
+    connection: str,
     corrected_sql: str | None = None,
     feedback_text: str | None = None,
     tables_involved: list[str] | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Provide feedback on generated SQL.
 
@@ -282,24 +258,16 @@ async def _query_feedback(
         natural_language: Original natural language query
         generated_sql: The SQL that was generated
         feedback_type: One of "corrected" or "rejected"
+        connection: Connection name for multi-connection support.
         corrected_sql: The correct SQL (required if feedback_type is "corrected")
         feedback_text: Explanation of what was wrong
         tables_involved: Tables referenced
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with feedback status
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     # Validate feedback type
     try:
@@ -370,8 +338,8 @@ async def _query_feedback(
 
 async def _query_add_rule(
     rule: str,
+    connection: str,
     category: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Add a business rule to the prompt instructions.
 
@@ -380,22 +348,14 @@ async def _query_add_rule(
 
     Args:
         rule: The business rule in plain English
+        connection: Connection name for multi-connection support.
         category: Optional category (e.g., "naming", "filter", "join")
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with rule addition status
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     result = add_rule(provider_id, rule)
 
@@ -436,30 +396,22 @@ async def _query_add_rule(
 
 
 async def _query_list_examples(
+    connection: str,
     limit: int = 10,
     tags: list[str] | None = None,
-    connection: str | None = None,
 ) -> dict:
     """List saved query examples.
 
     Args:
+        connection: Connection name for multi-connection support.
         limit: Maximum number of examples to return
         tags: Filter by tags
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with examples list
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     examples = load_examples(provider_id)
 
@@ -487,25 +439,17 @@ async def _query_list_examples(
     }
 
 
-async def _query_list_rules(connection: str | None = None) -> dict:
+async def _query_list_rules(connection: str) -> dict:
     """List business rules for SQL generation.
 
     Args:
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with rules list
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     instructions = load_instructions(provider_id)
 
@@ -530,7 +474,7 @@ async def _query_list_rules(connection: str | None = None) -> dict:
 # =============================================================================
 
 
-async def _import_instructions(rules: list[str], connection: str | None = None) -> dict:
+async def _import_instructions(rules: list[str], connection: str) -> dict:
     """Import business rules/instructions.
 
     The LLM should read the uploaded file (any format), extract, dedupe,
@@ -538,21 +482,13 @@ async def _import_instructions(rules: list[str], connection: str | None = None) 
 
     Args:
         rules: List of business rule strings extracted by the LLM
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with import status and counts
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     if not rules:
         return {"status": "error", "error": "No rules provided"}
@@ -621,7 +557,7 @@ async def _import_instructions(rules: list[str], connection: str | None = None) 
         return {"status": "error", "error": result.get("error", "Save failed")}
 
 
-async def _import_examples(examples: list[dict], connection: str | None = None) -> dict:
+async def _import_examples(examples: list[dict], connection: str) -> dict:
     """Import query examples.
 
     The LLM should read the uploaded file (any format), extract and dedupe
@@ -635,21 +571,13 @@ async def _import_examples(examples: list[dict], connection: str | None = None) 
 
     Args:
         examples: List of example dicts extracted by the LLM
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with import status and counts
     """
-    # For store-based operations, we need to resolve the connection to get the provider_id
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     if not examples:
         return {"status": "error", "error": "No examples provided"}

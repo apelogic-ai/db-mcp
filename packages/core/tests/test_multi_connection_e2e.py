@@ -102,10 +102,5 @@ async def test_run_sql_ambiguous_without_connection_lists_available(tmp_path):
     ConnectionRegistry.reset()
     ConnectionRegistry.get_instance(settings)
 
-    with pytest.raises(ValueError) as e:
-        _execute_query("SELECT v FROM t")
-
-    msg = str(e.value)
-    assert "Multiple connections available" in msg
-    assert "a" in msg
-    assert "b" in msg
+    with pytest.raises(ValueError, match="requires connection"):
+        _execute_query("SELECT v FROM t", connection=None)

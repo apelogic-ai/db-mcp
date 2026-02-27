@@ -24,11 +24,12 @@ async def _list_connections() -> dict:
     }
 
 
-async def _test_connection(database_url: str | None = None, connection: str | None = None) -> dict:
+async def _test_connection(connection: str, database_url: str | None = None) -> dict:
     """Test database connection.
 
     Args:
-        database_url: Optional database URL. If not provided, uses configured URL.
+        connection: Connection name for multi-connection support.
+        database_url: Optional database URL override for one-off testing.
 
     Returns:
         Connection status and info
@@ -58,12 +59,12 @@ async def _detect_dialect(database_url: str) -> dict:
     }
 
 
-async def _list_catalogs(database_url: str | None = None, connection: str | None = None) -> dict:
+async def _list_catalogs(connection: str, database_url: str | None = None) -> dict:
     """List all catalogs in the database (Trino 3-level hierarchy).
 
     Args:
-        database_url: Optional database URL.
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
+        database_url: Optional database URL (unused when connection is provided).
 
     Returns:
         List of catalog names
@@ -93,16 +94,16 @@ async def _list_catalogs(database_url: str | None = None, connection: str | None
 
 
 async def _list_schemas(
+    connection: str,
     catalog: str | None = None,
     database_url: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """List all schemas in the database (or in a specific catalog for Trino).
 
     Args:
+        connection: Connection name for multi-connection support.
         catalog: Optional catalog name (for Trino 3-level hierarchy).
-        database_url: Optional database URL.
-        connection: Optional connection name for multi-connection support.
+        database_url: Optional database URL (unused when connection is provided).
 
     Returns:
         List of schema names
@@ -132,10 +133,10 @@ async def _list_schemas(
 
 
 async def _list_tables(
+    connection: str,
     schema: str | None = None,
     catalog: str | None = None,
     database_url: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """List all tables in a schema (and catalog for Trino).
 
@@ -146,10 +147,10 @@ async def _list_tables(
         shell(command='grep -ri "keyword" examples/')
 
     Args:
+        connection: Connection name for multi-connection support.
         schema: Schema name. If None, uses default schema.
         catalog: Catalog name - REQUIRED for Trino databases.
-        database_url: Optional database URL.
-        connection: Optional connection name for multi-connection support.
+        database_url: Optional database URL (unused when connection is provided).
 
     Returns:
         List of table info with fully qualified names
@@ -189,10 +190,10 @@ def _make_full_name(table_name: str, schema: str | None, catalog: str | None) ->
 
 async def _describe_table(
     table_name: str,
+    connection: str,
     schema: str | None = None,
     catalog: str | None = None,
     database_url: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Get detailed information about a table.
 
@@ -203,10 +204,10 @@ async def _describe_table(
 
     Args:
         table_name: Name of the table
+        connection: Connection name for multi-connection support.
         schema: Schema name. If None, uses default schema.
         catalog: Catalog name - REQUIRED for Trino databases.
-        database_url: Optional database URL.
-        connection: Optional connection name for multi-connection support.
+        database_url: Optional database URL (unused when connection is provided).
 
     Returns:
         Table info including columns
@@ -242,21 +243,21 @@ async def _describe_table(
 
 async def _sample_table(
     table_name: str,
+    connection: str,
     schema: str | None = None,
     catalog: str | None = None,
     limit: int = 5,
     database_url: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Get sample rows from a table.
 
     Args:
         table_name: Name of the table
+        connection: Connection name for multi-connection support.
         schema: Schema name. If None, uses default schema.
         catalog: Optional catalog name (for Trino 3-level hierarchy).
         limit: Maximum rows to return (default 5, max 100)
-        database_url: Optional database URL.
-        connection: Optional connection name for multi-connection support.
+        database_url: Optional database URL (unused when connection is provided).
 
     Returns:
         Sample rows from the table
