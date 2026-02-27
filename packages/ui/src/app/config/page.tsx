@@ -83,6 +83,28 @@ interface UpdateResult {
   error?: string;
 }
 
+type ConnectArgs = Record<string, string | boolean | number>;
+
+const parseConnectArgsFromUrl = (url: string): ConnectArgs | undefined => {
+  try {
+    const parsed = new URL(url);
+    const params = parsed.searchParams;
+    const httpScheme = params.get("http_scheme") ?? params.get("httpScheme");
+    const verifyRaw = params.get("verify");
+    const connectArgs: ConnectArgs = {};
+
+    if (httpScheme) connectArgs.http_scheme = httpScheme;
+    if (verifyRaw !== null) {
+      const normalized = verifyRaw.trim().toLowerCase();
+      connectArgs.verify = !["false", "0", "no", "off"].includes(normalized);
+    }
+
+    return Object.keys(connectArgs).length ? connectArgs : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 // Inline status indicator (spinner / check / X)
 function StatusIndicator({
   testStatus,
@@ -222,9 +244,11 @@ export default function ConfigPage() {
   }, []);
 
   const hasPlayground = connections.some((c) => c.name === "playground");
-  const hasNoConnections = connections.length === 0 && !connectionsLoading && hasFetched;
+  const hasNoConnections =
+    connections.length === 0 && !connectionsLoading && hasFetched;
   const showOnboardingBubble = hasNoConnections && !onboardingDismissed;
-  const showPlaygroundButton = !hasNoConnections && !hasPlayground && hasFetched && !connectionsLoading;
+  const showPlaygroundButton =
+    !hasNoConnections && !hasPlayground && hasFetched && !connectionsLoading;
 
   const handleInstallPlayground = async () => {
     setPlaygroundInstalling(true);
@@ -400,9 +424,11 @@ export default function ConfigPage() {
 
       setTestStatus({ testing: true, success: null, message: "" });
       try {
+        const connectArgs = parseConnectArgsFromUrl(urlToTest);
         const result = await call<TestResult>("connections/test", {
           connectorType: "sql",
           databaseUrl: urlToTest,
+          connectArgs: connectArgs ?? undefined,
         });
         setTestStatus({
           testing: false,
@@ -761,7 +787,11 @@ export default function ConfigPage() {
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <DialectIcon dialect={conn.dialect} size={20} className={conn.isActive ? "text-brand" : ""} />
+            <DialectIcon
+              dialect={conn.dialect}
+              size={20}
+              className={conn.isActive ? "text-brand" : ""}
+            />
             <span className="text-white font-medium">{conn.name}</span>
             {conn.isActive && (
               <Badge className="bg-brand/20 text-brand-light text-xs">
@@ -1062,7 +1092,10 @@ export default function ConfigPage() {
             Try db-mcp with a sample music database (SQLite + Chinook)
           </p>
           <ol className="text-gray-300 text-sm space-y-1 mb-5 list-decimal list-inside">
-            <li>Click &quot;+ Add Playground DB&quot; to install a sample SQLite database</li>
+            <li>
+              Click &quot;+ Add Playground DB&quot; to install a sample SQLite
+              database
+            </li>
             <li>
               Restart your agent and start the onboarding flow — discover
               tables, describe schema, build domain knowledge
