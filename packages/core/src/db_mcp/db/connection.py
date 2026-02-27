@@ -79,26 +79,8 @@ def normalize_database_url(database_url: str) -> str:
     return database_url
 
 
-@lru_cache(maxsize=8)
-def get_engine(database_url: str | None = None, *, connect_args: dict | None = None) -> Engine:
-    """Get or create a SQLAlchemy engine.
-
-    Args:
-        database_url: Optional database URL. If not provided, uses settings.
-
-    Returns:
-        SQLAlchemy Engine instance
-
-    Raises:
-        DatabaseError: If no database URL is configured
-    """
-    if database_url is None:
-        settings = get_settings()
-        database_url = settings.database_url
-
-    if not database_url:
-        raise DatabaseError("No database URL configured")
-
+def _create_engine(database_url: str, *, connect_args: dict | None = None) -> Engine:
+    """Create a SQLAlchemy engine without caching."""
     normalized_url = normalize_database_url(database_url)
     dialect = detect_dialect_from_url(normalized_url)
 
@@ -140,6 +122,36 @@ def get_engine(database_url: str | None = None, *, connect_args: dict | None = N
         return engine
     except Exception as e:
         raise DatabaseError(f"Failed to create database engine: {e}") from e
+
+
+@lru_cache(maxsize=8)
+def _get_engine_cached(database_url: str) -> Engine:
+    return _create_engine(database_url)
+
+
+def get_engine(database_url: str | None = None, *, connect_args: dict | None = None) -> Engine:
+    """Get or create a SQLAlchemy engine.
+
+    Args:
+        database_url: Optional database URL. If not provided, uses settings.
+
+    Returns:
+        SQLAlchemy Engine instance
+
+    Raises:
+        DatabaseError: If no database URL is configured
+    """
+    if database_url is None:
+        settings = get_settings()
+        database_url = settings.database_url
+
+    if not database_url:
+        raise DatabaseError("No database URL configured")
+
+    if connect_args:
+        return _create_engine(database_url, connect_args=connect_args)
+
+    return _get_engine_cached(database_url)
 
 
 def test_connection(database_url: str | None = None, *, connect_args: dict | None = None) -> dict:

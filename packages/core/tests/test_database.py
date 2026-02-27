@@ -81,3 +81,15 @@ def test_test_connection_forwards_connect_args_to_get_engine():
         "trino://user@localhost:8080/catalog",
         connect_args={"http_scheme": "http"},
     )
+
+
+def test_get_engine_accepts_connect_args_dict():
+    """get_engine should accept connect_args without hashing errors."""
+    from db_mcp.db import connection
+
+    mock_engine = MagicMock()
+    with patch("db_mcp.db.connection.create_engine", return_value=mock_engine) as mock_create:
+        engine = connection.get_engine("sqlite:///:memory:", connect_args={"timeout": 5})
+
+    assert engine is mock_engine
+    assert mock_create.call_args.kwargs["connect_args"] == {"timeout": 5}
