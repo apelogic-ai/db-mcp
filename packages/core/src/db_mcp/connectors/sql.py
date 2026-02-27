@@ -50,22 +50,23 @@ class SQLConnector:
     def __init__(self, config: SQLConnectorConfig) -> None:
         self.config = config
 
+    def _get_connect_args(self) -> dict[str, Any] | None:
+        connect_args = self.config.capabilities.get("connect_args")
+        if not isinstance(connect_args, dict):
+            return None
+        return connect_args
+
     def get_engine(self) -> Engine:
         """Get the SQLAlchemy engine for this connection.
 
         This is SQL-specific and not part of the Connector protocol.
         Used by validation/explain and generation for direct engine access.
         """
-        connect_args = self.config.capabilities.get("connect_args")
-        if not isinstance(connect_args, dict):
-            connect_args = None
-        return get_engine(self.config.database_url, connect_args=connect_args)
+        return get_engine(self.config.database_url, connect_args=self._get_connect_args())
 
     def test_connection(self) -> dict[str, Any]:
         """Test database connectivity."""
-        connect_args = self.config.capabilities.get("connect_args")
-        if not isinstance(connect_args, dict):
-            connect_args = None
+        connect_args = self._get_connect_args()
         if connect_args is None:
             return db_test_connection(self.config.database_url)
         return db_test_connection(self.config.database_url, connect_args=connect_args)
@@ -76,24 +77,37 @@ class SQLConnector:
 
     def get_catalogs(self) -> list[str | None]:
         """List database catalogs."""
-        return db_get_catalogs(self.config.database_url)
+        return db_get_catalogs(self.config.database_url, connect_args=self._get_connect_args())
 
     def get_schemas(self, catalog: str | None = None) -> list[str | None]:
         """List schemas, optionally within a catalog."""
-        return db_get_schemas(self.config.database_url, catalog=catalog)
+        return db_get_schemas(
+            self.config.database_url,
+            catalog=catalog,
+            connect_args=self._get_connect_args(),
+        )
 
     def get_tables(
         self, schema: str | None = None, catalog: str | None = None
     ) -> list[dict[str, Any]]:
         """List tables in a schema."""
-        return db_get_tables(schema=schema, catalog=catalog, database_url=self.config.database_url)
+        return db_get_tables(
+            schema=schema,
+            catalog=catalog,
+            database_url=self.config.database_url,
+            connect_args=self._get_connect_args(),
+        )
 
     def get_columns(
         self, table_name: str, schema: str | None = None, catalog: str | None = None
     ) -> list[dict[str, Any]]:
         """Get column metadata for a table."""
         return db_get_columns(
-            table_name, schema=schema, catalog=catalog, database_url=self.config.database_url
+            table_name,
+            schema=schema,
+            catalog=catalog,
+            database_url=self.config.database_url,
+            connect_args=self._get_connect_args(),
         )
 
     def get_table_sample(
@@ -110,15 +124,13 @@ class SQLConnector:
             catalog=catalog,
             limit=limit,
             database_url=self.config.database_url,
+            connect_args=self._get_connect_args(),
         )
 
     def execute_sql(self, sql: str, params: dict | None = None) -> list[dict[str, Any]]:
         """Execute SQL and return rows as dicts."""
         try:
-            connect_args = self.config.capabilities.get("connect_args")
-            if not isinstance(connect_args, dict):
-                connect_args = None
-            engine = get_engine(self.config.database_url, connect_args=connect_args)
+            engine = get_engine(self.config.database_url, connect_args=self._get_connect_args())
             with engine.connect() as conn:
                 result = conn.execute(text(sql), params or {})
                 columns = result.keys()

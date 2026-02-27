@@ -170,7 +170,23 @@ class TestSQLConnector:
             mock.return_value = ["dwh", "staging"]
             result = connector.get_catalogs()
             assert result == ["dwh", "staging"]
-            mock.assert_called_once_with(connector.config.database_url)
+            mock.assert_called_once_with(connector.config.database_url, connect_args=None)
+
+    def test_get_catalogs_passes_connect_args(self):
+        """SQLConnector.get_catalogs should pass configured connect_args."""
+        config = SQLConnectorConfig(
+            database_url="trino://user:pass@host:8080/catalog",
+            capabilities={"connect_args": {"http_scheme": "http"}},
+        )
+        connector = SQLConnector(config)
+
+        with patch("db_mcp.connectors.sql.db_get_catalogs") as mock:
+            mock.return_value = []
+            connector.get_catalogs()
+            mock.assert_called_once_with(
+                connector.config.database_url,
+                connect_args={"http_scheme": "http"},
+            )
 
     def test_get_schemas_delegates(self, connector):
         """SQLConnector.get_schemas delegates to db.introspection.get_schemas."""
@@ -178,7 +194,9 @@ class TestSQLConnector:
             mock.return_value = ["public", "analytics"]
             result = connector.get_schemas(catalog="dwh")
             assert result == ["public", "analytics"]
-            mock.assert_called_once_with(connector.config.database_url, catalog="dwh")
+            mock.assert_called_once_with(
+                connector.config.database_url, catalog="dwh", connect_args=None
+            )
 
     def test_get_tables_delegates(self, connector):
         """SQLConnector.get_tables delegates to db.introspection.get_tables."""
@@ -190,7 +208,28 @@ class TestSQLConnector:
             assert len(result) == 1
             assert result[0]["name"] == "users"
             mock.assert_called_once_with(
-                schema="public", catalog=None, database_url=connector.config.database_url
+                schema="public",
+                catalog=None,
+                database_url=connector.config.database_url,
+                connect_args=None,
+            )
+
+    def test_get_tables_passes_connect_args(self):
+        """SQLConnector.get_tables should pass configured connect_args."""
+        config = SQLConnectorConfig(
+            database_url="trino://user:pass@host:8080/catalog",
+            capabilities={"connect_args": {"http_scheme": "http", "verify": False}},
+        )
+        connector = SQLConnector(config)
+
+        with patch("db_mcp.connectors.sql.db_get_tables") as mock:
+            mock.return_value = []
+            connector.get_tables(schema="public", catalog="dwh")
+            mock.assert_called_once_with(
+                schema="public",
+                catalog="dwh",
+                database_url=connector.config.database_url,
+                connect_args={"http_scheme": "http", "verify": False},
             )
 
     def test_get_columns_delegates(self, connector):
@@ -203,7 +242,11 @@ class TestSQLConnector:
             assert len(result) == 1
             assert result[0]["name"] == "id"
             mock.assert_called_once_with(
-                "users", schema="public", catalog=None, database_url=connector.config.database_url
+                "users",
+                schema="public",
+                catalog=None,
+                database_url=connector.config.database_url,
+                connect_args=None,
             )
 
     def test_get_table_sample_delegates(self, connector):
@@ -218,6 +261,7 @@ class TestSQLConnector:
                 catalog=None,
                 limit=2,
                 database_url=connector.config.database_url,
+                connect_args=None,
             )
 
     def test_execute_sql_delegates(self, connector, mock_engine):

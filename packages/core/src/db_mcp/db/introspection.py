@@ -42,7 +42,7 @@ def _fallback_information_schema_columns(
     ]
 
 
-def get_dialect(database_url: str | None = None) -> str:
+def get_dialect(database_url: str | None = None, *, connect_args: dict | None = None) -> str:
     """Get the SQL dialect for the database.
 
     Args:
@@ -52,13 +52,15 @@ def get_dialect(database_url: str | None = None) -> str:
         Dialect name (e.g., 'trino', 'clickhouse', 'postgresql')
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         return engine.dialect.name
     except Exception as e:
         raise DatabaseError(f"Failed to get dialect: {e}") from e
 
 
-def get_catalogs(database_url: str | None = None) -> list[str | None]:
+def get_catalogs(
+    database_url: str | None = None, *, connect_args: dict | None = None
+) -> list[str | None]:
     """Get list of catalogs in the database.
 
     For Trino: Queries all available catalogs via SHOW CATALOGS
@@ -72,7 +74,7 @@ def get_catalogs(database_url: str | None = None) -> list[str | None]:
         List of catalog names, or [None] if not applicable
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         dialect = engine.dialect.name.lower()
 
         if dialect == "trino":
@@ -102,7 +104,12 @@ def get_catalogs(database_url: str | None = None) -> list[str | None]:
         raise DatabaseError(f"Failed to get catalogs: {e}") from e
 
 
-def get_schemas(database_url: str | None = None, catalog: str | None = None) -> list[str | None]:
+def get_schemas(
+    database_url: str | None = None,
+    catalog: str | None = None,
+    *,
+    connect_args: dict | None = None,
+) -> list[str | None]:
     """Get list of schemas in the database.
 
     For Trino with catalog: Executes SHOW SCHEMAS FROM catalog
@@ -116,7 +123,7 @@ def get_schemas(database_url: str | None = None, catalog: str | None = None) -> 
         List of schema names, or [None] if not applicable
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         dialect = engine.dialect.name.lower()
 
         if dialect == "trino" and catalog:
@@ -150,6 +157,8 @@ def get_tables(
     schema: str | None = None,
     catalog: str | None = None,
     database_url: str | None = None,
+    *,
+    connect_args: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Get list of tables in a schema.
 
@@ -165,7 +174,7 @@ def get_tables(
         List of table info dicts with 'name', 'schema', 'catalog', 'type' keys
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         dialect = engine.dialect.name.lower()
 
         tables = []
@@ -265,6 +274,8 @@ def get_columns(
     schema: str | None = None,
     catalog: str | None = None,
     database_url: str | None = None,
+    *,
+    connect_args: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Get column information for a table.
 
@@ -281,7 +292,7 @@ def get_columns(
         List of column info dicts with name, type, nullable, etc.
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         dialect = engine.dialect.name.lower()
 
         if dialect == "trino" and catalog and schema:
@@ -343,6 +354,8 @@ def get_table_sample(
     catalog: str | None = None,
     limit: int = 5,
     database_url: str | None = None,
+    *,
+    connect_args: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Get sample rows from a table.
 
@@ -357,7 +370,7 @@ def get_table_sample(
         List of row dicts
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
 
         # Build full table name based on hierarchy
         if catalog and schema:
@@ -383,7 +396,11 @@ def get_table_sample(
 
 
 def get_primary_keys(
-    table_name: str, schema: str | None = None, database_url: str | None = None
+    table_name: str,
+    schema: str | None = None,
+    database_url: str | None = None,
+    *,
+    connect_args: dict | None = None,
 ) -> list[str]:
     """Get primary key columns for a table.
 
@@ -396,7 +413,7 @@ def get_primary_keys(
         List of primary key column names
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         inspector = inspect(engine)
 
         pk = inspector.get_pk_constraint(table_name, schema=schema)
@@ -406,7 +423,11 @@ def get_primary_keys(
 
 
 def get_foreign_keys(
-    table_name: str, schema: str | None = None, database_url: str | None = None
+    table_name: str,
+    schema: str | None = None,
+    database_url: str | None = None,
+    *,
+    connect_args: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Get foreign key constraints for a table.
 
@@ -419,7 +440,7 @@ def get_foreign_keys(
         List of foreign key info dicts
     """
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(database_url, connect_args=connect_args)
         inspector = inspect(engine)
 
         fks = inspector.get_foreign_keys(table_name, schema=schema)

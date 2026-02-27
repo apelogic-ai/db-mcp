@@ -1238,31 +1238,33 @@ class DBMCPAgent(BICPAgent):
         database_url = params.get("databaseUrl")
 
         if name:
-            # Load URL from existing connection
+            # Load connection via connector.yaml/.env with standard precedence.
             connections_dir = Path.home() / ".db-mcp" / "connections"
             conn_path = connections_dir / name
-            env_file = conn_path / ".env"
-
-            if not env_file.exists():
+            if not conn_path.exists():
                 return {"success": False, "error": f"Connection '{name}' not found"}
 
-            # Parse .env file
-            database_url = None
-            with open(env_file) as f:
-                for line in f:
-                    if line.startswith("DATABASE_URL="):
-                        database_url = line.split("=", 1)[1].strip().strip("\"'")
-                        break
+            from db_mcp.connectors import get_connector
 
-            if not database_url:
-                return {"success": False, "error": "No DATABASE_URL in connection config"}
+            connector = get_connector(str(conn_path))
+            result = connector.test_connection()
+            connected = bool(result.get("connected"))
+            response = {
+                "success": connected,
+                "dialect": result.get("dialect"),
+            }
+            if connected:
+                response["message"] = "Connection successful"
+            else:
+                response["error"] = result.get("error", "Connection failed")
+            if result.get("hint"):
+                response["hint"] = result["hint"]
+            return response
 
-        elif database_url:
-            pass  # Use provided URL
-        else:
-            return {"success": False, "error": "Either 'name' or 'databaseUrl' is required"}
+        if database_url:
+            return await self._test_database_url(database_url)
 
-        return await self._test_database_url(database_url)
+        return {"success": False, "error": "Either 'name' or 'databaseUrl' is required"}
 
     def _test_file_directory(self, directory: str) -> dict[str, Any]:
         """Test a file directory by checking for supported files."""
