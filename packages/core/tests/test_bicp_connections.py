@@ -35,3 +35,64 @@ async def test_connections_test_uses_connector_for_named_connection(monkeypatch)
         assert result["success"] is True
         mock_get.assert_called_once()
         mock_connector.test_connection.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_connections_test_database_url_passes_connect_args():
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    agent = DBMCPAgent.__new__(DBMCPAgent)
+    agent._method_handlers = {}
+    agent._settings = None
+    agent._dialect = "trino"
+
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = (1,)
+    mock_conn.execute.return_value = mock_result
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    mock_engine.connect.return_value.__exit__.return_value = False
+
+    with patch("db_mcp.db.connection.get_engine", return_value=mock_engine) as mock_get:
+        result = await agent._handle_connections_test(
+            {
+                "databaseUrl": "trino://user@host:8443/catalog",
+                "connectArgs": {"http_scheme": "http", "verify": False},
+            }
+        )
+
+    assert result["success"] is True
+    mock_get.assert_called_once_with(
+        "trino://user@host:8443/catalog",
+        connect_args={"http_scheme": "http", "verify": False},
+    )
+
+
+@pytest.mark.asyncio
+async def test_connections_test_database_url_parses_connect_args_from_url():
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    agent = DBMCPAgent.__new__(DBMCPAgent)
+    agent._method_handlers = {}
+    agent._settings = None
+    agent._dialect = "trino"
+
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = (1,)
+    mock_conn.execute.return_value = mock_result
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    mock_engine.connect.return_value.__exit__.return_value = False
+
+    url = "trino://user@host:8443/catalog?http_scheme=http&verify=false"
+
+    with patch("db_mcp.db.connection.get_engine", return_value=mock_engine) as mock_get:
+        result = await agent._handle_connections_test({"databaseUrl": url})
+
+    assert result["success"] is True
+    mock_get.assert_called_once_with(
+        "trino://user@host:8443/catalog",
+        connect_args={"http_scheme": "http", "verify": False},
+    )

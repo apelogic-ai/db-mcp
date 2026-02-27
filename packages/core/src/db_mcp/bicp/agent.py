@@ -1236,6 +1236,9 @@ class DBMCPAgent(BICPAgent):
         # SQL connector test
         name = params.get("name")
         database_url = params.get("databaseUrl")
+        connect_args = params.get("connectArgs")
+        if not isinstance(connect_args, dict):
+            connect_args = None
 
         if name:
             # Load connection via connector.yaml/.env with standard precedence.
@@ -1262,7 +1265,7 @@ class DBMCPAgent(BICPAgent):
             return response
 
         if database_url:
-            return await self._test_database_url(database_url)
+            return await self._test_database_url(database_url, connect_args=connect_args)
 
         return {"success": False, "error": "Either 'name' or 'databaseUrl' is required"}
 
@@ -1342,7 +1345,41 @@ class DBMCPAgent(BICPAgent):
                     "dialect": result.get("dialect", "duckdb"),
                 }
 
-    async def _test_database_url(self, database_url: str) -> dict[str, Any]:
+    def _extract_connect_args_from_url(
+        self, database_url: str
+    ) -> tuple[str, dict[str, Any] | None]:
+        import urllib.parse
+
+        try:
+            parsed = urllib.parse.urlparse(database_url)
+        except Exception:
+            return database_url, None
+
+        if not parsed.query:
+            return database_url, None
+
+        params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        connect_args: dict[str, Any] = {}
+
+        http_scheme = params.pop("http_scheme", None) or params.pop("httpScheme", None)
+        if http_scheme:
+            connect_args["http_scheme"] = http_scheme[-1]
+
+        verify = params.pop("verify", None)
+        if verify:
+            raw = str(verify[-1]).strip().lower()
+            connect_args["verify"] = raw not in ("false", "0", "no", "off")
+
+        if not connect_args:
+            return database_url, None
+
+        new_query = urllib.parse.urlencode(params, doseq=True)
+        sanitized = parsed._replace(query=new_query).geturl()
+        return sanitized, connect_args
+
+    async def _test_database_url(
+        self, database_url: str, *, connect_args: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Test a database URL by attempting to connect.
 
         Uses get_engine() from db.connection which handles URL normalization
@@ -1358,7 +1395,10 @@ class DBMCPAgent(BICPAgent):
         dialect = self._detect_dialect_from_url(database_url)
 
         try:
-            engine = get_engine(database_url)
+            database_url, inferred_connect_args = self._extract_connect_args_from_url(database_url)
+            if connect_args is None:
+                connect_args = inferred_connect_args
+            engine = get_engine(database_url, connect_args=connect_args)
 
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
