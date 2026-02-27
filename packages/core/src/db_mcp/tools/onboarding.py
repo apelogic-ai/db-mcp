@@ -9,7 +9,6 @@ from pathlib import Path
 from db_mcp_models import OnboardingPhase, TableDescriptionStatus
 from mcp.server.fastmcp import Context
 
-from db_mcp.config import get_settings
 from db_mcp.connectors import get_connector
 from db_mcp.onboarding.ignore import (
     add_ignore_pattern,
@@ -34,10 +33,7 @@ from db_mcp.onboarding.state import (
 logger = logging.getLogger(__name__)
 
 
-def _resolve_onboarding_context(
-    connection: str | None = None,
-    provider_id: str | None = None,
-) -> tuple:
+def _resolve_onboarding_context(connection: str, provider_id: str | None = None) -> tuple:
     """Resolve connection/provider_id to (connector, conn_name, conn_path).
 
     For onboarding tools that need a connector for discovery.
@@ -45,21 +41,13 @@ def _resolve_onboarding_context(
     Returns:
         Tuple of (connector, provider_id_str, conn_path)
     """
-    from db_mcp.tools.utils import resolve_connection
+    from db_mcp.tools.utils import require_connection, resolve_connection
 
-    if connection is not None:
-        connector, conn_name, conn_path = resolve_connection(connection)
-        return connector, conn_name, conn_path
-
-    # Legacy / single-connection: use settings
-    if provider_id is None:
-        settings = get_settings()
-        provider_id = settings.provider_id
-    connector = get_connector()
-    from db_mcp.onboarding.state import get_connection_path
-
-    conn_path = get_connection_path()
-    return connector, provider_id, conn_path
+    connection = require_connection(connection, tool_name="onboarding")
+    connector, conn_name, conn_path = resolve_connection(connection)
+    if provider_id is not None and provider_id != conn_name:
+        raise ValueError(f"provider_id '{provider_id}' does not match connection '{conn_name}'.")
+    return connector, conn_name, conn_path
 
 
 def _run_schema_gap_scan(provider_id: str, connection_path: Path | None = None) -> int:
@@ -271,7 +259,7 @@ async def _discover_tables_background(
         )
 
 
-async def _onboarding_discover_status(discovery_id: str) -> dict:
+async def _onboarding_discover_status(discovery_id: str, connection: str) -> dict:
     """Check the status of an async table discovery task.
 
     Use this to poll for results after onboarding_discover(phase='tables')
@@ -283,6 +271,9 @@ async def _onboarding_discover_status(discovery_id: str) -> dict:
     Returns:
         Dict with discovery status and results (when complete)
     """
+    from db_mcp.tools.utils import require_connection
+
+    require_connection(connection, tool_name="mcp_setup_discover_status")
     task = _discovery_tasks.get(discovery_id)
     if task is None:
         return {
@@ -312,7 +303,10 @@ async def _onboarding_discover_status(discovery_id: str) -> dict:
             "poll_interval_seconds": 10,
             "guidance": {
                 "next_steps": [
-                    f"Poll again in 10 seconds: mcp_setup_discover_status('{discovery_id}')",
+                    (
+                        "Poll again in 10 seconds: "
+                        f"mcp_setup_discover_status('{discovery_id}', connection='{connection}')"
+                    ),
                     "Tell the user discovery is still running",
                 ],
             },
@@ -475,14 +469,12 @@ def _build_status_guidance(state, tables_described: int) -> dict:
     }
 
 
-async def _onboarding_status(
-    provider_id: str | None = None, connection: str | None = None
-) -> dict:
+async def _onboarding_status(connection: str, provider_id: str | None = None) -> dict:
     """Get current onboarding status for a provider.
 
     Args:
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Current onboarding state and next action
@@ -541,7 +533,7 @@ async def _onboarding_status(
 
 
 async def _onboarding_start(
-    provider_id: str | None = None, force: bool = False, connection: str | None = None
+    connection: str, provider_id: str | None = None, force: bool = False
 ) -> dict:
     """Start onboarding flow for a provider.
 
@@ -555,7 +547,7 @@ async def _onboarding_start(
     Args:
         provider_id: Provider ID (deprecated, use connection instead).
         force: If True, restart onboarding even if already started
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Connection result with ignore patterns for review
@@ -670,10 +662,10 @@ async def _onboarding_start(
 
 
 async def _onboarding_discover(
-    ctx: Context | None = None,
-    provider_id: str | None = None,
+    connection: str,
     phase: str = "structure",
-    connection: str | None = None,
+    provider_id: str | None = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Run schema discovery after reviewing ignore patterns.
 
@@ -689,10 +681,10 @@ async def _onboarding_discover(
     3. onboarding_discover(phase="tables") - scan tables in remaining schemas
 
     Args:
-        ctx: MCP Context for progress reporting (optional)
-        provider_id: Provider ID (deprecated, use connection instead).
+        connection: Connection name for multi-connection support.
         phase: Discovery phase - "structure" (catalogs/schemas) or "tables"
-        connection: Optional connection name for multi-connection support.
+        provider_id: Provider ID (deprecated, use connection instead).
+        ctx: MCP Context for progress reporting (optional)
 
     Returns:
         Discovery result with counts
@@ -934,7 +926,10 @@ async def _onboarding_discover(
         "poll_interval_seconds": 10,
         "guidance": {
             "next_steps": [
-                f"Poll status with: mcp_setup_discover_status('{discovery_id}')",
+                (
+                    "Poll status with: "
+                    f"mcp_setup_discover_status('{discovery_id}', connection='{connection}')"
+                ),
                 "Check every 10-30 seconds until status is 'complete'",
             ],
             "suggested_response": (
@@ -947,7 +942,7 @@ async def _onboarding_discover(
 
 
 async def _onboarding_add_ignore_pattern(
-    pattern: str, provider_id: str | None = None, connection: str | None = None
+    pattern: str, connection: str, provider_id: str | None = None
 ) -> dict:
     """Add an ignore pattern for schema discovery.
 
@@ -956,8 +951,8 @@ async def _onboarding_add_ignore_pattern(
 
     Args:
         pattern: Pattern to add (e.g., 'test_*', 'staging_*')
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Result with updated pattern list
@@ -992,14 +987,14 @@ async def _onboarding_add_ignore_pattern(
 
 
 async def _onboarding_remove_ignore_pattern(
-    pattern: str, provider_id: str | None = None, connection: str | None = None
+    pattern: str, connection: str, provider_id: str | None = None
 ) -> dict:
     """Remove an ignore pattern.
 
     Args:
         pattern: Pattern to remove
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Result with updated pattern list
@@ -1035,9 +1030,9 @@ async def _onboarding_remove_ignore_pattern(
 
 async def _onboarding_import_ignore_patterns(
     patterns: list[str],
+    connection: str,
     replace: bool = False,
     provider_id: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Import ignore patterns from a list (LLM extracts from uploaded file).
 
@@ -1046,9 +1041,9 @@ async def _onboarding_import_ignore_patterns(
 
     Args:
         patterns: List of patterns to import
+        connection: Connection name for multi-connection support.
         replace: If True, replace all patterns. If False, merge with existing.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Result with updated pattern list
@@ -1086,14 +1081,14 @@ async def _onboarding_import_ignore_patterns(
 
 
 async def _onboarding_reset(
-    provider_id: str | None = None, hard: bool = False, connection: str | None = None
+    connection: str, provider_id: str | None = None, hard: bool = False
 ) -> dict:
     """Reset onboarding state for a provider.
 
     Args:
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
         hard: If True, also delete schema_descriptions.yaml (full reset)
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Reset result
@@ -1143,14 +1138,14 @@ async def _onboarding_reset(
         }
 
 
-async def _onboarding_next(provider_id: str | None = None, connection: str | None = None) -> dict:
+async def _onboarding_next(connection: str, provider_id: str | None = None) -> dict:
     """Get the next table to describe in the onboarding flow.
 
     Returns table schema and sample data to help generate a description.
 
     Args:
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Next table info with columns and sample data
@@ -1284,17 +1279,17 @@ async def _onboarding_next(provider_id: str | None = None, connection: str | Non
 
 async def _onboarding_approve(
     description: str,
+    connection: str,
     column_descriptions: dict[str, str] | None = None,
     provider_id: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Approve and save a table description.
 
     Args:
         description: Description of the table
+        connection: Connection name for multi-connection support.
         column_descriptions: Optional dict of column_name -> description
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Approval result
@@ -1394,12 +1389,12 @@ async def _onboarding_approve(
     }
 
 
-async def _onboarding_skip(provider_id: str | None = None, connection: str | None = None) -> dict:
+async def _onboarding_skip(connection: str, provider_id: str | None = None) -> dict:
     """Skip the current table without describing it.
 
     Args:
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Skip result
@@ -1499,9 +1494,9 @@ async def _onboarding_skip(provider_id: str | None = None, connection: str | Non
 
 
 async def _onboarding_bulk_approve(
+    connection: str,
     generate_descriptions: bool = True,
     provider_id: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Bulk approve all remaining tables.
 
@@ -1510,10 +1505,10 @@ async def _onboarding_bulk_approve(
     edit the descriptions later in schema_descriptions.yaml.
 
     Args:
+        connection: Connection name for multi-connection support.
         generate_descriptions: If True, generate placeholder descriptions
             from table and column names. If False, leave descriptions empty.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Bulk approval result with count of tables approved
@@ -1658,8 +1653,8 @@ async def _onboarding_bulk_approve(
 
 async def _onboarding_import_descriptions(
     descriptions: str,
+    connection: str,
     provider_id: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Import table and column descriptions from JSON, YAML, or freeform text.
 
@@ -1675,8 +1670,8 @@ async def _onboarding_import_descriptions(
             - Key-value pairs: "table_name: description"
             - Indented columns: "schema.table\n  col1: description"
             - Markdown tables, CSV-like format, etc.
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Import result with counts, summary, and any parsing warnings

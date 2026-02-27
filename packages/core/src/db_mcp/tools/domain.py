@@ -357,28 +357,19 @@ def _generate_domain_model_content(schema: SchemaDescriptions) -> str:
     return "\n".join(lines)
 
 
-async def _domain_status(provider_id: str | None = None, connection: str | None = None) -> dict:
+async def _domain_status(connection: str, provider_id: str | None = None) -> dict:
     """Get current domain model status.
 
     Args:
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Domain model status and content if available
     """
     from db_mcp.tools.utils import resolve_connection
 
-    if connection is not None:
-        # Use resolve_connection for proper validation
-        _, provider_id, conn_path = resolve_connection(connection)
-    else:
-        # Legacy fallback when no connection specified
-        if provider_id is None:
-            from db_mcp.tools.utils import get_resolved_provider_id
-
-            provider_id = get_resolved_provider_id(None)
-        conn_path = None
+    _, provider_id, conn_path = resolve_connection(connection)
 
     state = load_state(provider_id, connection_path=conn_path)
 
@@ -406,31 +397,22 @@ async def _domain_status(provider_id: str | None = None, connection: str | None 
     return result
 
 
-async def _domain_generate(provider_id: str | None = None, connection: str | None = None) -> dict:
+async def _domain_generate(connection: str, provider_id: str | None = None) -> dict:
     """Generate domain model from schema descriptions.
 
     Creates a markdown document describing the business domain based on
     the schema descriptions file.
 
     Args:
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Generated domain model content for review
     """
     from db_mcp.tools.utils import resolve_connection
 
-    if connection is not None:
-        # Use resolve_connection for proper validation
-        _, provider_id, conn_path = resolve_connection(connection)
-    else:
-        # Legacy fallback when no connection specified
-        if provider_id is None:
-            from db_mcp.tools.utils import get_resolved_provider_id
-
-            provider_id = get_resolved_provider_id(None)
-        conn_path = None
+    _, provider_id, conn_path = resolve_connection(connection)
 
     state = load_state(provider_id, connection_path=conn_path)
 
@@ -474,32 +456,23 @@ async def _domain_generate(provider_id: str | None = None, connection: str | Non
 
 
 async def _domain_approve(
+    connection: str,
     content: str | None = None,
     provider_id: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Approve and save the domain model.
 
     Args:
+        connection: Connection name for multi-connection support.
         content: Optional edited content. If not provided, uses the pending content.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Approval result with file path
     """
     from db_mcp.tools.utils import resolve_connection
 
-    if connection is not None:
-        # Use resolve_connection for proper validation
-        _, provider_id, conn_path = resolve_connection(connection)
-    else:
-        # Legacy fallback when no connection specified
-        if provider_id is None:
-            from db_mcp.tools.utils import get_resolved_provider_id
-
-            provider_id = get_resolved_provider_id(None)
-        conn_path = None
+    _, provider_id, conn_path = resolve_connection(connection)
 
     state = load_state(provider_id, connection_path=conn_path)
 
@@ -547,28 +520,19 @@ async def _domain_approve(
     }
 
 
-async def _domain_skip(provider_id: str | None = None, connection: str | None = None) -> dict:
+async def _domain_skip(connection: str, provider_id: str | None = None) -> dict:
     """Skip domain model generation and move to next phase.
 
     Args:
+        connection: Connection name for multi-connection support.
         provider_id: Provider ID (deprecated, use connection instead).
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Skip result
     """
     from db_mcp.tools.utils import resolve_connection
 
-    if connection is not None:
-        # Use resolve_connection for proper validation
-        _, provider_id, conn_path = resolve_connection(connection)
-    else:
-        # Legacy fallback when no connection specified
-        if provider_id is None:
-            from db_mcp.tools.utils import get_resolved_provider_id
-
-            provider_id = get_resolved_provider_id(None)
-        conn_path = None
+    _, provider_id, conn_path = resolve_connection(connection)
 
     state = load_state(provider_id, connection_path=conn_path)
 

@@ -13,8 +13,9 @@ from db_mcp.tools.utils import _resolve_connection_path
 
 
 class TestResolveConnectionPath:
-    def test_none_returns_none(self):
-        assert _resolve_connection_path(None) is None
+    def test_none_raises(self):
+        with pytest.raises(ValueError, match="connection is required"):
+            _resolve_connection_path(None)
 
     def test_resolves_with_connections_dir_setting(self):
         mock_settings = MagicMock()
@@ -61,15 +62,12 @@ class TestDatabaseToolsConnection:
         mock_gc.assert_called_once_with(connection_path="/path/to/prod")
 
     @patch("db_mcp.tools.database.get_connector")
-    async def test_list_catalogs_none_connection(self, mock_gc):
+    async def test_list_catalogs_missing_connection_raises(self, mock_gc):
         from db_mcp.tools.database import _list_catalogs
 
-        mock_connector = MagicMock()
-        mock_connector.get_catalogs.return_value = []
-        mock_gc.return_value = mock_connector
-
-        await _list_catalogs()
-        mock_gc.assert_called_once_with(connection_path=None)
+        result = await _list_catalogs(connection=None)
+        payload = result.structuredContent
+        assert "connection is required" in payload["error"]
 
     @patch("db_mcp.tools.database.get_connector")
     async def test_list_schemas_passes_connection(self, mock_gc):
@@ -197,16 +195,11 @@ class TestTestConnectionMultiConn:
         mock_gc.assert_called_once_with(connection_path="/p/staging")
 
     @patch("db_mcp.tools.database.get_connector")
-    async def test_test_connection_without_connection(self, mock_gc):
+    async def test_test_connection_without_connection_raises(self, mock_gc):
         from db_mcp.tools.database import _test_connection
 
-        mock_connector = MagicMock()
-        mock_connector.test_connection.return_value = {"status": "ok"}
-        mock_gc.return_value = mock_connector
-
-        await _test_connection()
-
-        mock_gc.assert_called_once_with(connection_path=None)
+        with pytest.raises(ValueError, match="connection is required"):
+            await _test_connection(connection=None)
 
 
 @pytest.mark.asyncio
@@ -234,22 +227,16 @@ class TestShellToolConnection:
         call_args = mock_run.call_args
         assert str(call_args[0][1]) == "/custom/connections/prod"
 
-    @patch("db_mcp.tools.shell.get_connection_path")
     @patch("db_mcp.tools.shell.run_sandboxed")
     @patch("db_mcp.tools.shell.validate_command")
-    async def test_shell_without_connection_uses_default(self, mock_validate, mock_run, mock_gcp):
+    async def test_shell_without_connection_raises(self, mock_validate, mock_run):
         from db_mcp.tools.shell import _shell
 
         mock_validate.return_value = MagicMock(ok=True, is_write=False)
         mock_run.return_value = {"stdout": "ok", "stderr": "", "exit_code": 0}
-        default_path = Path("/default/path")
-        mock_gcp.return_value = default_path
 
-        with patch.object(Path, "exists", return_value=True):
-            await _shell(command="ls")
-
-        mock_run.assert_called_once()
-        assert mock_run.call_args[0][1] == default_path
+        with pytest.raises(ValueError, match="connection is required"):
+            await _shell(command="ls", connection=None)
 
     @patch("db_mcp.tools.utils._resolve_connection_path")
     async def test_protocol_with_connection_uses_resolved_path(self, mock_resolve):

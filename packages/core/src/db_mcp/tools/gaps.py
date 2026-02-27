@@ -1,7 +1,7 @@
 """MCP tools for knowledge gaps inspection, resolution, and dismissal."""
 
 from db_mcp.gaps.store import auto_resolve_gaps, dismiss_gap, load_gaps
-from db_mcp.tools.utils import get_resolved_provider_id
+from db_mcp.tools.utils import resolve_connection
 
 
 def _gap_to_entry(gap) -> dict:
@@ -19,7 +19,7 @@ def _gap_to_entry(gap) -> dict:
     }
 
 
-async def _get_knowledge_gaps(connection: str | None = None) -> dict:
+async def _get_knowledge_gaps(connection: str) -> dict:
     """Get current knowledge gaps for the active connection.
 
     Returns open gaps with suggested rules, plus summary stats.
@@ -33,17 +33,9 @@ async def _get_knowledge_gaps(connection: str | None = None) -> dict:
     4. Use dismiss_knowledge_gap to dismiss false positives
 
     Args:
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
     """
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    _, provider_id, _ = resolve_connection(connection)
 
     # Auto-resolve first so stats are current
     auto_resolve_gaps(provider_id)
@@ -83,9 +75,7 @@ async def _get_knowledge_gaps(connection: str | None = None) -> dict:
     }
 
 
-async def _dismiss_knowledge_gap(
-    gap_id: str, reason: str = "", connection: str | None = None
-) -> dict:
+async def _dismiss_knowledge_gap(gap_id: str, connection: str, reason: str = "") -> dict:
     """Dismiss a knowledge gap as a false positive.
 
     Use this when a detected gap is not a real business term —
@@ -98,21 +88,13 @@ async def _dismiss_knowledge_gap(
 
     Args:
         gap_id: The ID of the gap to dismiss (from get_knowledge_gaps output).
+        connection: Connection name for multi-connection support.
         reason: Optional reason for dismissal (e.g., "not a domain term").
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Status dict with count of dismissed gaps.
     """
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    _, provider_id, _ = resolve_connection(connection)
 
     result = dismiss_gap(provider_id, gap_id, reason or None)
 

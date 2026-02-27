@@ -3,16 +3,17 @@
 from typing import Any
 
 from db_mcp.connectors import APIConnector, get_connector_capabilities
-from db_mcp.tools.utils import resolve_connection
+from db_mcp.tools.utils import require_connection, resolve_connection
 
 
-def _get_api_connector(connection: str | None) -> tuple[APIConnector | None, dict | None]:
+def _get_api_connector(connection: str) -> tuple[APIConnector | None, dict | None]:
     """Resolve and validate an API connector.
 
     Returns:
         (APIConnector, None) on success, or (None, error_dict) on failure.
     """
     try:
+        connection = require_connection(connection, tool_name="api tools")
         connector, conn_name, conn_path = resolve_connection(connection, require_type="api")
     except ValueError as exc:
         return None, {"error": str(exc)}
@@ -23,16 +24,15 @@ def _get_api_connector(connection: str | None) -> tuple[APIConnector | None, dic
     return connector, None
 
 
-async def _api_sync(endpoint: str | None = None, connection: str | None = None) -> dict:
+async def _api_sync(connection: str, endpoint: str | None = None) -> dict:
     """Sync data from API endpoints.
 
     Fetches latest data from configured API endpoints and stores
     as local JSONL files for querying.
 
     Args:
+        connection: Connection name for multi-connection support.
         endpoint: Optional endpoint name to sync. If not provided, syncs all endpoints.
-        connection: Optional connection name for multi-connection support.
-            If omitted and only one API connection exists, it is used automatically.
 
     Returns:
         Sync results including rows fetched per endpoint and any errors.
@@ -43,7 +43,7 @@ async def _api_sync(endpoint: str | None = None, connection: str | None = None) 
     return connector.sync(endpoint_name=endpoint)
 
 
-async def _api_discover(connection: str | None = None) -> dict:
+async def _api_discover(connection: str) -> dict:
     """Discover API endpoints, pagination, and schema.
 
     Automatically discovers what endpoints are available on the configured API
@@ -51,8 +51,7 @@ async def _api_discover(connection: str | None = None) -> dict:
     Updates the connection's connector.yaml with discovered endpoints.
 
     Args:
-        connection: Optional connection name for multi-connection support.
-            If omitted and only one API connection exists, it is used automatically.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Discovery results including endpoints found, strategy used, and any errors.
@@ -77,10 +76,10 @@ async def _api_discover(connection: str | None = None) -> dict:
 
 async def _api_query(
     endpoint: str,
+    connection: str,
     params: dict[str, str] | None = None,
     max_pages: int = 1,
     id: str | list[str] | None = None,
-    connection: str | None = None,
 ) -> dict[str, Any]:
     """Query a REST API endpoint with parameters.
 
@@ -91,13 +90,11 @@ async def _api_query(
 
     Args:
         endpoint: Name of the endpoint to query (e.g. "markets", "events").
+        connection: Connection name for multi-connection support.
         params: Query parameters as key-value pairs (e.g. {"active": "true"}).
         max_pages: Maximum pages to fetch. Default 1 (single page, fast).
         id: Fetch specific record(s) by ID. Hits the detail endpoint /{id}.
             Pass a single ID string or a list of ID strings.
-        connection: Optional connection name for multi-connection support.
-            If omitted and only one API connection exists, it is used automatically.
-
     Returns:
         {data: [...], rows_returned: int} or {error: "..."}.
     """
@@ -107,7 +104,7 @@ async def _api_query(
     return connector.query_endpoint(endpoint, params, max_pages, id=id)
 
 
-async def _api_execute_sql(sql: str, connection: str | None = None) -> dict[str, Any]:
+async def _api_execute_sql(sql: str, connection: str) -> dict[str, Any]:
     """Execute SQL on a SQL-like API (Dune, Trino-based services, etc.).
 
     Use this for API connectors with supports_sql=true. The SQL is sent to the
@@ -118,8 +115,7 @@ async def _api_execute_sql(sql: str, connection: str | None = None) -> dict[str,
 
     Args:
         sql: SQL query to execute (e.g. "SELECT * FROM dex_solana.trades LIMIT 10")
-        connection: Optional connection name for multi-connection support.
-            If omitted and only one API connection exists, it is used automatically.
+        connection: Connection name for multi-connection support.
 
     Returns:
         {status: "success", data: [...], rows_returned: int} or {status: "error", error: "..."}
@@ -148,7 +144,7 @@ async def _api_execute_sql(sql: str, connection: str | None = None) -> dict[str,
         return {"status": "error", "error": str(e)}
 
 
-async def _api_describe_endpoint(endpoint: str, connection: str | None = None) -> dict[str, Any]:
+async def _api_describe_endpoint(endpoint: str, connection: str) -> dict[str, Any]:
     """Describe an API endpoint's available query parameters.
 
     Returns endpoint metadata including available filters, sorts,
@@ -156,8 +152,7 @@ async def _api_describe_endpoint(endpoint: str, connection: str | None = None) -
 
     Args:
         endpoint: Name of the endpoint to describe (e.g. "markets", "events").
-        connection: Optional connection name for multi-connection support.
-            If omitted and only one API connection exists, it is used automatically.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Endpoint metadata including name, path, method, and query_params.
@@ -191,9 +186,9 @@ async def _api_describe_endpoint(endpoint: str, connection: str | None = None) -
 async def _api_mutate(
     endpoint: str,
     method: str,
+    connection: str,
     body: dict[str, Any] | None = None,
     params: dict[str, str] | None = None,
-    connection: str | None = None,
 ) -> dict[str, Any]:
     """Create, update, or delete a resource via a REST API endpoint.
 
@@ -206,10 +201,9 @@ async def _api_mutate(
     Args:
         endpoint: Name of the configured endpoint to call (e.g. "charts", "dashboards").
         method: HTTP method — must be POST, PUT, PATCH, or DELETE.
+        connection: Connection name for multi-connection support.
         body: JSON request body (for POST/PUT/PATCH). Optional for DELETE.
         params: Optional query string parameters.
-        connection: Optional connection name for multi-connection support.
-            If omitted and only one API connection exists, it is used automatically.
 
     Returns:
         Raw API response dict, or {error: "..."} on failure.

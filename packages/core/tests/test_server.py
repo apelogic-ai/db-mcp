@@ -2,6 +2,7 @@
 
 import importlib
 import pkgutil
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,6 +23,19 @@ def _get_tool_names(server):
 def _tool_payload(result_data: dict) -> dict:
     """Return structuredContent when present, otherwise raw result data."""
     return result_data.get("structuredContent", result_data)
+
+
+def _write_sql_connector(connection_dir: Path) -> None:
+    connection_dir.mkdir(parents=True, exist_ok=True)
+    (connection_dir / "connector.yaml").write_text(
+        "\n".join(
+            [
+                "type: sql",
+                "database_url: sqlite:///tmp/test.sqlite",
+            ]
+        )
+        + "\n"
+    )
 
 
 def test_mcp_server_created():
@@ -50,8 +64,16 @@ def test_server_exposes_improvement_tools():
 @pytest.mark.asyncio
 async def test_improvement_tools_behavior_with_pending_insights(tmp_path, monkeypatch):
     """Improvement tools should list/suggest/approve pending insights."""
-    monkeypatch.setenv("CONNECTION_PATH", str(tmp_path))
+    connections_dir = tmp_path / "connections"
+    connection_name = "default"
+    connection_path = connections_dir / connection_name
+    _write_sql_connector(connection_path)
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
     reset_settings()
+    ConnectionRegistry.reset()
 
     store = InsightStore(
         insights=[
@@ -73,42 +95,59 @@ async def test_improvement_tools_behavior_with_pending_insights(tmp_path, monkey
             ),
         ]
     )
-    save_insights(tmp_path, store)
+    save_insights(connection_path, store)
 
     server = _create_server()
     async with Client(server) as client:
-        listed = (await client.call_tool("mcp_list_improvements", {})).data
+        listed = (
+            await client.call_tool("mcp_list_improvements", {"connection": connection_name})
+        ).data
         listed_payload = _tool_payload(listed)
         assert listed_payload["count"] == 2
         assert {i["id"] for i in listed_payload["improvements"]} == {"info-1", "action-1"}
 
-        suggested = (await client.call_tool("mcp_suggest_improvement", {})).data
+        suggested = (
+            await client.call_tool("mcp_suggest_improvement", {"connection": connection_name})
+        ).data
         suggested_payload = _tool_payload(suggested)
         assert suggested_payload["status"] == "ok"
         assert suggested_payload["improvement"]["id"] == "action-1"
 
         approved = (
-            await client.call_tool("mcp_approve_improvement", {"improvement_id": "action-1"})
+            await client.call_tool(
+                "mcp_approve_improvement",
+                {"improvement_id": "action-1", "connection": connection_name},
+            )
         ).data
         approved_payload = _tool_payload(approved)
         assert approved_payload["status"] == "approved"
         assert approved_payload["remaining"] == 1
 
     # Persisted state should reflect approval (dismissed insight no longer pending).
-    remaining_ids = {i.id for i in load_insights(tmp_path).pending()}
+    remaining_ids = {i.id for i in load_insights(connection_path).pending()}
     assert remaining_ids == {"info-1"}
 
 
 @pytest.mark.asyncio
 async def test_mcp_suggest_improvement_returns_none_when_empty(tmp_path, monkeypatch):
     """Suggest improvement should return status=none when no pending insights exist."""
-    monkeypatch.setenv("CONNECTION_PATH", str(tmp_path))
+    connections_dir = tmp_path / "connections"
+    connection_name = "default"
+    connection_path = connections_dir / connection_name
+    _write_sql_connector(connection_path)
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
     reset_settings()
-    save_insights(tmp_path, InsightStore(insights=[]))
+    ConnectionRegistry.reset()
+    save_insights(connection_path, InsightStore(insights=[]))
 
     server = _create_server()
     async with Client(server) as client:
-        result = (await client.call_tool("mcp_suggest_improvement", {})).data
+        result = (
+            await client.call_tool("mcp_suggest_improvement", {"connection": connection_name})
+        ).data
         payload = _tool_payload(result)
         assert payload == {"status": "none", "improvement": None}
 
@@ -119,8 +158,8 @@ async def test_improvement_tools_accept_connection_argument(tmp_path, monkeypatc
     connections_dir = tmp_path / "connections"
     one_path = connections_dir / "one"
     two_path = connections_dir / "two"
-    one_path.mkdir(parents=True)
-    two_path.mkdir(parents=True)
+    _write_sql_connector(one_path)
+    _write_sql_connector(two_path)
 
     # Make directories discoverable as connections.
     (one_path / "state.yaml").write_text("phase: schema\n")

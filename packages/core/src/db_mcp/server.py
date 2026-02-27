@@ -702,22 +702,21 @@ def _create_server() -> FastMCP:
     # Core tools - always available
     # =========================================================================
 
-    def _resolve_tool_connection_path(connection: str | None = None):
-        """Resolve optional connection arg to a concrete connection path."""
-        if connection is None:
-            return get_connection_path()
-        from db_mcp.tools.utils import resolve_connection
+    def _resolve_tool_connection_path(connection: str) -> Path:
+        """Resolve connection arg to a concrete connection path."""
+        from db_mcp.tools.utils import require_connection, resolve_connection
 
+        connection = require_connection(connection, tool_name="insights")
         _, _, conn_path = resolve_connection(connection)
         return conn_path
 
-    async def _dismiss_insight(insight_id: str, connection: str | None = None) -> dict:
+    async def _dismiss_insight(insight_id: str, connection: str) -> dict:
         """Dismiss a pending insight after reviewing or resolving it.
 
         Args:
             insight_id: The ID of the insight to dismiss
                 (shown in insights/pending resource).
-            connection: Optional connection name for multi-connection support.
+            connection: Connection name for multi-connection support.
         """
         from db_mcp.insights.detector import (
             load_insights,
@@ -741,7 +740,7 @@ def _create_server() -> FastMCP:
 
     server.tool(name="dismiss_insight")(_dismiss_insight)
 
-    async def _mark_insights_processed(connection: str | None = None) -> dict:
+    async def _mark_insights_processed(connection: str) -> dict:
         """Mark insights as processed to update the timestamp.
 
         Call this when you've reviewed insights with the user, either through
@@ -757,7 +756,7 @@ def _create_server() -> FastMCP:
 
     server.tool(name="mark_insights_processed")(_mark_insights_processed)
 
-    async def _mcp_list_improvements(connection: str | None = None) -> dict:
+    async def _mcp_list_improvements(connection: str) -> dict:
         """List pending improvements (backward-compatible alias for insights)."""
         from db_mcp.insights.detector import load_insights
 
@@ -781,7 +780,7 @@ def _create_server() -> FastMCP:
 
     server.tool(name="mcp_list_improvements")(_mcp_list_improvements)
 
-    async def _mcp_suggest_improvement(connection: str | None = None) -> dict:
+    async def _mcp_suggest_improvement(connection: str) -> dict:
         """Suggest the highest-priority pending improvement.
 
         This tool is a compatibility alias over the insights subsystem.
@@ -813,7 +812,7 @@ def _create_server() -> FastMCP:
 
     server.tool(name="mcp_suggest_improvement")(_mcp_suggest_improvement)
 
-    async def _mcp_approve_improvement(improvement_id: str, connection: str | None = None) -> dict:
+    async def _mcp_approve_improvement(improvement_id: str, connection: str) -> dict:
         """Approve (resolve) an improvement by ID.
 
         For compatibility this maps to dismissing a pending insight.

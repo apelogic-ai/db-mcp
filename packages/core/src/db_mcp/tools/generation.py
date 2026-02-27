@@ -2,8 +2,8 @@
 
 These are the three main entry points per v2 architecture:
 - get_data(intent) - Natural language -> Plan -> SQL -> Result
-- run_sql(sql) - Direct SQL with validation
-- get_result(query_uuid) - Fetch cached/stored query result
+- run_sql(connection=..., sql=...) - Direct SQL with validation
+- get_result(query_uuid, connection=...) - Fetch cached/stored query result
 
 Uses PydanticAI with MCPSamplingModel for LLM calls through the MCP client,
 and MCP Elicitation for user confirmations.
@@ -250,9 +250,9 @@ def _execute_sql_on_engine(
 
 def _execute_query(
     sql: str,
+    connection: str,
     limit: int | None = 1000,
     query_id: str | None = None,
-    connection: str | None = None,
 ) -> dict[str, Any]:
     """Execute a SQL query and return results.
 
@@ -262,13 +262,14 @@ def _execute_query(
         sql: SQL query to execute.
         limit: Maximum rows to return.
         query_id: Optional query ID for tracing.
-        connection: Optional connection name for multi-connection dispatch.
+        connection: Connection name for multi-connection dispatch.
     """
-    from db_mcp.tools.utils import resolve_connection
+    from db_mcp.tools.utils import require_connection, resolve_connection
 
     qid = query_id[:8] if query_id else "adhoc"
     sql_preview = sql[:200] + "..." if len(sql) > 200 else sql
     statement_type, is_write = analyze_sql_statement(sql)
+    connection = require_connection(connection, tool_name="execute_query")
 
     with tracer.start_as_current_span(
         "execute_query",
@@ -343,9 +344,7 @@ def _execute_query(
             raise
 
 
-async def _execute_query_background(
-    query_id: str, sql: str, connection: str | None = None
-) -> None:
+async def _execute_query_background(query_id: str, sql: str, connection: str) -> None:
     """Execute query in background and update query store.
 
     This runs in an asyncio task, allowing the MCP tool to return immediately
@@ -367,7 +366,14 @@ async def _execute_query_background(
         from functools import partial
 
         result = await loop.run_in_executor(
-            None, partial(_execute_query, sql, 1000, query_id, connection)
+            None,
+            partial(
+                _execute_query,
+                sql,
+                connection,
+                limit=1000,
+                query_id=query_id,
+            ),
         )
 
         await store.update_status(
@@ -417,8 +423,8 @@ async def _report_progress(ctx: Context | None, progress: float, total: float = 
 async def _get_data(
     ctx: Context,
     intent: str,
+    connection: str,
     tables_hint: list[str] | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Generate and execute SQL from natural language intent.
 
@@ -432,28 +438,21 @@ async def _get_data(
 
     When MCP Sampling is NOT supported (e.g., Claude Desktop):
     - Returns context for the client to generate SQL
-    - Client should then call run_sql() with the generated SQL
+    - Client should then call run_sql(connection=..., sql=...) with the generated SQL
 
     Args:
         ctx: MCP Context for sampling and elicitation
         intent: Natural language query description
         tables_hint: Optional tables to focus on
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with query results, or context for client-side generation
     """
     from db_mcp.tools.utils import _resolve_connection_path, resolve_connection
 
-    if connection is not None:
-        # Use resolve_connection for proper validation and path resolution.
-        _, provider_id, conn_path = resolve_connection(connection)
-    else:
-        # Legacy fallback when no connection specified
-        from db_mcp.tools.utils import get_resolved_provider_id
-
-        provider_id = get_resolved_provider_id(None)
-        conn_path = None
+    # Use resolve_connection for proper validation and path resolution.
+    _, provider_id, conn_path = resolve_connection(connection)
 
     # Check if schema is available
     schema = load_schema_descriptions(provider_id, connection_path=conn_path)
@@ -525,7 +524,7 @@ Database Dialect: {schema.dialect or "unknown"}
                         "5. Describe tables: describe_table(...)",
                         "6. Search examples: shell(command='grep -ri \"keyword\" examples/')",
                         "7. Generate SQL yourself based on what you learned",
-                        "8. Execute: run_sql(sql='SELECT ...')",
+                        "8. Execute: run_sql(connection='...', sql='SELECT ...')",
                     ],
                     "important": (
                         "Do NOT skip steps. Start with list_catalogs() to understand "
@@ -660,7 +659,7 @@ Generate the SQL query that implements this plan.
                 "estimated_rows": explain_result.estimated_rows,
                 "sql": generated_sql,
                 "plan": plan.model_dump(),
-                "message": "Use run_sql(sql, confirmed=true) to proceed.",
+                "message": "Use run_sql(connection='...', sql=..., confirmed=true) to proceed.",
             }
 
     # ==========================================================================
@@ -693,17 +692,17 @@ Generate the SQL query that implements this plan.
 
 
 async def _run_sql(
+    connection: str,
     query_id: str | None = None,
     sql: str | None = None,
     confirmed: bool = False,
     ctx: Context | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Execute a previously validated SQL query or direct SQL for SQL-like APIs.
 
     FOR SQL-LIKE APIs (Dune, etc.) with supports_sql=true and supports_validate_sql=false:
-        Call run_sql(sql="SELECT ...") directly. The SQL will be sent to the API's
-        execute_sql endpoint, and results will be returned after polling completes.
+        Call run_sql(connection="<name>", sql="SELECT ...") directly. The SQL will be sent to
+        the API's execute_sql endpoint, and results will be returned after polling completes.
 
     FOR REGULAR SQL DATABASES:
         REQUIRES a query_id from validate_sql. This ensures:
@@ -720,6 +719,7 @@ async def _run_sql(
         See PROTOCOL.md for format.
 
     Args:
+        connection: Connection name for multi-connection dispatch.
         query_id: Query ID from validate_sql (required for SQL engines)
         sql: Raw SQL (allowed for SQL-like APIs without validate_sql)
         confirmed: Override for high-cost queries (cost_tier='reject')
@@ -737,8 +737,11 @@ async def _run_sql(
                 "error": "Provide query_id or sql.",
                 "guidance": {
                     "next_steps": [
-                        "For SQL databases: call validate_sql(sql=...) then run_sql(query_id=...)",
-                        "For SQL-like APIs: call run_sql(sql=...) directly",
+                        (
+                            "For SQL databases: call validate_sql(sql=..., connection=...) then "
+                            "run_sql(query_id=..., connection=...)"
+                        ),
+                        "For SQL-like APIs: call run_sql(connection=..., sql=...) directly",
                     ]
                 },
             }
@@ -766,7 +769,7 @@ async def _run_sql(
                     "guidance": {
                         "next_steps": [
                             "Call validate_sql(sql=...) to get a query_id",
-                            "Then call run_sql(query_id=...)",
+                            "Then call run_sql(query_id=..., connection=...)",
                         ]
                     },
                 }
@@ -914,7 +917,10 @@ async def _run_sql(
                 "guidance": {
                     "next_steps": [
                         "1. Call validate_sql(sql='YOUR SQL HERE')",
-                        "2. Use the returned query_id with run_sql(query_id='...')",
+                        (
+                            "2. Use the returned query_id with "
+                            "run_sql(query_id='...', connection='...')"
+                        ),
                     ],
                 },
             }
@@ -940,6 +946,18 @@ async def _run_sql(
             {
                 "status": "error",
                 "error": f"Query cannot be executed. Status: {query.status.value}",
+                "query_id": query_id,
+            }
+        )
+
+    if query.connection is not None and query.connection != connection:
+        return inject_protocol(
+            {
+                "status": "error",
+                "error": (
+                    f"Query was validated for connection '{query.connection}', "
+                    f"but run_sql was called with connection '{connection}'."
+                ),
                 "query_id": query_id,
             }
         )
@@ -990,7 +1008,10 @@ async def _run_sql(
                 "guidance": {
                     "next_steps": [
                         "Add WHERE clauses to narrow the query",
-                        "Or use run_sql(query_id='...', confirmed=true) to force execution",
+                        (
+                            "Or use run_sql(query_id='...', connection='...', confirmed=true) "
+                            "to force execution"
+                        ),
                     ],
                 },
             }
@@ -1012,7 +1033,10 @@ async def _run_sql(
             )
 
         # Start background execution (pass stored connection name)
-        asyncio.create_task(_execute_query_background(query_id, sql, connection=query.connection))
+        execution_connection = query.connection if query.connection is not None else connection
+        asyncio.create_task(
+            _execute_query_background(query_id, sql, connection=execution_connection)
+        )
 
         return inject_protocol(
             {
@@ -1024,12 +1048,12 @@ async def _run_sql(
                 "message": (
                     f"Query submitted for background execution. "
                     f"Estimated ~{query.estimated_rows:,} rows to scan. "
-                    f"Use get_result('{query_id}') to check status."
+                    f"Use get_result('{query_id}', connection='{connection}') to check status."
                 ),
                 "poll_interval_seconds": 10,
                 "guidance": {
                     "next_steps": [
-                        f"Poll status with: get_result('{query_id}')",
+                        f"Poll status with: get_result('{query_id}', connection='{connection}')",
                         "Check every 10-30 seconds until status is 'complete'",
                     ],
                 },
@@ -1042,7 +1066,8 @@ async def _run_sql(
         await store.update_status(query_id, QueryStatus.RUNNING)
         await _report_progress(ctx, 10, 100)  # 10% - Starting
 
-        result = _execute_query(sql, query_id=query_id, connection=query.connection)
+        execution_connection = query.connection if query.connection is not None else connection
+        result = _execute_query(sql, query_id=query_id, connection=execution_connection)
         await _report_progress(ctx, 80, 100)  # 80% - Query done, processing
 
         # Mark as complete
@@ -1101,7 +1126,7 @@ async def _run_sql(
         )
 
 
-async def _validate_sql(sql: str, connection: str | None = None) -> dict:
+async def _validate_sql(sql: str, connection: str) -> dict:
     """Validate SQL and register it for execution.
 
     REQUIRED before run_sql - validates the query and returns a query_id
@@ -1114,7 +1139,7 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
 
     Args:
         sql: SQL query to validate
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with validation results and query_id (if valid)
@@ -1134,7 +1159,7 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
                 "query_id": None,
                 "guidance": {
                     "next_steps": [
-                        "Call run_sql(sql=...) directly",
+                        "Call run_sql(connection=..., sql=...) directly",
                         "Or use api_query for connector-specific endpoints",
                     ]
                 },
@@ -1217,15 +1242,21 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
             "write_confirmation_required": is_write and require_write_confirmation,
             "message": (
                 f"Query validated successfully. "
-                f"Use run_sql(query_id='{query.query_id}') to execute. "
+                f"Use run_sql(query_id='{query.query_id}', connection='{connection}') to execute. "
                 f"Query ID expires in 30 minutes."
             ),
             "guidance": {
                 "next_steps": [
                     (
-                        f"Execute with: run_sql(query_id='{query.query_id}', confirmed=true)"
+                        (
+                            f"Execute with: run_sql(query_id='{query.query_id}', "
+                            f"connection='{connection}', confirmed=true)"
+                        )
                         if is_write and require_write_confirmation
-                        else f"Execute with: run_sql(query_id='{query.query_id}')"
+                        else (
+                            f"Execute with: run_sql(query_id='{query.query_id}', "
+                            f"connection='{connection}')"
+                        )
                     ),
                     (
                         "Write statements require explicit confirmation on this connection."
@@ -1243,7 +1274,7 @@ async def _validate_sql(sql: str, connection: str | None = None) -> dict:
     )
 
 
-async def _get_result(query_id: str) -> dict:
+async def _get_result(query_id: str, connection: str) -> dict:
     """Get status and results for a query.
 
     Use this to poll for results after run_sql returns status='submitted'.
@@ -1251,6 +1282,7 @@ async def _get_result(query_id: str) -> dict:
 
     Args:
         query_id: Query ID from validate_sql or run_sql
+        connection: Connection name for multi-connection dispatch.
 
     Returns:
         Dict with query status and results (when complete)
@@ -1267,6 +1299,18 @@ async def _get_result(query_id: str) -> dict:
             }
         )
 
+    if query.connection is not None and query.connection != connection:
+        return inject_protocol(
+            {
+                "status": "error",
+                "query_id": query_id,
+                "error": (
+                    f"Query belongs to connection '{query.connection}', "
+                    f"but get_result was called with connection '{connection}'."
+                ),
+            }
+        )
+
     if query.status == QueryStatus.VALIDATED:
         return inject_protocol(
             {
@@ -1276,7 +1320,11 @@ async def _get_result(query_id: str) -> dict:
                 "estimated_rows": query.estimated_rows,
                 "cost_tier": query.cost_tier,
                 "message": "Query is validated but not yet executed.",
-                "guidance": {"next_steps": [f"Execute with: run_sql(query_id='{query_id}')"]},
+                "guidance": {
+                    "next_steps": [
+                        f"Execute with: run_sql(query_id='{query_id}', connection='{connection}')"
+                    ]
+                },
             }
         )
 
@@ -1287,7 +1335,14 @@ async def _get_result(query_id: str) -> dict:
                 "query_id": query_id,
                 "elapsed_seconds": round(query.elapsed_seconds, 1),
                 "message": "Query is queued and will start shortly.",
-                "guidance": {"next_steps": [f"Poll again in 5 seconds: get_result('{query_id}')"]},
+                "guidance": {
+                    "next_steps": [
+                        (
+                            f"Poll again in 5 seconds: get_result('{query_id}', "
+                            f"connection='{connection}')"
+                        )
+                    ]
+                },
             }
         )
 
@@ -1303,7 +1358,10 @@ async def _get_result(query_id: str) -> dict:
                 "message": f"Query is executing ({query.elapsed_seconds:.0f}s elapsed).",
                 "guidance": {
                     "next_steps": [
-                        f"Poll again in 10-30 seconds: get_result('{query_id}')",
+                        (
+                            f"Poll again in 10-30 seconds: get_result('{query_id}', "
+                            f"connection='{connection}')"
+                        ),
                         "Tell the user the query is still running",
                     ]
                 },
@@ -1376,9 +1434,9 @@ async def _get_result(query_id: str) -> dict:
 async def _export_results(
     ctx: Context,
     sql: str,
+    connection: str,
     format: str = "csv",
     filename: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Export query results as CSV or other formats.
 
@@ -1390,7 +1448,7 @@ async def _export_results(
         sql: SQL query to execute and export
         format: Export format - 'csv' (default), 'json', or 'markdown'
         filename: Optional filename (without extension)
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with formatted content and file metadata

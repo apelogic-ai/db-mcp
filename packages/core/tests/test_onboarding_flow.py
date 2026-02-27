@@ -1,6 +1,7 @@
 """Tests for onboarding flow - start, discover, reset."""
 
 import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,6 +33,20 @@ def temp_connection_dir(monkeypatch):
         db_mcp.config._settings = None
 
         yield tmpdir
+
+
+@pytest.fixture(autouse=True)
+def mock_resolve_connection(temp_connection_dir, mock_connector):
+    """Route resolve_connection to the temp connection path and patched connector."""
+    conn_path = Path(temp_connection_dir)
+
+    def _resolve(name, **kwargs):
+        from db_mcp.tools import onboarding as onboarding_tools
+
+        return onboarding_tools.get_connector(connection_path=conn_path), name, conn_path
+
+    with patch("db_mcp.tools.utils.resolve_connection", side_effect=_resolve):
+        yield
 
 
 def _make_mock_connector(connected=True, error=None):
@@ -138,13 +153,47 @@ def mock_introspection(mock_connector):
     }
 
 
+async def _start(provider_id: str, **kwargs):
+    return await _onboarding_start(connection=provider_id, provider_id=provider_id, **kwargs)
+
+
+async def _discover(provider_id: str, **kwargs):
+    return await _onboarding_discover(connection=provider_id, provider_id=provider_id, **kwargs)
+
+
+async def _status(provider_id: str, **kwargs):
+    return await _onboarding_status(connection=provider_id, provider_id=provider_id, **kwargs)
+
+
+async def _reset(provider_id: str, **kwargs):
+    return await _onboarding_reset(connection=provider_id, provider_id=provider_id, **kwargs)
+
+
+async def _next(provider_id: str, **kwargs):
+    return await _onboarding_next(connection=provider_id, provider_id=provider_id, **kwargs)
+
+
+async def _approve(provider_id: str, **kwargs):
+    return await _onboarding_approve(connection=provider_id, provider_id=provider_id, **kwargs)
+
+
+async def _skip(provider_id: str, **kwargs):
+    return await _onboarding_skip(connection=provider_id, provider_id=provider_id, **kwargs)
+
+
+async def _bulk_approve(provider_id: str, **kwargs):
+    return await _onboarding_bulk_approve(
+        connection=provider_id, provider_id=provider_id, **kwargs
+    )
+
+
 class TestOnboardingStart:
     """Tests for onboarding_start."""
 
     @pytest.mark.asyncio
     async def test_start_success(self, temp_connection_dir, mock_db_connection):
         """Test successful onboarding start."""
-        result = await _onboarding_start(provider_id="test-provider")
+        result = await _start(provider_id="test-provider")
 
         assert result["started"] is True
         assert result["provider_id"] == "test-provider"
@@ -162,10 +211,10 @@ class TestOnboardingStart:
     async def test_start_already_started(self, temp_connection_dir, mock_db_connection):
         """Test starting when already started (without force) - idempotent behavior."""
         # First start
-        await _onboarding_start(provider_id="test-provider")
+        await _start(provider_id="test-provider")
 
         # Try to start again without force - should return success (idempotent)
-        result = await _onboarding_start(provider_id="test-provider")
+        result = await _start(provider_id="test-provider")
 
         # Idempotent: returns started=True with already_in_progress flag
         assert result["started"] is True
@@ -178,9 +227,9 @@ class TestOnboardingStart:
     ):
         """Test that force=True cleans up existing state and schema files."""
         # First start and discover (two-phase: structure then tables)
-        await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider", phase="structure")
-        await _onboarding_discover(provider_id="test-provider", phase="tables")
+        await _start(provider_id="test-provider")
+        await _discover(provider_id="test-provider", phase="structure")
+        await _discover(provider_id="test-provider", phase="tables")
 
         # Verify we're in schema phase
         state = load_state("test-provider")
@@ -191,7 +240,7 @@ class TestOnboardingStart:
         assert schema_file.exists()
 
         # Force restart
-        result = await _onboarding_start(provider_id="test-provider", force=True)
+        result = await _start(provider_id="test-provider", force=True)
 
         assert result["started"] is True
         assert result["phase"] == "init"
@@ -212,7 +261,7 @@ class TestOnboardingStart:
             "error": "Connection refused",
         }
         with patch("db_mcp.tools.onboarding.get_connector", return_value=mock):
-            result = await _onboarding_start(provider_id="test-provider")
+            result = await _start(provider_id="test-provider")
 
             assert result["started"] is False
             assert "connection failed" in result["error"].lower()
@@ -227,18 +276,16 @@ class TestOnboardingDiscover:
     ):
         """Test successful schema discovery (two-phase: structure then tables)."""
         # Start first
-        await _onboarding_start(provider_id="test-provider")
+        await _start(provider_id="test-provider")
 
         # Phase 1: structure discovery
-        structure_result = await _onboarding_discover(
-            provider_id="test-provider", phase="structure"
-        )
+        structure_result = await _discover(provider_id="test-provider", phase="structure")
         assert structure_result["discovered"] is True
         assert structure_result["discovery_phase"] == "structure"
         assert structure_result["schemas_found"] == 1
 
         # Phase 2: tables discovery
-        tables_result = await _onboarding_discover(provider_id="test-provider", phase="tables")
+        tables_result = await _discover(provider_id="test-provider", phase="tables")
         assert tables_result["discovered"] is True
         assert tables_result["discovery_phase"] == "tables"
         assert tables_result["tables_found"] == 2
@@ -263,17 +310,15 @@ class TestOnboardingDiscover:
         have no hierarchy. Discovery must still find tables.
         """
         # Start onboarding
-        await _onboarding_start(provider_id="test-provider")
+        await _start(provider_id="test-provider")
 
         # Phase 1: structure discovery — should succeed with flat hierarchy
-        structure_result = await _onboarding_discover(
-            provider_id="test-provider", phase="structure"
-        )
+        structure_result = await _discover(provider_id="test-provider", phase="structure")
         assert structure_result["discovered"] is True
         assert structure_result["discovery_phase"] == "structure"
 
         # Phase 2: tables discovery — must not be blocked by empty schemas
-        tables_result = await _onboarding_discover(provider_id="test-provider", phase="tables")
+        tables_result = await _discover(provider_id="test-provider", phase="tables")
         assert tables_result["discovered"] is True
         assert tables_result["discovery_phase"] == "tables"
         assert tables_result["tables_found"] == 2
@@ -293,7 +338,7 @@ class TestOnboardingDiscover:
     @pytest.mark.asyncio
     async def test_discover_not_started(self, temp_connection_dir):
         """Test discover when onboarding not started."""
-        result = await _onboarding_discover(provider_id="test-provider")
+        result = await _discover(provider_id="test-provider")
 
         assert result["discovered"] is False
         assert "not started" in result["error"].lower()
@@ -304,12 +349,12 @@ class TestOnboardingDiscover:
     ):
         """Test discover when already in schema phase."""
         # Start and do full discovery
-        await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider", phase="structure")
-        await _onboarding_discover(provider_id="test-provider", phase="tables")
+        await _start(provider_id="test-provider")
+        await _discover(provider_id="test-provider", phase="structure")
+        await _discover(provider_id="test-provider", phase="tables")
 
         # Try to discover structure again — should fail (already past INIT)
-        result = await _onboarding_discover(provider_id="test-provider", phase="structure")
+        result = await _discover(provider_id="test-provider", phase="structure")
 
         assert result["discovered"] is False
         assert "already discovered" in result["error"].lower()
@@ -324,12 +369,12 @@ class TestOnboardingReset:
     ):
         """Test successful reset."""
         # Start and discover (two-phase)
-        await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider", phase="structure")
-        await _onboarding_discover(provider_id="test-provider", phase="tables")
+        await _start(provider_id="test-provider")
+        await _discover(provider_id="test-provider", phase="structure")
+        await _discover(provider_id="test-provider", phase="tables")
 
         # Soft reset — deletes state file but keeps schema files
-        result = await _onboarding_reset(provider_id="test-provider")
+        result = await _reset(provider_id="test-provider")
 
         assert result["reset"] is True
 
@@ -346,16 +391,16 @@ class TestOnboardingReset:
     ):
         """Test hard reset deletes schema file too."""
         # Start and discover (two-phase)
-        await _onboarding_start(provider_id="test-provider")
-        await _onboarding_discover(provider_id="test-provider", phase="structure")
-        await _onboarding_discover(provider_id="test-provider", phase="tables")
+        await _start(provider_id="test-provider")
+        await _discover(provider_id="test-provider", phase="structure")
+        await _discover(provider_id="test-provider", phase="tables")
 
         # Verify schema file exists
         schema_file = get_schema_file_path("test-provider")
         assert schema_file.exists()
 
         # Hard reset
-        result = await _onboarding_reset(provider_id="test-provider", hard=True)
+        result = await _reset(provider_id="test-provider", hard=True)
 
         assert result["reset"] is True
         assert result["schema_deleted"] is True
@@ -367,7 +412,7 @@ class TestOnboardingReset:
     @pytest.mark.asyncio
     async def test_reset_not_started(self, temp_connection_dir):
         """Test reset when nothing to reset."""
-        result = await _onboarding_reset(provider_id="test-provider")
+        result = await _reset(provider_id="test-provider")
 
         # Should fail gracefully
         assert result["reset"] is False
@@ -376,7 +421,7 @@ class TestOnboardingReset:
     @pytest.mark.asyncio
     async def test_hard_reset_succeeds_even_if_no_state(self, temp_connection_dir):
         """Test hard reset returns success even if state file doesn't exist."""
-        result = await _onboarding_reset(provider_id="test-provider", hard=True)
+        result = await _reset(provider_id="test-provider", hard=True)
 
         # Hard reset should succeed (we've reset to clean state)
         assert result["reset"] is True
@@ -393,42 +438,42 @@ class TestOnboardingFlowIntegration:
         provider = "integration-test"
 
         # 1. Check status - not started
-        status = await _onboarding_status(provider_id=provider)
+        status = await _status(provider_id=provider)
         assert status["status"] == "not_started"
 
         # 2. Start
-        start_result = await _onboarding_start(provider_id=provider)
+        start_result = await _start(provider_id=provider)
         assert start_result["started"] is True
         assert start_result["phase"] == "init"
 
         # 3. Check status - init
-        status = await _onboarding_status(provider_id=provider)
+        status = await _status(provider_id=provider)
         assert status["phase"] == "init"
 
         # 4. Discover structure
-        structure_result = await _onboarding_discover(provider_id=provider, phase="structure")
+        structure_result = await _discover(provider_id=provider, phase="structure")
         assert structure_result["discovered"] is True
 
         # 5. Discover tables
-        tables_result = await _onboarding_discover(provider_id=provider, phase="tables")
+        tables_result = await _discover(provider_id=provider, phase="tables")
         assert tables_result["discovered"] is True
         assert tables_result["tables_found"] == 2
 
         # 6. Check status - schema
-        status = await _onboarding_status(provider_id=provider)
+        status = await _status(provider_id=provider)
         assert status["phase"] == "schema"
         assert status["tables_total"] == 2
 
         # 7. Hard reset
-        reset_result = await _onboarding_reset(provider_id=provider, hard=True)
+        reset_result = await _reset(provider_id=provider, hard=True)
         assert reset_result["reset"] is True
 
         # 8. Check status - not started
-        status = await _onboarding_status(provider_id=provider)
+        status = await _status(provider_id=provider)
         assert status["status"] == "not_started"
 
         # 9. Start again
-        start_result = await _onboarding_start(provider_id=provider)
+        start_result = await _start(provider_id=provider)
         assert start_result["started"] is True
 
     @pytest.mark.asyncio
@@ -439,16 +484,16 @@ class TestOnboardingFlowIntegration:
         provider = "force-test"
 
         # Start and discover (two-phase)
-        await _onboarding_start(provider_id=provider)
-        await _onboarding_discover(provider_id=provider, phase="structure")
-        await _onboarding_discover(provider_id=provider, phase="tables")
+        await _start(provider_id=provider)
+        await _discover(provider_id=provider, phase="structure")
+        await _discover(provider_id=provider, phase="tables")
 
         # Verify in schema phase
         state = load_state(provider)
         assert state.phase == OnboardingPhase.SCHEMA
 
         # Force start
-        result = await _onboarding_start(provider_id=provider, force=True)
+        result = await _start(provider_id=provider, force=True)
         assert result["started"] is True
         assert result["phase"] == "init"
 
@@ -457,7 +502,7 @@ class TestOnboardingFlowIntegration:
         assert state.phase == OnboardingPhase.INIT
 
         # Should be able to discover again (structure phase)
-        discover_result = await _onboarding_discover(provider_id=provider, phase="structure")
+        discover_result = await _discover(provider_id=provider, phase="structure")
         assert discover_result["discovered"] is True
 
 
@@ -466,9 +511,9 @@ class TestPhaseAdvancement:
 
     async def _setup_schema_phase(self, provider, mock_connector):
         """Helper: start onboarding and discover tables, ending in SCHEMA phase."""
-        await _onboarding_start(provider_id=provider)
-        await _onboarding_discover(provider_id=provider, phase="structure")
-        await _onboarding_discover(provider_id=provider, phase="tables")
+        await _start(provider_id=provider)
+        await _discover(provider_id=provider, phase="structure")
+        await _discover(provider_id=provider, phase="tables")
         state = load_state(provider)
         assert state.phase == OnboardingPhase.SCHEMA
         assert state.tables_total == 2
@@ -483,17 +528,17 @@ class TestPhaseAdvancement:
         await self._setup_schema_phase(provider, mock_connector)
 
         # Get and approve first table
-        next1 = await _onboarding_next(provider_id=provider)
+        next1 = await _next(provider_id=provider)
         assert "table_name" in next1
-        result1 = await _onboarding_approve(description="First table", provider_id=provider)
+        result1 = await _approve(description="First table", provider_id=provider)
         assert result1["approved"] is True
         state = load_state(provider)
         assert state.phase == OnboardingPhase.SCHEMA  # Still in schema
 
         # Get and approve second (last) table
-        next2 = await _onboarding_next(provider_id=provider)
+        next2 = await _next(provider_id=provider)
         assert "table_name" in next2
-        result2 = await _onboarding_approve(description="Second table", provider_id=provider)
+        result2 = await _approve(description="Second table", provider_id=provider)
         assert result2["approved"] is True
 
         # Phase should now be DOMAIN
@@ -508,14 +553,14 @@ class TestPhaseAdvancement:
         await self._setup_schema_phase(provider, mock_connector)
 
         # Get and approve first table
-        next1 = await _onboarding_next(provider_id=provider)
+        next1 = await _next(provider_id=provider)
         assert "table_name" in next1
-        await _onboarding_approve(description="First table", provider_id=provider)
+        await _approve(description="First table", provider_id=provider)
 
         # Get and skip second (last) table
-        next2 = await _onboarding_next(provider_id=provider)
+        next2 = await _next(provider_id=provider)
         assert "table_name" in next2
-        result2 = await _onboarding_skip(provider_id=provider)
+        result2 = await _skip(provider_id=provider)
         assert result2["skipped"] is True
 
         # Phase should now be DOMAIN
@@ -533,8 +578,8 @@ class TestPhaseAdvancement:
 
         # Approve both tables individually via next+approve
         for _ in range(2):
-            await _onboarding_next(provider_id=provider)
-            await _onboarding_approve(description="A table", provider_id=provider)
+            await _next(provider_id=provider)
+            await _approve(description="A table", provider_id=provider)
 
         # Phase advanced to DOMAIN already (from fix 1)
         # But simulate the old scenario: force phase back to SCHEMA
@@ -545,7 +590,7 @@ class TestPhaseAdvancement:
         save_state(state)
 
         # Now call bulk_approve with 0 pending — should still advance
-        result = await _onboarding_bulk_approve(provider_id=provider)
+        result = await _bulk_approve(provider_id=provider)
         assert result.get("phase") == "domain"
 
         state = load_state(provider)
@@ -560,8 +605,8 @@ class TestPhaseAdvancement:
         await self._setup_schema_phase(provider, mock_connector)
 
         # Get and approve first table only
-        await _onboarding_next(provider_id=provider)
-        result = await _onboarding_approve(description="First table", provider_id=provider)
+        await _next(provider_id=provider)
+        result = await _approve(description="First table", provider_id=provider)
         assert result["approved"] is True
 
         # Phase should stay SCHEMA (1 table remaining)

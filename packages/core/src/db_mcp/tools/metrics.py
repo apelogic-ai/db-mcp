@@ -9,11 +9,10 @@ from db_mcp.metrics.store import (
     load_dimensions,
     load_metrics,
 )
-from db_mcp.onboarding.state import get_connection_path
-from db_mcp.tools.utils import get_resolved_provider_id
+from db_mcp.tools.utils import resolve_connection
 
 
-async def _metrics_discover(connection: str | None = None) -> dict:
+async def _metrics_discover(connection: str) -> dict:
     """Mine the knowledge vault for metric and dimension candidates.
 
     Analyzes training examples (SQL patterns), business rules, and schema
@@ -27,14 +26,8 @@ async def _metrics_discover(connection: str | None = None) -> dict:
         Dict with metric_candidates, dimension_candidates grouped by category,
         and a summary.
     """
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation
-        _, _, connection_path = resolve_connection(connection)
-    else:
-        # Legacy fallback when no connection specified
-        connection_path = get_connection_path()
+    # Use resolve_connection for proper validation
+    _, _, connection_path = resolve_connection(connection)
     result = await mine_metrics_and_dimensions(connection_path)
 
     metric_candidates = result.get("metric_candidates", [])
@@ -93,27 +86,20 @@ async def _metrics_discover(connection: str | None = None) -> dict:
     }
 
 
-async def _metrics_list(connection: str | None = None) -> dict:
+async def _metrics_list(connection: str) -> dict:
     """List all approved metrics and dimensions in the catalog.
 
     Returns the full catalog of business metrics and dimensions that have
     been approved or manually added.
 
     Args:
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with metrics list, dimensions list, and summary.
     """
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     metrics_catalog = load_metrics(provider_id)
     dimensions_catalog = load_dimensions(provider_id)
@@ -160,6 +146,7 @@ async def _metrics_list(connection: str | None = None) -> dict:
 async def _metrics_approve(
     type: str,
     name: str,
+    connection: str,
     description: str = "",
     sql: str = "",
     column: str = "",
@@ -170,7 +157,6 @@ async def _metrics_approve(
     dim_type: str = "categorical",
     values: list[str] | None = None,
     notes: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Approve a discovered candidate into the metrics catalog.
 
@@ -179,6 +165,7 @@ async def _metrics_approve(
     Args:
         type: Either "metric" or "dimension"
         name: Identifier for the metric/dimension
+        connection: Connection name for multi-connection support.
         description: What it measures (required for metrics)
         sql: SQL template (required for metrics)
         column: Column reference like "table.column" (required for dimensions)
@@ -189,20 +176,12 @@ async def _metrics_approve(
         dim_type: Dimension type — temporal, categorical, geographic, entity
         values: Known values for the dimension
         notes: Additional notes (metrics only)
-        connection: Optional connection name for multi-connection support.
 
     Returns:
         Dict with approval status.
     """
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     if type == "metric":
         if not description or not sql:
@@ -269,6 +248,7 @@ async def _metrics_approve(
 async def _metrics_add(
     type: str,
     name: str,
+    connection: str,
     description: str = "",
     sql: str = "",
     column: str = "",
@@ -279,7 +259,6 @@ async def _metrics_add(
     dim_type: str = "categorical",
     values: list[str] | None = None,
     notes: str | None = None,
-    connection: str | None = None,
 ) -> dict:
     """Manually add a metric or dimension to the catalog.
 
@@ -288,6 +267,7 @@ async def _metrics_add(
     Args:
         type: Either "metric" or "dimension"
         name: Identifier for the metric/dimension
+        connection: Connection name for multi-connection support.
         description: What it measures (required for metrics)
         sql: SQL template (required for metrics)
         column: Column reference like "table.column" (required for dimensions)
@@ -306,6 +286,7 @@ async def _metrics_add(
     result = await _metrics_approve(
         type=type,
         name=name,
+        connection=connection,
         description=description,
         sql=sql,
         column=column,
@@ -316,7 +297,6 @@ async def _metrics_add(
         dim_type=dim_type,
         values=values,
         notes=notes,
-        connection=connection,
     )
 
     # Rename key for clarity
@@ -326,26 +306,19 @@ async def _metrics_add(
     return result
 
 
-async def _metrics_remove(type: str, name: str, connection: str | None = None) -> dict:
+async def _metrics_remove(type: str, name: str, connection: str) -> dict:
     """Remove a metric or dimension from the catalog.
 
     Args:
         type: Either "metric" or "dimension"
         name: Name of the metric/dimension to remove
-        connection: Optional connection name for multi-connection support.
+        connection: Connection name for multi-connection support.
 
     Returns:
         Dict with removal status.
     """
-    from db_mcp.tools.utils import resolve_connection
-
-    if connection is not None:
-        # Use resolve_connection for proper validation, then use connection name as provider_id
-        resolve_connection(connection)  # Validates connection exists
-        provider_id = connection
-    else:
-        # Legacy fallback when no connection specified
-        provider_id = get_resolved_provider_id(None)
+    # Resolve connection for validation and provider_id
+    _, provider_id, _ = resolve_connection(connection)
 
     if type == "metric":
         result = delete_metric(provider_id, name)
