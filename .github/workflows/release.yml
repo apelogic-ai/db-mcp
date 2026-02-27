@@ -12,8 +12,53 @@ on:
         type: string
 
 jobs:
+  guard:
+    name: Verify Tag Version
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure tag matches pyproject version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+
+          with open("packages/core/pyproject.toml", "rb") as f:
+            data = tomllib.load(f)
+          version = data["project"]["version"]
+          event = os.environ.get("GITHUB_EVENT_NAME", "")
+          input_version = os.environ.get("INPUT_VERSION", "").strip()
+          if event == "workflow_dispatch":
+            expected = input_version
+          else:
+            ref = os.environ.get("GITHUB_REF", "")
+            prefix = "refs/tags/v"
+            if not ref.startswith(prefix):
+              print(f"Expected tag ref, got {ref}", file=sys.stderr)
+              sys.exit(1)
+            expected = ref[len(prefix):]
+          if not expected:
+            print("Expected version is empty", file=sys.stderr)
+            sys.exit(1)
+          if version != expected:
+            print(
+              f"Version mismatch: pyproject.toml has {version}, "
+              f"but release expects {expected}",
+              file=sys.stderr,
+            )
+            sys.exit(1)
+          print(f"Version OK: {version}")
+          PY
+
   build:
     name: Build ${{ matrix.platform }}
+    needs: guard
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,6 +75,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "RELEASE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          fi
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -82,6 +137,35 @@ jobs:
           else
             mv dist/db-mcp dist/db-mcp-${{ matrix.platform }}
           fi
+
+      - name: Verify binary version
+        if: ${{ !startsWith(matrix.platform, 'windows') }}
+        working-directory: packages/core
+        shell: bash
+        run: |
+          chmod +x dist/db-mcp-${{ matrix.platform }}
+          ACTUAL="$(./dist/db-mcp-${{ matrix.platform }} --version | awk '{print $NF}')"
+          if [[ "$ACTUAL" != "$RELEASE_VERSION" ]]; then
+            echo "Version mismatch: expected $RELEASE_VERSION, got $ACTUAL" >&2
+            exit 1
+          fi
+
+      - name: Verify binary version (Windows)
+        if: startsWith(matrix.platform, 'windows')
+        working-directory: packages/core
+        shell: pwsh
+        run: |
+          $output = .\dist\db-mcp-${{ matrix.platform }}.exe --version
+          if ($output -match '([0-9]+\.[0-9]+\.[0-9]+)') {
+            $actual = $Matches[1]
+          } else {
+            Write-Error "Could not parse version from output: $output"
+            exit 1
+          }
+          if ($actual -ne $env:RELEASE_VERSION) {
+            Write-Error "Version mismatch: expected $env:RELEASE_VERSION, got $actual"
+            exit 1
+          }
 
       - uses: actions/upload-artifact@v4
         with:
