@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.6.4] - 2026-03-02
+
+## Overview
+v0.6.4 is a patch release that hardens API connector auth behavior in long-lived MCP sessions by adding connector cache invalidation and one-shot retry on auth failures.
+
+## Highlights
+- Added `ConnectionRegistry.invalidate_connector()` and `refresh_connector()` to explicitly refresh cached connector instances.
+- `api_query` now retries once on auth-style failures (`401`/`Unauthorized`) after invalidating the cached connector.
+- `api_mutate` now applies the same retry-on-auth-failure behavior.
+
+## Bug Fixes
+- Fixed stale API connector cache behavior where MCP sessions could keep returning auth failures even when a fresh runtime connection succeeded.
+- Improved resilience for API write flows that depend on re-auth after long-running sessions.
+
+## New Features
+- Added regression tests for:
+  - connector cache invalidation and forced refresh behavior,
+  - `api_query` retry after auth errors,
+  - `api_mutate` retry after auth errors.
+
+## Files Changed
+| File | Change |
+|---|---|
+| `packages/core/src/db_mcp/registry.py` | Added connector cache invalidation/refresh helpers |
+| `packages/core/src/db_mcp/tools/api.py` | Added one-time auth-error retry with connector refresh for `api_query` and `api_mutate` |
+| `packages/core/tests/test_registry.py` | Added registry invalidation regression tests |
+| `packages/core/tests/test_resolve_connection.py` | Added `api_query` auth-retry regression test |
+| `packages/core/tests/test_api_connector.py` | Added `api_mutate` auth-retry regression test |
+| `packages/core/pyproject.toml` | Bumped core package version to `0.6.4` |
+| `packages/core/src/db_mcp/__init__.py` | Updated exported version to `0.6.4` |
+| `docs/releases/v0.6.4.md` | Added release notes |
+
+## Testing
+- `uv run pytest tests/test_registry.py tests/test_resolve_connection.py tests/test_api_connector.py -k "invalidate_connector or retries_once_on_auth_error" -v`
+- `uv run ruff check . --fix`
+- `uv run pytest tests/ -v`
+
 ## [0.6.3] - 2026-03-02
 
 ## Overview
@@ -1127,4 +1164,3 @@ endpoints:
 
 ## Known issues
 - None
-

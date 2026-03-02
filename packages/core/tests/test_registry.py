@@ -161,6 +161,27 @@ class TestGetConnector:
         registry.get_connector(None)
         mock_get.assert_called_once()
 
+    @patch("db_mcp.registry.get_connector")
+    def test_invalidate_connector_removes_cached_instance(
+        self, mock_get: MagicMock, registry: ConnectionRegistry
+    ):
+        first = MagicMock()
+        second = MagicMock()
+        mock_get.side_effect = [first, second]
+
+        cached = registry.get_connector("my-postgres")
+        assert cached is first
+        assert registry.invalidate_connector("my-postgres") is True
+
+        refreshed = registry.get_connector("my-postgres")
+        assert refreshed is second
+        assert mock_get.call_count == 2
+
+    def test_invalidate_connector_returns_false_when_not_cached(
+        self, registry: ConnectionRegistry
+    ):
+        assert registry.invalidate_connector("my-postgres") is False
+
 
 class TestSingleton:
     def test_get_instance_returns_same(self, settings: Settings):

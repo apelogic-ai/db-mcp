@@ -531,6 +531,51 @@ class TestAPIToolConnectionDispatch:
         assert "error" in result
         assert "requires connection" in result["error"]
 
+    def test_api_query_retries_once_on_auth_error_with_fresh_connector(self):
+        """api_query should invalidate cache and retry once on auth errors."""
+        stale_connector = _make_mock_api_connector()
+        stale_connector.query_endpoint.return_value = {
+            "error": "401 Client Error: Unauthorized for url: https://api.example.com/dashboard/"
+        }
+
+        fresh_connector = _make_mock_api_connector()
+        fresh_connector.query_endpoint.return_value = {"data": [{"id": 3}], "rows_returned": 1}
+
+        with (
+            patch(
+                "db_mcp.tools.api.resolve_connection",
+                side_effect=[
+                    (stale_connector, "my-api", Path("/tmp/my-api")),
+                    (fresh_connector, "my-api", Path("/tmp/my-api")),
+                ],
+            ),
+            patch("db_mcp.tools.api.ConnectionRegistry") as mock_registry_cls,
+        ):
+            mock_registry = MagicMock()
+            mock_registry_cls.get_instance.return_value = mock_registry
+
+            result = asyncio.run(
+                __import__("db_mcp.tools.api", fromlist=["_api_query"])._api_query(
+                    endpoint="list_dashboards",
+                    connection="my-api",
+                )
+            )
+
+        assert result == {"data": [{"id": 3}], "rows_returned": 1}
+        mock_registry.invalidate_connector.assert_called_once_with("my-api")
+        stale_connector.query_endpoint.assert_called_once_with(
+            "list_dashboards",
+            None,
+            1,
+            id=None,
+        )
+        fresh_connector.query_endpoint.assert_called_once_with(
+            "list_dashboards",
+            None,
+            1,
+            id=None,
+        )
+
 
 # ============================================================================
 # Backward compatibility tests

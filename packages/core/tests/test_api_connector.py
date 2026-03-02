@@ -2268,6 +2268,46 @@ class TestAPIMutateTool:
             )
         assert "error" in result
 
+    def test_api_mutate_retries_once_on_auth_error(self, mock_api_connector):
+        """api_mutate should invalidate and retry once when first call returns 401."""
+        from pathlib import Path
+
+        from db_mcp.connectors.api import APIConnector
+        from db_mcp.tools.api import _api_mutate
+
+        stale_connector = mock_api_connector
+        stale_connector.query_endpoint.return_value = {
+            "error": "401 Client Error: Unauthorized for url: https://api.example.com/items/"
+        }
+        fresh_connector = MagicMock(spec=APIConnector)
+        fresh_connector.query_endpoint.return_value = {"data": {"id": 99}, "rows_returned": 1}
+
+        with (
+            patch(
+                "db_mcp.tools.api.resolve_connection",
+                side_effect=[
+                    (stale_connector, "test-api", Path("/tmp/test")),
+                    (fresh_connector, "test-api", Path("/tmp/test")),
+                ],
+            ),
+            patch("db_mcp.tools.api.ConnectionRegistry") as mock_registry_cls,
+        ):
+            mock_registry = MagicMock()
+            mock_registry_cls.get_instance.return_value = mock_registry
+            result = asyncio.run(
+                _api_mutate(
+                    endpoint="items",
+                    method="POST",
+                    connection="test-api",
+                    body={"name": "Widget"},
+                )
+            )
+
+        assert result == {"data": {"id": 99}, "rows_returned": 1}
+        mock_registry.invalidate_connector.assert_called_once_with("test-api")
+        assert stale_connector.query_endpoint.call_count == 1
+        assert fresh_connector.query_endpoint.call_count == 1
+
 
 class TestJWTLoginBody:
     """Tests for login_body support in jwt_login auth handler."""

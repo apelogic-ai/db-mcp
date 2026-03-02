@@ -4,6 +4,7 @@ from typing import Any
 
 from db_mcp.connectors import APIConnector, get_connector_capabilities
 from db_mcp.execution import check_protocol_ack_gate, evaluate_sql_execution_policy
+from db_mcp.registry import ConnectionRegistry
 from db_mcp.tools.utils import require_connection, resolve_connection
 
 
@@ -23,6 +24,15 @@ def _get_api_connector(connection: str) -> tuple[APIConnector | None, dict | Non
         return None, {"error": "Resolved connection is not an API connector"}
 
     return connector, None
+
+
+def _is_auth_error(result: dict[str, Any]) -> bool:
+    """Return True when a tool result indicates authentication/authorization failure."""
+    err = result.get("error")
+    if not isinstance(err, str):
+        return False
+    lowered = err.lower()
+    return "401" in lowered or "unauthorized" in lowered
 
 
 async def _api_sync(connection: str, endpoint: str | None = None) -> dict:
@@ -104,7 +114,14 @@ async def _api_query(
     connector, err = _get_api_connector(connection)
     if err:
         return err
-    return connector.query_endpoint(endpoint, params, max_pages, id=id)
+    result = connector.query_endpoint(endpoint, params, max_pages, id=id)
+    if _is_auth_error(result):
+        ConnectionRegistry.get_instance().invalidate_connector(connection)
+        connector, err = _get_api_connector(connection)
+        if err:
+            return err
+        result = connector.query_endpoint(endpoint, params, max_pages, id=id)
+    return result
 
 
 async def _api_execute_sql(sql: str, connection: str) -> dict[str, Any]:
@@ -242,4 +259,16 @@ async def _api_mutate(
     if err:
         return err
 
-    return connector.query_endpoint(endpoint, params, body=body, method_override=method_upper)
+    result = connector.query_endpoint(endpoint, params, body=body, method_override=method_upper)
+    if _is_auth_error(result):
+        ConnectionRegistry.get_instance().invalidate_connector(connection)
+        connector, err = _get_api_connector(connection)
+        if err:
+            return err
+        result = connector.query_endpoint(
+            endpoint,
+            params,
+            body=body,
+            method_override=method_upper,
+        )
+    return result
