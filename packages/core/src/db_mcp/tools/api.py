@@ -78,7 +78,7 @@ async def _api_discover(connection: str) -> dict:
 async def _api_query(
     endpoint: str,
     connection: str,
-    params: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
     max_pages: int = 1,
     id: str | list[str] | None = None,
 ) -> dict[str, Any]:
@@ -92,10 +92,12 @@ async def _api_query(
     Args:
         endpoint: Name of the endpoint to query (e.g. "markets", "events").
         connection: Connection name for multi-connection support.
-        params: Query parameters as key-value pairs (e.g. {"active": "true"}).
+        params: Endpoint parameters as key-value pairs. Values may be non-string
+            types (e.g. booleans, numbers, arrays) for APIs that expect JSON payloads.
         max_pages: Maximum pages to fetch. Default 1 (single page, fast).
-        id: Fetch specific record(s) by ID. Hits the detail endpoint /{id}.
-            Pass a single ID string or a list of ID strings.
+        id: Optional ID hint for detail endpoints. For templated endpoint paths like
+            `/resource/{id}`, this substitutes the `{id}` placeholder.
+            For non-templated GET endpoints, this fetches detail paths via `/{id}`.
     Returns:
         {data: [...], rows_returned: int} or {error: "..."}.
     """
