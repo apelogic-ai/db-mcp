@@ -647,8 +647,8 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
             connector = get_connector(connection_path=str(connection_path))
             capabilities = get_connector_capabilities(connector)
             connector_type = (
-                getattr(getattr(connector, "config", None), "type", None)
-                or getattr(getattr(connector, "api_config", None), "type", None)
+                getattr(getattr(connector, "api_config", None), "type", None)
+                or getattr(getattr(connector, "config", None), "type", None)
                 or connector.__class__.__name__
             )
             checks.append(

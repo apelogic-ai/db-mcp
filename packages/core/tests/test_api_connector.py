@@ -200,7 +200,7 @@ class TestAPIConnectorTestConnection:
         mock_response.status_code = 200
         mock_response.json.return_value = {"data": []}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_response):
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response):
             result = api_connector.test_connection()
         assert result["connected"] is True
         assert result["dialect"] == "duckdb"
@@ -212,10 +212,46 @@ class TestAPIConnectorTestConnection:
         mock_response.text = "Unauthorized"
         mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_response):
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response):
             result = api_connector.test_connection()
         assert result["connected"] is False
         assert result["error"] is not None
+
+    def test_connection_uses_endpoint_method_and_sql_probe(self, data_dir, env_file):
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/sql/execute",
+                    method="POST",
+                    sql_field="sql",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": {"rows": [{"db_mcp_doctor": 1}]}}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response) as req:
+            result = conn.test_connection()
+
+        assert result["connected"] is True
+        req.assert_called_once()
+        called_kwargs = req.call_args.kwargs
+        assert called_kwargs["method"] == "POST"
+        assert called_kwargs["url"] == "https://api.example.com/sql/execute"
+        assert called_kwargs["json"]["sql"] == "SELECT 1 AS db_mcp_doctor"
 
 
 # ---------------------------------------------------------------------------

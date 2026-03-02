@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.6.1] - 2026-03-02
+
+## Overview
+v0.6.1 is a patch release focused on stabilizing SQL execution for SQL-like API connectors (notably Dune) and reducing behavior drift between database and API-backed SQL flows. The release fixes connector misclassification, corrects doctor/auth probing for API SQL endpoints, and unifies run/poll execution behavior so async provider responses are handled consistently through `run_sql` and `get_result`.
+
+## Highlights
+- API connectors are no longer misclassified as file connectors when computing runtime capabilities.
+- `db-mcp doctor --connection dune --json` now correctly identifies `connector_type: api` and uses endpoint-aware auth checks.
+- `run_sql` now uses a unified lifecycle for SQL-like APIs: providers that return execution IDs produce `submitted` responses even when configured as `api_sync`, and `get_result` polls them consistently.
+- Tool docs now explicitly state that SQL-like APIs may return either immediate success or async submission for the same `run_sql` interface.
+
+## Bug Fixes
+- Fixed connector capability resolution order so `APIConnector` is matched before `FileConnector` in runtime capability normalization.
+- Fixed doctor connector type reporting to prefer `api_config.type` over inherited file config type.
+- Fixed API connector `test_connection()` to use endpoint HTTP method and send a lightweight SQL probe body for non-GET SQL execute endpoints.
+- Fixed SQL API lifecycle handling so `get_result` polls executions when `external_execution_id` is present, not only when `sql_mode == api_async`.
+- Fixed SQL API metadata propagation in polling to preserve connector mode in execution metadata.
+
+## New Features
+- Unified SQL-like API direct execution path in `run_sql`:
+  - `submit_sql -> mode=sync` returns immediate `success`.
+  - `submit_sql -> mode=async` returns `submitted` + `execution_id` and is resolved via `get_result`.
+
+## Files Changed
+| File | Change |
+|---|---|
+| `packages/core/src/db_mcp/connectors/__init__.py` | Corrected API vs file capability detection order |
+| `packages/core/src/db_mcp/connectors/api.py` | Improved endpoint-aware API auth/test probing for SQL endpoints |
+| `packages/core/src/db_mcp/cli/commands/core.py` | Fixed doctor connector type reporting precedence |
+| `packages/core/src/db_mcp/tools/generation.py` | Unified SQL API execution lifecycle across `api_sync` and async provider behavior |
+| `packages/core/tests/test_api_connector.py` | Added/updated API test_connection method coverage |
+| `packages/core/tests/test_cli/test_doctor_command.py` | Added regression for API connector type reporting |
+| `packages/core/tests/test_run_sql.py` | Added regressions for unified `run_sql/get_result` SQL-like API behavior |
+
+## Testing
+- `uv run ruff check src/db_mcp/tools/generation.py tests/test_run_sql.py`
+- `uv run pytest tests/test_run_sql.py tests/test_execution_response_contracts.py -v`
+- `uv run pytest tests/test_run_sql.py tests/test_cli/test_doctor_command.py tests/test_api_connector.py -v`
+- Live smoke on patched runtime:
+  - `uv run db-mcp doctor --json --connection dune`
+  - `uv run db-mcp doctor --json --connection top-ledger`
+  - `run_sql(connection='dune', sql='SELECT 1 AS ok') -> submitted`
+  - `get_result(execution_id, connection='dune') -> complete`
+
+
 ## [0.5.0] - 2026-02-09
 
 ## Highlights
