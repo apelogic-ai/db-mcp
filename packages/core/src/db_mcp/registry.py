@@ -231,6 +231,23 @@ class ConnectionRegistry:
         self._connectors[cache_key] = connector
         return connector
 
+    def invalidate_connector(self, name: str | None = None) -> bool:
+        """Invalidate a cached connector instance.
+
+        Args:
+            name: Connection name. If None, invalidates the default connection cache key.
+
+        Returns:
+            True if a cached connector was removed, False otherwise.
+        """
+        cache_key = name or self._settings.connection_name or "default"
+        return self._connectors.pop(cache_key, None) is not None
+
+    def refresh_connector(self, name: str | None = None) -> Connector:
+        """Force-reload a connector by invalidating cache then reloading."""
+        self.invalidate_connector(name)
+        return self.get_connector(name)
+
     # =========================================================================
     # New multi-connection helpers
     # =========================================================================
