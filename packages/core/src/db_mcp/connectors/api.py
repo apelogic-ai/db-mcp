@@ -478,10 +478,7 @@ class APIConnector(FileConnector):
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         resp.raise_for_status()
         body = resp.json()
-        data_field = self.api_config.pagination.data_field
-        if isinstance(body, list):
-            return body
-        return body.get(data_field, body.get("results", []))
+        return self._extract_rows_from_response(body)
 
     def _fetch_cursor(
         self,
@@ -657,27 +654,26 @@ class APIConnector(FileConnector):
                 if effective_body is None and endpoint.body_mode == "json":
                     effective_body = merged_params
                     effective_params = {}
+                elif effective_body is None and params and not endpoint.query_params:
+                    # Heuristic for write APIs (e.g., Superset): if endpoint declares
+                    # no query params, treat user-supplied params as JSON body.
+                    user_payload = dict(merged_params)
+                    for key, value in base_params.items():
+                        if user_payload.get(key) == value:
+                            user_payload.pop(key, None)
+                    if user_payload:
+                        effective_body = user_payload
+                        effective_params = dict(base_params)
 
                 raw = self._send_request_with_retry(
                     method, base_url, headers, effective_params, effective_body
                 )
                 if endpoint.response_mode == "raw":
                     return {"data": raw, "rows_returned": 1}
-                if isinstance(raw, list):
-                    rows = raw
-                elif isinstance(raw, dict):
-                    # Try to extract rows from a collection wrapper
-                    data_field = self.api_config.pagination.data_field
-                    extracted = raw.get(data_field)
-                    if extracted is None:
-                        extracted = raw.get("results")
-                    if isinstance(extracted, list):
-                        rows = extracted
-                    else:
-                        # Single object response (e.g. created resource)
-                        rows = [raw]
-                else:
-                    rows = []
+                rows = self._extract_rows_from_response(raw)
+                if not rows and isinstance(raw, dict):
+                    # Preserve prior behavior for single-object create/update responses.
+                    rows = [raw]
             else:
                 rows = self._fetch_non_get(base_url, headers, merged_params, endpoint)
 
@@ -954,7 +950,7 @@ class APIConnector(FileConnector):
 
         raise TimeoutError(f"SQL execution did not complete within {max_wait_seconds} seconds")
 
-    def _extract_rows_from_response(self, response: dict[str, Any]) -> list[dict[str, Any]]:
+    def _extract_rows_from_response(self, response: Any) -> list[dict[str, Any]]:
         """Extract rows from an API response.
 
         Handles common response formats:
@@ -973,12 +969,14 @@ class APIConnector(FileConnector):
         if isinstance(response, list):
             return response
 
-        # Try nested result.rows (Dune format)
-        result = response.get("result", {})
+        # Try result wrappers first (Dune/Superset/common APIs).
+        result = response.get("result")
+        if isinstance(result, list):
+            return result
         if isinstance(result, dict):
             rows = result.get("rows")
-            if rows is not None:
-                return rows if isinstance(rows, list) else []
+            if isinstance(rows, list):
+                return rows
 
         # Check for columns + rows as arrays format first (before generic field check)
         # This handles APIs that return {columns: [...], rows: [[...], [...]]}
@@ -1000,6 +998,12 @@ class APIConnector(FileConnector):
                 value = response[field_name]
                 if isinstance(value, list):
                     return value
+
+        # Honor configured data_field for non-SQL API endpoints.
+        data_field = self.api_config.pagination.data_field
+        value = response.get(data_field)
+        if isinstance(value, list):
+            return value
 
         # Last resort: return empty
         return []
