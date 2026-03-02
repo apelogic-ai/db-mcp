@@ -588,7 +588,7 @@ class APIConnector(FileConnector):
     def query_endpoint(
         self,
         endpoint_name: str,
-        params: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
         max_pages: int = 1,
         id: str | list[str] | None = None,
         body: dict[str, Any] | None = None,
@@ -598,7 +598,9 @@ class APIConnector(FileConnector):
 
         Args:
             endpoint_name: Name of the configured endpoint to query.
-            params: Query string parameters to pass to the endpoint.
+            params: Parameters to pass to the endpoint. For GET these are query
+                parameters; for many write endpoints these may be promoted to a
+                JSON body when no explicit body is provided.
             max_pages: Maximum number of pages to fetch (default 1).
             id: Fetch specific record(s) by ID. Appends /{id} to endpoint path.
                 Pass a single string or a list of strings for multiple records.
@@ -621,23 +623,44 @@ class APIConnector(FileConnector):
         try:
             headers = self._resolve_auth_headers()
             base_params = self._resolve_auth_params()
+            method = (method_override or endpoint.method).upper()
 
             # Merge user params
             merged_params = dict(base_params)
             if params:
                 merged_params.update(params)
 
+            # If endpoint path is templated with {id}, allow id argument to fill it
+            # for both read and write methods.
+            if id is not None and "{id}" in endpoint.path:
+                if isinstance(id, list):
+                    return {
+                        "error": "id must be a single value when endpoint path contains {id}"
+                    }
+                merged_params["id"] = id
+
             rendered_path, merged_params = self._render_path(endpoint.path, merged_params)
             base_url = self.api_config.base_url.rstrip("/") + rendered_path
 
-            method = (method_override or endpoint.method).upper()
-
             # Detail endpoint: fetch by ID(s)
             if id is not None:
-                if method != "GET":
-                    return {"error": "id lookup only supported for GET endpoints"}
-                ids = [id] if isinstance(id, str) else id
-                rows = self._fetch_by_ids(base_url, headers, merged_params, ids)
+                if method == "GET":
+                    # If endpoint template consumed {id}, query the already rendered URL.
+                    if "{id}" in endpoint.path:
+                        raw = self._send_request_with_retry(
+                            method, base_url, headers, merged_params, body
+                        )
+                        if endpoint.response_mode == "raw":
+                            return {"data": raw, "rows_returned": 1}
+                        rows = self._extract_rows_from_response(raw)
+                    else:
+                        ids = [id] if isinstance(id, str) else id
+                        rows = self._fetch_by_ids(base_url, headers, merged_params, ids)
+                elif "{id}" in endpoint.path:
+                    # Non-GET method with templated path: continue through write flow.
+                    pass
+                else:
+                    return {"error": "id lookup only supported for GET endpoints or {id} paths"}
             elif method == "GET":
                 if endpoint.response_mode == "raw":
                     raw = self._send_request_with_retry(
@@ -645,7 +668,7 @@ class APIConnector(FileConnector):
                     )
                     return {"data": raw, "rows_returned": 1}
                 rows = self._fetch_with_pagination(base_url, headers, merged_params, max_pages)
-            elif method in ("POST", "PUT", "PATCH", "DELETE"):
+            if method in ("POST", "PUT", "PATCH", "DELETE"):
                 # Determine the effective JSON body:
                 # - Explicit body parameter takes priority
                 # - Backward compat: body_mode=json with no explicit body → params as body
@@ -674,7 +697,7 @@ class APIConnector(FileConnector):
                 if not rows and isinstance(raw, dict):
                     # Preserve prior behavior for single-object create/update responses.
                     rows = [raw]
-            else:
+            elif method not in ("GET",):
                 rows = self._fetch_non_get(base_url, headers, merged_params, endpoint)
 
             return {

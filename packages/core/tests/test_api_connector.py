@@ -802,6 +802,68 @@ class TestAPIConnectorPathParams:
         assert "query_id" not in called_params
         assert called_params["limit"] == "1"
 
+    def test_query_endpoint_id_substitutes_templated_path_for_put(self, data_dir, env_file):
+        """id argument should substitute {id} for non-GET templated endpoints."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="update_dashboard",
+                    path="/dashboard/{id}",
+                    method="PUT",
+                    body_mode="json",
+                    response_mode="raw",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"id": 4, "updated": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            conn.query_endpoint(
+                "update_dashboard",
+                params={"position_json": "{\"foo\":1}"},
+                id="4",
+            )
+
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["method"] == "PUT"
+        assert call_kw["url"].endswith("/dashboard/4")
+        assert call_kw["json"] == {"position_json": "{\"foo\":1}"}
+
+    def test_query_endpoint_non_get_id_without_template_errors(self, data_dir, env_file):
+        """id argument on non-GET non-templated endpoints should return an error."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(name="update_dashboard", path="/dashboard", method="PUT")
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        result = conn.query_endpoint("update_dashboard", params={"a": "b"}, id="4")
+        assert "error" in result
+        assert "id lookup only supported for GET endpoints or {id} paths" in result["error"]
+
 
 class TestAPIConnectorPostBody:
     def test_query_endpoint_post_json_body(self, data_dir, env_file):

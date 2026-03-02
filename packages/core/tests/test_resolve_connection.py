@@ -493,6 +493,32 @@ class TestAPIToolConnectionDispatch:
         mock_resolve.assert_called_once_with("my-api", require_type="api")
         mock_api_connector.query_endpoint.assert_called_once()
 
+    def test_api_query_allows_non_string_param_values(self):
+        """api_query should forward non-string parameter values unchanged."""
+        from pathlib import Path
+
+        mock_api_connector = _make_mock_api_connector()
+        mock_api_connector.query_endpoint.return_value = {"data": [], "rows_returned": 0}
+
+        with patch(
+            "db_mcp.tools.api.resolve_connection",
+            return_value=(mock_api_connector, "my-api", Path("/tmp/my-api")),
+        ):
+            asyncio.run(
+                __import__("db_mcp.tools.api", fromlist=["_api_query"])._api_query(
+                    endpoint="update_dashboard",
+                    connection="my-api",
+                    params={"published": True, "refresh_rate": 30},
+                )
+            )
+
+        mock_api_connector.query_endpoint.assert_called_once_with(
+            "update_dashboard",
+            {"published": True, "refresh_rate": 30},
+            1,
+            id=None,
+        )
+
     def test_api_query_without_connection_errors(self):
         """api_query without connection param errors."""
         result = asyncio.run(
