@@ -490,7 +490,7 @@ def _poll_api_async_execution(
 
     state = _api_async_state(status_payload if isinstance(status_payload, dict) else {})
     status_metadata = {
-        "sql_mode": "api_async",
+        "sql_mode": metadata.get("sql_mode") or "api_async",
         "external_execution_id": str(external_id),
         "external_status": status_payload,
     }
@@ -862,7 +862,10 @@ async def _run_sql(
 
     FOR SQL-LIKE APIs (Dune, etc.) with supports_sql=true and supports_validate_sql=false:
         Call run_sql(connection="<name>", sql="SELECT ...") directly. The SQL will be sent to
-        the API's execute_sql endpoint, and results will be returned after polling completes.
+        the API's execute_sql endpoint. Depending on provider behavior, run_sql may return:
+        - status='success' with rows immediately (sync response), or
+        - status='submitted' with execution_id when provider runs asynchronously.
+        Use get_result(query_id=<execution_id>, connection=...) to poll async submissions.
 
     FOR REGULAR SQL DATABASES:
         REQUIRES a query_id from validate_sql. This ensures:
@@ -1033,11 +1036,7 @@ async def _run_sql(
                         }
                     )
 
-        if sql_mode is None or sql_mode == "api_sync" or sql_mode == "engine":
-            # Standard SQL connector (no sql_mode), sync API, or direct engine access
-            return _run_sync_via_engine()
-
-        if sql_mode == "api_async":
+        def _run_sql_like_api_via_execution_lifecycle() -> dict:
             execution_engine = get_execution_engine(connection_path)
             local_query_id = _generate_query_uuid(sql)
             request = ExecutionRequest(
@@ -1045,27 +1044,9 @@ async def _run_sql(
                 sql=sql,
                 query_id=local_query_id,
                 idempotency_key=local_query_id,
-                metadata={"sql_mode": "api_async"},
+                metadata={"sql_mode": sql_mode or "api_sync"},
             )
             handle = execution_engine.submit_async(request)
-
-            if not hasattr(connector, "submit_sql"):
-                execution_engine.mark_failed(
-                    handle.execution_id,
-                    message="Connector does not expose submit_sql for api_async mode.",
-                    code=ExecutionErrorCode.TOOLING,
-                    duration_ms=None,
-                )
-                return inject_protocol(
-                    {
-                        "status": "error",
-                        "query_id": handle.execution_id,
-                        "execution_id": handle.execution_id,
-                        "state": ExecutionState.FAILED.value,
-                        "error_code": ExecutionErrorCode.TOOLING.value,
-                        "error": "Connector does not expose async SQL submission API.",
-                    }
-                )
 
             try:
                 submission = connector.submit_sql(sql)
@@ -1082,7 +1063,10 @@ async def _run_sql(
                         rows_returned=len(rows),
                         rows_affected=None,
                         duration_ms=None,
-                        metadata={"sql_mode": "api_async", "submission_mode": "sync"},
+                        metadata={
+                            "sql_mode": sql_mode or "api_sync",
+                            "submission_mode": "sync",
+                        },
                     )
                     return inject_protocol(
                         {
@@ -1111,8 +1095,9 @@ async def _run_sql(
                 execution_engine.update_metadata(
                     handle.execution_id,
                     {
-                        "sql_mode": "api_async",
+                        "sql_mode": sql_mode or "api_sync",
                         "external_execution_id": str(external_id),
+                        "submission_mode": "async",
                     },
                     merge=True,
                 )
@@ -1128,7 +1113,7 @@ async def _run_sql(
                         "sql": sql,
                         "external_execution_id": str(external_id),
                         "message": (
-                            "Query submitted to async SQL API. "
+                            "Query submitted to SQL API. "
                             f"Use get_result('{handle.execution_id}', connection='{connection}') "
                             "to poll status."
                         ),
@@ -1153,6 +1138,24 @@ async def _run_sql(
                         "sql": sql,
                     }
                 )
+
+        if hasattr(connector, "submit_sql") and not isinstance(connector, SQLConnector):
+            # SQL-like API connector: submit first, then return submitted/running lifecycle
+            # when provider executes asynchronously.
+            return _run_sql_like_api_via_execution_lifecycle()
+
+        if sql_mode is None or sql_mode == "engine":
+            # Standard SQL connector (no sql_mode) or direct engine access.
+            return _run_sync_via_engine()
+
+        if sql_mode == "api_async":
+            return inject_protocol(
+                {
+                    "status": "error",
+                    "error": "Connector does not expose async SQL submission API.",
+                    "error_code": ExecutionErrorCode.TOOLING.value,
+                }
+            )
 
         # Fallback: try execute_sql for any other sql_mode (connector may support it)
         if hasattr(connector, "execute_sql"):
@@ -1626,9 +1629,12 @@ async def _get_result(query_id: str, connection: str) -> dict:
         execution_result = execution_engine.get_result(query_id)
         if execution_result is not None:
             metadata = execution_result.metadata or {}
+            should_poll_api_sql = bool(metadata.get("external_execution_id")) or (
+                metadata.get("sql_mode") == "api_async"
+            )
             if (
                 execution_result.state in {ExecutionState.SUBMITTED, ExecutionState.RUNNING}
-                and metadata.get("sql_mode") == "api_async"
+                and should_poll_api_sql
             ):
                 poll_outcome = _poll_api_async_execution(
                     connection=connection,

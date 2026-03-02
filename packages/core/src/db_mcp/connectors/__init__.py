@@ -272,18 +272,18 @@ _CONNECTOR_FACTORIES: dict[type, Any] = {
 
 def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
     """Return normalized capability flags for a connector."""
-    if isinstance(connector, SQLConnector):
+    if isinstance(connector, APIConnector):
+        connector_type = "api"
+        config_caps = connector.api_config.capabilities
+    elif isinstance(connector, SQLConnector):
         connector_type = "sql"
-        config_caps = connector.config.capabilities
-    elif isinstance(connector, FileConnector):
-        connector_type = "file"
         config_caps = connector.config.capabilities
     elif isinstance(connector, MetabaseConnector):
         connector_type = "metabase"
         config_caps = connector.config.capabilities
-    elif isinstance(connector, APIConnector):
-        connector_type = "api"
-        config_caps = connector.api_config.capabilities
+    elif isinstance(connector, FileConnector):
+        connector_type = "file"
+        config_caps = connector.config.capabilities
     else:
         connector_type = "unknown"
         config_caps = {}

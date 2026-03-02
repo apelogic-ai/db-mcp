@@ -369,18 +369,33 @@ class APIConnector(FileConnector):
         try:
             headers = self._resolve_auth_headers()
             params = self._resolve_auth_params()
+            method = "GET"
+            body: dict[str, Any] | None = None
 
             # Try the first endpoint with a small limit
             if self.api_config.endpoints:
                 ep = self.api_config.endpoints[0]
                 url = self.api_config.base_url.rstrip("/") + ep.path
+                method = (ep.method or "GET").upper()
                 pg = self.api_config.pagination
-                if pg.page_size_param:
+                if method == "GET" and pg.page_size_param:
                     params[pg.page_size_param] = "1"
+                if method != "GET" and ep.name == "execute_sql":
+                    body = {ep.sql_field or "sql": "SELECT 1 AS db_mcp_doctor"}
             else:
                 url = self.api_config.base_url
 
-            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            request_kwargs: dict[str, Any] = {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                "params": params,
+                "timeout": 10,
+            }
+            if body is not None:
+                request_kwargs["json"] = body
+
+            resp = requests.request(**request_kwargs)
             resp.raise_for_status()
 
             return {
