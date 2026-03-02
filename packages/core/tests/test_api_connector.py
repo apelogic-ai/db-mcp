@@ -1029,6 +1029,70 @@ class TestAPIConnectorSQLExecution:
         assert result[0]["id"] == 1
         assert call_count["status"] == 2  # Called twice: pending, then complete
 
+    def test_submit_and_poll_methods_for_async_sql(self, data_dir, env_file):
+        """submit_sql/get_execution_status/get_execution_results should work independently."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.dune.com/api/v1",
+            auth=APIAuthConfig(
+                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+            ),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql", path="/sql/execute", method="POST", body_mode="json"
+                ),
+                APIEndpointConfig(
+                    name="execution_status", path="/execution/{execution_id}/status", method="GET"
+                ),
+                APIEndpointConfig(
+                    name="execution_results",
+                    path="/execution/{execution_id}/results",
+                    method="GET",
+                ),
+            ],
+            capabilities={"supports_sql": True, "sql_mode": "api_async"},
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        execute_resp = MagicMock()
+        execute_resp.status_code = 200
+        execute_resp.json.return_value = {"execution_id": "exec-123"}
+
+        status_resp = MagicMock()
+        status_resp.status_code = 200
+        status_resp.json.return_value = {"state": "QUERY_STATE_COMPLETED"}
+
+        results_resp = MagicMock()
+        results_resp.status_code = 200
+        results_resp.json.return_value = {"result": {"rows": [{"id": 1}]}}
+
+        def _get(url, **kwargs):
+            if "/status" in url:
+                return status_resp
+            if "/results" in url:
+                return results_resp
+            raise ValueError(f"Unexpected GET {url}")
+
+        with (
+            patch("db_mcp.connectors.api.requests.post", return_value=execute_resp),
+            patch("db_mcp.connectors.api.requests.get", side_effect=_get),
+        ):
+            submission = conn.submit_sql("SELECT 1")
+            assert submission["mode"] == "async"
+            assert submission["execution_id"] == "exec-123"
+
+            status = conn.get_execution_status("exec-123")
+            assert status["state"] == "QUERY_STATE_COMPLETED"
+
+            rows = conn.get_execution_results("exec-123")
+            assert rows == [{"id": 1}]
+
     def test_execute_sql_missing_endpoint_raises(self, data_dir, env_file):
         """Missing execute_sql endpoint should raise ValueError."""
         from db_mcp.connectors.api import (

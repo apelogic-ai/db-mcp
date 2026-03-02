@@ -9,6 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import yaml
 
+from db_mcp.capabilities import normalize_capabilities
 from db_mcp.config import get_settings
 from db_mcp.connectors.api import (
     APIAuthConfig,
@@ -271,54 +272,26 @@ _CONNECTOR_FACTORIES: dict[type, Any] = {
 
 def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
     """Return normalized capability flags for a connector."""
-    defaults: dict[str, Any] = {
-        "supports_sql": False,
-        "supports_validate_sql": False,
-        "supports_async_jobs": False,
-        "sql_mode": None,
-    }
-
     if isinstance(connector, SQLConnector):
-        defaults.update(
-            {
-                "supports_sql": True,
-                "supports_validate_sql": True,
-                "supports_async_jobs": True,
-                "sql_mode": "engine",
-            }
-        )
+        connector_type = "sql"
         config_caps = connector.config.capabilities
     elif isinstance(connector, FileConnector):
-        defaults.update(
-            {
-                "supports_sql": True,
-                "supports_validate_sql": True,
-                "supports_async_jobs": True,
-                "sql_mode": "engine",
-            }
-        )
+        connector_type = "file"
         config_caps = connector.config.capabilities
     elif isinstance(connector, MetabaseConnector):
-        defaults.update(
-            {
-                "supports_sql": True,
-                "supports_validate_sql": False,
-                "supports_async_jobs": False,
-                "sql_mode": "api_sync",
-            }
-        )
+        connector_type = "metabase"
         config_caps = connector.config.capabilities
     elif isinstance(connector, APIConnector):
+        connector_type = "api"
         config_caps = connector.api_config.capabilities
     else:
+        connector_type = "unknown"
         config_caps = {}
 
     if not isinstance(config_caps, dict):
         config_caps = {}
 
-    merged = dict(defaults)
-    merged.update(config_caps)
-    return merged
+    return normalize_capabilities(connector_type, config_caps)
 
 
 __all__ = [

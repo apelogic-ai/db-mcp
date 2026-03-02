@@ -3,6 +3,7 @@
 from typing import Any
 
 from db_mcp.connectors import APIConnector, get_connector_capabilities
+from db_mcp.execution import check_protocol_ack_gate, evaluate_sql_execution_policy
 from db_mcp.tools.utils import require_connection, resolve_connection
 
 
@@ -120,9 +121,14 @@ async def _api_execute_sql(sql: str, connection: str) -> dict[str, Any]:
     Returns:
         {status: "success", data: [...], rows_returned: int} or {status: "error", error: "..."}
     """
-    connector, err = _get_api_connector(connection)
-    if err:
-        return {"status": "error", "error": err.get("error", "Unknown error")}
+    try:
+        connection = require_connection(connection, tool_name="api_execute_sql")
+        connector, _, conn_path = resolve_connection(connection, require_type="api")
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
+
+    if not isinstance(connector, APIConnector):
+        return {"status": "error", "error": "Resolved connection is not an API connector"}
 
     caps = get_connector_capabilities(connector)
     if not caps.get("supports_sql"):
@@ -130,6 +136,20 @@ async def _api_execute_sql(sql: str, connection: str) -> dict[str, Any]:
             "status": "error",
             "error": "This API connector does not support SQL execution. Use api_query instead.",
         }
+
+    policy_error = check_protocol_ack_gate(connection=connection, connection_path=conn_path)
+    if policy_error is not None:
+        return policy_error
+
+    policy_error, _, _ = evaluate_sql_execution_policy(
+        sql=sql,
+        capabilities=caps,
+        confirmed=False,
+        require_validate_first=False,
+        query_id=None,
+    )
+    if policy_error is not None:
+        return policy_error
 
     try:
         rows = connector.execute_sql(sql)
