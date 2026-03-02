@@ -6,13 +6,13 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 from fastmcp import FastMCP
 from pydantic_ai import Agent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from db_mcp.capabilities import normalize_capabilities
 from db_mcp.config import get_settings
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
@@ -375,12 +375,24 @@ def _build_connection_instructions(all_connections: dict) -> str:
     return "\n".join(lines)
 
 
+def _resolve_tool_profile(settings: object, is_shell_mode: bool) -> str:
+    """Resolve effective tool profile with safe fallback."""
+    profile = getattr(settings, "tool_profile", "auto")
+    if profile not in {"auto", "full", "query"}:
+        profile = "auto"
+    if profile == "auto":
+        return "query" if is_shell_mode else "full"
+    return profile
+
+
 def _create_server() -> FastMCP:
     """Create and configure the MCP server based on tool_mode setting."""
     import yaml as _yaml
 
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
+    tool_profile = _resolve_tool_profile(settings, is_shell_mode)
+    is_full_profile = tool_profile == "full"
 
     # =========================================================================
     # Registry-based aggregate capability detection
@@ -389,34 +401,6 @@ def _create_server() -> FastMCP:
 
     registry = ConnectionRegistry.get_instance()
     all_connections = registry.discover()
-
-    # Type-specific capability defaults (mirrors get_connector_capabilities)
-    _type_defaults: dict[str, dict[str, Any]] = {
-        "sql": {
-            "supports_sql": True,
-            "supports_validate_sql": True,
-            "supports_async_jobs": True,
-            "sql_mode": "engine",
-        },
-        "file": {
-            "supports_sql": True,
-            "supports_validate_sql": True,
-            "supports_async_jobs": True,
-            "sql_mode": "engine",
-        },
-        "metabase": {
-            "supports_sql": True,
-            "supports_validate_sql": False,
-            "supports_async_jobs": False,
-            "sql_mode": "api_sync",
-        },
-        "api": {
-            "supports_sql": False,
-            "supports_validate_sql": False,
-            "supports_async_jobs": False,
-            "sql_mode": None,
-        },
-    }
 
     if all_connections:
         # Scan all connections for aggregate capabilities
@@ -436,8 +420,7 @@ def _create_server() -> FastMCP:
 
             conn_type = _yaml_data.get("type", "sql")
             raw_caps = dict(_yaml_data.get("capabilities", {}) or {})
-            merged = dict(_type_defaults.get(conn_type, {}))
-            merged.update(raw_caps)
+            merged = normalize_capabilities(conn_type, raw_caps)
 
             if conn_type == "api":
                 has_api = True
@@ -470,8 +453,7 @@ def _create_server() -> FastMCP:
             connector_type = "sql"
             raw_caps = {}
 
-        connector_caps = dict(_type_defaults.get(connector_type, {}))
-        connector_caps.update(raw_caps)
+        connector_caps = normalize_capabilities(connector_type, raw_caps)
 
         is_api = connector_type == "api"
         has_api = is_api
@@ -659,6 +641,7 @@ def _create_server() -> FastMCP:
                 "service": "db-mcp",
                 "connection": settings.connection_name,
                 "tool_mode": settings.tool_mode,
+                "tool_profile": tool_profile,
             }
         )
 
@@ -738,7 +721,8 @@ def _create_server() -> FastMCP:
             "insight_id": insight_id,
         }
 
-    server.tool(name="dismiss_insight")(_dismiss_insight)
+    if is_full_profile:
+        server.tool(name="dismiss_insight")(_dismiss_insight)
 
     async def _mark_insights_processed(connection: str) -> dict:
         """Mark insights as processed to update the timestamp.
@@ -754,7 +738,8 @@ def _create_server() -> FastMCP:
 
         return {"status": "processed", "message": "Insights processing timestamp updated"}
 
-    server.tool(name="mark_insights_processed")(_mark_insights_processed)
+    if is_full_profile:
+        server.tool(name="mark_insights_processed")(_mark_insights_processed)
 
     async def _mcp_list_improvements(connection: str) -> dict:
         """List pending improvements (backward-compatible alias for insights)."""
@@ -778,7 +763,8 @@ def _create_server() -> FastMCP:
             "count": len(improvements),
         }
 
-    server.tool(name="mcp_list_improvements")(_mcp_list_improvements)
+    if is_full_profile:
+        server.tool(name="mcp_list_improvements")(_mcp_list_improvements)
 
     async def _mcp_suggest_improvement(connection: str) -> dict:
         """Suggest the highest-priority pending improvement.
@@ -810,7 +796,8 @@ def _create_server() -> FastMCP:
             },
         }
 
-    server.tool(name="mcp_suggest_improvement")(_mcp_suggest_improvement)
+    if is_full_profile:
+        server.tool(name="mcp_suggest_improvement")(_mcp_suggest_improvement)
 
     async def _mcp_approve_improvement(improvement_id: str, connection: str) -> dict:
         """Approve (resolve) an improvement by ID.
@@ -831,7 +818,8 @@ def _create_server() -> FastMCP:
             "remaining": len(store.pending()),
         }
 
-    server.tool(name="mcp_approve_improvement")(_mcp_approve_improvement)
+    if is_full_profile:
+        server.tool(name="mcp_approve_improvement")(_mcp_approve_improvement)
 
     def _connection_is_configured(connection: str | None = None) -> bool:
         """Check whether the selected connection has required source config."""
@@ -873,6 +861,7 @@ def _create_server() -> FastMCP:
             "status": "ok",
             "connection": resolved_connection,
             "tool_mode": settings.tool_mode,
+            "tool_profile": tool_profile,
             "database_configured": _connection_is_configured(resolved_connection),
         }
 
@@ -884,6 +873,7 @@ def _create_server() -> FastMCP:
             "connection": resolved_connection,
             "connection_path": str(connection_path),
             "tool_mode": settings.tool_mode,
+            "tool_profile": tool_profile,
             "database_configured": _connection_is_configured(resolved_connection),
         }
 
@@ -918,47 +908,49 @@ def _create_server() -> FastMCP:
     # =========================================================================
 
     if has_api:
-        server.tool(name="api_discover")(_api_discover)
         server.tool(name="api_query")(_api_query)
-        server.tool(name="api_mutate")(_api_mutate)
         server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
         if has_api_sql:
             server.tool(name="api_execute_sql")(_api_execute_sql)
+        if is_full_profile:
+            server.tool(name="api_discover")(_api_discover)
+            server.tool(name="api_mutate")(_api_mutate)
 
     # =========================================================================
     # Admin/Setup tools - always available (not for casual query use)
     # =========================================================================
 
-    # MCP setup tools (schema discovery wizard)
-    server.tool(name="mcp_setup_status")(_onboarding_status)
-    server.tool(name="mcp_setup_start")(_onboarding_start)
-    server.tool(name="mcp_setup_add_ignore_pattern")(_onboarding_add_ignore_pattern)
-    server.tool(name="mcp_setup_remove_ignore_pattern")(_onboarding_remove_ignore_pattern)
-    server.tool(name="mcp_setup_import_ignore_patterns")(_onboarding_import_ignore_patterns)
-    server.tool(name="mcp_setup_discover")(_onboarding_discover)
-    server.tool(name="mcp_setup_discover_status")(_onboarding_discover_status)
-    server.tool(name="mcp_setup_reset")(_onboarding_reset)
-    server.tool(name="mcp_setup_next")(_onboarding_next)
-    server.tool(name="mcp_setup_approve")(_onboarding_approve)
-    server.tool(name="mcp_setup_skip")(_onboarding_skip)
-    server.tool(name="mcp_setup_bulk_approve")(_onboarding_bulk_approve)
-    server.tool(name="mcp_setup_import_descriptions")(_onboarding_import_descriptions)
+    if is_full_profile:
+        # MCP setup tools (schema discovery wizard)
+        server.tool(name="mcp_setup_status")(_onboarding_status)
+        server.tool(name="mcp_setup_start")(_onboarding_start)
+        server.tool(name="mcp_setup_add_ignore_pattern")(_onboarding_add_ignore_pattern)
+        server.tool(name="mcp_setup_remove_ignore_pattern")(_onboarding_remove_ignore_pattern)
+        server.tool(name="mcp_setup_import_ignore_patterns")(_onboarding_import_ignore_patterns)
+        server.tool(name="mcp_setup_discover")(_onboarding_discover)
+        server.tool(name="mcp_setup_discover_status")(_onboarding_discover_status)
+        server.tool(name="mcp_setup_reset")(_onboarding_reset)
+        server.tool(name="mcp_setup_next")(_onboarding_next)
+        server.tool(name="mcp_setup_approve")(_onboarding_approve)
+        server.tool(name="mcp_setup_skip")(_onboarding_skip)
+        server.tool(name="mcp_setup_bulk_approve")(_onboarding_bulk_approve)
+        server.tool(name="mcp_setup_import_descriptions")(_onboarding_import_descriptions)
 
-    # MCP domain tools (domain model generation)
-    server.tool(name="mcp_domain_status")(_domain_status)
-    server.tool(name="mcp_domain_generate")(_domain_generate)
-    server.tool(name="mcp_domain_approve")(_domain_approve)
-    server.tool(name="mcp_domain_skip")(_domain_skip)
+        # MCP domain tools (domain model generation)
+        server.tool(name="mcp_domain_status")(_domain_status)
+        server.tool(name="mcp_domain_generate")(_domain_generate)
+        server.tool(name="mcp_domain_approve")(_domain_approve)
+        server.tool(name="mcp_domain_skip")(_domain_skip)
 
-    # Import tools (bulk import from legacy format)
-    server.tool(name="import_instructions")(_import_instructions)
-    server.tool(name="import_examples")(_import_examples)
+        # Import tools (bulk import from legacy format)
+        server.tool(name="import_instructions")(_import_instructions)
+        server.tool(name="import_examples")(_import_examples)
 
     # =========================================================================
     # Detailed mode ONLY - schema discovery and query helper tools
     # =========================================================================
 
-    if not is_shell_mode and (has_sql or has_api):
+    if is_full_profile and not is_shell_mode and (has_sql or has_api):
         # Database introspection tools
         server.tool(name="test_connection")(_test_connection)
         server.tool(name="detect_dialect")(_detect_dialect)

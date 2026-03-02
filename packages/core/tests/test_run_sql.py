@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from db_mcp.tasks.store import Query, QueryStatus
-from db_mcp.tools.generation import _run_sql, _validate_sql
+from db_mcp.tools.generation import _get_result, _run_sql, _validate_sql
 
 CONNECTION = "test-conn"
 
@@ -14,6 +14,23 @@ CONNECTION = "test-conn"
 class _FakeSQLConnector:
     def execute_sql(self, sql: str):
         return [{"id": 1, "name": "Alice"}]
+
+
+class _FakeAsyncSQLConnector:
+    def __init__(self):
+        self.status_calls = 0
+
+    def submit_sql(self, sql: str):
+        return {"mode": "async", "execution_id": "remote-exec-1"}
+
+    def get_execution_status(self, execution_id: str):
+        self.status_calls += 1
+        if self.status_calls == 1:
+            return {"state": "RUNNING"}
+        return {"state": "QUERY_STATE_COMPLETED", "is_execution_finished": True}
+
+    def get_execution_results(self, execution_id: str):
+        return [{"token": "SOL", "volume": 123.0}]
 
 
 class _FakeQueryStore:
@@ -107,6 +124,75 @@ async def test_run_sql_allows_direct_sql_for_engine_mode():
     assert payload["status"] == "success"
     assert payload["rows_returned"] == 1
     assert payload["data"][0]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_run_sql_api_async_submits_and_get_result_polls(tmp_path: Path):
+    """api_async connectors should submit and then resolve through get_result polling."""
+    connection_path = tmp_path / "conn"
+    connection_path.mkdir(parents=True, exist_ok=True)
+    connector = _FakeAsyncSQLConnector()
+
+    with (
+        patch("db_mcp.tools.generation.get_connector", return_value=connector),
+        patch(
+            "db_mcp.tools.generation.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "supports_async_jobs": True,
+                "sql_mode": "api_async",
+            },
+        ),
+        patch(
+            "db_mcp.tools.utils._resolve_connection_path",
+            return_value=str(connection_path),
+        ),
+    ):
+        submit_result = await _run_sql(sql="SELECT 1", connection=CONNECTION)
+        submit_payload = submit_result.structuredContent
+        assert submit_payload["status"] == "submitted"
+        execution_id = submit_payload["execution_id"]
+
+        running = await _get_result(query_id=execution_id, connection=CONNECTION)
+        running_payload = running.structuredContent
+        assert running_payload["status"] == "running"
+
+        complete = await _get_result(query_id=execution_id, connection=CONNECTION)
+        complete_payload = complete.structuredContent
+        assert complete_payload["status"] == "complete"
+        assert complete_payload["rows_returned"] == 1
+        assert complete_payload["data"][0]["token"] == "SOL"
+
+
+@pytest.mark.asyncio
+async def test_run_sql_direct_sql_blocked_when_protocol_ack_required(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    connection_path = tmp_path / "conn"
+    connection_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DB_MCP_REQUIRE_PROTOCOL_ACK", "1")
+
+    with (
+        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.tools.generation.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "sql_mode": "engine",
+            },
+        ),
+        patch(
+            "db_mcp.tools.utils._resolve_connection_path",
+            return_value=str(connection_path),
+        ),
+    ):
+        result = await _run_sql(sql="SELECT 1", connection=CONNECTION)
+
+    payload = result.structuredContent
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "POLICY"
 
 
 @pytest.mark.asyncio
@@ -308,3 +394,38 @@ async def test_run_sql_write_executes_when_confirmed():
     assert payload["status"] == "success"
     assert payload["is_write"] is True
     assert payload["rows_affected"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_result_can_read_direct_sql_execution_result(tmp_path: Path):
+    """Direct run_sql execution IDs should be retrievable through get_result fallback."""
+    connection_path = tmp_path / "conn"
+    connection_path.mkdir(parents=True)
+
+    with (
+        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.tools.generation.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "sql_mode": "api_sync",
+            },
+        ),
+        patch(
+            "db_mcp.tools.utils._resolve_connection_path",
+            return_value=str(connection_path),
+        ),
+    ):
+        run_result = await _run_sql(sql="SELECT 1", connection=CONNECTION)
+
+        run_payload = run_result.structuredContent
+        assert run_payload["status"] == "success"
+        execution_id = run_payload.get("execution_id")
+        assert execution_id
+
+        get_result = await _get_result(query_id=execution_id, connection=CONNECTION)
+        get_payload = get_result.structuredContent
+        assert get_payload["status"] == "complete"
+        assert get_payload["execution_id"] == execution_id
+        assert get_payload["rows_returned"] == 1

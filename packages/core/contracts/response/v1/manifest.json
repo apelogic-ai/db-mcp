@@ -1,0 +1,11 @@
+{
+  "schema_version": "v1",
+  "schemas": [
+    "get_result_complete.schema.json",
+    "get_result_error.schema.json",
+    "get_result_running.schema.json",
+    "run_sql_async_error.schema.json",
+    "run_sql_async_submitted.schema.json",
+    "run_sql_sync_success.schema.json"
+  ]
+}

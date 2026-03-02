@@ -333,6 +333,15 @@ async def _shell(command: str, connection: str) -> dict:
     logger.info(f"Running shell command: {command[:100]}...")
     result = await run_sandboxed(command, connection_path)
 
+    # Reading protocol via shell counts as explicit acknowledgment for policy gating.
+    if result["exit_code"] == 0 and "protocol.md" in command.lower():
+        try:
+            from db_mcp.execution.policy import record_protocol_ack
+
+            record_protocol_ack(connection_path, source="shell")
+        except Exception as exc:
+            logger.debug(f"Failed to record protocol ack from shell: {exc}")
+
     # Log writes for audit
     if validation.is_write:
         logger.info(f"Connection write operation: {command[:100]}...")
@@ -363,6 +372,12 @@ async def _protocol(connection: str) -> str:
     protocol_path = base_path / "PROTOCOL.md"
 
     if protocol_path.exists():
+        try:
+            from db_mcp.execution.policy import record_protocol_ack
+
+            record_protocol_ack(base_path, source="protocol_tool")
+        except Exception as exc:
+            logger.debug(f"Failed to record protocol ack: {exc}")
         return protocol_path.read_text()
 
     return "PROTOCOL.md not found. Connection may not be initialized."

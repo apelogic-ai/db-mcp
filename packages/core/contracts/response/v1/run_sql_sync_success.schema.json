@@ -1,0 +1,115 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "cost_tier": {
+      "title": "Cost Tier",
+      "type": "string"
+    },
+    "data": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Data",
+      "type": "array"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Duration Ms"
+    },
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "is_write": {
+      "title": "Is Write",
+      "type": "boolean"
+    },
+    "mode": {
+      "const": "sync",
+      "title": "Mode",
+      "type": "string"
+    },
+    "provider_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Provider Id"
+    },
+    "query_id": {
+      "title": "Query Id",
+      "type": "string"
+    },
+    "rows_affected": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rows Affected"
+    },
+    "rows_returned": {
+      "title": "Rows Returned",
+      "type": "integer"
+    },
+    "sql": {
+      "title": "Sql",
+      "type": "string"
+    },
+    "state": {
+      "const": "succeeded",
+      "title": "State",
+      "type": "string"
+    },
+    "statement_type": {
+      "title": "Statement Type",
+      "type": "string"
+    },
+    "status": {
+      "const": "success",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "mode",
+    "execution_id",
+    "state",
+    "query_id",
+    "sql",
+    "data",
+    "columns",
+    "rows_returned",
+    "duration_ms",
+    "provider_id",
+    "cost_tier",
+    "statement_type",
+    "is_write",
+    "rows_affected"
+  ],
+  "title": "RunSqlSyncSuccessContract",
+  "type": "object"
+}

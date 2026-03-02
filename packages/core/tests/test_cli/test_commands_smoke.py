@@ -43,7 +43,7 @@ class TestMainGroup:
     def test_all_expected_commands_registered(self, runner):
         """Verify the main group has every expected top-level name."""
         expected = {
-            "init", "start", "status", "list", "use", "sync", "pull",
+            "init", "start", "status", "list", "use", "doctor", "sync", "pull",
             "discover", "agents", "console", "ui",
             "collab", "traces", "playground",
         }
@@ -57,7 +57,7 @@ class TestMainGroup:
 # ---------------------------------------------------------------------------
 
 class TestCoreCommandsHelp:
-    @pytest.mark.parametrize("cmd", ["init", "start", "status", "list", "use"])
+    @pytest.mark.parametrize("cmd", ["init", "start", "status", "list", "use", "doctor"])
     def test_core_command_help(self, runner, cmd):
         result = invoke_help(runner, cmd)
         assert result.exit_code == 0, f"'{cmd} --help' failed: {result.output}"
@@ -172,6 +172,7 @@ class TestRegisterCommands:
         assert "status" in g.commands
         assert "list" in g.commands
         assert "use" in g.commands
+        assert "doctor" in g.commands
 
     def test_register_agents(self):
         from db_mcp.cli.commands.agents_cmd import register_commands
