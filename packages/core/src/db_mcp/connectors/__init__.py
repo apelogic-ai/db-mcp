@@ -188,9 +188,14 @@ def _load_api_config(data: dict[str, Any]) -> APIConnectorConfig:
     endpoints_data = data.get("endpoints", [])
     endpoints = []
     for e in endpoints_data:
-        qp_data = e.pop("query_params", [])
+        endpoint_data = dict(e)
+        qp_data = endpoint_data.pop("query_params", [])
         query_params = [APIQueryParamConfig(**qp) for qp in qp_data]
-        endpoints.append(APIEndpointConfig(**e, query_params=query_params))
+        method = str(endpoint_data.get("method", "GET")).upper()
+        if "body_mode" not in endpoint_data and method != "GET":
+            # Most write endpoints expect JSON body; explicit body_mode still wins.
+            endpoint_data["body_mode"] = "json"
+        endpoints.append(APIEndpointConfig(**endpoint_data, query_params=query_params))
 
     pagination_data = data.get("pagination", {})
     pagination = (

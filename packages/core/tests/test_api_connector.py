@@ -493,6 +493,35 @@ class TestAPIConnectorAdHocQuery:
         assert len(result["data"]) == 2
         assert result["data"][0]["name"] == "Alice"
 
+    def test_query_endpoint_extracts_result_wrapper(self, data_dir, env_file):
+        """Superset-style `{result: [...]}` payload should be extracted as rows."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="dashboards", path="/dashboard/")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "count": 1,
+            "result": [{"id": 42, "dashboard_title": "wifi metrics"}],
+        }
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+            result = conn.query_endpoint("dashboards")
+
+        assert result["rows_returned"] == 1
+        assert result["data"][0]["id"] == 42
+
     def test_query_endpoint_passes_user_params(self, data_dir, env_file):
         """User params should appear in the HTTP request."""
         from db_mcp.connectors.api import (
@@ -1335,6 +1364,72 @@ class TestQueryEndpointWriteSupport:
         assert call_kw["json"] == {"name": "Widget", "price": 9.99}
         assert call_kw["method"] == "POST"
 
+    def test_query_endpoint_post_without_query_params_uses_json_body(self, data_dir, env_file):
+        """POST params default to JSON body when endpoint declares no query params."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="create_item", path="/items", method="POST")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {"id": 100}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            conn.query_endpoint("create_item", params={"name": "Widget"})
+
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["method"] == "POST"
+        assert call_kw["json"] == {"name": "Widget"}
+        assert call_kw["params"] == {}
+
+    def test_query_endpoint_post_with_declared_query_params_keeps_query_params(
+        self, data_dir, env_file
+    ):
+        """POST params stay in query string when endpoint declares query params."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+            APIQueryParamConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="create_item",
+                    path="/items",
+                    method="POST",
+                    query_params=[APIQueryParamConfig(name="dry_run")],
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ok": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+            conn.query_endpoint("create_item", params={"dry_run": "true"})
+
+        call_kw = mock_req.call_args.kwargs
+        assert call_kw["method"] == "POST"
+        assert call_kw["params"] == {"dry_run": "true"}
+        assert "json" not in call_kw
+
     def test_query_endpoint_with_method_override(self, data_dir, env_file):
         """method_override overrides the endpoint's default method."""
         from db_mcp.connectors.api import (
@@ -1764,6 +1859,25 @@ class TestJWTLoginAuth:
         # Literal values never get pushed into *_env fields.
         assert config.auth.username_env == ""
         assert config.auth.password_env == ""
+
+    def test_load_api_config_non_get_endpoint_defaults_to_json_body_mode(self):
+        """POST endpoints without body_mode default to JSON body routing."""
+        from db_mcp.connectors import _load_api_config
+
+        data = {
+            "type": "api",
+            "base_url": "https://example.com",
+            "auth": {"type": "bearer", "token_env": "TEST_API_KEY"},
+            "endpoints": [
+                {"name": "list_items", "path": "/items", "method": "GET"},
+                {"name": "create_item", "path": "/items", "method": "POST"},
+            ],
+        }
+
+        config = _load_api_config(data)
+        endpoint_map = {ep.name: ep for ep in config.endpoints}
+        assert endpoint_map["list_items"].body_mode == "query"
+        assert endpoint_map["create_item"].body_mode == "json"
 
 
 # ---------------------------------------------------------------------------
