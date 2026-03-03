@@ -4,9 +4,24 @@ db-mcp exposes MCP tools dynamically based on tool mode and connector capabiliti
 
 ## Tool exposure rules
 
-- `TOOL_MODE=detailed`: full tool surface.
-- `TOOL_MODE=shell`: shell-first workflow plus execution helpers.
-- Connector capabilities control SQL/API tool availability (for example `supports_sql`, `supports_validate_sql`).
+- `TOOL_MODE=detailed`: exposes introspection, query-training, metrics, and helper tools.
+- `TOOL_MODE=shell`: shell-first workflow with execution helpers.
+- Connector capabilities control SQL/API tool availability (for example `supports_sql`, `supports_validate_sql`, `supports_async_jobs`).
+
+## Availability matrix
+
+| Tool group | Availability |
+|---|---|
+| `ping`, `get_config`, `list_connections`, `shell`, `protocol` | Always exposed |
+| `mcp_setup_*`, `mcp_domain_*`, `import_examples`, `import_instructions` | Always exposed |
+| `dismiss_insight`, `mark_insights_processed`, `mcp_*improvement*` | Always exposed |
+| `run_sql` | Only when selected connection type supports SQL |
+| `validate_sql` | Only when SQL + `supports_validate_sql=true` |
+| `get_result` | Only when SQL + `supports_async_jobs=true` |
+| `export_results` | Only when SQL is supported |
+| `api_*` tools | Only when at least one API connection exists |
+| `api_execute_sql` | Only for API connectors with SQL capability |
+| `test_connection`, `list_*`, `describe_table`, `query_*`, `metrics_*`, `get_data`, `test_*` helpers | Detailed mode only |
 
 ## Connection routing
 
@@ -20,6 +35,7 @@ Best practice:
 
 - Always pass `connection` in multi-connection sessions.
 - Keep `connection` consistent across validate/execute flows.
+- If `connection` is omitted and multiple candidates exist, the tool errors and asks for explicit selection.
 
 ## Core tools
 
@@ -31,18 +47,24 @@ Best practice:
 
 ## SQL and database tools
 
-- `test_connection`
-- `detect_dialect`
-- `list_catalogs`
-- `list_schemas`
-- `list_tables`
-- `describe_table`
-- `sample_table`
-- `validate_sql`
-- `run_sql`
-- `get_result`
-- `export_results`
-- `get_data`
+- `test_connection` (detailed mode)
+- `detect_dialect` (detailed mode)
+- `list_catalogs` (detailed mode)
+- `list_schemas` (detailed mode)
+- `list_tables` (detailed mode)
+- `describe_table` (detailed mode)
+- `sample_table` (detailed mode)
+- `validate_sql` (when `supports_validate_sql=true`)
+- `run_sql` (when SQL execution is supported)
+- `get_result` (when async jobs are supported)
+- `export_results` (when SQL execution is supported)
+- `get_data` (detailed mode)
+
+Example (`validate_sql` + `run_sql` flow):
+
+```json
+{"connection":"analytics","sql":"SELECT * FROM public.users LIMIT 10"}
+```
 
 ## API connector tools
 
@@ -74,25 +96,25 @@ Best practice:
 
 ## Training and rules tools
 
-- `query_status`
-- `query_generate`
-- `query_approve`
-- `query_feedback`
-- `query_add_rule`
-- `query_list_examples`
-- `query_list_rules`
+- `query_status` (detailed mode)
+- `query_generate` (detailed mode)
+- `query_approve` (detailed mode)
+- `query_feedback` (detailed mode)
+- `query_add_rule` (detailed mode)
+- `query_list_examples` (detailed mode)
+- `query_list_rules` (detailed mode)
 - `import_examples`
 - `import_instructions`
 
 ## Metrics and gaps tools
 
-- `metrics_discover`
-- `metrics_list`
-- `metrics_approve`
-- `metrics_add`
-- `metrics_remove`
-- `get_knowledge_gaps`
-- `dismiss_knowledge_gap`
+- `metrics_discover` (detailed mode)
+- `metrics_list` (detailed mode)
+- `metrics_approve` (detailed mode)
+- `metrics_add` (detailed mode)
+- `metrics_remove` (detailed mode)
+- `get_knowledge_gaps` (detailed mode)
+- `dismiss_knowledge_gap` (detailed mode)
 
 ## Insights and compatibility tools
 
@@ -104,8 +126,8 @@ Best practice:
 
 ## Testing helper tools
 
-- `test_elicitation`
-- `test_sampling`
+- `test_elicitation` (detailed mode)
+- `test_sampling` (detailed mode)
 
 ## Resources
 
@@ -116,3 +138,9 @@ In addition to tools, db-mcp provides MCP resources such as:
 - `db-mcp://ground-rules`
 - `db-mcp://sql-rules`
 - `db-mcp://insights/pending`
+
+## Prompts
+
+db-mcp also exposes prompts:
+
+- `review-insights`: workflow prompt for reviewing and resolving pending insights.

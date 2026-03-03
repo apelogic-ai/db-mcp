@@ -34,6 +34,10 @@ Then use:
 - `db-mcp://insights/pending` resource for actionable items
 - `dismiss_insight` / `mark_insights_processed` for workflow control
 
+Visualization:
+
+![Insights — semantic layer gaps and usage patterns](assets/ui-insights.jpg)
+
 ## Collaboration model
 
 Team workflows are git-based, at connection scope.
@@ -49,10 +53,18 @@ Collaborative subgroup commands:
 
 - `db-mcp collab init`
 - `db-mcp collab attach <url>`
+- `db-mcp collab detach`
 - `db-mcp collab join`
 - `db-mcp collab sync`
 - `db-mcp collab merge`
+- `db-mcp collab prune`
 - `db-mcp collab status`
+- `db-mcp collab members`
+- `db-mcp collab daemon`
+
+`db-mcp collab status` sample:
+
+![Collaboration status output](assets/cli-collab-status.png)
 
 ## Multi-connection operations
 
@@ -62,6 +74,12 @@ For stable behavior in mixed workloads:
 - keep `connector.yaml` present for every connection
 - keep connector type/capabilities accurate
 - avoid implicit defaults in long-running agent sessions
+
+Preflight check before troubleshooting:
+
+```bash
+db-mcp doctor -c <connection>
+```
 
 ## Tool mode strategy
 
@@ -73,6 +91,21 @@ Set in config and verify with:
 ```bash
 db-mcp status
 ```
+
+Operational guidance:
+
+- Keep `shell` for day-to-day query sessions and faster grounding from vault files.
+- Use `detailed` for onboarding, schema introspection, and structured tool debugging.
+
+## Shell safety model
+
+The `shell` tool is intentionally constrained:
+
+- command allowlist (`cat`, `grep`, `find`, `ls`, `head`, `tail`, `wc`, `sort`, `uniq`, `diff`, `mkdir`, `touch`, `tee`, `echo`, `date`, `uuidgen`)
+- no deletion/move/network commands
+- no overwrite redirection (`>`)
+
+This is by design to protect vault integrity and credentials.
 
 ## Migrations and compatibility
 

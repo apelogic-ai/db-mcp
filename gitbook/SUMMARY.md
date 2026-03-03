@@ -2,6 +2,7 @@
 
 - [db-mcp Docs](README.md)
 - [Quickstart](quickstart.md)
+- [How-To Guides](how-to-guides.md)
 - [Install and Configuration](install-and-configuration.md)
 - [Using the CLI](using-cli.md)
 - [Using the Web UI](using-web-ui.md)

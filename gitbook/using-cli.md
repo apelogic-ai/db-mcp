@@ -10,6 +10,11 @@ db-mcp status
 db-mcp start
 ```
 
+Default behavior:
+
+- `init` sets `tool_mode` to `shell` by default.
+- `start` runs MCP over stdio for agent clients.
+
 ## Common commands
 
 ### Connection management
@@ -40,6 +45,7 @@ db-mcp start
 
 - `db-mcp discover --connection NAME`
 - `db-mcp discover --url <database_url>`
+- `db-mcp doctor -c NAME`
 - `db-mcp traces on`
 - `db-mcp traces off`
 - `db-mcp traces status`
@@ -54,11 +60,44 @@ db-mcp start
 
 - `db-mcp collab init`
 - `db-mcp collab attach <repo-url>`
+- `db-mcp collab detach`
 - `db-mcp collab join`
 - `db-mcp collab sync`
 - `db-mcp collab merge`
+- `db-mcp collab prune`
 - `db-mcp collab status`
 - `db-mcp collab members`
+- `db-mcp collab daemon`
+
+## Practical workflows
+
+### Solo workflow
+
+```bash
+db-mcp init analytics
+db-mcp status
+db-mcp agents --all
+# query from your agent client
+db-mcp traces status
+```
+
+### Team contributor workflow
+
+```bash
+db-mcp init analytics git@github.com:your-org/db-mcp-analytics.git
+db-mcp collab join
+# query from your agent client
+db-mcp collab sync
+db-mcp collab status
+```
+
+### Master reviewer workflow
+
+```bash
+db-mcp collab merge -c analytics
+db-mcp collab members -c analytics
+db-mcp collab prune -c analytics
+```
 
 ## Typical daily workflow
 
@@ -76,6 +115,18 @@ db-mcp traces status
 db-mcp sync analytics
 ```
 
+## Example CLI output
+
+`db-mcp --help` includes these command groups:
+
+- `agents`, `collab`, `discover`, `traces`
+- `init`, `start`, `status`, `ui`, `console`, `doctor`
+- `git-init`, `pull`, `sync`, `migrate`
+
+`db-mcp collab --help` includes:
+
+- `attach`, `detach`, `join`, `sync`, `merge`, `prune`, `status`, `members`, `daemon`
+
 ## Help and command introspection
 
 ```bash
@@ -84,3 +135,45 @@ db-mcp <command> --help
 db-mcp collab --help
 db-mcp traces --help
 ```
+
+## CLI output gallery
+
+Main command help:
+
+![Main help output](assets/cli-help-main.png)
+
+Collaboration help:
+
+![Collab help output](assets/cli-help-collab.png)
+
+Agent setup (interactive):
+
+![Agents interactive setup](assets/cli-agents-interactive.png)
+
+Agent detection list:
+
+![Agents list output](assets/cli-agents-list.png)
+
+Global status:
+
+![Status output](assets/cli-status.png)
+
+Schema discovery sample:
+
+![Discover output for playground](assets/cli-discover-playground.png)
+
+Playground connection status:
+
+![Playground status output](assets/cli-playground-status.png)
+
+Collaboration status sample:
+
+![Collab status output](assets/cli-collab-status.png)
+
+Doctor help:
+
+![Doctor help output](assets/cli-doctor-help.png)
+
+Doctor preflight pass sample:
+
+![Doctor command pass output](assets/cli-doctor-dune-pass.png)
