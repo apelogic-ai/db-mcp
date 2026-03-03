@@ -23,6 +23,21 @@ db-mcp agents --all
 db-mcp agents -A claude-desktop -A codex
 ```
 
+Interactive setup sample:
+
+![Agents interactive setup](assets/cli-agents-interactive.png)
+
+Detected clients sample:
+
+![Agents list output](assets/cli-agents-list.png)
+
+## Recommended rollout order
+
+1. Run `db-mcp agents --list` and confirm detected clients.
+2. Run `db-mcp agents --all` (or target specific clients with `-A`).
+3. Restart each configured client.
+4. Verify with `db-mcp status` and `db-mcp traces status`.
+
 ## What configuration is written
 
 Each agent gets a `db-mcp` entry with:
@@ -87,3 +102,13 @@ args = ["start"]
 2. Restart your agent client.
 3. Trigger a simple MCP call (for example ask a question that hits `ping`/`list_connections` paths).
 4. Confirm activity under `db-mcp traces status` or UI `/traces`.
+
+## UI validation
+
+Use `/config` to confirm connection and agent setup visually:
+
+![Config screen — manage connections and agents](assets/ui-config.jpg)
+
+Use `/traces` to validate real tool activity after restart:
+
+![Traces — OpenTelemetry viewer for MCP operations](assets/ui-traces.jpg)

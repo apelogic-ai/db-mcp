@@ -21,14 +21,31 @@ db-mcp stores global and per-connection state in `~/.db-mcp`.
 ~/.db-mcp/
 ├── config.yaml
 └── connections/{name}/
-    ├── connector.yaml
-    ├── .env
-    ├── state.yaml
+    ├── .env                         # credentials/secrets (gitignored)
+    ├── connector.yaml               # connector type/capabilities (optional for plain SQL)
+    ├── PROTOCOL.md                  # system-managed agent protocol
+    ├── state.yaml                   # onboarding progress/state
+    ├── knowledge_gaps.yaml          # detected/resolved term gaps (created when used)
+    ├── feedback_log.yaml            # SQL feedback history (created when used)
+    ├── .insights.json               # pending insights queue (created when used)
     ├── schema/
+    │   └── descriptions.yaml
     ├── domain/
-    ├── training/
+    │   └── model.md
+    ├── instructions/
+    │   ├── sql_rules.md
+    │   └── business_rules.yaml
+    ├── examples/
+    │   └── *.yaml
     ├── learnings/
-    └── traces/
+    │   ├── patterns.md
+    │   ├── schema_gotchas.md
+    │   └── failures/*.yaml
+    ├── metrics/
+    │   ├── catalog.yaml
+    │   └── dimensions.yaml
+    ├── traces/{user_id}/*.jsonl     # when traces are enabled
+    └── .collab.yaml                 # when collaboration is initialized
 ```
 
 ## `connector.yaml` vs `.env`
@@ -84,7 +101,30 @@ db-mcp remove mydb
 
 ```bash
 db-mcp status
-db-mcp discover --connection mydb --format yaml
+db-mcp discover -c playground
 ```
+
+Expected validation signals:
+
+- `db-mcp status` shows an active connection and credentials.
+- `db-mcp discover` returns schema data (catalog/schema/table/columns).
+
+`db-mcp status` sample:
+
+![Status command output](assets/cli-status.png)
+
+`db-mcp discover -c playground` sample:
+
+![Discovery command output](assets/cli-discover-playground.png)
+
+## UI check
+
+Use the Config page to verify connection settings and agent integration:
+
+![Config screen — manage connections and agents](assets/ui-config.jpg)
+
+Use the Context page to confirm schema/domain/examples/rules files are present:
+
+![Context viewer — browse schema, domain, examples, and rules](assets/ui-context.jpg)
 
 If setup looks good, continue to [Using the CLI](using-cli.md) and [Working with Agents](working-with-agents.md).

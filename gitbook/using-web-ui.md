@@ -16,6 +16,12 @@ db-mcp ui -c mydb        # open with a specific connection
 db-mcp ui -v             # verbose logging
 ```
 
+Startup behavior:
+
+- Starts local FastAPI + BICP endpoints.
+- Opens your browser automatically.
+- Uses the same connection state and files as CLI/MCP server.
+
 ## Main screens
 
 ### Config (`/config`)
@@ -82,8 +88,39 @@ Key panels:
 - **Knowledge Capture** — examples saved and feedback given
 - **Trace analysis** — patterns from recent agent activity
 
+## Workflow playbooks
+
+### Onboard a new connection
+
+1. Open `/config` and verify connection credentials.
+2. Run discovery/onboarding from UI controls.
+3. Open `/context` and verify `schema/descriptions.yaml` and `domain/model.md`.
+4. Ask a few real queries from your agent and return to `/traces`.
+
+### Improve query quality using insights
+
+1. Open `/insights` and identify high-severity items.
+2. Add/adjust rules or examples in `/context`.
+3. Re-run representative queries.
+4. Confirm improvements in `/traces` and refreshed insight state.
+
+### Manage metrics lifecycle
+
+1. Open `/metrics`.
+2. Discover candidates from vault artifacts.
+3. Approve/edit/remove catalog entries.
+4. Re-test KPI questions in your agent against approved definitions.
+
 ## Operational notes
 
 - `db-mcp ui` starts a local FastAPI service and opens your browser automatically.
 - UI actions operate on the same connection state used by CLI and MCP server — changes are reflected everywhere.
 - For clean shutdown, stop with `Ctrl+C`.
+
+## Screenshot requests
+
+If you share these, I will add them as inline visuals:
+
+- `assets/ui-context-edit-example.png` (editing an example/rule in `/context`)
+- `assets/ui-metrics-candidates.png` (candidate discovery list in `/metrics`)
+- `assets/ui-insights-action-loop.png` (before/after insights triage view)
