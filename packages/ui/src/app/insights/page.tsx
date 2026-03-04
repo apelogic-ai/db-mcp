@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import {
   Card,
   CardHeader,
@@ -1368,7 +1368,7 @@ function ProcessingBanner({
   );
 }
 
-export default function InsightsPage() {
+function InsightsPageContent() {
   const searchParams = useSearchParams();
   const { activeConnection } = useConnections();
   const [analysis, setAnalysis] = useState<InsightsAnalysis | null>(null);
@@ -1621,5 +1621,13 @@ export default function InsightsPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function InsightsPage() {
+  return (
+    <Suspense fallback={<div className="text-gray-400">Loading insights...</div>}>
+      <InsightsPageContent />
+    </Suspense>
   );
 }
