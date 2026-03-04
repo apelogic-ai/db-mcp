@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "columns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "data": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Data",
+      "type": "array"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Duration Ms"
+    },
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "query_id": {
+      "title": "Query Id",
+      "type": "string"
+    },
+    "rows_returned": {
+      "title": "Rows Returned",
+      "type": "integer"
+    },
+    "sql": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sql"
+    },
+    "state": {
+      "const": "succeeded",
+      "title": "State",
+      "type": "string"
+    },
+    "status": {
+      "const": "complete",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "query_id",
+    "execution_id",
+    "state",
+    "sql",
+    "data",
+    "columns",
+    "rows_returned",
+    "duration_ms"
+  ],
+  "title": "GetResultCompleteContract",
+  "type": "object"
+}

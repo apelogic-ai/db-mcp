@@ -1,5 +1,6 @@
 """Core CRUD commands: init, start, config, status, list, use, edit, rename, remove, all."""
 
+import json
 import os
 import subprocess
 import sys
@@ -33,6 +34,9 @@ from db_mcp.cli.utils import (
     load_claude_desktop_config,
     load_config,
 )
+from db_mcp.connectors import get_connector, get_connector_capabilities
+from db_mcp.execution import ExecutionRequest, ExecutionState
+from db_mcp.execution.engine import get_execution_engine
 
 
 def _get_git_remote_url(path: Path) -> str | None:
@@ -69,6 +73,25 @@ def _get_git_status_indicator(path: Path) -> str:
         if has_changes:
             return "[yellow]○[/yellow]"  # Local only, uncommitted changes
         return "[dim]○[/dim]"  # Local only, clean
+
+
+def _doctor_connection_ok(result: dict | None) -> bool:
+    """Best-effort check for connector test_connection result."""
+    if not isinstance(result, dict):
+        return bool(result)
+
+    for key in ("connected", "success", "ok", "valid"):
+        value = result.get(key)
+        if value is not None:
+            return bool(value)
+
+    status = str(result.get("status", "")).lower()
+    if status in {"ok", "success", "connected", "healthy"}:
+        return True
+    if status in {"error", "failed", "disconnected"}:
+        return False
+
+    return "error" not in result
 
 
 @click.command()
@@ -582,6 +605,213 @@ def all(command: str):
                 console.print(f"  [red]Error: {e}[/red]")
 
 
+@click.command()
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+@click.option("--json", "as_json", is_flag=True, help="Output machine-readable diagnostics")
+@click.option(
+    "--sql",
+    "test_sql",
+    default="SELECT 1 AS db_mcp_doctor",
+    show_default=True,
+    help="Smoke-test SQL for SQL-capable connectors",
+)
+def doctor(connection: str | None, as_json: bool, test_sql: str):
+    """Run deterministic preflight checks for a connection."""
+    connection_name = connection or get_active_connection()
+    connection_path = get_connection_path(connection_name)
+    checks: list[dict[str, object]] = []
+
+    if not connection_exists(connection_name):
+        checks.append(
+            {
+                "name": "resolve_connection",
+                "status": "fail",
+                "details": {"error": f"Connection '{connection_name}' not found."},
+            }
+        )
+    else:
+        checks.append(
+            {
+                "name": "resolve_connection",
+                "status": "pass",
+                "details": {"connection_path": str(connection_path)},
+            }
+        )
+
+    connector = None
+    capabilities: dict[str, object] = {}
+    connector_type = "unknown"
+
+    if checks[0]["status"] == "pass":
+        try:
+            connector = get_connector(connection_path=str(connection_path))
+            capabilities = get_connector_capabilities(connector)
+            connector_type = (
+                getattr(getattr(connector, "api_config", None), "type", None)
+                or getattr(getattr(connector, "config", None), "type", None)
+                or connector.__class__.__name__
+            )
+            checks.append(
+                {
+                    "name": "load_connector",
+                    "status": "pass",
+                    "details": {"connector_type": connector_type},
+                }
+            )
+        except Exception as exc:
+            checks.append(
+                {
+                    "name": "load_connector",
+                    "status": "fail",
+                    "details": {"error": str(exc)},
+                }
+            )
+
+    auth_ok = False
+    if connector is not None:
+        try:
+            auth_result = connector.test_connection()
+            auth_ok = _doctor_connection_ok(auth_result)
+            checks.append(
+                {
+                    "name": "auth",
+                    "status": "pass" if auth_ok else "fail",
+                    "details": (
+                        auth_result if isinstance(auth_result, dict) else {"result": auth_result}
+                    ),
+                }
+            )
+        except Exception as exc:
+            checks.append(
+                {
+                    "name": "auth",
+                    "status": "fail",
+                    "details": {"error": str(exc)},
+                }
+            )
+
+    supports_sql = bool(capabilities.get("supports_sql", False))
+    if connector is not None and supports_sql and auth_ok:
+        execution_id = None
+        exec_ok = False
+
+        try:
+            execution_engine = get_execution_engine(connection_path)
+            request = ExecutionRequest(connection=connection_name, sql=test_sql)
+
+            def _runner(sql: str) -> dict[str, object]:
+                rows = connector.execute_sql(sql)
+                columns = list(rows[0].keys()) if rows else []
+                return {
+                    "data": rows,
+                    "columns": columns,
+                    "rows_returned": len(rows),
+                    "metadata": {"doctor": True},
+                }
+
+            handle, result = execution_engine.submit_sync(request, _runner)
+            execution_id = handle.execution_id
+            exec_ok = result.state == ExecutionState.SUCCEEDED
+            checks.append(
+                {
+                    "name": "execute_test",
+                    "status": "pass" if exec_ok else "fail",
+                    "details": {
+                        "execution_id": execution_id,
+                        "state": result.state.value,
+                        "rows_returned": result.rows_returned,
+                        "error": result.error.message if result.error else None,
+                    },
+                }
+            )
+        except Exception as exc:
+            checks.append(
+                {
+                    "name": "execute_test",
+                    "status": "fail",
+                    "details": {"error": str(exc)},
+                }
+            )
+
+        if execution_id and exec_ok:
+            try:
+                execution_engine = get_execution_engine(connection_path)
+                polled = execution_engine.get_result(execution_id)
+                poll_ok = polled is not None and polled.state == ExecutionState.SUCCEEDED
+                checks.append(
+                    {
+                        "name": "poll_test",
+                        "status": "pass" if poll_ok else "fail",
+                        "details": {
+                            "execution_id": execution_id,
+                            "state": polled.state.value if polled else None,
+                        },
+                    }
+                )
+            except Exception as exc:
+                checks.append(
+                    {
+                        "name": "poll_test",
+                        "status": "fail",
+                        "details": {"error": str(exc)},
+                    }
+                )
+        else:
+            checks.append(
+                {
+                    "name": "poll_test",
+                    "status": "skip",
+                    "details": {"reason": "execute_test did not succeed"},
+                }
+            )
+    elif connector is not None:
+        skip_reason = "connector does not support SQL" if not supports_sql else "auth check failed"
+        checks.append(
+            {
+                "name": "execute_test",
+                "status": "skip",
+                "details": {"reason": skip_reason},
+            }
+        )
+        checks.append(
+            {
+                "name": "poll_test",
+                "status": "skip",
+                "details": {"reason": skip_reason},
+            }
+        )
+
+    overall_status = "fail" if any(c["status"] == "fail" for c in checks) else "pass"
+    payload = {
+        "status": overall_status,
+        "connection": connection_name,
+        "connection_path": str(connection_path),
+        "connector_type": connector_type,
+        "capabilities": capabilities,
+        "checks": checks,
+    }
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, default=str))
+    else:
+        color = "green" if overall_status == "pass" else "red"
+        console.print(f"[bold {color}]doctor: {overall_status}[/bold {color}]")
+        console.print(f"connection: [cyan]{connection_name}[/cyan]")
+        if connector is not None:
+            console.print(f"connector: [cyan]{connector_type}[/cyan]")
+        for check in checks:
+            status_name = str(check["status"])
+            icon = {"pass": "[green]✓[/green]", "fail": "[red]✗[/red]"}.get(
+                status_name, "[dim]-[/dim]"
+            )
+            console.print(f"  {icon} {check['name']} ({status_name})")
+        if overall_status != "pass":
+            console.print("[dim]Run with --json for full diagnostics.[/dim]")
+
+    if overall_status != "pass":
+        sys.exit(1)
+
+
 def register_commands(main_group: click.Group) -> None:
     """Register all core commands with the main group."""
     main_group.add_command(init)
@@ -594,3 +824,4 @@ def register_commands(main_group: click.Group) -> None:
     main_group.add_command(rename)
     main_group.add_command(remove)
     main_group.add_command(all)
+    main_group.add_command(doctor)

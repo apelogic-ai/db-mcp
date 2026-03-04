@@ -9,6 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import yaml
 
+from db_mcp.capabilities import normalize_capabilities
 from db_mcp.config import get_settings
 from db_mcp.connectors.api import (
     APIAuthConfig,
@@ -187,9 +188,14 @@ def _load_api_config(data: dict[str, Any]) -> APIConnectorConfig:
     endpoints_data = data.get("endpoints", [])
     endpoints = []
     for e in endpoints_data:
-        qp_data = e.pop("query_params", [])
+        endpoint_data = dict(e)
+        qp_data = endpoint_data.pop("query_params", [])
         query_params = [APIQueryParamConfig(**qp) for qp in qp_data]
-        endpoints.append(APIEndpointConfig(**e, query_params=query_params))
+        method = str(endpoint_data.get("method", "GET")).upper()
+        if "body_mode" not in endpoint_data and method != "GET":
+            # Most write endpoints expect JSON body; explicit body_mode still wins.
+            endpoint_data["body_mode"] = "json"
+        endpoints.append(APIEndpointConfig(**endpoint_data, query_params=query_params))
 
     pagination_data = data.get("pagination", {})
     pagination = (
@@ -269,72 +275,28 @@ _CONNECTOR_FACTORIES: dict[type, Any] = {
 }
 
 
-def normalize_capabilities(raw_caps: dict[str, Any] | None) -> dict[str, Any]:
-    """Normalize capability aliases to canonical capability keys."""
-    if not isinstance(raw_caps, dict):
-        return {}
-
-    caps = dict(raw_caps)
-    alias_map = {
-        "sql": "supports_sql",
-        "validate_sql": "supports_validate_sql",
-        "async_jobs": "supports_async_jobs",
-    }
-
-    for legacy_key, canonical_key in alias_map.items():
-        if canonical_key not in caps and legacy_key in caps:
-            caps[canonical_key] = caps[legacy_key]
-
-    return caps
-
-
 def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
     """Return normalized capability flags for a connector."""
-    defaults: dict[str, Any] = {
-        "supports_sql": False,
-        "supports_validate_sql": False,
-        "supports_async_jobs": False,
-        "sql_mode": None,
-    }
-
     if isinstance(connector, APIConnector):
+        connector_type = "api"
         config_caps = connector.api_config.capabilities
     elif isinstance(connector, SQLConnector):
-        defaults.update(
-            {
-                "supports_sql": True,
-                "supports_validate_sql": True,
-                "supports_async_jobs": True,
-                "sql_mode": "engine",
-            }
-        )
-        config_caps = connector.config.capabilities
-    elif isinstance(connector, FileConnector):
-        defaults.update(
-            {
-                "supports_sql": True,
-                "supports_validate_sql": True,
-                "supports_async_jobs": True,
-                "sql_mode": "engine",
-            }
-        )
+        connector_type = "sql"
         config_caps = connector.config.capabilities
     elif isinstance(connector, MetabaseConnector):
-        defaults.update(
-            {
-                "supports_sql": True,
-                "supports_validate_sql": False,
-                "supports_async_jobs": False,
-                "sql_mode": "api_sync",
-            }
-        )
+        connector_type = "metabase"
+        config_caps = connector.config.capabilities
+    elif isinstance(connector, FileConnector):
+        connector_type = "file"
         config_caps = connector.config.capabilities
     else:
+        connector_type = "unknown"
         config_caps = {}
 
-    merged = dict(defaults)
-    merged.update(normalize_capabilities(config_caps))
-    return merged
+    if not isinstance(config_caps, dict):
+        config_caps = {}
+
+    return normalize_capabilities(connector_type, config_caps)
 
 
 __all__ = [

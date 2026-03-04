@@ -193,6 +193,14 @@ class Settings(BaseSettings):
             "'shell' exposes only the shell tool for query work (agent uses vault filesystem)"
         ),
     )
+    tool_profile: Literal["auto", "full", "query"] = Field(
+        default="auto",
+        description=(
+            "Tool profile gating. 'full' exposes all tools; "
+            "'query' exposes query-focused tools only; "
+            "'auto' resolves to 'query' in shell mode and 'full' in detailed mode."
+        ),
+    )
     mcp_transport: str = Field(
         default="stdio",
         description="MCP transport: 'stdio' for local, 'http' for remote",

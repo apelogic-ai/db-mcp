@@ -393,18 +393,33 @@ class APIConnector(FileConnector):
         try:
             headers = self._resolve_auth_headers()
             params = self._resolve_auth_params()
+            method = "GET"
+            body: dict[str, Any] | None = None
 
             # Try the first endpoint with a small limit
             if self.api_config.endpoints:
                 ep = self.api_config.endpoints[0]
                 url = self.api_config.base_url.rstrip("/") + ep.path
+                method = (ep.method or "GET").upper()
                 pg = self.api_config.pagination
-                if pg.page_size_param:
+                if method == "GET" and pg.page_size_param:
                     params[pg.page_size_param] = "1"
+                if method != "GET" and ep.name == "execute_sql":
+                    body = {ep.sql_field or "sql": "SELECT 1 AS db_mcp_doctor"}
             else:
                 url = self.api_config.base_url
 
-            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            request_kwargs: dict[str, Any] = {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                "params": params,
+                "timeout": 10,
+            }
+            if body is not None:
+                request_kwargs["json"] = body
+
+            resp = requests.request(**request_kwargs)
             resp.raise_for_status()
 
             return {
@@ -618,7 +633,7 @@ class APIConnector(FileConnector):
     def query_endpoint(
         self,
         endpoint_name: str,
-        params: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
         max_pages: int = 1,
         id: str | list[str] | None = None,
         body: dict[str, Any] | None = None,
@@ -628,7 +643,9 @@ class APIConnector(FileConnector):
 
         Args:
             endpoint_name: Name of the configured endpoint to query.
-            params: Query string parameters to pass to the endpoint.
+            params: Parameters to pass to the endpoint. For GET these are query
+                parameters; for many write endpoints these may be promoted to a
+                JSON body when no explicit body is provided.
             max_pages: Maximum number of pages to fetch (default 1).
             id: Fetch specific record(s) by ID. Appends /{id} to endpoint path.
                 Pass a single string or a list of strings for multiple records.
@@ -651,23 +668,44 @@ class APIConnector(FileConnector):
         try:
             headers = self._resolve_auth_headers()
             base_params = self._resolve_auth_params()
+            method = (method_override or endpoint.method).upper()
 
             # Merge user params
             merged_params = dict(base_params)
             if params:
                 merged_params.update(params)
 
+            # If endpoint path is templated with {id}, allow id argument to fill it
+            # for both read and write methods.
+            if id is not None and "{id}" in endpoint.path:
+                if isinstance(id, list):
+                    return {
+                        "error": "id must be a single value when endpoint path contains {id}"
+                    }
+                merged_params["id"] = id
+
             rendered_path, merged_params = self._render_path(endpoint.path, merged_params)
             base_url = self.api_config.base_url.rstrip("/") + rendered_path
 
-            method = (method_override or endpoint.method).upper()
-
             # Detail endpoint: fetch by ID(s)
             if id is not None:
-                if method != "GET":
-                    return {"error": "id lookup only supported for GET endpoints"}
-                ids = [id] if isinstance(id, str) else id
-                rows = self._fetch_by_ids(base_url, headers, merged_params, ids)
+                if method == "GET":
+                    # If endpoint template consumed {id}, query the already rendered URL.
+                    if "{id}" in endpoint.path:
+                        raw = self._send_request_with_retry(
+                            method, base_url, headers, merged_params, body
+                        )
+                        if endpoint.response_mode == "raw":
+                            return {"data": raw, "rows_returned": 1}
+                        rows = self._extract_rows_from_response(raw)
+                    else:
+                        ids = [id] if isinstance(id, str) else id
+                        rows = self._fetch_by_ids(base_url, headers, merged_params, ids)
+                elif "{id}" in endpoint.path:
+                    # Non-GET method with templated path: continue through write flow.
+                    pass
+                else:
+                    return {"error": "id lookup only supported for GET endpoints or {id} paths"}
             elif method == "GET":
                 if endpoint.response_mode == "raw":
                     raw = self._send_request_with_retry(
@@ -675,7 +713,7 @@ class APIConnector(FileConnector):
                     )
                     return {"data": raw, "rows_returned": 1}
                 rows = self._fetch_with_pagination(base_url, headers, merged_params, max_pages)
-            elif method in ("POST", "PUT", "PATCH", "DELETE"):
+            if method in ("POST", "PUT", "PATCH", "DELETE"):
                 # Determine the effective JSON body:
                 # - Explicit body parameter takes priority
                 # - Backward compat: body_mode=json with no explicit body → params as body
@@ -684,28 +722,27 @@ class APIConnector(FileConnector):
                 if effective_body is None and endpoint.body_mode == "json":
                     effective_body = merged_params
                     effective_params = {}
+                elif effective_body is None and params and not endpoint.query_params:
+                    # Heuristic for write APIs (e.g., Superset): if endpoint declares
+                    # no query params, treat user-supplied params as JSON body.
+                    user_payload = dict(merged_params)
+                    for key, value in base_params.items():
+                        if user_payload.get(key) == value:
+                            user_payload.pop(key, None)
+                    if user_payload:
+                        effective_body = user_payload
+                        effective_params = dict(base_params)
 
                 raw = self._send_request_with_retry(
                     method, base_url, headers, effective_params, effective_body
                 )
                 if endpoint.response_mode == "raw":
                     return {"data": raw, "rows_returned": 1}
-                if isinstance(raw, list):
-                    rows = raw
-                elif isinstance(raw, dict):
-                    # Try to extract rows from a collection wrapper
-                    data_field = self.api_config.pagination.data_field
-                    extracted = raw.get(data_field)
-                    if extracted is None:
-                        extracted = raw.get("results")
-                    if isinstance(extracted, list):
-                        rows = extracted
-                    else:
-                        # Single object response (e.g. created resource)
-                        rows = [raw]
-                else:
-                    rows = []
-            else:
+                rows = self._extract_rows_from_response(raw)
+                if not rows and isinstance(raw, dict):
+                    # Preserve prior behavior for single-object create/update responses.
+                    rows = [raw]
+            elif method not in ("GET",):
                 rows = self._fetch_non_get(base_url, headers, merged_params, endpoint)
 
             return {
@@ -745,6 +782,152 @@ class APIConnector(FileConnector):
 
     # -- SQL-like API execution ---------------------------------------------
 
+    def _get_endpoint(self, name: str) -> APIEndpointConfig | None:
+        for endpoint in self.api_config.endpoints:
+            if endpoint.name == name:
+                return endpoint
+        return None
+
+    def submit_sql(self, sql: str) -> dict[str, Any]:
+        """Submit SQL to an API execute endpoint.
+
+        Returns:
+            {"mode": "async", "execution_id": "..."} for async APIs
+            {"mode": "sync", "rows": [...]} for APIs returning rows immediately
+        """
+        caps = self.api_config.capabilities
+        supports_sql = caps.get("supports_sql")
+        if supports_sql is None:
+            supports_sql = caps.get("sql")
+        if not supports_sql:
+            rows = super().execute_sql(sql, None)
+            return {"mode": "sync", "rows": rows}
+
+        execute_endpoint = self._get_endpoint("execute_sql")
+        if execute_endpoint is None:
+            raise ValueError(
+                "No 'execute_sql' endpoint configured. "
+                "Add an endpoint named 'execute_sql' to connector.yaml."
+            )
+
+        headers = self._resolve_auth_headers()
+        url = self.api_config.base_url.rstrip("/") + execute_endpoint.path
+        sql_field = execute_endpoint.sql_field or "sql"
+        try:
+            if execute_endpoint.body_mode == "json":
+                resp = requests.post(url, headers=headers, json={sql_field: sql}, timeout=60)
+            else:
+                resp = requests.post(url, headers=headers, params={sql_field: sql}, timeout=60)
+            resp.raise_for_status()
+            response = resp.json()
+        except requests.exceptions.HTTPError as exc:
+            if (
+                exc.response is not None
+                and exc.response.status_code == 401
+                and self.api_config.auth.type == "jwt_login"
+            ):
+                self._jwt_refresh()
+                headers = self._resolve_auth_headers()
+                if execute_endpoint.body_mode == "json":
+                    resp = requests.post(url, headers=headers, json={sql_field: sql}, timeout=60)
+                else:
+                    resp = requests.post(url, headers=headers, params={sql_field: sql}, timeout=60)
+                resp.raise_for_status()
+                response = resp.json()
+            else:
+                raise
+
+        if not isinstance(response, dict):
+            rows = self._extract_rows_from_response({"rows": response})
+            return {"mode": "sync", "rows": rows}
+
+        execution_id = response.get("execution_id")
+        if execution_id is None:
+            execution_id = response.get("executionId")
+        if execution_id is not None:
+            return {
+                "mode": "async",
+                "execution_id": str(execution_id),
+                "raw": response,
+            }
+
+        rows = self._extract_rows_from_response(response)
+        return {"mode": "sync", "rows": rows, "raw": response}
+
+    def get_execution_status(self, execution_id: str) -> dict[str, Any]:
+        """Get async execution status from API, if supported."""
+        status_endpoint = self._get_endpoint("execution_status")
+        if status_endpoint is None:
+            return {
+                "state": "UNKNOWN",
+                "execution_id": execution_id,
+                "status_endpoint": False,
+            }
+
+        headers = self._resolve_auth_headers()
+        status_path = status_endpoint.path.replace("{execution_id}", execution_id)
+        status_url = self.api_config.base_url.rstrip("/") + status_path
+        try:
+            status_resp = requests.get(status_url, headers=headers, timeout=30)
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+        except requests.exceptions.HTTPError as exc:
+            if (
+                exc.response is not None
+                and exc.response.status_code == 401
+                and self.api_config.auth.type == "jwt_login"
+            ):
+                self._jwt_refresh()
+                headers = self._resolve_auth_headers()
+                status_resp = requests.get(status_url, headers=headers, timeout=30)
+                status_resp.raise_for_status()
+                status_data = status_resp.json()
+            else:
+                raise
+        if not isinstance(status_data, dict):
+            return {
+                "state": "UNKNOWN",
+                "execution_id": execution_id,
+                "raw": status_data,
+                "status_endpoint": True,
+            }
+        return status_data
+
+    def get_execution_results(self, execution_id: str) -> list[dict[str, Any]]:
+        """Fetch async SQL execution results from API."""
+        results_endpoint = self._get_endpoint("execution_results")
+        if results_endpoint is None:
+            raise ValueError(
+                "No 'execution_results' endpoint configured for async SQL API. "
+                "Add an endpoint named 'execution_results' to connector.yaml."
+            )
+
+        headers = self._resolve_auth_headers()
+        results_path = results_endpoint.path.replace("{execution_id}", execution_id)
+        results_url = self.api_config.base_url.rstrip("/") + results_path
+        try:
+            results_resp = requests.get(results_url, headers=headers, timeout=60)
+            results_resp.raise_for_status()
+            results_data = results_resp.json()
+        except requests.exceptions.HTTPError as exc:
+            if (
+                exc.response is not None
+                and exc.response.status_code == 401
+                and self.api_config.auth.type == "jwt_login"
+            ):
+                self._jwt_refresh()
+                headers = self._resolve_auth_headers()
+                results_resp = requests.get(results_url, headers=headers, timeout=60)
+                results_resp.raise_for_status()
+                results_data = results_resp.json()
+            else:
+                raise
+        if isinstance(results_data, list):
+            return results_data
+        if not isinstance(results_data, dict):
+            return []
+        return self._extract_rows_from_response(results_data)
+
     def execute_sql(self, sql: str, params: dict | None = None) -> list[dict[str, Any]]:
         """Execute SQL via API for SQL-like connectors.
 
@@ -765,57 +948,20 @@ class APIConnector(FileConnector):
         Raises:
             ValueError: If SQL execution is not supported or fails
         """
-        caps = self.api_config.capabilities
-        supports_sql = caps.get("supports_sql")
-        if supports_sql is None:
-            supports_sql = caps.get("sql")
+        submission = self.submit_sql(sql)
+        if submission.get("mode") == "sync":
+            rows = submission.get("rows", [])
+            return rows if isinstance(rows, list) else []
 
-        if not supports_sql:
-            # Fall back to parent's DuckDB-based execute_sql
-            return super().execute_sql(sql, params)
+        execution_id = submission.get("execution_id")
+        if not execution_id:
+            raise ValueError("SQL execution submission did not return execution_id")
 
-        # Find the execute_sql endpoint
-        execute_endpoint = None
-        for ep in self.api_config.endpoints:
-            if ep.name == "execute_sql":
-                execute_endpoint = ep
-                break
-
-        if execute_endpoint is None:
-            raise ValueError(
-                "No 'execute_sql' endpoint configured. "
-                "Add an endpoint named 'execute_sql' to connector.yaml."
-            )
-
-        headers = self._resolve_auth_headers()
-
-        # Build the request
-        url = self.api_config.base_url.rstrip("/") + execute_endpoint.path
-
-        # Use configured field name for SQL (default: "sql")
-        sql_field = execute_endpoint.sql_field or "sql"
-
-        if execute_endpoint.body_mode == "json":
-            body = {sql_field: sql}
-            resp = requests.post(url, headers=headers, json=body, timeout=60)
-        else:
-            resp = requests.post(url, headers=headers, params={sql_field: sql}, timeout=60)
-
-        resp.raise_for_status()
-        result = resp.json()
-
-        # Check if this is an async API (returns execution_id)
-        execution_id = result.get("execution_id")
-        if execution_id:
-            return self._poll_execution_results(execution_id, headers)
-
-        # Sync API - results are in the response
-        return self._extract_rows_from_response(result)
+        return self._poll_execution_results(str(execution_id))
 
     def _poll_execution_results(
         self,
         execution_id: str,
-        headers: dict[str, str],
         max_wait_seconds: int = 300,
         poll_interval: float = 2.0,
     ) -> list[dict[str, Any]]:
@@ -834,22 +980,7 @@ class APIConnector(FileConnector):
             TimeoutError: If execution doesn't complete in time
             ValueError: If execution fails
         """
-        # Find status and results endpoints
-        status_endpoint = None
-        results_endpoint = None
-        for ep in self.api_config.endpoints:
-            if ep.name == "execution_status":
-                status_endpoint = ep
-            elif ep.name == "execution_results":
-                results_endpoint = ep
-
-        if results_endpoint is None:
-            raise ValueError(
-                "No 'execution_results' endpoint configured for async SQL API. "
-                "Add an endpoint named 'execution_results' to connector.yaml."
-            )
-
-        base_url = self.api_config.base_url.rstrip("/")
+        status_endpoint = self._get_endpoint("execution_status")
         start_time = time.time()
 
         while (time.time() - start_time) < max_wait_seconds:
@@ -857,11 +988,7 @@ class APIConnector(FileConnector):
 
             # Check status if endpoint exists
             if status_endpoint:
-                status_path = status_endpoint.path.replace("{execution_id}", execution_id)
-                status_url = base_url + status_path
-                status_resp = requests.get(status_url, headers=headers, timeout=30)
-                status_resp.raise_for_status()
-                status_data = status_resp.json()
+                status_data = self.get_execution_status(execution_id)
 
                 state = status_data.get("state", "").lower()
                 # Also check is_execution_finished for APIs like Dune
@@ -882,18 +1009,22 @@ class APIConnector(FileConnector):
                     time.sleep(poll_interval)
                     continue
 
-            # Fetch results
-            results_path = results_endpoint.path.replace("{execution_id}", execution_id)
-            results_url = base_url + results_path
-            results_resp = requests.get(results_url, headers=headers, timeout=60)
-            results_resp.raise_for_status()
-            results_data = results_resp.json()
-
-            return self._extract_rows_from_response(results_data)
+            try:
+                return self.get_execution_results(execution_id)
+            except requests.exceptions.HTTPError as exc:
+                # Some APIs expose only results endpoint and return 404/409 while pending.
+                if (
+                    not status_endpoint
+                    and exc.response is not None
+                    and exc.response.status_code in (404, 409, 425)
+                ):
+                    time.sleep(poll_interval)
+                    continue
+                raise
 
         raise TimeoutError(f"SQL execution did not complete within {max_wait_seconds} seconds")
 
-    def _extract_rows_from_response(self, response: dict[str, Any]) -> list[dict[str, Any]]:
+    def _extract_rows_from_response(self, response: Any) -> list[dict[str, Any]]:
         """Extract rows from an API response.
 
         Handles common response formats:
@@ -912,12 +1043,14 @@ class APIConnector(FileConnector):
         if isinstance(response, list):
             return response
 
-        # Try nested result.rows (Dune format)
-        result = response.get("result", {})
+        # Try result wrappers first (Dune/Superset/common APIs).
+        result = response.get("result")
+        if isinstance(result, list):
+            return result
         if isinstance(result, dict):
             rows = result.get("rows")
-            if rows is not None:
-                return rows if isinstance(rows, list) else []
+            if isinstance(rows, list):
+                return rows
 
         # Check for columns + rows as arrays format first (before generic field check)
         # This handles APIs that return {columns: [...], rows: [[...], [...]]}
@@ -939,6 +1072,12 @@ class APIConnector(FileConnector):
                 value = response[field_name]
                 if isinstance(value, list):
                     return value
+
+        # Honor configured data_field for non-SQL API endpoints.
+        data_field = self.api_config.pagination.data_field
+        value = response.get(data_field)
+        if isinstance(value, list):
+            return value
 
         # Last resort: return empty
         return []
