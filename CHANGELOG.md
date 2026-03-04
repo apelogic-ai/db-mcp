@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.6.5] - 2026-03-04
+
+## Overview
+v0.6.5 is a patch release that fixes critical API connector execution-path mismatches and adds first-class API onboarding in `db-mcp init`. It unifies capability handling, reconnects `run_sql -> get_result` behavior for API execution IDs, and improves error surfacing for failed remote SQL executions.
+
+## Highlights
+- `db-mcp init` now supports API connector setup directly with connector type selection and API scaffolding.
+- Legacy API capability keys (`sql`, `validate_sql`, `async_jobs`) are normalized to canonical runtime keys, preventing SQL capability drift.
+- `get_result` now resolves API execution IDs produced by API SQL endpoints, including status/results polling fallback.
+- Failed API execution states now surface explicit errors instead of appearing as empty result sets.
+
+## Bug Fixes
+- Fixed missing API connector onboarding path in CLI init flow.
+- Fixed capability-key mismatch that caused SQL execution to be incorrectly disabled for API connectors.
+- Fixed disconnected execution-ID paths between API SQL submission and `get_result` retrieval.
+- Fixed API status/result parsing so failure payloads preserve error detail.
+
+## New Features
+- Added API connector type selection and config/env scaffolding during `db-mcp init`.
+- Added capability alias normalization layer for connector/runtime/tool-registration consistency.
+- Added regression coverage for API execution-ID resolution and failure-state extraction.
+
+## Files Changed
+| File | Change |
+|---|---|
+| `packages/core/src/db_mcp/cli/init_flow.py` | Added API connector onboarding flow in interactive init |
+| `packages/core/src/db_mcp/connectors/__init__.py` | Applied normalized capability resolution across connector loading |
+| `packages/core/src/db_mcp/capabilities.py` | Added canonical capability defaults and legacy-alias normalization |
+| `packages/core/src/db_mcp/connectors/api.py` | Improved API SQL status/result/error handling for flat and failure payloads |
+| `packages/core/src/db_mcp/tools/generation.py` | Unified execution fallback so `get_result` can resolve API-submitted execution IDs |
+| `packages/core/src/db_mcp/server.py` | Updated capability scan to use normalized connector capabilities |
+| `packages/core/tests/test_run_sql.py` | Added regressions for API execution-ID resolution and error surfacing |
+| `packages/core/tests/test_api_connector.py` | Added API status/result/error extraction regressions |
+| `packages/core/tests/test_connectors.py` | Added capability alias normalization regression coverage |
+| `packages/core/tests/test_cli/test_init_flow.py` | Added API init-flow coverage |
+| `packages/core/pyproject.toml` | Bumped core package version to `0.6.5` |
+| `packages/core/src/db_mcp/__init__.py` | Updated exported package version to `0.6.5` |
+
+## Testing
+- `cd packages/core && uv run ruff check . --fix`
+- `cd packages/core && uv run pytest tests/ -v`
+- Focused regression checks in release prep:
+  - `uv run --with pytest-asyncio pytest tests/test_run_sql.py tests/test_api_connector.py tests/test_connectors.py tests/test_server.py -k "get_result_can_read_direct_sql_execution_result or get_result_resolves_api_execution_ids_not_in_query_store or get_result_surfaces_api_execution_failures or api_capabilities_normalize_legacy_sql_flag or query_endpoint_keeps_flat_execution_status_payload or query_endpoint_surfaces_failed_execution_errors" -v`
+
+
 ## [0.6.4] - 2026-03-02
 
 ## Overview
