@@ -269,6 +269,25 @@ _CONNECTOR_FACTORIES: dict[type, Any] = {
 }
 
 
+def normalize_capabilities(raw_caps: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize capability aliases to canonical capability keys."""
+    if not isinstance(raw_caps, dict):
+        return {}
+
+    caps = dict(raw_caps)
+    alias_map = {
+        "sql": "supports_sql",
+        "validate_sql": "supports_validate_sql",
+        "async_jobs": "supports_async_jobs",
+    }
+
+    for legacy_key, canonical_key in alias_map.items():
+        if canonical_key not in caps and legacy_key in caps:
+            caps[canonical_key] = caps[legacy_key]
+
+    return caps
+
+
 def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
     """Return normalized capability flags for a connector."""
     defaults: dict[str, Any] = {
@@ -278,7 +297,9 @@ def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
         "sql_mode": None,
     }
 
-    if isinstance(connector, SQLConnector):
+    if isinstance(connector, APIConnector):
+        config_caps = connector.api_config.capabilities
+    elif isinstance(connector, SQLConnector):
         defaults.update(
             {
                 "supports_sql": True,
@@ -308,16 +329,11 @@ def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
             }
         )
         config_caps = connector.config.capabilities
-    elif isinstance(connector, APIConnector):
-        config_caps = connector.api_config.capabilities
     else:
         config_caps = {}
 
-    if not isinstance(config_caps, dict):
-        config_caps = {}
-
     merged = dict(defaults)
-    merged.update(config_caps)
+    merged.update(normalize_capabilities(config_caps))
     return merged
 
 
@@ -334,6 +350,7 @@ __all__ = [
     "FileConnectorConfig",
     "FileSourceConfig",
     "get_connector_capabilities",
+    "normalize_capabilities",
     "MetabaseAuthConfig",
     "MetabaseConnector",
     "MetabaseConnectorConfig",

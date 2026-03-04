@@ -192,6 +192,30 @@ class APIConnector(FileConnector):
         file_config = FileConnectorConfig(directory=str(self._data_dir))
         super().__init__(file_config)
 
+    @staticmethod
+    def _format_api_error(error: Any, default: str) -> str:
+        """Convert structured API error payloads into readable messages."""
+        if isinstance(error, dict):
+            for key in ("message", "detail", "error", "reason"):
+                value = error.get(key)
+                if value:
+                    return str(value)
+            return str(error)
+        if error:
+            return str(error)
+        return default
+
+    def _extract_response_error(self, response: dict[str, Any]) -> str | None:
+        """Extract execution failure details from API status/result payloads."""
+        state = str(response.get("state") or response.get("status") or "").lower()
+        error = response.get("error")
+        is_failed_state = any(token in state for token in ("failed", "error", "cancelled"))
+        if is_failed_state:
+            return self._format_api_error(error, f"Execution failed ({state})")
+        if error and response.get("success") is False:
+            return self._format_api_error(error, "API request failed")
+        return None
+
     # -- Auth ---------------------------------------------------------------
 
     def _load_env(self) -> dict[str, str]:
@@ -466,7 +490,25 @@ class APIConnector(FileConnector):
         data_field = self.api_config.pagination.data_field
         if isinstance(body, list):
             return body
-        return body.get(data_field, body.get("results", []))
+        if not isinstance(body, dict):
+            return []
+
+        error_msg = self._extract_response_error(body)
+        if error_msg:
+            raise ValueError(error_msg)
+
+        extracted = body.get(data_field)
+        if extracted is None:
+            extracted = body.get("results")
+        if isinstance(extracted, list):
+            return extracted
+
+        extracted_rows = self._extract_rows_from_response(body)
+        if extracted_rows:
+            return extracted_rows
+
+        # Keep flat JSON payloads (e.g. execution status) instead of dropping them.
+        return [body]
 
     def _fetch_cursor(
         self,
@@ -724,7 +766,11 @@ class APIConnector(FileConnector):
             ValueError: If SQL execution is not supported or fails
         """
         caps = self.api_config.capabilities
-        if not caps.get("supports_sql"):
+        supports_sql = caps.get("supports_sql")
+        if supports_sql is None:
+            supports_sql = caps.get("sql")
+
+        if not supports_sql:
             # Fall back to parent's DuckDB-based execute_sql
             return super().execute_sql(sql, params)
 
@@ -822,7 +868,10 @@ class APIConnector(FileConnector):
                 is_finished = status_data.get("is_execution_finished", False)
 
                 if "failed" in state or "error" in state or "cancelled" in state:
-                    error_msg = status_data.get("error", "Execution failed")
+                    error_msg = self._format_api_error(
+                        status_data.get("error"),
+                        "Execution failed",
+                    )
                     raise ValueError(f"SQL execution failed: {error_msg}")
 
                 # Check for completion - handle various formats like "QUERY_STATE_COMPLETED"

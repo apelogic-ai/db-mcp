@@ -379,6 +379,8 @@ def _create_server() -> FastMCP:
     """Create and configure the MCP server based on tool_mode setting."""
     import yaml as _yaml
 
+    from db_mcp.connectors import normalize_capabilities
+
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
 
@@ -435,7 +437,7 @@ def _create_server() -> FastMCP:
                 _yaml_data = {}
 
             conn_type = _yaml_data.get("type", "sql")
-            raw_caps = dict(_yaml_data.get("capabilities", {}) or {})
+            raw_caps = normalize_capabilities(dict(_yaml_data.get("capabilities", {}) or {}))
             merged = dict(_type_defaults.get(conn_type, {}))
             merged.update(raw_caps)
 
@@ -465,7 +467,7 @@ def _create_server() -> FastMCP:
             yaml_path = conn_path / "connector.yaml"
             _connector_config = ConnectorConfig.from_yaml(yaml_path)
             connector_type = getattr(_connector_config, "type", "sql")
-            raw_caps = getattr(_connector_config, "capabilities", {}) or {}
+            raw_caps = normalize_capabilities(getattr(_connector_config, "capabilities", {}) or {})
         except Exception:
             connector_type = "sql"
             raw_caps = {}

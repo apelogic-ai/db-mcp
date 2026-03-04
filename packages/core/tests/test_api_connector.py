@@ -1048,6 +1048,87 @@ class TestAPIConnectorSQLExecution:
         with pytest.raises(ValueError, match="No 'execute_sql' endpoint configured"):
             conn.execute_sql("SELECT 1")
 
+    def test_query_endpoint_keeps_flat_execution_status_payload(self, data_dir, env_file):
+        """Flat status JSON should not be dropped to an empty list."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.dune.com/api/v1",
+            auth=APIAuthConfig(
+                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+            ),
+            endpoints=[
+                APIEndpointConfig(
+                    name="get_execution_status",
+                    path="/execution/{execution_id}/status",
+                    method="GET",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        status_resp = MagicMock()
+        status_resp.status_code = 200
+        status_resp.json.return_value = {
+            "execution_id": "exec-123",
+            "state": "QUERY_STATE_PENDING",
+        }
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=status_resp):
+            result = conn.query_endpoint(
+                "get_execution_status",
+                params={"execution_id": "exec-123"},
+            )
+
+        assert result["rows_returned"] == 1
+        assert result["data"][0]["state"] == "QUERY_STATE_PENDING"
+
+    def test_query_endpoint_surfaces_failed_execution_errors(self, data_dir, env_file):
+        """Failed execution payloads should return an explicit error."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://api.dune.com/api/v1",
+            auth=APIAuthConfig(
+                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+            ),
+            endpoints=[
+                APIEndpointConfig(
+                    name="get_execution_results",
+                    path="/execution/{execution_id}/results",
+                    method="GET",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        failed_resp = MagicMock()
+        failed_resp.status_code = 200
+        failed_resp.json.return_value = {
+            "execution_id": "exec-123",
+            "state": "QUERY_STATE_FAILED",
+            "error": {"message": "line 1:15: mismatched input 'FROMM'"},
+        }
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=failed_resp):
+            result = conn.query_endpoint(
+                "get_execution_results",
+                params={"execution_id": "exec-123"},
+            )
+
+        assert "error" in result
+        assert "FROMM" in result["error"]
+
     def test_extract_rows_handles_various_formats(self, data_dir, env_file):
         """_extract_rows_from_response handles multiple response formats."""
         from db_mcp.connectors.api import APIConnector, APIConnectorConfig

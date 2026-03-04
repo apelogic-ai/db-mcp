@@ -19,6 +19,7 @@ from rich.prompt import Confirm, Prompt
 
 from db_mcp.cli.agent_config import _configure_agents
 from db_mcp.cli.connection import (
+    _prompt_and_save_api_connection,
     _prompt_and_save_database_url,
     get_connection_path,
 )
@@ -331,10 +332,14 @@ def _init_greenfield(name: str):
         if not claude_config_path.exists():
             console.print("[dim]Will create new config file.[/dim]")
 
-    # Prompt for DATABASE_URL
-    database_url = _prompt_and_save_database_url(name, existing_url)
-    if not database_url:
-        return
+    connector_type = Prompt.ask("Connection type", choices=["sql", "api"], default="sql")
+    if connector_type == "api":
+        if not _prompt_and_save_api_connection(name):
+            return
+    else:
+        database_url = _prompt_and_save_database_url(name, existing_url)
+        if not database_url:
+            return
 
     # Create connection directory
     connection_path.mkdir(parents=True, exist_ok=True)

@@ -460,6 +460,40 @@ class TestConnectorTypeToolGating:
         assert "list_tables" in tools
         assert "describe_table" in tools
 
+    def test_api_connector_with_legacy_sql_capability_key_exposes_api_execute_sql(self, tmp_path):
+        """Legacy `capabilities.sql: true` should still enable SQL-like API tooling."""
+        connector_yaml = tmp_path / "connector.yaml"
+        connector_yaml.write_text(
+            yaml.dump(
+                {
+                    "type": "api",
+                    "base_url": "https://example.com",
+                    "capabilities": {
+                        "sql": True,
+                        "supports_validate_sql": False,
+                    },
+                }
+            )
+        )
+        conn_info = ConnectionInfo(
+            name="test", path=tmp_path, type="api", dialect="", description="", is_default=True
+        )
+
+        with (
+            patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+            patch("db_mcp.server.get_settings") as mock_settings,
+        ):
+            mock_registry = MagicMock()
+            mock_registry.discover.return_value = {"test": conn_info}
+            mock_reg_cls.get_instance.return_value = mock_registry
+            mock_settings.return_value.tool_mode = "detailed"
+            mock_settings.return_value.auth0_enabled = False
+            mock_settings.return_value.auth0_domain = ""
+            server = _create_server()
+
+        tools = _get_tool_names(server)
+        assert "api_execute_sql" in tools
+
     def test_api_connector_exposes_api_tools(self, tmp_path):
         """API connector should expose api_query, api_describe_endpoint, api_discover."""
         connector_yaml = tmp_path / "connector.yaml"

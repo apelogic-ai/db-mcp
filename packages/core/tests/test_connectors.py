@@ -13,7 +13,9 @@ from db_mcp.connectors import (
     MetabaseConnectorConfig,
     SQLConnector,
     SQLConnectorConfig,
+    get_connector_capabilities,
 )
+from db_mcp.connectors.api import APIConnector, APIConnectorConfig
 
 
 class TestConnectorProtocol:
@@ -104,6 +106,18 @@ class TestConnectorConfig:
         assert config.base_url == "https://metabase.example.com"
         assert config.database_id == 12
         assert config.database_name == "analytics"
+
+    def test_api_capabilities_normalize_legacy_sql_flag(self, tmp_path):
+        """Legacy `capabilities.sql` should map to `supports_sql`."""
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            capabilities={"sql": True},
+        )
+        connector = APIConnector(config, data_dir=str(tmp_path / "data"))
+
+        caps = get_connector_capabilities(connector)
+
+        assert caps["supports_sql"] is True
 
 
 class TestSQLConnector:
