@@ -1604,6 +1604,187 @@ async def _validate_sql(sql: str, connection: str) -> dict:
     )
 
 
+def _format_api_error(error: Any, default: str = "Execution failed") -> str:
+    """Convert structured API error payloads into a readable string."""
+    if isinstance(error, dict):
+        for key in ("message", "detail", "error", "reason"):
+            value = error.get(key)
+            if value:
+                return str(value)
+        return str(error)
+    if error:
+        return str(error)
+    return default
+
+
+def _extract_api_execution_error(payload: dict[str, Any] | None) -> str | None:
+    """Extract a failure message from API execution status/results payloads."""
+    if not isinstance(payload, dict):
+        return None
+
+    state = str(payload.get("state") or payload.get("status") or "").lower()
+    error = payload.get("error")
+    is_failed_state = any(token in state for token in ("failed", "error", "cancelled"))
+    if is_failed_state:
+        return _format_api_error(error, f"Execution failed ({state})")
+    if error and payload.get("success") is False:
+        return _format_api_error(error, "API request failed")
+    return None
+
+
+def _api_rows(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize API query tool payloads into row dictionaries."""
+    data = response.get("data")
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        return [data]
+    return []
+
+
+def _find_endpoint_name(connector: Any, candidates: tuple[str, ...]) -> str | None:
+    endpoints = getattr(connector.api_config, "endpoints", [])
+    endpoint_names = {getattr(ep, "name", "") for ep in endpoints}
+    for candidate in candidates:
+        if candidate in endpoint_names:
+            return candidate
+    return None
+
+
+def _resolve_api_execution(query_id: str, connection: str) -> dict[str, Any] | None:
+    """Resolve API execution IDs that are not tracked in the internal query store."""
+    from db_mcp.tools.utils import resolve_connection
+
+    try:
+        connector, _, _ = resolve_connection(connection, require_type="api")
+    except Exception:
+        return None
+
+    if not hasattr(connector, "query_endpoint") or not hasattr(connector, "api_config"):
+        return None
+
+    status_endpoint = _find_endpoint_name(
+        connector,
+        ("get_execution_status", "execution_status"),
+    )
+    results_endpoint = _find_endpoint_name(
+        connector,
+        ("get_execution_results", "execution_results"),
+    )
+    if status_endpoint is None and results_endpoint is None:
+        return None
+
+    state = ""
+    is_finished = False
+    if status_endpoint is not None:
+        status_response = connector.query_endpoint(
+            status_endpoint,
+            params={"execution_id": query_id},
+        )
+        if status_response.get("error"):
+            return {
+                "status": "error",
+                "query_id": query_id,
+                "error": status_response["error"],
+            }
+
+        status_rows = _api_rows(status_response)
+        status_payload = status_rows[0] if status_rows else {}
+        status_error = _extract_api_execution_error(status_payload)
+        if status_error:
+            return {
+                "status": "error",
+                "query_id": query_id,
+                "error": status_error,
+                "message": f"Query failed: {status_error}",
+            }
+
+        state = str(status_payload.get("state") or status_payload.get("status") or "").lower()
+        is_finished = bool(status_payload.get("is_execution_finished"))
+        is_complete = is_finished or any(
+            token in state for token in ("complete", "success", "finished")
+        )
+        if not is_complete:
+            is_running = any(token in state for token in ("running", "executing"))
+            if is_running:
+                return {
+                    "status": "running",
+                    "query_id": query_id,
+                    "message": "Query is still executing on the API provider.",
+                    "guidance": {
+                        "next_steps": [
+                            (
+                                "Poll again in 10-30 seconds: "
+                                f"get_result('{query_id}', connection='{connection}')"
+                            )
+                        ]
+                    },
+                }
+            return {
+                "status": "pending",
+                "query_id": query_id,
+                "message": "Query is queued on the API provider.",
+                "guidance": {
+                    "next_steps": [
+                        (
+                            "Poll again in 5-10 seconds: "
+                            f"get_result('{query_id}', connection='{connection}')"
+                        )
+                    ]
+                },
+            }
+
+    if results_endpoint is None:
+        return {
+            "status": "complete",
+            "query_id": query_id,
+            "data": [],
+            "columns": [],
+            "rows_returned": 0,
+        }
+
+    results_response = connector.query_endpoint(
+        results_endpoint,
+        params={"execution_id": query_id},
+    )
+    if results_response.get("error"):
+        return {
+            "status": "error",
+            "query_id": query_id,
+            "error": results_response["error"],
+            "message": f"Query failed: {results_response['error']}",
+        }
+
+    rows = _api_rows(results_response)
+    if len(rows) == 1 and any(
+        key in rows[0] for key in ("execution_id", "state", "error", "is_execution_finished")
+    ):
+        # Some APIs return a status envelope instead of row data.
+        api_error = _extract_api_execution_error(rows[0])
+        if api_error:
+            return {
+                "status": "error",
+                "query_id": query_id,
+                "error": api_error,
+                "message": f"Query failed: {api_error}",
+            }
+
+    columns = list(rows[0].keys()) if rows else []
+    return {
+        "status": "complete",
+        "query_id": query_id,
+        "data": rows,
+        "columns": columns,
+        "rows_returned": len(rows),
+        "provider_id": connection,
+        "message": (
+            f"Query completed successfully. {len(rows)} rows returned."
+            if rows
+            else f"Query completed successfully with no rows (state={state or 'complete'})."
+        ),
+    }
+
+
 async def _get_result(query_id: str, connection: str) -> dict:
     """Get status and results for a query.
 
@@ -1707,7 +1888,9 @@ async def _get_result(query_id: str, connection: str) -> dict:
                         "message": "Execution is in progress.",
                     }
                 )
-
+        api_payload = _resolve_api_execution(query_id=query_id, connection=connection)
+        if api_payload is not None:
+            return inject_protocol(api_payload)
         return inject_protocol(
             {
                 "status": "not_found",

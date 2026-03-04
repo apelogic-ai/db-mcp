@@ -12,7 +12,6 @@ from pydantic_ai import Agent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from db_mcp.capabilities import normalize_capabilities
 from db_mcp.config import get_settings
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
@@ -389,6 +388,8 @@ def _create_server() -> FastMCP:
     """Create and configure the MCP server based on tool_mode setting."""
     import yaml as _yaml
 
+    from db_mcp.connectors import normalize_capabilities
+
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
     tool_profile = _resolve_tool_profile(settings, is_shell_mode)
@@ -448,7 +449,7 @@ def _create_server() -> FastMCP:
             yaml_path = conn_path / "connector.yaml"
             _connector_config = ConnectorConfig.from_yaml(yaml_path)
             connector_type = getattr(_connector_config, "type", "sql")
-            raw_caps = getattr(_connector_config, "capabilities", {}) or {}
+            raw_caps = normalize_capabilities(getattr(_connector_config, "capabilities", {}) or {})
         except Exception:
             connector_type = "sql"
             raw_caps = {}

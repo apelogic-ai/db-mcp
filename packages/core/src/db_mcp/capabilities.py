@@ -45,6 +45,12 @@ TYPE_CAPABILITY_DEFAULTS: dict[str, dict[str, Any]] = {
     },
 }
 
+LEGACY_CAPABILITY_ALIASES: dict[str, str] = {
+    "sql": "supports_sql",
+    "validate_sql": "supports_validate_sql",
+    "async_jobs": "supports_async_jobs",
+}
+
 
 def normalize_capabilities(
     connector_type: str,
@@ -60,6 +66,10 @@ def normalize_capabilities(
     caps.update(TYPE_CAPABILITY_DEFAULTS.get(connector_type, {}))
 
     if isinstance(overrides, dict):
-        caps.update(overrides)
+        merged_overrides = dict(overrides)
+        for legacy_key, canonical_key in LEGACY_CAPABILITY_ALIASES.items():
+            if canonical_key not in merged_overrides and legacy_key in merged_overrides:
+                merged_overrides[canonical_key] = merged_overrides[legacy_key]
+        caps.update(merged_overrides)
 
     return caps

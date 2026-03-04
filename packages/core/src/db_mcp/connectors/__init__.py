@@ -312,6 +312,7 @@ __all__ = [
     "FileConnectorConfig",
     "FileSourceConfig",
     "get_connector_capabilities",
+    "normalize_capabilities",
     "MetabaseAuthConfig",
     "MetabaseConnector",
     "MetabaseConnectorConfig",
