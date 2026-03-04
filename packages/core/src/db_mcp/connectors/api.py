@@ -13,6 +13,7 @@ import requests
 import yaml
 
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig
+from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 
 # ---------------------------------------------------------------------------
 # Auth value resolution
@@ -154,6 +155,7 @@ class APIConnectorConfig:
     """Configuration for the API connector."""
 
     type: str = field(default="api", init=False)
+    profile: str = ""
     base_url: str = ""
     auth: APIAuthConfig = field(default_factory=APIAuthConfig)
     endpoints: list[APIEndpointConfig] = field(default_factory=list)
@@ -1333,9 +1335,13 @@ class APIConnector(FileConnector):
             yaml_path: Path to write the connector.yaml file.
         """
         data: dict[str, Any] = {
+            "spec_version": CONNECTOR_SPEC_VERSION,
             "type": "api",
+            "profile": self.api_config.profile or "api_openapi",
             "base_url": self.api_config.base_url,
         }
+        if self.api_config.capabilities:
+            data["capabilities"] = self.api_config.capabilities
 
         # Add optional API metadata
         if self.api_config.api_title:

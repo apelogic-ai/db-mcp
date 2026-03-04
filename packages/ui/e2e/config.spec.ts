@@ -1,6 +1,11 @@
 import { test, expect, mockData } from "./fixtures";
 
 test.describe("Config Page", () => {
+  test("onboarding query param forces onboarding card", async ({ page }) => {
+    await page.goto("/config?wizard=onboarding");
+    await expect(page.getByText("Get Started with a Demo Database")).toBeVisible();
+  });
+
   test("displays connection list with badges", async ({ page }) => {
     await page.goto("/config");
 

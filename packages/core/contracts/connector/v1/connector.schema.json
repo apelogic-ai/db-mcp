@@ -1,0 +1,219 @@
+{
+  "$defs": {
+    "CatalogMetadataContract": {
+      "additionalProperties": false,
+      "description": "Optional metadata block for externally curated connector catalogs.",
+      "properties": {
+        "checksum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checksum"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "title": "CatalogMetadataContract",
+      "type": "object"
+    },
+    "FileSourceContract": {
+      "additionalProperties": false,
+      "description": "File source definition for file connectors.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "FileSourceContract",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Versioned connector.yaml contract.",
+  "properties": {
+    "api_description": {
+      "default": "",
+      "title": "Api Description",
+      "type": "string"
+    },
+    "api_title": {
+      "default": "",
+      "title": "Api Title",
+      "type": "string"
+    },
+    "auth": {
+      "additionalProperties": true,
+      "title": "Auth",
+      "type": "object"
+    },
+    "base_url": {
+      "default": "",
+      "title": "Base Url",
+      "type": "string"
+    },
+    "capabilities": {
+      "additionalProperties": true,
+      "title": "Capabilities",
+      "type": "object"
+    },
+    "catalog": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CatalogMetadataContract"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "database_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Database Id"
+    },
+    "database_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Database Name"
+    },
+    "database_url": {
+      "default": "",
+      "title": "Database Url",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "directory": {
+      "default": "",
+      "title": "Directory",
+      "type": "string"
+    },
+    "endpoints": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Endpoints",
+      "type": "array"
+    },
+    "pagination": {
+      "additionalProperties": true,
+      "title": "Pagination",
+      "type": "object"
+    },
+    "profile": {
+      "default": "",
+      "title": "Profile",
+      "type": "string"
+    },
+    "rate_limit": {
+      "additionalProperties": true,
+      "title": "Rate Limit",
+      "type": "object"
+    },
+    "rate_limit_rps": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rate Limit Rps"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/FileSourceContract"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "spec_version": {
+      "default": "1.0.0",
+      "title": "Spec Version",
+      "type": "string"
+    },
+    "type": {
+      "default": "sql",
+      "enum": [
+        "sql",
+        "api",
+        "file",
+        "metabase"
+      ],
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "title": "ConnectorContractV1",
+  "type": "object"
+}

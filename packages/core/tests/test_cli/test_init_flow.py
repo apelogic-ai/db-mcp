@@ -20,7 +20,9 @@ def test_init_greenfield_api_flow_skips_database_url(monkeypatch, tmp_path):
         lambda: ({}, Path(tmp_path / "claude_desktop_config.json")),
     )
     monkeypatch.setattr(init_flow, "load_config", lambda: {})
-    monkeypatch.setattr(init_flow, "get_connection_path", lambda _name: tmp_path / "dune")
+    monkeypatch.setattr(
+        init_flow, "get_connection_path", lambda _name: tmp_path / "analytics_connection"
+    )
     monkeypatch.setattr(init_flow, "_configure_agents", lambda: None)
     monkeypatch.setattr(init_flow, "_offer_git_setup", lambda _name, _path: None)
     monkeypatch.setattr(init_flow.Confirm, "ask", lambda *args, **kwargs: False)
@@ -44,6 +46,6 @@ def test_init_greenfield_api_flow_skips_database_url(monkeypatch, tmp_path):
         raising=False,
     )
 
-    _init_greenfield("dune")
+    _init_greenfield("analytics_connection")
 
     assert called["api_prompt"] is True

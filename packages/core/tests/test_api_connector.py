@@ -1021,7 +1021,7 @@ class TestAPIConnectorYAMLRoundTrip:
 
 
 class TestAPIConnectorSQLExecution:
-    """Tests for execute_sql with SQL-like APIs (Dune, etc.)."""
+    """Tests for execute_sql with SQL-like APIs."""
 
     def test_execute_sql_without_supports_sql_falls_back_to_duckdb(self, api_connector, data_dir):
         """Without supports_sql, execute_sql falls back to DuckDB on local files."""
@@ -1048,9 +1048,9 @@ class TestAPIConnectorSQLExecution:
         )
 
         config = APIConnectorConfig(
-            base_url="https://api.dune.com/api/v1",
+            base_url="https://api.example.com/v1",
             auth=APIAuthConfig(
-                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+                type="header", token_env="TEST_API_KEY", header_name="X-API-KEY"
             ),
             endpoints=[
                 APIEndpointConfig(
@@ -1077,7 +1077,7 @@ class TestAPIConnectorSQLExecution:
         called_url = mock_post.call_args.args[0]
         called_json = mock_post.call_args.kwargs["json"]
         assert "/sql/execute" in called_url
-        # Default sql_field is "sql" (matching Dune's API)
+        # Default sql_field is "sql"
         assert called_json["sql"] == "SELECT token, volume FROM dex_solana.trades LIMIT 1"
 
         # Verify results extracted correctly
@@ -1095,9 +1095,9 @@ class TestAPIConnectorSQLExecution:
         )
 
         config = APIConnectorConfig(
-            base_url="https://api.dune.com/api/v1",
+            base_url="https://api.example.com/v1",
             auth=APIAuthConfig(
-                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+                type="header", token_env="TEST_API_KEY", header_name="X-API-KEY"
             ),
             endpoints=[
                 APIEndpointConfig(
@@ -1166,9 +1166,9 @@ class TestAPIConnectorSQLExecution:
         )
 
         config = APIConnectorConfig(
-            base_url="https://api.dune.com/api/v1",
+            base_url="https://api.example.com/v1",
             auth=APIAuthConfig(
-                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+                type="header", token_env="TEST_API_KEY", header_name="X-API-KEY"
             ),
             endpoints=[
                 APIEndpointConfig(
@@ -1249,9 +1249,9 @@ class TestAPIConnectorSQLExecution:
         )
 
         config = APIConnectorConfig(
-            base_url="https://api.dune.com/api/v1",
+            base_url="https://api.example.com/v1",
             auth=APIAuthConfig(
-                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+                type="header", token_env="TEST_API_KEY", header_name="X-API-KEY"
             ),
             endpoints=[
                 APIEndpointConfig(
@@ -1289,9 +1289,9 @@ class TestAPIConnectorSQLExecution:
         )
 
         config = APIConnectorConfig(
-            base_url="https://api.dune.com/api/v1",
+            base_url="https://api.example.com/v1",
             auth=APIAuthConfig(
-                type="header", token_env="TEST_API_KEY", header_name="X-DUNE-API-KEY"
+                type="header", token_env="TEST_API_KEY", header_name="X-API-KEY"
             ),
             endpoints=[
                 APIEndpointConfig(
@@ -1327,7 +1327,7 @@ class TestAPIConnectorSQLExecution:
         config = APIConnectorConfig(base_url="https://api.example.com")
         conn = APIConnector(config, data_dir=str(data_dir))
 
-        # Format: {result: {rows: [...]}} (Dune)
+        # Format: {result: {rows: [...]}}
         assert conn._extract_rows_from_response({"result": {"rows": [{"a": 1}]}}) == [{"a": 1}]
 
         # Format: {data: [...]}

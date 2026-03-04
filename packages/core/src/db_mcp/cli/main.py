@@ -7,6 +7,7 @@ import click
 
 from db_mcp.cli.commands.agents_cmd import register_commands as register_agents
 from db_mcp.cli.commands.collab import register_commands as register_collab
+from db_mcp.cli.commands.connector_cmd import register_commands as register_connector
 from db_mcp.cli.commands.core import register_commands as register_core
 from db_mcp.cli.commands.discover_cmd import register_commands as register_discover
 from db_mcp.cli.commands.git_cmds import register_commands as register_git
@@ -29,6 +30,7 @@ register_traces(main)
 register_git(main)
 register_discover(main)
 register_services(main)
+register_connector(main)
 
 
 if __name__ == "__main__":

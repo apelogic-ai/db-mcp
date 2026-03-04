@@ -7,42 +7,18 @@ validate_sql for API connectors when the runtime says it's not supported).
 """
 
 
-def _server_caps_for_type(connector_type: str, yaml_caps: dict | None = None):
+def _server_caps_for_type(
+    connector_type: str,
+    yaml_caps: dict | None = None,
+    profile: str | None = None,
+):
     """Simulate the server.py capability resolution for a given connector type.
 
     Mirrors the logic in _create_server() without actually creating the server.
     """
-    raw_caps = yaml_caps or {}
+    from db_mcp.capabilities import normalize_capabilities
 
-    _type_defaults = {
-        "sql": {
-            "supports_sql": True,
-            "supports_validate_sql": True,
-            "supports_async_jobs": True,
-            "sql_mode": "engine",
-        },
-        "file": {
-            "supports_sql": True,
-            "supports_validate_sql": True,
-            "supports_async_jobs": True,
-            "sql_mode": "engine",
-        },
-        "metabase": {
-            "supports_sql": True,
-            "supports_validate_sql": False,
-            "supports_async_jobs": False,
-            "sql_mode": "api_sync",
-        },
-        "api": {
-            "supports_sql": False,
-            "supports_validate_sql": False,
-            "supports_async_jobs": False,
-            "sql_mode": None,
-        },
-    }
-    caps = dict(_type_defaults.get(connector_type, {}))
-    caps.update(raw_caps)
-    return caps
+    return normalize_capabilities(connector_type, yaml_caps or {}, profile=profile)
 
 
 class TestCapabilityDefaultsMatch:
@@ -78,6 +54,12 @@ class TestCapabilityDefaultsMatch:
         caps = _server_caps_for_type("api", {"supports_validate_sql": True, "supports_sql": True})
         assert caps["supports_validate_sql"] is True
         assert caps["supports_sql"] is True
+
+    def test_api_sql_profile_defaults_to_sql_enabled(self):
+        caps = _server_caps_for_type("api", profile="api_sql")
+        assert caps["supports_sql"] is True
+        assert caps["supports_validate_sql"] is False
+        assert caps["sql_mode"] == "api_async"
 
     def test_metabase_defaults(self):
         """Metabase: supports_sql=true, validate=false, sql_mode=api_sync."""

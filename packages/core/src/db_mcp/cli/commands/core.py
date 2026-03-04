@@ -12,6 +12,7 @@ from rich.prompt import Confirm
 from rich.table import Table
 
 from db_mcp.agents import AGENTS, detect_installed_agents
+from db_mcp.capabilities import normalize_capabilities, resolve_connector_profile
 from db_mcp.cli.connection import (
     _get_connection_env_path,
     _load_connection_env,
@@ -34,7 +35,12 @@ from db_mcp.cli.utils import (
     load_claude_desktop_config,
     load_config,
 )
-from db_mcp.connectors import get_connector, get_connector_capabilities
+from db_mcp.connectors import (
+    ConnectorConfig,
+    get_connector,
+    get_connector_capabilities,
+    get_connector_profile,
+)
 from db_mcp.execution import ExecutionRequest, ExecutionState
 from db_mcp.execution.engine import get_execution_engine
 
@@ -92,6 +98,26 @@ def _doctor_connection_ok(result: dict | None) -> bool:
         return False
 
     return "error" not in result
+
+
+def _connection_connector_metadata(connection_path: Path) -> dict[str, object]:
+    """Load connector type/profile/capabilities from connector.yaml."""
+    try:
+        config = ConnectorConfig.from_yaml(connection_path / "connector.yaml")
+        connector_type = getattr(config, "type", "sql")
+        configured_profile = getattr(config, "profile", "")
+        capabilities = normalize_capabilities(
+            connector_type,
+            getattr(config, "capabilities", {}) or {},
+            profile=configured_profile,
+        )
+        profile = resolve_connector_profile(connector_type, configured_profile)
+    except Exception:
+        connector_type = "sql"
+        profile = resolve_connector_profile("sql", "")
+        capabilities = normalize_capabilities("sql")
+
+    return {"type": connector_type, "profile": profile, "capabilities": capabilities}
 
 
 @click.command()
@@ -274,6 +300,7 @@ def status(connection: str | None):
             has_schema = (conn_path / "schema" / "descriptions.yaml").exists()
             has_domain = (conn_path / "domain" / "model.md").exists()
             has_env = (conn_path / ".env").exists()
+            connector_meta = _connection_connector_metadata(conn_path)
 
             status_parts = []
             if has_schema:
@@ -284,7 +311,12 @@ def status(connection: str | None):
                 status_parts.append("credentials")
 
             status_str = f"[dim]({', '.join(status_parts)})[/dim]" if status_parts else ""
-            console.print(f"  {marker} [cyan]{conn}[/cyan]{active_label} {status_str}")
+            connector_label = (
+                f"[dim]{connector_meta['type']}:{connector_meta['profile']}[/dim]"
+            )
+            console.print(
+                f"  {marker} [cyan]{conn}[/cyan]{active_label} {connector_label} {status_str}"
+            )
 
             # Show masked database URL for active connection
             if is_active:
@@ -302,6 +334,15 @@ def status(connection: str | None):
                 elif not has_env:
                     console.print(
                         "      [yellow]No .env file - run 'db-mcp init' to configure[/yellow]"
+                    )
+                caps = connector_meta["capabilities"]
+                if isinstance(caps, dict):
+                    console.print(
+                        "      [dim]Capabilities: "
+                        f"sql={bool(caps.get('supports_sql'))}, "
+                        f"validate={bool(caps.get('supports_validate_sql'))}, "
+                        f"openapi={bool(caps.get('supports_openapi_discovery'))}, "
+                        f"endpoint_discovery={bool(caps.get('supports_endpoint_discovery'))}[/dim]"
                     )
     else:
         console.print("  [dim]No connections configured.[/dim]")
@@ -641,11 +682,13 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
     connector = None
     capabilities: dict[str, object] = {}
     connector_type = "unknown"
+    connector_profile = ""
 
     if checks[0]["status"] == "pass":
         try:
             connector = get_connector(connection_path=str(connection_path))
             capabilities = get_connector_capabilities(connector)
+            connector_profile = get_connector_profile(connector)
             connector_type = (
                 getattr(getattr(connector, "api_config", None), "type", None)
                 or getattr(getattr(connector, "config", None), "type", None)
@@ -655,7 +698,10 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
                 {
                     "name": "load_connector",
                     "status": "pass",
-                    "details": {"connector_type": connector_type},
+                    "details": {
+                        "connector_type": connector_type,
+                        "connector_profile": connector_profile,
+                    },
                 }
             )
         except Exception as exc:
@@ -787,6 +833,7 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
         "connection": connection_name,
         "connection_path": str(connection_path),
         "connector_type": connector_type,
+        "connector_profile": connector_profile,
         "capabilities": capabilities,
         "checks": checks,
     }
@@ -799,6 +846,7 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
         console.print(f"connection: [cyan]{connection_name}[/cyan]")
         if connector is not None:
             console.print(f"connector: [cyan]{connector_type}[/cyan]")
+            console.print(f"profile: [cyan]{connector_profile or 'n/a'}[/cyan]")
         for check in checks:
             status_name = str(check["status"])
             icon = {"pass": "[green]✓[/green]", "fail": "[red]✗[/red]"}.get(

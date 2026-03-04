@@ -79,20 +79,25 @@ export default function ConfigPage() {
   // Playground state
   const [playgroundInstalling, setPlaygroundInstalling] = useState(false);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [forceOnboarding, setForceOnboarding] = useState(false);
 
-  // Check localStorage for onboarding dismissal on mount
+  // Check localStorage for onboarding dismissal and URL wizard mode on mount.
   useEffect(() => {
     if (typeof window !== "undefined") {
       setOnboardingDismissed(
         localStorage.getItem("db-mcp-onboarding-dismissed") === "true",
       );
+      const params = new URLSearchParams(window.location.search);
+      setForceOnboarding(params.get("wizard") === "onboarding");
     }
   }, []);
 
   const hasPlayground = connections.some((c) => c.name === "playground");
   const hasNoConnections =
     connections.length === 0 && !connectionsLoading && hasFetched;
-  const showOnboardingBubble = hasNoConnections && !onboardingDismissed;
+  const showOnboardingBubble =
+    (hasNoConnections || forceOnboarding) &&
+    (!onboardingDismissed || forceOnboarding);
   const showPlaygroundButton =
     !hasNoConnections && !hasPlayground && hasFetched && !connectionsLoading;
 
@@ -112,6 +117,7 @@ export default function ConfigPage() {
 
   const handleDismissOnboarding = () => {
     setOnboardingDismissed(true);
+    setForceOnboarding(false);
     if (typeof window !== "undefined") {
       localStorage.setItem("db-mcp-onboarding-dismissed", "true");
     }

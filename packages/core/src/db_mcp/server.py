@@ -420,8 +420,9 @@ def _create_server() -> FastMCP:
                 _yaml_data = {}
 
             conn_type = _yaml_data.get("type", "sql")
+            profile = _yaml_data.get("profile")
             raw_caps = dict(_yaml_data.get("capabilities", {}) or {})
-            merged = normalize_capabilities(conn_type, raw_caps)
+            merged = normalize_capabilities(conn_type, raw_caps, profile=profile)
 
             if conn_type == "api":
                 has_api = True
@@ -449,12 +450,14 @@ def _create_server() -> FastMCP:
             yaml_path = conn_path / "connector.yaml"
             _connector_config = ConnectorConfig.from_yaml(yaml_path)
             connector_type = getattr(_connector_config, "type", "sql")
-            raw_caps = normalize_capabilities(getattr(_connector_config, "capabilities", {}) or {})
+            profile = getattr(_connector_config, "profile", "")
+            raw_caps = getattr(_connector_config, "capabilities", {}) or {}
         except Exception:
             connector_type = "sql"
+            profile = ""
             raw_caps = {}
 
-        connector_caps = normalize_capabilities(connector_type, raw_caps)
+        connector_caps = normalize_capabilities(connector_type, raw_caps, profile=profile)
 
         is_api = connector_type == "api"
         has_api = is_api

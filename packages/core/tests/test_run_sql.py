@@ -6,11 +6,32 @@ from unittest.mock import patch
 
 import pytest
 
+from db_mcp.config import reset_settings
 from db_mcp.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
+from db_mcp.execution import engine as execution_engine
+from db_mcp.registry import ConnectionRegistry
 from db_mcp.tasks.store import Query, QueryStatus
 from db_mcp.tools.generation import _get_result, _run_sql, _validate_sql
 
-CONNECTION = "test-conn"
+CONNECTION = "test_connection"
+WRITE_CONNECTION = "write_connection"
+ASYNC_CONNECTION = "analytics_connection"
+
+
+@pytest.fixture(autouse=True)
+def isolate_connection_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Prevent tests from writing execution artifacts into ~/.db-mcp."""
+    connections_dir = tmp_path / "connections"
+    connections_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
+    reset_settings()
+    ConnectionRegistry.reset()
+    execution_engine._EXECUTION_STORE_CACHE.clear()
+    yield
+    reset_settings()
+    ConnectionRegistry.reset()
+    execution_engine._EXECUTION_STORE_CACHE.clear()
 
 
 class _FakeSQLConnector:
@@ -404,7 +425,7 @@ async def test_validate_sql_allows_write_when_enabled_for_connection():
         query_id="q-1",
         sql="INSERT INTO users(id) VALUES (1)",
         status=QueryStatus.VALIDATED,
-        connection="prod",
+        connection=WRITE_CONNECTION,
     )
 
     class _Store:
@@ -424,7 +445,9 @@ async def test_validate_sql_allows_write_when_enabled_for_connection():
         ),
         patch("db_mcp.tasks.store.get_query_store", return_value=_Store()),
     ):
-        result = await _validate_sql("INSERT INTO users(id) VALUES (1)", connection="prod")
+        result = await _validate_sql(
+            "INSERT INTO users(id) VALUES (1)", connection=WRITE_CONNECTION
+        )
 
     payload = result.structuredContent
     assert payload["valid"] is True
@@ -459,7 +482,7 @@ async def test_run_sql_write_requires_confirmation_by_default():
         query_id="q-1",
         sql="INSERT INTO users(id) VALUES (1)",
         status=QueryStatus.VALIDATED,
-        connection="prod",
+        connection=WRITE_CONNECTION,
     )
     store = _FakeQueryStore(query=query)
 
@@ -468,7 +491,7 @@ async def test_run_sql_write_requires_confirmation_by_default():
         patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
         patch(
             "db_mcp.tools.utils.resolve_connection",
-            return_value=(_FakeSQLConnector(), "prod", Path("/tmp/prod")),
+            return_value=(_FakeSQLConnector(), WRITE_CONNECTION, Path("/tmp/write_connection")),
         ),
         patch(
             "db_mcp.tools.generation.get_connector_capabilities",
@@ -476,7 +499,7 @@ async def test_run_sql_write_requires_confirmation_by_default():
         ),
         patch("db_mcp.tools.generation._execute_query") as mock_execute,
     ):
-        result = await _run_sql(query_id="q-1", connection="prod")
+        result = await _run_sql(query_id="q-1", connection=WRITE_CONNECTION)
 
     payload = result.structuredContent
     assert payload["status"] == "confirm_required"
@@ -490,7 +513,7 @@ async def test_run_sql_write_executes_when_confirmed():
         query_id="q-1",
         sql="INSERT INTO users(id) VALUES (1)",
         status=QueryStatus.VALIDATED,
-        connection="prod",
+        connection=WRITE_CONNECTION,
     )
     store = _FakeQueryStore(query=query)
 
@@ -499,7 +522,7 @@ async def test_run_sql_write_executes_when_confirmed():
         patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
         patch(
             "db_mcp.tools.utils.resolve_connection",
-            return_value=(_FakeSQLConnector(), "prod", Path("/tmp/prod")),
+            return_value=(_FakeSQLConnector(), WRITE_CONNECTION, Path("/tmp/write_connection")),
         ),
         patch(
             "db_mcp.tools.generation.get_connector_capabilities",
@@ -512,14 +535,14 @@ async def test_run_sql_write_executes_when_confirmed():
                 "columns": [],
                 "rows_returned": 0,
                 "duration_ms": 2.0,
-                "provider_id": "prod",
+                "provider_id": WRITE_CONNECTION,
                 "statement_type": "INSERT",
                 "is_write": True,
                 "rows_affected": 1,
             },
         ),
     ):
-        result = await _run_sql(query_id="q-1", confirmed=True, connection="prod")
+        result = await _run_sql(query_id="q-1", confirmed=True, connection=WRITE_CONNECTION)
 
     payload = result.structuredContent
     assert payload["status"] == "success"
@@ -621,10 +644,10 @@ async def test_get_result_resolves_api_execution_ids_not_in_query_store(tmp_path
         patch("db_mcp.tasks.store.get_query_store", return_value=_MissingStore()),
         patch(
             "db_mcp.tools.utils.resolve_connection",
-            return_value=(connector, "dune", Path("/tmp/dune")),
+            return_value=(connector, ASYNC_CONNECTION, Path("/tmp/analytics_connection")),
         ),
     ):
-        result = await _get_result("exec-123", connection="dune")
+        result = await _get_result("exec-123", connection=ASYNC_CONNECTION)
 
     payload = result.structuredContent
     assert payload["status"] == "complete"
@@ -677,10 +700,10 @@ async def test_get_result_surfaces_api_execution_failures(tmp_path: Path):
         patch("db_mcp.tasks.store.get_query_store", return_value=_MissingStore()),
         patch(
             "db_mcp.tools.utils.resolve_connection",
-            return_value=(connector, "dune", Path("/tmp/dune")),
+            return_value=(connector, ASYNC_CONNECTION, Path("/tmp/analytics_connection")),
         ),
     ):
-        result = await _get_result("exec-123", connection="dune")
+        result = await _get_result("exec-123", connection=ASYNC_CONNECTION)
 
     payload = result.structuredContent
     assert payload["status"] == "error"

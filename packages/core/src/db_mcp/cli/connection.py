@@ -16,6 +16,7 @@ from db_mcp.cli.utils import (
     load_config,
     save_config,
 )
+from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 
 
 def get_connection_path(name: str) -> Path:
@@ -156,7 +157,9 @@ def _prompt_and_save_api_connection(name: str) -> bool:
     )
 
     connector_yaml: dict[str, object] = {
+        "spec_version": CONNECTOR_SPEC_VERSION,
         "type": "api",
+        "profile": "api_openapi",
         "base_url": base_url,
         "auth": {
             "type": auth_type,
@@ -176,6 +179,7 @@ def _prompt_and_save_api_connection(name: str) -> bool:
     }
 
     if sql_support == "yes":
+        connector_yaml["profile"] = "api_sql"
         sql_mode = Prompt.ask("SQL mode", choices=["api_async", "api_sync"], default="api_async")
         execute_path = Prompt.ask("SQL execute path", default="/sql/execute")
         status_path = Prompt.ask(
