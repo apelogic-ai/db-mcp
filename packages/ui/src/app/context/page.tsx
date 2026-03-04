@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useBICP } from "@/lib/bicp-context";
 import { useConnections } from "@/lib/connection-context";
@@ -53,7 +53,7 @@ function decodeParam(value: string | null): string {
   }
 }
 
-export default function ContextPage() {
+function ContextPageContent() {
   const searchParams = useSearchParams();
   const { isInitialized, call } = useBICP();
   const { activeConnection } = useConnections();
@@ -861,5 +861,13 @@ export default function ContextPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ContextPage() {
+  return (
+    <Suspense fallback={<div className="text-gray-400">Loading context...</div>}>
+      <ContextPageContent />
+    </Suspense>
   );
 }
