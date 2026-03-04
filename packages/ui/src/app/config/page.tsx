@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Card,
@@ -31,7 +31,7 @@ import {
 } from "@/features/config/types";
 import { maskDatabaseUrl, parseConnectArgsFromUrl } from "@/features/config/utils";
 
-export default function ConfigPage() {
+function ConfigPageContent() {
   const searchParams = useSearchParams();
   const { isInitialized, isLoading, error, serverInfo, initialize, call } =
     useBICP();
@@ -1686,5 +1686,13 @@ export default function ConfigPage() {
         <AgentConfig />
       </div>
     </div>
+  );
+}
+
+export default function ConfigPage() {
+  return (
+    <Suspense fallback={<div className="text-gray-400">Loading setup...</div>}>
+      <ConfigPageContent />
+    </Suspense>
   );
 }
