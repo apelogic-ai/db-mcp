@@ -35,6 +35,14 @@ from sqlalchemy import text
 
 from db_mcp.connectors import get_connector, get_connector_capabilities
 from db_mcp.connectors.sql import SQLConnector
+from db_mcp.execution import (
+    ExecutionErrorCode,
+    ExecutionRequest,
+    ExecutionState,
+    check_protocol_ack_gate,
+    evaluate_sql_execution_policy,
+)
+from db_mcp.execution.engine import get_execution_engine
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.tasks.store import QueryStatus, get_query_store
 from db_mcp.tools.shell import inject_protocol
@@ -344,7 +352,12 @@ def _execute_query(
             raise
 
 
-async def _execute_query_background(query_id: str, sql: str, connection: str) -> None:
+async def _execute_query_background(
+    query_id: str,
+    sql: str,
+    connection: str,
+    execution_id: str | None = None,
+) -> None:
     """Execute query in background and update query store.
 
     This runs in an asyncio task, allowing the MCP tool to return immediately
@@ -354,11 +367,18 @@ async def _execute_query_background(query_id: str, sql: str, connection: str) ->
         query_id: Query identifier in the store.
         sql: SQL to execute.
         connection: Connection name for multi-connection dispatch.
+        execution_id: Optional execution lifecycle ID in persistent execution store.
     """
+    from db_mcp.tools.utils import _resolve_connection_path
+
     store = get_query_store()
+    execution_engine = get_execution_engine(Path(_resolve_connection_path(connection)))
+    started = time.time()
 
     try:
         await store.update_status(query_id, QueryStatus.RUNNING)
+        if execution_id:
+            execution_engine.mark_running(execution_id)
         logger.info(f"Query {query_id}: Starting background execution")
 
         # Run the blocking query in a thread pool
@@ -382,6 +402,21 @@ async def _execute_query_background(query_id: str, sql: str, connection: str) ->
             result=result,
             rows_returned=result["rows_returned"],
         )
+        if execution_id:
+            execution_engine.mark_succeeded(
+                execution_id,
+                data=result.get("data", []),
+                columns=result.get("columns", []),
+                rows_returned=result.get("rows_returned", 0),
+                rows_affected=result.get("rows_affected"),
+                duration_ms=(time.time() - started) * 1000,
+                metadata={
+                    "provider_id": result.get("provider_id"),
+                    "statement_type": result.get("statement_type"),
+                    "is_write": result.get("is_write"),
+                    "query_id": query_id,
+                },
+            )
         logger.info(f"Query {query_id}: Complete, {result['rows_returned']} rows")
 
     except Exception as e:
@@ -391,6 +426,131 @@ async def _execute_query_background(query_id: str, sql: str, connection: str) ->
             QueryStatus.ERROR,
             error=str(e),
         )
+        if execution_id:
+            execution_engine.mark_failed(
+                execution_id,
+                message=str(e),
+                duration_ms=(time.time() - started) * 1000,
+                metadata={"query_id": query_id},
+            )
+
+
+def _api_async_state(status_payload: dict[str, Any]) -> ExecutionState:
+    """Map API-specific status payload to unified execution state."""
+    state = str(status_payload.get("state", "")).lower()
+    is_finished = bool(status_payload.get("is_execution_finished", False))
+
+    if "cancel" in state:
+        return ExecutionState.CANCELLED
+    if "timeout" in state:
+        return ExecutionState.TIMED_OUT
+    if "failed" in state or "error" in state:
+        return ExecutionState.FAILED
+    if is_finished or "complete" in state or "success" in state or "finished" in state:
+        return ExecutionState.SUCCEEDED
+    if "submit" in state:
+        return ExecutionState.SUBMITTED
+    return ExecutionState.RUNNING
+
+
+def _poll_api_async_execution(
+    *,
+    connection: str,
+    execution_id: str,
+    metadata: dict[str, Any],
+    started_at: datetime | None,
+) -> dict[str, Any]:
+    """Poll async SQL-like API execution and update unified execution store."""
+    from db_mcp.tools.utils import _resolve_connection_path
+
+    external_id = metadata.get("external_execution_id")
+    if not external_id:
+        return {"status": "running", "message": "Execution submitted to API."}
+
+    connection_path = Path(_resolve_connection_path(connection))
+    execution_engine = get_execution_engine(connection_path)
+    connector = get_connector(connection_path=str(connection_path))
+
+    if not hasattr(connector, "get_execution_status") or not hasattr(
+        connector, "get_execution_results"
+    ):
+        return {
+            "status": "error",
+            "error_code": ExecutionErrorCode.TOOLING.value,
+            "error": "Connector does not expose async SQL polling methods.",
+        }
+
+    try:
+        status_payload = connector.get_execution_status(str(external_id))
+    except Exception as exc:
+        return {
+            "status": "running",
+            "message": f"Polling status failed transiently: {exc}",
+        }
+
+    state = _api_async_state(status_payload if isinstance(status_payload, dict) else {})
+    status_metadata = {
+        "sql_mode": metadata.get("sql_mode") or "api_async",
+        "external_execution_id": str(external_id),
+        "external_status": status_payload,
+    }
+
+    if state in {ExecutionState.SUBMITTED, ExecutionState.RUNNING}:
+        execution_engine.update_metadata(execution_id, status_metadata, merge=True)
+        return {
+            "status": "running",
+            "state": state.value,
+            "message": "Execution is still in progress.",
+        }
+
+    if state == ExecutionState.SUCCEEDED:
+        try:
+            rows = connector.get_execution_results(str(external_id))
+        except Exception as exc:
+            return {
+                "status": "running",
+                "state": ExecutionState.RUNNING.value,
+                "message": f"Execution finished but result fetch is retrying: {exc}",
+            }
+
+        columns = list(rows[0].keys()) if rows else []
+        duration_ms = None
+        if started_at is not None:
+            duration_ms = (datetime.now(tz=started_at.tzinfo) - started_at).total_seconds() * 1000
+
+        execution_engine.mark_succeeded(
+            execution_id,
+            data=rows,
+            columns=columns,
+            rows_returned=len(rows),
+            rows_affected=None,
+            duration_ms=duration_ms,
+            metadata=status_metadata,
+        )
+        return {"status": "complete"}
+
+    error_msg = "Execution failed"
+    if isinstance(status_payload, dict):
+        error_msg = str(status_payload.get("error") or status_payload.get("message") or error_msg)
+
+    code = ExecutionErrorCode.ENGINE
+    if state == ExecutionState.CANCELLED:
+        code = ExecutionErrorCode.POLICY
+    elif state == ExecutionState.TIMED_OUT:
+        code = ExecutionErrorCode.TIMEOUT
+
+    duration_ms = None
+    if started_at is not None:
+        duration_ms = (datetime.now(tz=started_at.tzinfo) - started_at).total_seconds() * 1000
+
+    execution_engine.mark_failed(
+        execution_id,
+        message=error_msg,
+        code=code,
+        duration_ms=duration_ms,
+        metadata=status_metadata,
+    )
+    return {"status": "error"}
 
 
 def _check_sampling_support(ctx: Context) -> bool:
@@ -702,7 +862,10 @@ async def _run_sql(
 
     FOR SQL-LIKE APIs (Dune, etc.) with supports_sql=true and supports_validate_sql=false:
         Call run_sql(connection="<name>", sql="SELECT ...") directly. The SQL will be sent to
-        the API's execute_sql endpoint, and results will be returned after polling completes.
+        the API's execute_sql endpoint. Depending on provider behavior, run_sql may return:
+        - status='success' with rows immediately (sync response), or
+        - status='submitted' with execution_id when provider runs asynchronously.
+        Use get_result(query_id=<execution_id>, connection=...) to poll async submissions.
 
     FOR REGULAR SQL DATABASES:
         REQUIRES a query_id from validate_sql. This ensures:
@@ -750,8 +913,16 @@ async def _run_sql(
     from db_mcp.tools.utils import _resolve_connection_path
 
     if query_id is None and sql is not None:
-        connector = get_connector(connection_path=_resolve_connection_path(connection))
+        connection_path = Path(_resolve_connection_path(connection))
+        connector = get_connector(connection_path=str(connection_path))
         caps = get_connector_capabilities(connector)
+
+        policy_error = check_protocol_ack_gate(
+            connection=connection,
+            connection_path=connection_path,
+        )
+        if policy_error is not None:
+            return inject_protocol(policy_error)
 
         if not caps.get("supports_sql"):
             return inject_protocol(
@@ -761,138 +932,243 @@ async def _run_sql(
                 }
             )
 
-        if caps.get("supports_validate_sql", True):
-            return inject_protocol(
-                {
-                    "status": "error",
-                    "error": "Validation required. Use validate_sql first.",
-                    "guidance": {
-                        "next_steps": [
-                            "Call validate_sql(sql=...) to get a query_id",
-                            "Then call run_sql(query_id=..., connection=...)",
-                        ]
-                    },
-                }
-            )
-
-        is_allowed, error, statement_type, is_write = validate_sql_permissions(
-            sql, capabilities=caps
+        policy_error, statement_type, is_write = evaluate_sql_execution_policy(
+            sql=sql,
+            capabilities=caps,
+            confirmed=confirmed,
+            require_validate_first=True,
         )
-        if not is_allowed:
-            return inject_protocol(
-                {
-                    "status": "error",
-                    "error": error,
-                    "sql": sql,
-                    "statement_type": statement_type,
-                    "is_write": is_write,
-                }
-            )
-
-        _, _, require_write_confirmation = get_write_policy(caps)
-        if is_write and require_write_confirmation and not confirmed:
-            return inject_protocol(
-                {
-                    "status": "confirm_required",
-                    "query_id": None,
-                    "sql": sql,
-                    "statement_type": statement_type,
-                    "is_write": True,
-                    "message": (
-                        "Write statement requires confirmation. "
-                        "Re-run with confirmed=true to execute."
-                    ),
-                }
-            )
+        if policy_error is not None:
+            return inject_protocol(policy_error)
 
         sql_mode = caps.get("sql_mode")
-        if sql_mode is None or sql_mode == "api_sync" or sql_mode == "engine":
-            # Standard SQL connector (no sql_mode), sync API, or direct engine access
-            try:
-                rows_affected = None
-                if isinstance(connector, SQLConnector):
-                    columns, rows, rows_affected = _execute_sql_on_engine(
-                        connector, sql, is_write=is_write, limit=None
-                    )
-                else:
-                    rows = connector.execute_sql(sql)
-                    columns = list(rows[0].keys()) if rows else []
-                return inject_protocol(
-                    {
-                        "status": "success",
-                        "mode": "sync",
-                        "query_id": _generate_query_uuid(sql),
-                        "sql": sql,
-                        "data": rows,
-                        "columns": columns,
-                        "rows_returned": len(rows),
-                        "duration_ms": None,
-                        "provider_id": None,
-                        "cost_tier": "unknown",
-                        "statement_type": statement_type,
-                        "is_write": is_write,
-                        "rows_affected": rows_affected,
-                    }
+
+        def _sync_execute(_: str) -> dict[str, Any]:
+            rows_affected = None
+            if isinstance(connector, SQLConnector):
+                columns, rows, rows_affected = _execute_sql_on_engine(
+                    connector, sql, is_write=is_write, limit=None
                 )
-            except Exception as exc:
+            else:
+                rows = connector.execute_sql(sql)
+                columns = list(rows[0].keys()) if rows else []
+
+            return {
+                "data": rows,
+                "columns": columns,
+                "rows_returned": len(rows),
+                "rows_affected": rows_affected,
+            }
+
+        def _run_sync_via_engine() -> dict:
+            try:
+                execution_engine = get_execution_engine(connection_path)
+                request = ExecutionRequest(
+                    connection=connection,
+                    sql=sql,
+                )
+                handle, exec_result = execution_engine.submit_sync(request, _sync_execute)
+
+                if exec_result.state == ExecutionState.SUCCEEDED:
+                    return inject_protocol(
+                        {
+                            "status": "success",
+                            "mode": "sync",
+                            "execution_id": handle.execution_id,
+                            "state": exec_result.state.value,
+                            "query_id": _generate_query_uuid(sql),
+                            "sql": sql,
+                            "data": exec_result.data,
+                            "columns": exec_result.columns,
+                            "rows_returned": exec_result.rows_returned,
+                            "duration_ms": exec_result.duration_ms,
+                            "provider_id": None,
+                            "cost_tier": "unknown",
+                            "statement_type": statement_type,
+                            "is_write": is_write,
+                            "rows_affected": exec_result.rows_affected,
+                        }
+                    )
+
                 return inject_protocol(
                     {
                         "status": "error",
-                        "error": f"Execution failed: {exc}",
+                        "execution_id": handle.execution_id,
+                        "state": exec_result.state.value,
+                        "error": (
+                            exec_result.error.message if exec_result.error else "Execution failed"
+                        ),
+                        "error_code": (
+                            exec_result.error.code.value if exec_result.error else None
+                        ),
                         "sql": sql,
                     }
                 )
+            except Exception as exc:
+                # If persistent execution storage is unavailable, fall back to
+                # direct execution to preserve backwards-compatible behavior.
+                try:
+                    fallback = _sync_execute()
+                    return inject_protocol(
+                        {
+                            "status": "success",
+                            "mode": "sync",
+                            "query_id": _generate_query_uuid(sql),
+                            "sql": sql,
+                            "data": fallback["data"],
+                            "columns": fallback["columns"],
+                            "rows_returned": fallback["rows_returned"],
+                            "duration_ms": None,
+                            "provider_id": None,
+                            "cost_tier": "unknown",
+                            "statement_type": statement_type,
+                            "is_write": is_write,
+                            "rows_affected": fallback["rows_affected"],
+                            "execution_store_error": str(exc),
+                        }
+                    )
+                except Exception as fallback_exc:
+                    return inject_protocol(
+                        {
+                            "status": "error",
+                            "error": f"Execution failed: {fallback_exc}",
+                            "sql": sql,
+                        }
+                    )
+
+        def _run_sql_like_api_via_execution_lifecycle() -> dict:
+            execution_engine = get_execution_engine(connection_path)
+            local_query_id = _generate_query_uuid(sql)
+            request = ExecutionRequest(
+                connection=connection,
+                sql=sql,
+                query_id=local_query_id,
+                idempotency_key=local_query_id,
+                metadata={"sql_mode": sql_mode or "api_sync"},
+            )
+            handle = execution_engine.submit_async(request)
+
+            try:
+                submission = connector.submit_sql(sql)
+                mode = submission.get("mode")
+                if mode == "sync":
+                    rows = submission.get("rows", [])
+                    if not isinstance(rows, list):
+                        rows = []
+                    columns = list(rows[0].keys()) if rows else []
+                    execution_engine.mark_succeeded(
+                        handle.execution_id,
+                        data=rows,
+                        columns=columns,
+                        rows_returned=len(rows),
+                        rows_affected=None,
+                        duration_ms=None,
+                        metadata={
+                            "sql_mode": sql_mode or "api_sync",
+                            "submission_mode": "sync",
+                        },
+                    )
+                    return inject_protocol(
+                        {
+                            "status": "success",
+                            "mode": "sync",
+                            "query_id": local_query_id,
+                            "execution_id": handle.execution_id,
+                            "state": ExecutionState.SUCCEEDED.value,
+                            "sql": sql,
+                            "data": rows,
+                            "columns": columns,
+                            "rows_returned": len(rows),
+                            "duration_ms": None,
+                            "provider_id": None,
+                            "cost_tier": "unknown",
+                            "statement_type": statement_type,
+                            "is_write": is_write,
+                            "rows_affected": None,
+                        }
+                    )
+
+                external_id = submission.get("execution_id")
+                if not external_id:
+                    raise ValueError("Async submission missing execution_id")
+
+                execution_engine.update_metadata(
+                    handle.execution_id,
+                    {
+                        "sql_mode": sql_mode or "api_sync",
+                        "external_execution_id": str(external_id),
+                        "submission_mode": "async",
+                    },
+                    merge=True,
+                )
+                execution_engine.mark_running(handle.execution_id)
+
+                return inject_protocol(
+                    {
+                        "status": "submitted",
+                        "mode": "async",
+                        "query_id": handle.execution_id,
+                        "execution_id": handle.execution_id,
+                        "state": ExecutionState.RUNNING.value,
+                        "sql": sql,
+                        "external_execution_id": str(external_id),
+                        "message": (
+                            "Query submitted to SQL API. "
+                            f"Use get_result('{handle.execution_id}', connection='{connection}') "
+                            "to poll status."
+                        ),
+                        "poll_interval_seconds": 5,
+                    }
+                )
+            except Exception as exc:
+                execution_engine.mark_failed(
+                    handle.execution_id,
+                    message=str(exc),
+                    code=ExecutionErrorCode.ENGINE,
+                    duration_ms=None,
+                )
+                return inject_protocol(
+                    {
+                        "status": "error",
+                        "query_id": handle.execution_id,
+                        "execution_id": handle.execution_id,
+                        "state": ExecutionState.FAILED.value,
+                        "error_code": ExecutionErrorCode.ENGINE.value,
+                        "error": f"Async SQL API submission failed: {exc}",
+                        "sql": sql,
+                    }
+                )
+
+        if hasattr(connector, "submit_sql") and not isinstance(connector, SQLConnector):
+            # SQL-like API connector: submit first, then return submitted/running lifecycle
+            # when provider executes asynchronously.
+            return _run_sql_like_api_via_execution_lifecycle()
+
+        if sql_mode is None or sql_mode == "engine":
+            # Standard SQL connector (no sql_mode) or direct engine access.
+            return _run_sync_via_engine()
 
         if sql_mode == "api_async":
             return inject_protocol(
                 {
                     "status": "error",
-                    "error": "Async SQL API execution is not implemented for this connector.",
-                    "guidance": {
-                        "next_steps": [
-                            "Use api_query endpoints for this connector",
-                            "Or set sql_mode to api_sync if supported",
-                        ]
-                    },
+                    "error": "Connector does not expose async SQL submission API.",
+                    "error_code": ExecutionErrorCode.TOOLING.value,
                 }
             )
 
         # Fallback: try execute_sql for any other sql_mode (connector may support it)
         if hasattr(connector, "execute_sql"):
-            try:
-                rows_affected = None
-                if isinstance(connector, SQLConnector):
-                    columns, rows, rows_affected = _execute_sql_on_engine(
-                        connector, sql, is_write=is_write, limit=None
-                    )
-                else:
-                    rows = connector.execute_sql(sql)
-                    columns = list(rows[0].keys()) if rows else []
-                return inject_protocol(
-                    {
-                        "status": "success",
-                        "mode": "sync",
-                        "query_id": _generate_query_uuid(sql),
-                        "sql": sql,
-                        "data": rows,
-                        "columns": columns,
-                        "rows_returned": len(rows),
-                        "duration_ms": None,
-                        "provider_id": None,
-                        "cost_tier": "unknown",
-                        "statement_type": statement_type,
-                        "is_write": is_write,
-                        "rows_affected": rows_affected,
-                    }
-                )
-            except Exception as exc:
-                return inject_protocol(
-                    {
-                        "status": "error",
-                        "error": f"Execution failed (sql_mode={sql_mode!r}): {exc}",
-                        "sql": sql,
-                    }
-                )
+            result = _run_sync_via_engine()
+            payload = result.structuredContent
+            if (
+                isinstance(payload, dict)
+                and payload.get("status") == "error"
+                and payload.get("error")
+            ):
+                payload["error"] = f"Execution failed (sql_mode={sql_mode!r}): {payload['error']}"
+                return inject_protocol(payload)
+            return result
 
         return inject_protocol(
             {
@@ -964,35 +1240,25 @@ async def _run_sql(
 
     sql = query.sql
     policy_connection = query.connection if query.connection is not None else connection
-    policy_connector = get_connector(connection_path=_resolve_connection_path(policy_connection))
+    policy_connection_path = Path(_resolve_connection_path(policy_connection))
+    policy_connector = get_connector(connection_path=str(policy_connection_path))
     policy_caps = get_connector_capabilities(policy_connector)
-    is_allowed, error, statement_type, is_write = validate_sql_permissions(
-        sql, capabilities=policy_caps
+    policy_error = check_protocol_ack_gate(
+        connection=policy_connection,
+        connection_path=policy_connection_path,
     )
-    if not is_allowed:
-        return inject_protocol(
-            {
-                "status": "error",
-                "error": error,
-                "query_id": query_id,
-                "sql": sql,
-                "statement_type": statement_type,
-                "is_write": is_write,
-            }
-        )
+    if policy_error is not None:
+        return inject_protocol(policy_error)
 
-    _, _, require_write_confirmation = get_write_policy(policy_caps)
-    if is_write and require_write_confirmation and not confirmed:
-        return inject_protocol(
-            {
-                "status": "confirm_required",
-                "query_id": query_id,
-                "sql": sql,
-                "statement_type": statement_type,
-                "is_write": True,
-                "message": "Write statement requires confirmation. Re-run with confirmed=true.",
-            }
-        )
+    policy_error, statement_type, is_write = evaluate_sql_execution_policy(
+        sql=sql,
+        capabilities=policy_caps,
+        confirmed=confirmed,
+        require_validate_first=False,
+        query_id=query_id,
+    )
+    if policy_error is not None:
+        return inject_protocol(policy_error)
 
     # Step 2: Check cost tier
     if query.cost_tier == "reject" and not confirmed:
@@ -1017,6 +1283,10 @@ async def _run_sql(
             }
         )
 
+    execution_connection = query.connection if query.connection is not None else connection
+    execution_connection_path = Path(_resolve_connection_path(execution_connection))
+    execution_engine = get_execution_engine(execution_connection_path)
+
     # Step 3: Check if query should run async
     should_run_async = query.estimated_rows and query.estimated_rows > ASYNC_ROW_THRESHOLD
 
@@ -1032,10 +1302,22 @@ async def _run_sql(
                 }
             )
 
-        # Start background execution (pass stored connection name)
-        execution_connection = query.connection if query.connection is not None else connection
+        request = ExecutionRequest(
+            connection=execution_connection,
+            sql=sql,
+            query_id=query_id,
+            idempotency_key=query_id,
+        )
+        handle = execution_engine.submit_async(request)
+
+        # Start background execution (pass stored connection + execution lifecycle id)
         asyncio.create_task(
-            _execute_query_background(query_id, sql, connection=execution_connection)
+            _execute_query_background(
+                query_id,
+                sql,
+                connection=execution_connection,
+                execution_id=handle.execution_id,
+            )
         )
 
         return inject_protocol(
@@ -1043,6 +1325,8 @@ async def _run_sql(
                 "status": "submitted",
                 "mode": "async",
                 "query_id": query_id,
+                "execution_id": handle.execution_id,
+                "state": handle.state.value,
                 "sql": sql,
                 "estimated_rows": query.estimated_rows,
                 "message": (
@@ -1066,8 +1350,52 @@ async def _run_sql(
         await store.update_status(query_id, QueryStatus.RUNNING)
         await _report_progress(ctx, 10, 100)  # 10% - Starting
 
-        execution_connection = query.connection if query.connection is not None else connection
-        result = _execute_query(sql, query_id=query_id, connection=execution_connection)
+        request = ExecutionRequest(
+            connection=execution_connection,
+            sql=sql,
+            query_id=query_id,
+            idempotency_key=query_id,
+        )
+
+        def _validated_runner(runner_sql: str) -> dict[str, Any]:
+            raw = _execute_query(runner_sql, query_id=query_id, connection=execution_connection)
+            return {
+                "data": raw.get("data", []),
+                "columns": raw.get("columns", []),
+                "rows_returned": raw.get("rows_returned", 0),
+                "rows_affected": raw.get("rows_affected"),
+                "metadata": {
+                    "provider_id": raw.get("provider_id"),
+                    "statement_type": raw.get("statement_type"),
+                    "is_write": raw.get("is_write", False),
+                },
+            }
+
+        handle, exec_result = execution_engine.submit_sync(request, _validated_runner)
+        if exec_result.state != ExecutionState.SUCCEEDED:
+            error_message = exec_result.error.message if exec_result.error else "Execution failed"
+            await store.update_status(query_id, QueryStatus.ERROR, error=error_message)
+            return inject_protocol(
+                {
+                    "status": "error",
+                    "error": f"Execution failed: {error_message}",
+                    "query_id": query_id,
+                    "execution_id": handle.execution_id,
+                    "state": exec_result.state.value,
+                    "sql": sql,
+                }
+            )
+
+        result = {
+            "data": exec_result.data,
+            "columns": exec_result.columns,
+            "rows_returned": exec_result.rows_returned,
+            "duration_ms": exec_result.duration_ms,
+            "provider_id": exec_result.metadata.get("provider_id"),
+            "statement_type": exec_result.metadata.get("statement_type"),
+            "is_write": exec_result.metadata.get("is_write", False),
+            "rows_affected": exec_result.rows_affected,
+        }
         await _report_progress(ctx, 80, 100)  # 80% - Query done, processing
 
         # Mark as complete
@@ -1086,6 +1414,8 @@ async def _run_sql(
             {
                 "status": "success",
                 "query_id": query_id,
+                "execution_id": handle.execution_id,
+                "state": exec_result.state.value,
                 "sql": sql,
                 "data": result["data"],
                 "columns": result["columns"],
@@ -1468,10 +1798,96 @@ async def _get_result(query_id: str, connection: str) -> dict:
     Returns:
         Dict with query status and results (when complete)
     """
+    from db_mcp.tools.utils import _resolve_connection_path
+
     store = get_query_store()
     query = await store.get(query_id)
 
     if query is None:
+        # Fallback to unified execution store for direct SQL execution IDs.
+        connection_path = Path(_resolve_connection_path(connection))
+        execution_engine = get_execution_engine(connection_path)
+        execution_result = execution_engine.get_result(query_id)
+        if execution_result is not None:
+            metadata = execution_result.metadata or {}
+            should_poll_api_sql = bool(metadata.get("external_execution_id")) or (
+                metadata.get("sql_mode") == "api_async"
+            )
+            if (
+                execution_result.state in {ExecutionState.SUBMITTED, ExecutionState.RUNNING}
+                and should_poll_api_sql
+            ):
+                poll_outcome = _poll_api_async_execution(
+                    connection=connection,
+                    execution_id=query_id,
+                    metadata=metadata,
+                    started_at=execution_result.started_at,
+                )
+                if poll_outcome.get("status") == "error":
+                    return inject_protocol(
+                        {
+                            "status": "error",
+                            "query_id": query_id,
+                            "execution_id": query_id,
+                            "state": execution_result.state.value,
+                            "error": poll_outcome.get("error", "Execution failed"),
+                            "error_code": poll_outcome.get("error_code"),
+                        }
+                    )
+
+                # Reload after polling attempt because state may have transitioned.
+                execution_result = execution_engine.get_result(query_id) or execution_result
+                metadata = execution_result.metadata or metadata
+
+            if execution_result.state == ExecutionState.SUCCEEDED:
+                rows_returned = execution_result.rows_returned
+                return inject_protocol(
+                    {
+                        "status": "complete",
+                        "query_id": query_id,
+                        "execution_id": query_id,
+                        "state": execution_result.state.value,
+                        "sql": None,
+                        "data": execution_result.data,
+                        "columns": execution_result.columns,
+                        "rows_returned": rows_returned,
+                        "duration_ms": execution_result.duration_ms,
+                    }
+                )
+
+            if execution_result.state == ExecutionState.FAILED:
+                return inject_protocol(
+                    {
+                        "status": "error",
+                        "query_id": query_id,
+                        "execution_id": query_id,
+                        "state": execution_result.state.value,
+                        "error": (
+                            execution_result.error.message
+                            if execution_result.error
+                            else "Execution failed"
+                        ),
+                        "error_code": (
+                            execution_result.error.code.value if execution_result.error else None
+                        ),
+                    }
+                )
+
+            if execution_result.state in {
+                ExecutionState.SUBMITTED,
+                ExecutionState.RUNNING,
+                ExecutionState.PRECHECK,
+            }:
+                return inject_protocol(
+                    {
+                        "status": "running",
+                        "query_id": query_id,
+                        "execution_id": query_id,
+                        "state": execution_result.state.value,
+                        "external_execution_id": metadata.get("external_execution_id"),
+                        "message": "Execution is in progress.",
+                    }
+                )
         api_payload = _resolve_api_execution(query_id=query_id, connection=connection)
         if api_payload is not None:
             return inject_protocol(api_payload)

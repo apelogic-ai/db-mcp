@@ -541,6 +541,103 @@ class TestConnectorTypeToolGating:
         assert "mcp_domain_generate" in tools
 
 
+def test_shell_auto_profile_reduces_tool_surface(tmp_path):
+    """Shell mode + auto profile should expose only query-focused tools."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql", "database_url": "sqlite:///tmp/test.db"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "shell"
+        mock_settings.return_value.tool_profile = "auto"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "test"
+
+        server = _create_server()
+
+    tools = _get_tool_names(server)
+    assert "shell" in tools
+    assert "protocol" in tools
+    assert "run_sql" in tools
+    assert "validate_sql" in tools
+    assert "mcp_setup_status" not in tools
+    assert "mcp_suggest_improvement" not in tools
+    assert "list_tables" not in tools
+
+
+def test_detailed_query_profile_reduces_tool_surface(tmp_path):
+    """Detailed mode can still force a smaller query profile."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql", "database_url": "sqlite:///tmp/test.db"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "detailed"
+        mock_settings.return_value.tool_profile = "query"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "test"
+
+        server = _create_server()
+
+    tools = _get_tool_names(server)
+    assert "run_sql" in tools
+    assert "validate_sql" in tools
+    assert "mcp_setup_status" not in tools
+    assert "mcp_suggest_improvement" not in tools
+    assert "list_tables" not in tools
+
+
+def test_shell_full_profile_keeps_admin_tools(tmp_path):
+    """Shell mode can opt back into full profile when needed."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql", "database_url": "sqlite:///tmp/test.db"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "shell"
+        mock_settings.return_value.tool_profile = "full"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "test"
+
+        server = _create_server()
+
+    tools = _get_tool_names(server)
+    assert "mcp_setup_status" in tools
+    assert "mcp_suggest_improvement" in tools
+    # Detailed-only helper tools remain off in shell mode.
+    assert "list_tables" not in tools
+
+
 def test_all_db_mcp_modules_importable():
     """Guard against PyInstaller missing modules.
 

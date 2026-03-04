@@ -1,0 +1,47 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "error": {
+      "title": "Error",
+      "type": "string"
+    },
+    "error_code": {
+      "const": "ENGINE",
+      "title": "Error Code",
+      "type": "string"
+    },
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "query_id": {
+      "title": "Query Id",
+      "type": "string"
+    },
+    "sql": {
+      "title": "Sql",
+      "type": "string"
+    },
+    "state": {
+      "const": "failed",
+      "title": "State",
+      "type": "string"
+    },
+    "status": {
+      "const": "error",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "query_id",
+    "execution_id",
+    "state",
+    "error_code",
+    "error",
+    "sql"
+  ],
+  "title": "RunSqlAsyncErrorContract",
+  "type": "object"
+}

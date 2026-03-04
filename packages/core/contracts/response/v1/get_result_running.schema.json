@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "external_execution_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "External Execution Id"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "query_id": {
+      "title": "Query Id",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "submitted",
+        "running",
+        "precheck"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "status": {
+      "const": "running",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "query_id",
+    "execution_id",
+    "state",
+    "external_execution_id",
+    "message"
+  ],
+  "title": "GetResultRunningContract",
+  "type": "object"
+}

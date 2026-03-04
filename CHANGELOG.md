@@ -9,6 +9,166 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.6.4] - 2026-03-02
+
+## Overview
+v0.6.4 is a patch release that hardens API connector auth behavior in long-lived MCP sessions by adding connector cache invalidation and one-shot retry on auth failures.
+
+## Highlights
+- Added `ConnectionRegistry.invalidate_connector()` and `refresh_connector()` to explicitly refresh cached connector instances.
+- `api_query` now retries once on auth-style failures (`401`/`Unauthorized`) after invalidating the cached connector.
+- `api_mutate` now applies the same retry-on-auth-failure behavior.
+
+## Bug Fixes
+- Fixed stale API connector cache behavior where MCP sessions could keep returning auth failures even when a fresh runtime connection succeeded.
+- Improved resilience for API write flows that depend on re-auth after long-running sessions.
+
+## New Features
+- Added regression tests for:
+  - connector cache invalidation and forced refresh behavior,
+  - `api_query` retry after auth errors,
+  - `api_mutate` retry after auth errors.
+
+## Files Changed
+| File | Change |
+|---|---|
+| `packages/core/src/db_mcp/registry.py` | Added connector cache invalidation/refresh helpers |
+| `packages/core/src/db_mcp/tools/api.py` | Added one-time auth-error retry with connector refresh for `api_query` and `api_mutate` |
+| `packages/core/tests/test_registry.py` | Added registry invalidation regression tests |
+| `packages/core/tests/test_resolve_connection.py` | Added `api_query` auth-retry regression test |
+| `packages/core/tests/test_api_connector.py` | Added `api_mutate` auth-retry regression test |
+| `packages/core/pyproject.toml` | Bumped core package version to `0.6.4` |
+| `packages/core/src/db_mcp/__init__.py` | Updated exported version to `0.6.4` |
+| `docs/releases/v0.6.4.md` | Added release notes |
+
+## Testing
+- `uv run pytest tests/test_registry.py tests/test_resolve_connection.py tests/test_api_connector.py -k "invalidate_connector or retries_once_on_auth_error" -v`
+- `uv run ruff check . --fix`
+- `uv run pytest tests/ -v`
+
+## [0.6.3] - 2026-03-02
+
+## Overview
+v0.6.3 is a patch release that fixes two API tooling issues discovered during dashboard automation workflows: path-template ID resolution for non-GET endpoints and overly strict parameter typing in `api_query`.
+
+## Highlights
+- `api_query` now supports non-string parameter values (booleans, numbers, nested JSON-compatible values) instead of requiring string-only dictionaries.
+- `id` values now correctly substitute `{id}` placeholders in endpoint paths for non-GET methods (for example, `PUT /dashboard/{id}`).
+- Added guardrails for invalid `id` usage on non-templated non-GET endpoints.
+
+## Bug Fixes
+- Fixed `api_query` tool signature/type expectations to accept generic parameter values and pass them through correctly.
+- Fixed `APIConnector.query_endpoint()` path rendering so `id` is used to resolve templated endpoint paths instead of being treated as a GET-only suffix pattern.
+- Improved `id` error messaging for unsupported non-GET endpoint configurations.
+
+## New Features
+- Added regression tests for:
+  - non-GET templated path substitution with `id`,
+  - invalid `id` usage on non-templated non-GET endpoints,
+  - forwarding non-string `api_query` parameter values through tool dispatch.
+
+## Files Changed
+| File | Change |
+|---|---|
+| `packages/core/src/db_mcp/connectors/api.py` | Fixed generic `id` template substitution and non-GET `id` handling in endpoint query flow |
+| `packages/core/src/db_mcp/tools/api.py` | Relaxed `api_query` parameter typing to accept generic JSON-compatible values |
+| `packages/core/tests/test_api_connector.py` | Added path-template/non-GET `id` regressions |
+| `packages/core/tests/test_resolve_connection.py` | Added `api_query` non-string params dispatch regression |
+| `packages/core/pyproject.toml` | Bumped core package version to `0.6.3` |
+
+## Testing
+- `uv run pytest tests/test_api_connector.py tests/test_resolve_connection.py -k "id_substitutes_templated_path_for_put or non_get_id_without_template_errors or allows_non_string_param_values" -v`
+- `uv run pytest tests/test_api_connector.py -v`
+- `uv run ruff check src/db_mcp/connectors/api.py src/db_mcp/tools/api.py tests/test_api_connector.py tests/test_resolve_connection.py`
+- Live smoke on patched runtime against `wifimetrics-superset`:
+  - `update_dashboard` with endpoint path `/dashboard/{id}` and `id=4` succeeded
+
+
+## [0.6.2] - 2026-03-02
+
+## Overview
+v0.6.2 is a patch release focused on fixing REST API write behavior for API connectors, with Superset as the primary validation target. It ensures write payloads are routed as JSON bodies when appropriate, improves response extraction for `result` wrappers, and adds regression coverage so API-based create workflows remain stable.
+
+## Highlights
+- Fixed API write routing so Superset-style create calls no longer send POST payloads as URL query parameters.
+- Added compatibility for list/result wrappers that return rows under `result`.
+- Added API config loader default for non-GET endpoints to use `body_mode: json` when omitted.
+- Included internal design note on standardizing db-mcp knowledge patterns.
+
+## Bug Fixes
+- Fixed `_load_api_config()` to default non-GET endpoints to JSON body mode unless explicitly overridden.
+- Fixed `APIConnector.query_endpoint()` to infer JSON body for write endpoints when the endpoint declares no query parameters and caller passes `params`.
+- Fixed API response extraction to support `result` list wrappers (common in Superset responses) in standard endpoint querying flows.
+
+## New Features
+- Added regression tests covering:
+  - Superset-style `{result: [...]}` response parsing.
+  - POST payload inference to JSON body when endpoint query params are not declared.
+  - Preservation of query-string behavior when endpoint query params are explicitly declared.
+
+## Files Changed
+| File | Change |
+|---|---|
+| `packages/core/src/db_mcp/connectors/__init__.py` | Defaulted non-GET API endpoints to `body_mode: json` during config load |
+| `packages/core/src/db_mcp/connectors/api.py` | Fixed write payload routing and response row extraction for `result` wrappers |
+| `packages/core/tests/test_api_connector.py` | Added Superset/write-path regressions and loader default coverage |
+| `packages/core/pyproject.toml` | Bumped core package version to `0.6.2` |
+| `docs/knowledge-patterns-standardization.md` | Added internal knowledge-layer standardization analysis |
+
+## Testing
+- `uv run pytest tests/test_api_connector.py -v`
+- `uv run ruff check src/db_mcp/connectors/__init__.py src/db_mcp/connectors/api.py tests/test_api_connector.py`
+- Live smoke on patched runtime against `wifimetrics-superset`:
+  - `create_dataset` succeeded (virtual dataset created)
+  - `create_dashboard` succeeded
+  - `create_chart` succeeded and linked to dashboard
+
+
+## [0.6.1] - 2026-03-02
+
+## Overview
+v0.6.1 is a patch release focused on stabilizing SQL execution for SQL-like API connectors (notably Dune) and reducing behavior drift between database and API-backed SQL flows. The release fixes connector misclassification, corrects doctor/auth probing for API SQL endpoints, and unifies run/poll execution behavior so async provider responses are handled consistently through `run_sql` and `get_result`.
+
+## Highlights
+- API connectors are no longer misclassified as file connectors when computing runtime capabilities.
+- `db-mcp doctor --connection dune --json` now correctly identifies `connector_type: api` and uses endpoint-aware auth checks.
+- `run_sql` now uses a unified lifecycle for SQL-like APIs: providers that return execution IDs produce `submitted` responses even when configured as `api_sync`, and `get_result` polls them consistently.
+- Tool docs now explicitly state that SQL-like APIs may return either immediate success or async submission for the same `run_sql` interface.
+
+## Bug Fixes
+- Fixed connector capability resolution order so `APIConnector` is matched before `FileConnector` in runtime capability normalization.
+- Fixed doctor connector type reporting to prefer `api_config.type` over inherited file config type.
+- Fixed API connector `test_connection()` to use endpoint HTTP method and send a lightweight SQL probe body for non-GET SQL execute endpoints.
+- Fixed SQL API lifecycle handling so `get_result` polls executions when `external_execution_id` is present, not only when `sql_mode == api_async`.
+- Fixed SQL API metadata propagation in polling to preserve connector mode in execution metadata.
+
+## New Features
+- Unified SQL-like API direct execution path in `run_sql`:
+  - `submit_sql -> mode=sync` returns immediate `success`.
+  - `submit_sql -> mode=async` returns `submitted` + `execution_id` and is resolved via `get_result`.
+
+## Files Changed
+| File | Change |
+|---|---|
+| `packages/core/src/db_mcp/connectors/__init__.py` | Corrected API vs file capability detection order |
+| `packages/core/src/db_mcp/connectors/api.py` | Improved endpoint-aware API auth/test probing for SQL endpoints |
+| `packages/core/src/db_mcp/cli/commands/core.py` | Fixed doctor connector type reporting precedence |
+| `packages/core/src/db_mcp/tools/generation.py` | Unified SQL API execution lifecycle across `api_sync` and async provider behavior |
+| `packages/core/tests/test_api_connector.py` | Added/updated API test_connection method coverage |
+| `packages/core/tests/test_cli/test_doctor_command.py` | Added regression for API connector type reporting |
+| `packages/core/tests/test_run_sql.py` | Added regressions for unified `run_sql/get_result` SQL-like API behavior |
+
+## Testing
+- `uv run ruff check src/db_mcp/tools/generation.py tests/test_run_sql.py`
+- `uv run pytest tests/test_run_sql.py tests/test_execution_response_contracts.py -v`
+- `uv run pytest tests/test_run_sql.py tests/test_cli/test_doctor_command.py tests/test_api_connector.py -v`
+- Live smoke on patched runtime:
+  - `uv run db-mcp doctor --json --connection dune`
+  - `uv run db-mcp doctor --json --connection top-ledger`
+  - `run_sql(connection='dune', sql='SELECT 1 AS ok') -> submitted`
+  - `get_result(execution_id, connection='dune') -> complete`
+
+
 ## [0.5.0] - 2026-02-09
 
 ## Highlights
@@ -1004,4 +1164,3 @@ endpoints:
 
 ## Known issues
 - None
-

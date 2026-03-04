@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "external_execution_id": {
+      "title": "External Execution Id",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "mode": {
+      "const": "async",
+      "title": "Mode",
+      "type": "string"
+    },
+    "poll_interval_seconds": {
+      "title": "Poll Interval Seconds",
+      "type": "integer"
+    },
+    "query_id": {
+      "title": "Query Id",
+      "type": "string"
+    },
+    "sql": {
+      "title": "Sql",
+      "type": "string"
+    },
+    "state": {
+      "const": "running",
+      "title": "State",
+      "type": "string"
+    },
+    "status": {
+      "const": "submitted",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "mode",
+    "query_id",
+    "execution_id",
+    "state",
+    "sql",
+    "external_execution_id",
+    "message",
+    "poll_interval_seconds"
+  ],
+  "title": "RunSqlAsyncSubmittedContract",
+  "type": "object"
+}
