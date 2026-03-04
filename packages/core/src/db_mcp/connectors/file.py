@@ -29,6 +29,7 @@ class FileConnectorConfig:
     """Configuration for the file connector."""
 
     type: str = field(default="file", init=False)
+    profile: str = ""
     sources: list[FileSourceConfig] = field(default_factory=list)
     directory: str = ""
     description: str = ""

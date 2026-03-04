@@ -28,6 +28,7 @@ class MetabaseConnectorConfig:
     """Configuration for Metabase connector."""
 
     type: str = field(default="metabase", init=False)
+    profile: str = ""
     base_url: str = ""
     database_id: int | None = None
     database_name: str | None = None

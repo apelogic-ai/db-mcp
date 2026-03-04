@@ -39,7 +39,7 @@ def test_execution_store_persists_across_instances(tmp_path: Path):
 def test_execution_engine_submit_sync_success(tmp_path: Path):
     store = ExecutionStore(tmp_path / "executions.sqlite")
     engine = ExecutionEngine(store)
-    request = ExecutionRequest(connection="dune", sql="SELECT 1")
+    request = ExecutionRequest(connection="analytics_connection", sql="SELECT 1")
 
     def runner(sql: str):
         assert sql == "SELECT 1"
@@ -62,7 +62,7 @@ def test_execution_engine_submit_sync_success(tmp_path: Path):
 def test_execution_engine_submit_sync_failure(tmp_path: Path):
     store = ExecutionStore(tmp_path / "executions.sqlite")
     engine = ExecutionEngine(store)
-    request = ExecutionRequest(connection="dune", sql="SELECT broken")
+    request = ExecutionRequest(connection="analytics_connection", sql="SELECT broken")
 
     def runner(sql: str):
         raise RuntimeError(f"boom on {sql}")
@@ -80,7 +80,7 @@ def test_execution_engine_idempotency_returns_existing_execution(tmp_path: Path)
     store = ExecutionStore(tmp_path / "executions.sqlite")
     engine = ExecutionEngine(store)
     request = ExecutionRequest(
-        connection="dune",
+        connection="analytics_connection",
         sql="SELECT 1",
         idempotency_key="same-key",
     )

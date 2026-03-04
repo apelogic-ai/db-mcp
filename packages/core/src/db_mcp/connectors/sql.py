@@ -35,6 +35,7 @@ class SQLConnectorConfig:
     """Configuration for a SQL database connector."""
 
     type: str = field(default="sql", init=False)
+    profile: str = ""
     database_url: str = ""
     description: str = ""
     capabilities: dict[str, Any] = field(default_factory=dict)

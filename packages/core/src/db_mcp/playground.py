@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
+
 logger = logging.getLogger(__name__)
 
 PLAYGROUND_CONNECTION_NAME = "playground"
@@ -92,7 +94,9 @@ def install_playground() -> dict:
     # Create connector.yaml with just the connection info
     connector_path = playground_dir / "connector.yaml"
     config = {
+        "spec_version": CONNECTOR_SPEC_VERSION,
         "type": "sql",
+        "profile": "sql_db",
         "database_url": database_url,
         "capabilities": {"supports_validate_sql": False},
     }

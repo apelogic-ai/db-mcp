@@ -147,3 +147,29 @@ class TestDiscoverCommand:
         assert len(table["columns"]) == 2
         assert table["columns"][0]["name"] == "id"
         assert table["columns"][0]["type"] == "integer"
+
+    @patch("db_mcp.cli.commands.discover_cmd._run_discovery_with_progress")
+    @patch("db_mcp.cli.commands.discover_cmd.get_connection_path")
+    @patch("db_mcp.connectors.get_connector")
+    def test_discover_named_connection_auto_saves_to_connection(
+        self, mock_get_connector, mock_get_connection_path, mock_run_discovery, tmp_path
+    ):
+        """Named connection discovery should save schema/descriptions.yaml by default."""
+        runner = CliRunner()
+        conn_path = tmp_path / "connections" / "playground"
+        conn_path.mkdir(parents=True)
+        mock_get_connection_path.return_value = conn_path
+        mock_get_connector.return_value = _make_mock_connector()
+
+        mock_schema = MagicMock()
+        mock_schema.model_dump.return_value = {"version": "1.0.0", "tables": []}
+        mock_run_discovery.return_value = {"schema": mock_schema}
+
+        result = runner.invoke(main, ["discover", "-c", "playground"])
+
+        assert result.exit_code == 0
+        mock_run_discovery.assert_called_once()
+        kwargs = mock_run_discovery.call_args.kwargs
+        assert kwargs["save"] is True
+        assert kwargs["conn_name"] == "playground"
+        assert kwargs["connection_path"] == conn_path

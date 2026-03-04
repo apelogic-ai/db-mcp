@@ -96,3 +96,84 @@ async def test_connections_test_database_url_parses_connect_args_from_url():
         "trino://user@host:8443/catalog",
         connect_args={"http_scheme": "http", "verify": False},
     )
+
+
+@pytest.mark.asyncio
+async def test_connections_list_falls_back_to_connection_name_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        monkeypatch.setenv("CONNECTION_NAME", "playground")
+
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "playground"
+        conn_path.mkdir(parents=True)
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "sqlite"
+
+        result = await agent._handle_connections_list({})
+
+    assert result["activeConnection"] == "playground"
+    assert result["connections"][0]["name"] == "playground"
+    assert result["connections"][0]["isActive"] is True
+
+
+@pytest.mark.asyncio
+async def test_connections_list_prefers_config_over_connection_name_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        monkeypatch.setenv("CONNECTION_NAME", "playground")
+
+        db_mcp_dir = Path(tmpdir) / ".db-mcp"
+        connections_dir = db_mcp_dir / "connections"
+        connections_dir.mkdir(parents=True)
+        (connections_dir / "playground").mkdir()
+        (connections_dir / "prod").mkdir()
+        (db_mcp_dir / "config.yaml").write_text("active_connection: prod\n")
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "sqlite"
+
+        result = await agent._handle_connections_list({})
+
+    assert result["activeConnection"] == "prod"
+    assert [c["name"] for c in result["connections"]] == ["playground", "prod"]
+    assert result["connections"][0]["isActive"] is False
+    assert result["connections"][1]["isActive"] is True
+
+
+def test_get_active_connection_path_falls_back_to_connection_name_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        monkeypatch.setenv("CONNECTION_NAME", "playground")
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        path = agent._get_active_connection_path()
+
+    assert path == Path(tmpdir) / ".db-mcp" / "connections" / "playground"
+
+
+def test_get_active_connection_path_prefers_config_over_connection_name_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        monkeypatch.setenv("CONNECTION_NAME", "playground")
+
+        db_mcp_dir = Path(tmpdir) / ".db-mcp"
+        db_mcp_dir.mkdir(parents=True)
+        (db_mcp_dir / "config.yaml").write_text("active_connection: prod\n")
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        path = agent._get_active_connection_path()
+
+    assert path == Path(tmpdir) / ".db-mcp" / "connections" / "prod"

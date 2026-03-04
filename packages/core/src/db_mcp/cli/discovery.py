@@ -6,6 +6,7 @@ in a background thread with a configurable timeout.
 
 import threading
 import time
+from pathlib import Path
 
 from rich.console import Console
 
@@ -16,6 +17,7 @@ def _run_discovery_with_progress(
     connector,
     conn_name: str = "cli-discover",
     save: bool = False,
+    connection_path: Path | None = None,
     timeout_s: int = 300,
     schemas: list[str] | None = None,
 ) -> dict | None:
@@ -25,6 +27,7 @@ def _run_discovery_with_progress(
         connector: Database connector instance
         conn_name: Connection name (used for schema file if saving)
         save: If True, save schema_descriptions.yaml to the connection dir
+        connection_path: Optional explicit connection directory when saving
         timeout_s: Abort if discovery takes longer than this many seconds
         schemas: Optional list of schema names to limit discovery
 
@@ -207,7 +210,7 @@ def _run_discovery_with_progress(
         from db_mcp.onboarding.schema_store import save_schema_descriptions
 
         schema_obj.provider_id = conn_name
-        save_result = save_schema_descriptions(schema_obj)
+        save_result = save_schema_descriptions(schema_obj, connection_path=connection_path)
         if save_result.get("saved"):
             err_console.print(f"[green]✓ Schema saved to {save_result.get('file_path')}[/green]")
 

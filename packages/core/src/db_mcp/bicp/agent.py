@@ -8,6 +8,7 @@ validation, and execution.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -37,6 +38,7 @@ from sqlalchemy import text
 from db_mcp.config import get_settings
 from db_mcp.connectors import get_connector, get_connector_capabilities
 from db_mcp.connectors.sql import SQLConnector
+from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 from db_mcp.onboarding.schema_store import load_schema_descriptions
 from db_mcp.training.store import load_examples
 from db_mcp.validation.explain import (
@@ -672,6 +674,12 @@ class DBMCPAgent(BICPAgent):
                 config = yaml.safe_load(f) or {}
                 active_connection = config.get("active_connection")
 
+        # `db-mcp ui -c <name>` sets CONNECTION_NAME for the running server.
+        # When config.yaml has no active_connection yet, use that runtime override
+        # so UI state and top-right selector stay consistent.
+        if not active_connection:
+            active_connection = os.environ.get("CONNECTION_NAME") or None
+
         connections = []
         if connections_dir.exists():
             for conn_path in sorted(connections_dir.iterdir()):
@@ -962,7 +970,12 @@ class DBMCPAgent(BICPAgent):
         connector_yaml = conn_path / "connector.yaml"
         with open(connector_yaml, "w") as f:
             yaml.dump(
-                {"type": "file", "directory": directory},
+                {
+                    "spec_version": CONNECTOR_SPEC_VERSION,
+                    "type": "file",
+                    "profile": "file_local",
+                    "directory": directory,
+                },
                 f,
                 default_flow_style=False,
             )
@@ -1016,7 +1029,9 @@ class DBMCPAgent(BICPAgent):
             auth_data["header_name"] = header_name
 
         connector_data: dict[str, Any] = {
+            "spec_version": CONNECTOR_SPEC_VERSION,
             "type": "api",
+            "profile": "api_openapi",
             "base_url": base_url,
             "auth": auth_data,
             "endpoints": [],
@@ -2889,21 +2904,22 @@ This knowledge helps the AI generate better queries over time.
     # ========== Trace Viewer Methods ==========
 
     def _get_active_connection_path(self) -> Path | None:
-        """Get the active connection path from config.yaml.
+        """Get the active connection path from config.yaml or runtime override.
 
-        The UI server doesn't set CONNECTION_NAME, so we read
-        active_connection directly from the config file.
+        Prefers config.yaml active_connection. If unset, falls back to
+        CONNECTION_NAME (e.g., when launching `db-mcp ui -c <name>`).
         """
         import yaml
 
         config_file = Path.home() / ".db-mcp" / "config.yaml"
-        if not config_file.exists():
-            return None
+        active = None
+        if config_file.exists():
+            with open(config_file) as f:
+                config = yaml.safe_load(f) or {}
+            active = config.get("active_connection")
 
-        with open(config_file) as f:
-            config = yaml.safe_load(f) or {}
-
-        active = config.get("active_connection")
+        if not active:
+            active = os.environ.get("CONNECTION_NAME")
         if not active:
             return None
 

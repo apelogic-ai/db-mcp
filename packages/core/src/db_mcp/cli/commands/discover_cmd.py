@@ -69,6 +69,8 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
 
     # Resolve connector
     connector: Connector | None = None
+    resolved_conn_name: str | None = None
+    resolved_conn_path = None
 
     if url:
         # Direct URL: create a SQL connector with per-statement timeout where supported.
@@ -85,6 +87,8 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
         if not conn_path.exists():
             console.print(f"[red]Connection '{conn_name}' not found.[/red]")
             sys.exit(1)
+        resolved_conn_name = conn_name
+        resolved_conn_path = conn_path
         from db_mcp.connectors import get_connector
 
         connector = get_connector(str(conn_path))
@@ -98,6 +102,8 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
                 "or set up a connection with 'db-mcp init'.[/red]"
             )
             sys.exit(1)
+        resolved_conn_name = active
+        resolved_conn_path = conn_path
 
         # We have a connection directory, but it may not have a DB URL configured.
         # Avoid surfacing an internal message like "No database URL configured".
@@ -122,9 +128,12 @@ def discover(url, output, conn_name, schemas, timeout_s, fmt):
             sys.exit(1)
 
     # Run discovery
+    should_save = bool(resolved_conn_name and resolved_conn_path and not output)
     result = _run_discovery_with_progress(
         connector,
-        conn_name=conn_name or "cli-discover",
+        conn_name=resolved_conn_name or "cli-discover",
+        save=should_save,
+        connection_path=resolved_conn_path,
         timeout_s=timeout_s,
         schemas=list(schemas) if schemas else None,
     )

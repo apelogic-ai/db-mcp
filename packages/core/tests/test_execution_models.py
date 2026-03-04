@@ -10,8 +10,8 @@ from db_mcp.execution import (
 
 
 def test_execution_request_requires_connection():
-    req = ExecutionRequest(connection="dune", sql="SELECT 1")
-    assert req.connection == "dune"
+    req = ExecutionRequest(connection="analytics_connection", sql="SELECT 1")
+    assert req.connection == "analytics_connection"
     assert req.sql == "SELECT 1"
 
 

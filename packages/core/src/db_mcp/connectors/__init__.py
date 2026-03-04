@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 import yaml
+from pydantic import ValidationError
 
-from db_mcp.capabilities import normalize_capabilities
+from db_mcp.capabilities import normalize_capabilities, resolve_connector_profile
 from db_mcp.config import get_settings
 from db_mcp.connectors.api import (
     APIAuthConfig,
@@ -26,6 +27,10 @@ from db_mcp.connectors.metabase import (
     MetabaseConnectorConfig,
 )
 from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
+from db_mcp.contracts.connector_contracts import (
+    format_validation_error,
+    validate_connector_contract,
+)
 
 
 class ConnectorConfig:
@@ -51,6 +56,13 @@ class ConnectorConfig:
 
         with open(path) as f:
             data = yaml.safe_load(f) or {}
+
+        if "spec_version" in data:
+            try:
+                validate_connector_contract(data)
+            except ValidationError as exc:
+                details = "; ".join(format_validation_error(exc))
+                raise ValueError(f"Invalid connector contract: {details}") from exc
 
         connector_type = data.get("type", "sql")
         loader = _CONFIG_LOADERS.get(connector_type)
@@ -174,6 +186,7 @@ def _load_file_config(data: dict[str, Any]) -> FileConnectorConfig:
     sources = [FileSourceConfig(**s) for s in sources_data]
     directory = data.get("directory", "")
     return FileConnectorConfig(
+        profile=data.get("profile", ""),
         sources=sources,
         directory=directory,
         description=data.get("description", ""),
@@ -206,6 +219,7 @@ def _load_api_config(data: dict[str, Any]) -> APIConnectorConfig:
     rate_limit_rps = rate_limit.get("requests_per_second", 10.0) if rate_limit else 10.0
 
     return APIConnectorConfig(
+        profile=data.get("profile", ""),
         base_url=data.get("base_url", ""),
         auth=auth,
         endpoints=endpoints,
@@ -221,6 +235,7 @@ def _load_metabase_config(data: dict[str, Any]) -> MetabaseConnectorConfig:
     auth_data = data.get("auth", {})
     auth = MetabaseAuthConfig(**auth_data) if auth_data else MetabaseAuthConfig()
     return MetabaseConnectorConfig(
+        profile=data.get("profile", ""),
         base_url=data.get("base_url", ""),
         database_id=data.get("database_id"),
         database_name=data.get("database_name"),
@@ -275,28 +290,46 @@ _CONNECTOR_FACTORIES: dict[type, Any] = {
 }
 
 
-def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
-    """Return normalized capability flags for a connector."""
+def _resolve_connector_descriptor(connector: Connector) -> tuple[str, dict[str, Any], str]:
+    """Resolve (type, capability_overrides, profile) for a connector instance."""
     if isinstance(connector, APIConnector):
         connector_type = "api"
         config_caps = connector.api_config.capabilities
+        configured_profile = connector.api_config.profile
     elif isinstance(connector, SQLConnector):
         connector_type = "sql"
         config_caps = connector.config.capabilities
+        configured_profile = connector.config.profile
     elif isinstance(connector, MetabaseConnector):
         connector_type = "metabase"
         config_caps = connector.config.capabilities
+        configured_profile = connector.config.profile
     elif isinstance(connector, FileConnector):
         connector_type = "file"
         config_caps = connector.config.capabilities
+        configured_profile = connector.config.profile
     else:
         connector_type = "unknown"
         config_caps = {}
+        configured_profile = ""
 
     if not isinstance(config_caps, dict):
         config_caps = {}
 
-    return normalize_capabilities(connector_type, config_caps)
+    profile = resolve_connector_profile(connector_type, configured_profile)
+    return connector_type, config_caps, profile
+
+
+def get_connector_capabilities(connector: Connector) -> dict[str, Any]:
+    """Return normalized capability flags for a connector."""
+    connector_type, config_caps, profile = _resolve_connector_descriptor(connector)
+    return normalize_capabilities(connector_type, config_caps, profile=profile)
+
+
+def get_connector_profile(connector: Connector) -> str:
+    """Return effective connector profile for a connector."""
+    _, _, profile = _resolve_connector_descriptor(connector)
+    return profile
 
 
 __all__ = [
@@ -312,6 +345,7 @@ __all__ = [
     "FileConnectorConfig",
     "FileSourceConfig",
     "get_connector_capabilities",
+    "get_connector_profile",
     "normalize_capabilities",
     "MetabaseAuthConfig",
     "MetabaseConnector",

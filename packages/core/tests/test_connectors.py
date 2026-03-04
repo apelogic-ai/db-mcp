@@ -14,6 +14,7 @@ from db_mcp.connectors import (
     SQLConnector,
     SQLConnectorConfig,
     get_connector_capabilities,
+    get_connector_profile,
 )
 from db_mcp.connectors.api import APIConnector, APIConnectorConfig
 
@@ -118,6 +119,45 @@ class TestConnectorConfig:
         caps = get_connector_capabilities(connector)
 
         assert caps["supports_sql"] is True
+
+    def test_connector_config_loads_profile_field(self, tmp_path):
+        """connector.yaml profile should be parsed into config."""
+        yaml_file = tmp_path / "connector.yaml"
+        yaml_file.write_text(
+            "type: api\n"
+            "profile: api_probe\n"
+            "base_url: https://api.example.com/v1\n"
+        )
+
+        config = ConnectorConfig.from_yaml(yaml_file)
+        assert isinstance(config, APIConnectorConfig)
+        assert config.profile == "api_probe"
+
+    def test_connector_profile_defaults_when_missing(self, tmp_path):
+        config = APIConnectorConfig(base_url="https://api.example.com")
+        connector = APIConnector(config, data_dir=str(tmp_path / "data"))
+
+        assert get_connector_profile(connector) == "api_openapi"
+
+    def test_connector_profile_uses_configured_value(self, tmp_path):
+        config = APIConnectorConfig(base_url="https://api.example.com", profile="api_sql")
+        connector = APIConnector(config, data_dir=str(tmp_path / "data"))
+
+        assert get_connector_profile(connector) == "api_sql"
+        caps = get_connector_capabilities(connector)
+        assert caps["supports_sql"] is True
+
+    def test_connector_config_with_spec_version_validates_contract(self, tmp_path):
+        yaml_file = tmp_path / "connector.yaml"
+        yaml_file.write_text(
+            "spec_version: 2.0.0\n"
+            "type: api\n"
+            "profile: api_openapi\n"
+            "base_url: https://api.example.com/v1\n"
+        )
+
+        with pytest.raises(ValueError, match="Invalid connector contract"):
+            ConnectorConfig.from_yaml(yaml_file)
 
 
 class TestSQLConnector:

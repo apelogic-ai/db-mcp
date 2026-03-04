@@ -45,7 +45,7 @@ class TestMainGroup:
         expected = {
             "init", "start", "status", "list", "use", "doctor", "sync", "pull",
             "discover", "agents", "console", "ui",
-            "collab", "traces", "playground",
+            "collab", "traces", "playground", "connector",
         }
         registered = set(main.commands.keys())
         missing = expected - registered
@@ -139,6 +139,10 @@ class TestSubgroupsHelp:
         result = invoke_help(runner, "playground")
         assert result.exit_code == 0
 
+    def test_connector_help(self, runner):
+        result = invoke_help(runner, "connector")
+        assert result.exit_code == 0
+
     def test_collab_is_group(self, runner):
         cmd = main.commands["collab"]
         assert isinstance(cmd, click.Group)
@@ -149,6 +153,10 @@ class TestSubgroupsHelp:
 
     def test_playground_is_group(self, runner):
         cmd = main.commands["playground"]
+        assert isinstance(cmd, click.Group)
+
+    def test_connector_is_group(self, runner):
+        cmd = main.commands["connector"]
         assert isinstance(cmd, click.Group)
 
 
@@ -212,3 +220,9 @@ class TestRegisterCommands:
         assert "console" in g.commands
         assert "ui" in g.commands
         assert "playground" in g.commands
+
+    def test_register_connector(self):
+        from db_mcp.cli.commands.connector_cmd import register_commands
+        g = self._fresh_group()
+        register_commands(g)
+        assert "connector" in g.commands
