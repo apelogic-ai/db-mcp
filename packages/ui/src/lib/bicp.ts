@@ -1,7 +1,5 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-
 // JSON-RPC 2.0 Types
 export interface JSONRPCRequest {
   jsonrpc: "2.0";
@@ -696,65 +694,4 @@ export async function discoverEndpoints(
   name: string,
 ): Promise<ConnectionDiscoverResult> {
   return bicpCall<ConnectionDiscoverResult>("connections/discover", { name });
-}
-
-// React hook for BICP operations
-export interface UseBICPResult {
-  isInitialized: boolean;
-  isLoading: boolean;
-  error: Error | null;
-  serverInfo: BICPServerInfo | null;
-  initialize: () => Promise<void>;
-  call: <T = unknown>(
-    method: string,
-    params?: Record<string, unknown>,
-  ) => Promise<T>;
-}
-
-export function useBICP(config: Partial<BICPConfig> = {}): UseBICPResult {
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [serverInfo, setServerInfo] = useState<BICPServerInfo | null>(null);
-
-  // Memoize config to prevent unnecessary re-renders
-  const stableConfig = useMemo(
-    () => ({ ...DEFAULT_CONFIG, ...config }),
-    [config.baseUrl, config.clientName, config.clientVersion],
-  );
-
-  const initializeConnection = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const result = await initialize(stableConfig);
-      setServerInfo(result.serverInfo);
-      setIsInitialized(true);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error(String(err)));
-      setIsInitialized(false);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [stableConfig]);
-
-  const call = useCallback(
-    async <T = unknown>(
-      method: string,
-      params?: Record<string, unknown>,
-    ): Promise<T> => {
-      return bicpCall<T>(method, params, stableConfig);
-    },
-    [stableConfig],
-  );
-
-  return {
-    isInitialized,
-    isLoading,
-    error,
-    serverInfo,
-    initialize: initializeConnection,
-    call,
-  };
 }
