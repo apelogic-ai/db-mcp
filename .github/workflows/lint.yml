@@ -50,6 +50,9 @@ jobs:
         with:
           version: "0.5.x"
 
+      - name: Verify version consistency
+        run: python scripts/check_version_consistency.py
+
       - name: Install dependencies
         working-directory: packages/core
         run: uv sync --all-extras
