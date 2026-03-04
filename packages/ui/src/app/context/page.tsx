@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useBICP } from "@/lib/bicp-context";
+import { useConnections } from "@/lib/connection-context";
 import { useContextViewer } from "@/lib/context-viewer-context";
 import { TreeView, ConnectionNode, UsageData } from "@/components/context/TreeView";
 import { CodeEditor } from "@/components/context/CodeEditor";
@@ -41,6 +42,7 @@ interface DeleteResult {
 
 export default function ContextPage() {
   const { isInitialized, call } = useBICP();
+  const { activeConnection } = useConnections();
   const {
     connections,
     setConnections,
@@ -116,7 +118,7 @@ export default function ContextPage() {
     } finally {
       setTreeLoading(false);
     }
-  }, [isInitialized, call]);
+  }, [isInitialized, call, setConnections]);
 
   // Fetch usage data
   const fetchUsage = useCallback(async () => {
@@ -207,13 +209,27 @@ export default function ContextPage() {
         setFileLoading(false);
       }
     },
-    [call, setSelectedFile, setContent, setOriginalContent],
+    [call, setSelectedFile, setContent, setOriginalContent, setIsStockReadme],
   );
 
-  // Initial fetch
+  // Refresh tree when active connection changes
   useEffect(() => {
+    setSelectedFile(null);
+    setSelectedTreeNode(null);
+    setContent("");
+    setOriginalContent("");
+    setIsStockReadme(false);
+    setFileError(null);
     fetchTree();
-  }, [fetchTree]);
+  }, [
+    activeConnection,
+    fetchTree,
+    setSelectedFile,
+    setSelectedTreeNode,
+    setContent,
+    setOriginalContent,
+    setIsStockReadme,
+  ]);
 
   // Fetch usage when connections change
   useEffect(() => {

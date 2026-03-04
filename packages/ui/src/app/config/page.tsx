@@ -12,177 +12,26 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBICP } from "@/lib/bicp-context";
+import { useConnections } from "@/lib/connection-context";
 import AgentConfig from "@/components/AgentConfig";
 import { DialectIcon } from "@/components/DialectIcon";
-
-interface Connection {
-  name: string;
-  isActive: boolean;
-  hasSchema: boolean;
-  hasDomain: boolean;
-  hasCredentials: boolean;
-  dialect: string | null;
-  onboardingPhase: string | null;
-  connectorType: "sql" | "file" | "api";
-}
-
-interface ConnectionsListResult {
-  connections: Connection[];
-  activeConnection: string | null;
-}
-
-interface CreateResult {
-  success: boolean;
-  name?: string;
-  dialect?: string;
-  error?: string;
-}
-
-interface TestResult {
-  success: boolean;
-  message?: string;
-  dialect?: string;
-  error?: string;
-  hint?: string;
-  sources?: Record<string, string>;
-}
-
-interface DeleteResult {
-  success: boolean;
-  error?: string;
-}
-
-interface GetResult {
-  success: boolean;
-  name?: string;
-  databaseUrl?: string;
-  connectorType?: "sql" | "file" | "api";
-  directory?: string;
-  baseUrl?: string;
-  auth?: {
-    type: string;
-    tokenEnv: string;
-    headerName: string;
-    paramName: string;
-  };
-  endpoints?: Array<{ name: string; path: string; method: string }>;
-  pagination?: {
-    type: string;
-    cursorParam: string;
-    cursorField: string;
-    pageSizeParam: string;
-    pageSize: number;
-    dataField: string;
-  };
-  rateLimitRps?: number;
-  error?: string;
-}
-
-interface UpdateResult {
-  success: boolean;
-  error?: string;
-}
-
-type ConnectArgs = Record<string, string | boolean | number>;
-
-const parseConnectArgsFromUrl = (url: string): ConnectArgs | undefined => {
-  try {
-    const parsed = new URL(url);
-    const params = parsed.searchParams;
-    const httpScheme = params.get("http_scheme") ?? params.get("httpScheme");
-    const verifyRaw = params.get("verify");
-    const connectArgs: ConnectArgs = {};
-
-    if (httpScheme) connectArgs.http_scheme = httpScheme;
-    if (verifyRaw !== null) {
-      const normalized = verifyRaw.trim().toLowerCase();
-      connectArgs.verify = !["false", "0", "no", "off"].includes(normalized);
-    }
-
-    return Object.keys(connectArgs).length ? connectArgs : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-// Inline status indicator (spinner / check / X)
-function StatusIndicator({
-  testStatus,
-}: {
-  testStatus: {
-    testing: boolean;
-    success: boolean | null;
-    message: string;
-    hint?: string;
-  } | null;
-}) {
-  if (!testStatus) return null;
-  if (testStatus.testing) {
-    return (
-      <svg
-        className="animate-spin h-4 w-4 text-gray-400"
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-      >
-        <circle
-          className="opacity-25"
-          cx="12"
-          cy="12"
-          r="10"
-          stroke="currentColor"
-          strokeWidth="4"
-        />
-        <path
-          className="opacity-75"
-          fill="currentColor"
-          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-        />
-      </svg>
-    );
-  }
-  if (testStatus.success === true) {
-    return (
-      <span title={testStatus.message}>
-        <svg
-          className="h-4 w-4 text-green-500"
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fillRule="evenodd"
-            d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </span>
-    );
-  }
-  if (testStatus.success === false) {
-    return (
-      <span title={testStatus.message}>
-        <svg
-          className="h-4 w-4 text-red-500"
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fillRule="evenodd"
-            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </span>
-    );
-  }
-  return null;
-}
+import { StatusIndicator } from "@/features/config/status-indicator";
+import {
+  type Connection,
+  type ConnectionsListResult,
+  type ConnectionTestStatus,
+  type CreateResult,
+  type DeleteResult,
+  type GetResult,
+  type TestResult,
+  type UpdateResult,
+} from "@/features/config/types";
+import { maskDatabaseUrl, parseConnectArgsFromUrl } from "@/features/config/utils";
 
 export default function ConfigPage() {
   const { isInitialized, isLoading, error, serverInfo, initialize, call } =
     useBICP();
+  const { activeConnection, switchConnection } = useConnections();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(false);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
@@ -203,12 +52,9 @@ export default function ConfigPage() {
   const [newName, setNewName] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [testStatus, setTestStatus] = useState<{
-    testing: boolean;
-    success: boolean | null;
-    message: string;
-    hint?: string;
-  } | null>(null);
+  const [testStatus, setTestStatus] = useState<ConnectionTestStatus | null>(
+    null,
+  );
 
   // API form state
   const [apiBaseUrl, setApiBaseUrl] = useState("");
@@ -278,19 +124,6 @@ export default function ConfigPage() {
   const fileConnections = connections.filter((c) => c.connectorType === "file");
   const apiConnections = connections.filter((c) => c.connectorType === "api");
 
-  const maskDatabaseUrl = (url: string): string => {
-    try {
-      const match = url.match(/^(\w+):\/\/([^:]+):([^@]+)@(.+)$/);
-      if (match) {
-        const [, protocol, user, , rest] = match;
-        return `${protocol}://${user}:****@${rest}`;
-      }
-      return url;
-    } catch {
-      return url;
-    }
-  };
-
   const resetFormState = () => {
     setShowCreateSqlForm(false);
     setShowCreateFileForm(false);
@@ -333,9 +166,15 @@ export default function ConfigPage() {
     }
   }, [isInitialized, hasFetched, fetchConnections]);
 
+  useEffect(() => {
+    if (isInitialized && hasFetched) {
+      fetchConnections();
+    }
+  }, [activeConnection, isInitialized, hasFetched, fetchConnections]);
+
   const handleSwitchConnection = async (name: string) => {
     try {
-      await call("connections/switch", { name });
+      await switchConnection(name);
       await fetchConnections();
     } catch (err) {
       setConnectionsError(
@@ -454,6 +293,7 @@ export default function ConfigPage() {
       apiBaseUrl,
       apiKey,
       apiAuthType,
+      apiHeaderName,
     ],
   );
 

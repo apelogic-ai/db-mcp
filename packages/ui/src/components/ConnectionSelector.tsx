@@ -1,57 +1,15 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { useBICP } from "@/lib/bicp-context";
-
-interface Connection {
-  name: string;
-  isActive: boolean;
-  dialect: string | null;
-}
-
-interface ConnectionsListResult {
-  connections: Connection[];
-  activeConnection: string | null;
-}
+import { useConnections } from "@/lib/connection-context";
 
 export function ConnectionSelector() {
-  const { isInitialized, call } = useBICP();
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [active, setActive] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
-
-  const fetchConnections = useCallback(async () => {
-    try {
-      const result = await call<ConnectionsListResult>("connections/list", {});
-      setConnections(result.connections);
-      setActive(result.activeConnection);
-    } catch {
-      // Silently handle — nav shouldn't break if this fails
-    }
-  }, [call]);
-
-  useEffect(() => {
-    if (isInitialized) {
-      fetchConnections();
-    }
-  }, [isInitialized, fetchConnections]);
+  const { connections, activeConnection, isLoading, switchConnection } = useConnections();
 
   const handleSwitch = async (name: string) => {
-    if (name === active || switching) return;
-    setSwitching(true);
-    try {
-      await call("connections/switch", { name });
-      setActive(name);
-      // Reload the page to pick up the new connection context
-      window.location.reload();
-    } catch {
-      // ignore
-    } finally {
-      setSwitching(false);
-    }
+    await switchConnection(name);
   };
 
-  if (!isInitialized || connections.length === 0) {
+  if (connections.length === 0) {
     return null;
   }
 
@@ -63,9 +21,9 @@ export function ConnectionSelector() {
         backgroundRepeat: "no-repeat",
         backgroundPosition: "right 6px center",
       }}
-      value={active || ""}
+      value={activeConnection || ""}
       onChange={(e) => handleSwitch(e.target.value)}
-      disabled={switching}
+      disabled={isLoading}
     >
       {connections.map((conn) => (
         <option key={conn.name} value={conn.name}>

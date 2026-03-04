@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  bicpCall,
   listMetrics,
   addMetricOrDimension,
   updateMetricOrDimension,
@@ -21,6 +20,7 @@ import {
   type DimensionDefinition,
   type MetricCandidateResult,
 } from "@/lib/bicp";
+import { useConnections } from "@/lib/connection-context";
 
 // =============================================================================
 // Helpers
@@ -68,18 +68,6 @@ function TagFilter({
       )}
     </div>
   );
-}
-
-async function getActiveConnection(): Promise<string | null> {
-  try {
-    const result = await bicpCall<{
-      connections: Array<{ name: string; isActive: boolean }>;
-      activeConnection: string | null;
-    }>("connections/list", {});
-    return result.activeConnection;
-  } catch {
-    return null;
-  }
 }
 
 // =============================================================================
@@ -832,26 +820,30 @@ function CandidatesTab({
 // =============================================================================
 
 export default function MetricsPage() {
+  const { activeConnection, isLoading: connectionsLoading } = useConnections();
   const [tab, setTab] = useState<"catalog" | "candidates">("catalog");
   const [loading, setLoading] = useState(true);
-  const [connection, setConnection] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<MetricDefinition[]>([]);
   const [dimensions, setDimensions] = useState<DimensionDefinition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [candidateCount, setCandidateCount] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
-    const conn = await getActiveConnection();
-    setConnection(conn);
-    if (!conn) {
+    if (!activeConnection) {
+      setMetrics([]);
+      setDimensions([]);
+      setCandidateCount(null);
+      setError(null);
       setLoading(false);
       return;
     }
 
+    setLoading(true);
+    setError(null);
     try {
       const [result, candidates] = await Promise.all([
-        listMetrics(conn),
-        mineMetricsCandidates(conn).catch(() => null),
+        listMetrics(activeConnection),
+        mineMetricsCandidates(activeConnection).catch(() => null),
       ]);
       if (result.success) {
         setMetrics(result.metrics);
@@ -867,13 +859,16 @@ export default function MetricsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeConnection]);
 
   useEffect(() => {
+    if (connectionsLoading) {
+      return;
+    }
     loadData();
-  }, [loadData]);
+  }, [connectionsLoading, loadData]);
 
-  if (loading) {
+  if (loading || connectionsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-gray-400">Loading metrics...</p>
@@ -881,7 +876,7 @@ export default function MetricsPage() {
     );
   }
 
-  if (!connection) {
+  if (!activeConnection) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-gray-400">
@@ -935,12 +930,12 @@ export default function MetricsPage() {
         <CatalogTab
           metrics={metrics}
           dimensions={dimensions}
-          connection={connection}
+          connection={activeConnection}
           onRefresh={loadData}
         />
       ) : (
         <CandidatesTab
-          connection={connection}
+          connection={activeConnection}
           onRefresh={loadData}
           onCandidateCount={setCandidateCount}
         />

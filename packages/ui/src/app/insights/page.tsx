@@ -11,12 +11,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   analyzeInsights,
-  bicpCall,
   contextAddRule,
   dismissGap,
   saveExample,
   type InsightsAnalysis,
 } from "@/lib/bicp";
+import { useConnections } from "@/lib/connection-context";
 import { AgentDialog } from "@/components/AgentDialog";
 
 function formatDuration(ms: number): string {
@@ -68,9 +68,11 @@ function Bar({
 function KnowledgeFlowBanner({
   insights,
   traceCount,
+  connectionId,
 }: {
   insights: InsightsAnalysis["insights"];
   traceCount: number;
+  connectionId: string | null;
 }) {
   const [dismissed, setDismissed] = useState<string | null>(null);
 
@@ -83,22 +85,6 @@ function KnowledgeFlowBanner({
     (a, b) => a + b,
     0,
   );
-
-  // Get active connection ID for localStorage key
-  const [connectionId, setConnectionId] = useState<string>("");
-  
-  useEffect(() => {
-    bicpCall<{
-      connections: Array<{ name: string; isActive: boolean }>;
-      activeConnection: string | null;
-    }>("connections/list", {}).then(result => {
-      if (result.activeConnection) {
-        setConnectionId(result.activeConnection);
-      }
-    }).catch(() => {
-      // Ignore errors, just use empty string
-    });
-  }, []);
 
   // Determine banner state
   let state: "green" | "yellow" | "neutral";
@@ -216,8 +202,10 @@ function KnowledgeFlowBanner({
 
 function VocabularyGapsCard({
   gaps,
+  activeConnection,
 }: {
   gaps: InsightsAnalysis["vocabularyGaps"];
+  activeConnection: string | null;
 }) {
   const [addingIdx, setAddingIdx] = useState<number | null>(null);
   const [addedIdxs, setAddedIdxs] = useState<Set<number>>(new Set());
@@ -245,17 +233,12 @@ function VocabularyGapsCard({
     setAddingIdx(groupIdx);
     setAddError(null);
     try {
-      const connResult = await bicpCall<{
-        connections: Array<{ name: string; isActive: boolean }>;
-        activeConnection: string | null;
-      }>("connections/list", {});
-      const conn = connResult.activeConnection;
-      if (!conn) {
+      if (!activeConnection) {
         setAddError("No active connection");
         return;
       }
 
-      const result = await contextAddRule(conn, rule, gapId);
+      const result = await contextAddRule(activeConnection, rule, gapId);
       if (result.success) {
         setAddedIdxs((prev) => new Set(prev).add(groupIdx));
         setEditingIdx(null);
@@ -273,17 +256,12 @@ function VocabularyGapsCard({
   const handleDismiss = async (groupIdx: number, gapId: string) => {
     setAddError(null);
     try {
-      const connResult = await bicpCall<{
-        connections: Array<{ name: string; isActive: boolean }>;
-        activeConnection: string | null;
-      }>("connections/list", {});
-      const conn = connResult.activeConnection;
-      if (!conn) {
+      if (!activeConnection) {
         setAddError("No active connection");
         return;
       }
 
-      const result = await dismissGap(conn, gapId, "false positive");
+      const result = await dismissGap(activeConnection, gapId, "false positive");
       if (result.success) {
         setDismissedIdxs((prev) => new Set(prev).add(groupIdx));
       } else {
@@ -800,12 +778,14 @@ function SqlPatternsCard({
   errorCount,
   validationFailures,
   validationFailureCount,
+  activeConnection,
 }: {
   repeatedQueries: InsightsAnalysis["repeatedQueries"];
   errors: InsightsAnalysis["errors"];
   errorCount: number;
   validationFailures: InsightsAnalysis["validationFailures"];
   validationFailureCount: number;
+  activeConnection: string | null;
 }) {
   const [savedIdxs, setSavedIdxs] = useState<Set<string>>(new Set());
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -818,20 +798,11 @@ function SqlPatternsCard({
 
   if (!hasContent) return null;
 
-  const getActiveConnection = async () => {
-    const connResult = await bicpCall<{
-      connections: Array<{ name: string; isActive: boolean }>;
-      activeConnection: string | null;
-    }>("connections/list", {});
-    return connResult.activeConnection;
-  };
-
   const handleSaveExample = async (key: string, sql: string, note: string) => {
     setSavingKey(key);
     try {
-      const conn = await getActiveConnection();
-      if (!conn) throw new Error("No active connection");
-      const result = await saveExample(conn, sql, note);
+      if (!activeConnection) throw new Error("No active connection");
+      const result = await saveExample(activeConnection, sql, note);
       if (result.success) {
         setSavedIdxs((prev) => new Set(prev).add(key));
       } else {
@@ -845,9 +816,12 @@ function SqlPatternsCard({
   const handleSaveLearning = async (key: string, sql: string, note: string) => {
     setSavingKey(key);
     try {
-      const conn = await getActiveConnection();
-      if (!conn) throw new Error("No active connection");
-      const result = await saveExample(conn, sql, `[ERROR PATTERN] ${note}`);
+      if (!activeConnection) throw new Error("No active connection");
+      const result = await saveExample(
+        activeConnection,
+        sql,
+        `[ERROR PATTERN] ${note}`,
+      );
       if (result.success) {
         setSavedIdxs((prev) => new Set(prev).add(key));
       } else {
@@ -1279,6 +1253,7 @@ function ProcessingBanner({
 }
 
 export default function InsightsPage() {
+  const { activeConnection } = useConnections();
   const [analysis, setAnalysis] = useState<InsightsAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1374,6 +1349,7 @@ export default function InsightsPage() {
             <KnowledgeFlowBanner
               insights={analysis.insights}
               traceCount={analysis.traceCount}
+              connectionId={activeConnection}
             />
           )}
 
@@ -1433,7 +1409,10 @@ export default function InsightsPage() {
 
           {/* Vocabulary gaps — unmapped business terms */}
           {analysis.vocabularyGaps && analysis.vocabularyGaps.length > 0 && (
-            <VocabularyGapsCard gaps={analysis.vocabularyGaps} />
+            <VocabularyGapsCard
+              gaps={analysis.vocabularyGaps}
+              activeConnection={activeConnection}
+            />
           )}
 
           {/* SQL Patterns + Knowledge Capture + Tables */}
@@ -1443,6 +1422,7 @@ export default function InsightsPage() {
             errorCount={analysis.errorCount}
             validationFailures={analysis.validationFailures}
             validationFailureCount={analysis.validationFailureCount}
+            activeConnection={activeConnection}
           />
 
           <KnowledgeCaptureCard
