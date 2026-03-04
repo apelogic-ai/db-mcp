@@ -1,6 +1,25 @@
 import { test, expect, mockData } from "./fixtures";
 
 test.describe("Insights Page", () => {
+  test("triage wizard renders when query param is set", async ({ page }) => {
+    await page.goto("/insights?wizard=triage");
+
+    const main = page.locator("main");
+    await expect(main.getByText("Insights Triage Wizard")).toBeVisible();
+    await expect(main.getByText("1. Review Queue")).toBeVisible();
+    await expect(main.getByText("Action Queue").first()).toBeVisible();
+  });
+
+  test("action queue lists term and SQL actions", async ({ page }) => {
+    await page.goto("/insights");
+
+    const main = page.locator("main");
+    await expect(main.getByText("Action Queue").first()).toBeVisible();
+    await expect(main.getByText("Resolve Unmapped Terms")).toBeVisible();
+    await expect(main.getByText("Save Repeated SQL Patterns")).toBeVisible();
+    await expect(main.getByText("Capture Error Learnings")).toBeVisible();
+  });
+
   test("renders page header with period selector", async ({ page }) => {
     await page.goto("/insights");
 
@@ -254,8 +273,8 @@ test.describe("Insights Page", () => {
     // Stats show (page renders)
     await expect(main.getByText("Tool Traces").first()).toBeVisible();
 
-    // No vocabulary gaps card (empty array)
-    await expect(main.getByText("Unmapped Terms")).not.toBeVisible();
+    // No vocabulary gaps detail section (empty array)
+    await expect(main.locator("#vocabulary-gaps")).toHaveCount(0);
   });
 
   test("SQL Patterns card shows repeated queries with save flow", async ({

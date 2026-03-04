@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Card,
@@ -18,6 +20,8 @@ import {
 } from "@/lib/bicp";
 import { useConnections } from "@/lib/connection-context";
 import { AgentDialog } from "@/components/AgentDialog";
+import { TriageWizard } from "@/features/wizards/triage/TriageWizard";
+import type { ActionQueueItem } from "@/lib/ui-types";
 
 function formatDuration(ms: number): string {
   if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
@@ -1151,6 +1155,118 @@ function TablesCard({ tables }: { tables: Record<string, number> }) {
   );
 }
 
+function buildActionQueueItems(analysis: InsightsAnalysis): ActionQueueItem[] {
+  const openGapCount = (analysis.vocabularyGaps || []).filter(
+    (g) => g.status !== "resolved" && g.status !== "dismissed",
+  ).length;
+
+  const unsavedPatternCount = analysis.repeatedQueries.filter((q) => !q.is_example).length;
+
+  const unsavedErrorCount = analysis.errors.filter(
+    (e) => e.error_type === "soft" && e.sql && !e.is_saved,
+  ).length;
+
+  return [
+    {
+      id: "queue-vocabulary",
+      source: "insight",
+      severity: openGapCount > 0 ? "warn" : "info",
+      title: "Resolve Unmapped Terms",
+      detail:
+        openGapCount > 0
+          ? `${openGapCount} open term gap${openGapCount !== 1 ? "s" : ""}`
+          : "No open term gaps",
+      ctaLabel: "Review Terms",
+      ctaUrl: "#vocabulary-gaps",
+      status: openGapCount > 0 ? "open" : "done",
+    },
+    {
+      id: "queue-sql-patterns",
+      source: "insight",
+      severity: unsavedPatternCount > 0 ? "warn" : "info",
+      title: "Save Repeated SQL Patterns",
+      detail:
+        unsavedPatternCount > 0
+          ? `${unsavedPatternCount} unsaved pattern${unsavedPatternCount !== 1 ? "s" : ""}`
+          : "All repeated patterns are captured",
+      ctaLabel: "Review Patterns",
+      ctaUrl: "#sql-patterns",
+      status: unsavedPatternCount > 0 ? "open" : "done",
+    },
+    {
+      id: "queue-error-learnings",
+      source: "insight",
+      severity: unsavedErrorCount > 0 ? "warn" : "info",
+      title: "Capture Error Learnings",
+      detail:
+        unsavedErrorCount > 0
+          ? `${unsavedErrorCount} unsaved error learning${unsavedErrorCount !== 1 ? "s" : ""}`
+          : "No pending error learnings",
+      ctaLabel: "Review Errors",
+      ctaUrl: "#sql-patterns",
+      status: unsavedErrorCount > 0 ? "open" : "done",
+    },
+  ];
+}
+
+function ActionQueueCard({ items }: { items: ActionQueueItem[] }) {
+  const openCount = items.filter((item) => item.status === "open").length;
+
+  return (
+    <Card id="insights-action-queue" className="bg-gray-900 border-gray-800">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-white text-sm flex items-center gap-2">
+          Action Queue
+          <Badge
+            variant="secondary"
+            className={
+              openCount > 0
+                ? "bg-yellow-900/50 text-yellow-400"
+                : "bg-green-900/50 text-green-400"
+            }
+          >
+            {openCount} open
+          </Badge>
+        </CardTitle>
+        <CardDescription className="text-gray-500 text-xs">
+          Prioritized actions generated from current insight gaps and SQL patterns.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {items.map((item) => (
+          <div
+            key={item.id}
+            id={item.id}
+            className="rounded border border-gray-800 bg-gray-950 p-3 flex items-center gap-3"
+          >
+            <span
+              className={`text-xs shrink-0 ${
+                item.status === "open"
+                  ? "text-yellow-400"
+                  : item.status === "done"
+                    ? "text-green-400"
+                    : "text-gray-500"
+              }`}
+            >
+              {item.status === "open" ? "!" : item.status === "done" ? "\u2713" : "\u2717"}
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-gray-200">{item.title}</p>
+              <p className="text-xs text-gray-500">{item.detail}</p>
+            </div>
+            <a
+              href={item.ctaUrl}
+              className="rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-200 hover:bg-gray-800"
+            >
+              {item.ctaLabel}
+            </a>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ProcessingBanner({
   analysis,
 }: {
@@ -1253,12 +1369,21 @@ function ProcessingBanner({
 }
 
 export default function InsightsPage() {
+  const searchParams = useSearchParams();
   const { activeConnection } = useConnections();
   const [analysis, setAnalysis] = useState<InsightsAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const triageWizardEnabled = searchParams.get("wizard") === "triage";
+  const daysFromQuery = Number(searchParams.get("days"));
+
+  useEffect(() => {
+    if ([1, 7, 30].includes(daysFromQuery)) {
+      setDays(daysFromQuery);
+    }
+  }, [daysFromQuery]);
 
   const fetchInsights = useCallback(async () => {
     setLoading(true);
@@ -1286,6 +1411,19 @@ export default function InsightsPage() {
     };
   }, [fetchInsights]);
 
+  const actionQueueItems = analysis ? buildActionQueueItems(analysis) : [];
+  const openGapCount = analysis
+    ? (analysis.vocabularyGaps || []).filter(
+        (g) => g.status !== "resolved" && g.status !== "dismissed",
+      ).length
+    : 0;
+  const unsavedPatternCount = analysis
+    ? analysis.repeatedQueries.filter((q) => !q.is_example).length
+    : 0;
+  const unsavedErrorCount = analysis
+    ? analysis.errors.filter((e) => e.error_type === "soft" && e.sql && !e.is_saved).length
+    : 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -1296,6 +1434,21 @@ export default function InsightsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {triageWizardEnabled ? (
+            <Link
+              href={`/insights?days=${days}`}
+              className="rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-200 hover:bg-gray-800"
+            >
+              Exit Triage
+            </Link>
+          ) : (
+            <Link
+              href={`/insights?wizard=triage&days=${days}`}
+              className="rounded-md border border-[#EF8626] px-2.5 py-1.5 text-xs text-[#EF8626] hover:bg-[#EF8626]/10"
+            >
+              Start Triage
+            </Link>
+          )}
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
@@ -1401,36 +1554,57 @@ export default function InsightsPage() {
           {/* Processing Banner */}
           <ProcessingBanner analysis={analysis} />
 
+          {triageWizardEnabled && (
+            <TriageWizard
+              key={activeConnection ?? "none"}
+              enabled={triageWizardEnabled}
+              activeConnection={activeConnection}
+              openGapCount={openGapCount}
+              unsavedPatternCount={unsavedPatternCount}
+              unsavedErrorCount={unsavedErrorCount}
+            />
+          )}
+
+          {/* Action Queue (action-first surface) */}
+          <ActionQueueCard items={actionQueueItems} />
+
           {/* Semantic Layer + Tool Usage */}
           <div className="grid grid-cols-2 gap-4">
             <SemanticLayerCard status={analysis.knowledgeStatus} />
             <ToolUsageCard usage={analysis.toolUsage} />
           </div>
 
-          {/* Vocabulary gaps — unmapped business terms */}
+          {/* Detailed sections */}
           {analysis.vocabularyGaps && analysis.vocabularyGaps.length > 0 && (
-            <VocabularyGapsCard
-              gaps={analysis.vocabularyGaps}
-              activeConnection={activeConnection}
-            />
+            <div id="vocabulary-gaps">
+              <VocabularyGapsCard
+                gaps={analysis.vocabularyGaps}
+                activeConnection={activeConnection}
+              />
+            </div>
           )}
 
-          {/* SQL Patterns + Knowledge Capture + Tables */}
-          <SqlPatternsCard
-            repeatedQueries={analysis.repeatedQueries}
-            errors={analysis.errors}
-            errorCount={analysis.errorCount}
-            validationFailures={analysis.validationFailures}
-            validationFailureCount={analysis.validationFailureCount}
-            activeConnection={activeConnection}
-          />
+          <div id="sql-patterns">
+            <SqlPatternsCard
+              repeatedQueries={analysis.repeatedQueries}
+              errors={analysis.errors}
+              errorCount={analysis.errorCount}
+              validationFailures={analysis.validationFailures}
+              validationFailureCount={analysis.validationFailureCount}
+              activeConnection={activeConnection}
+            />
+          </div>
 
-          <KnowledgeCaptureCard
-            events={analysis.knowledgeEvents}
-            count={analysis.knowledgeCaptureCount}
-            traceCount={analysis.traceCount}
-          />
-          <TablesCard tables={analysis.tablesReferenced} />
+          <div id="knowledge-capture">
+            <KnowledgeCaptureCard
+              events={analysis.knowledgeEvents}
+              count={analysis.knowledgeCaptureCount}
+              traceCount={analysis.traceCount}
+            />
+          </div>
+          <div id="tables-referenced">
+            <TablesCard tables={analysis.tablesReferenced} />
+          </div>
 
           {analysis.traceCount === 0 && (
             <Card className="bg-gray-900 border-gray-800">
