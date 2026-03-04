@@ -7,8 +7,10 @@ import type { InsightsAnalyzeResult } from "@/lib/bicp";
 import { useBICP } from "@/lib/bicp-context";
 import { useConnections } from "@/lib/connection-context";
 import {
+  type DashboardSummaryEndpointResult,
   type DashboardSummary,
   buildDashboardSummary,
+  normalizeDashboardSummary,
 } from "@/lib/services/dashboard";
 
 function formatDuration(ms: number): string {
@@ -43,15 +45,23 @@ export default function HomePage() {
     setError(null);
 
     try {
-      const result = await call<InsightsAnalyzeResult>("insights/analyze", {
-        days: 7,
-      });
+      try {
+        const result = await call<DashboardSummaryEndpointResult>("dashboard/summary", {
+          connection: activeConnection,
+        });
+        setSummary(normalizeDashboardSummary(result, activeConnection));
+      } catch {
+        // Back-compat fallback while endpoint rollout converges.
+        const result = await call<InsightsAnalyzeResult>("insights/analyze", {
+          days: 7,
+        });
 
-      if (!result.success) {
-        setError(result.error || "Failed to load dashboard summary");
-        setSummary(null);
-      } else {
-        setSummary(buildDashboardSummary(result.analysis, activeConnection));
+        if (!result.success) {
+          setError(result.error || "Failed to load dashboard summary");
+          setSummary(null);
+        } else {
+          setSummary(buildDashboardSummary(result.analysis, activeConnection));
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dashboard summary");
@@ -137,7 +147,7 @@ export default function HomePage() {
                 <CardTitle className="text-sm text-gray-300">Open Actions</CardTitle>
               </CardHeader>
               <CardContent className="text-lg font-semibold text-white">
-                {summary.queue.length}
+                {summary.openItems}
               </CardContent>
             </Card>
             <Card className="border-gray-800 bg-gray-900">

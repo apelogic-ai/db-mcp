@@ -727,6 +727,54 @@ export const INSIGHTS_ERROR = {
   analysis: null,
 };
 
+export const DASHBOARD_SUMMARY_HAPPY = {
+  setup: {
+    hasConnection: true,
+    activeConnection: "production",
+    hasSchema: true,
+    hasDomain: true,
+  },
+  semantic: {
+    score: 4,
+    maxScore: 5,
+    examples: 12,
+    rules: 3,
+    metrics: 0,
+  },
+  queue: {
+    openItems: 2,
+    items: [
+      {
+        id: "queue-vocabulary",
+        source: "insight" as const,
+        severity: "warn" as const,
+        title: "Resolve unmapped terms",
+        detail: "2 open term gaps",
+        ctaLabel: "Open triage",
+        ctaUrl: "/insights?wizard=triage&days=7#queue-vocabulary",
+        status: "open" as const,
+      },
+      {
+        id: "queue-sql-patterns",
+        source: "insight" as const,
+        severity: "warn" as const,
+        title: "Save repeated SQL patterns",
+        detail: "1 unsaved pattern",
+        ctaLabel: "Review patterns",
+        ctaUrl: "/insights?wizard=triage&days=7#queue-sql-patterns",
+        status: "open" as const,
+      },
+    ],
+  },
+  recent: {
+    traces: 31,
+    errors: 12,
+    validationFailures: 0,
+    totalDurationMs: 38000,
+    knowledgeCaptured: 9,
+  },
+};
+
 export const ADD_RULE_SUCCESS = {
   success: true,
 };

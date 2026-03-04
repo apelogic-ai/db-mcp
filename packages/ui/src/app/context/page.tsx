@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { useBICP } from "@/lib/bicp-context";
 import { useConnections } from "@/lib/connection-context";
 import { useContextViewer } from "@/lib/context-viewer-context";
@@ -9,6 +10,7 @@ import { CodeEditor } from "@/components/context/CodeEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AgentDialog } from "@/components/AgentDialog";
+import { RecoveryWizard } from "@/features/wizards/recovery/RecoveryWizard";
 
 interface ContextTreeResult {
   connections: ConnectionNode[];
@@ -40,7 +42,19 @@ interface DeleteResult {
   error?: string;
 }
 
+function decodeParam(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export default function ContextPage() {
+  const searchParams = useSearchParams();
   const { isInitialized, call } = useBICP();
   const { activeConnection } = useConnections();
   const {
@@ -83,6 +97,14 @@ export default function ContextPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
   const [uploadMode, setUploadMode] = useState<"upload" | "paste">("upload");
+
+  const recoveryWizardEnabled = searchParams.get("wizard") === "recovery";
+  const recoverySource = searchParams.get("source") === "insight" ? "insight" : "trace";
+  const recoveryArtifact =
+    searchParams.get("artifact") === "example" ? "example" : "rule";
+  const recoveryDraft = decodeParam(searchParams.get("draft"));
+  const recoveryReturnTo = decodeParam(searchParams.get("returnTo")) ||
+    (recoverySource === "insight" ? "/insights?wizard=triage&days=7" : "/traces");
   
   // Agent modal state (dialog handles its own agent loading)
 
@@ -445,6 +467,51 @@ export default function ContextPage() {
     }
   };
 
+  const handleCreateRecoveryArtifact = useCallback(
+    async (artifactContent: string, artifactType: "rule" | "example") => {
+      if (!activeConnection) {
+        return { success: false, error: "No active connection selected." };
+      }
+
+      const folder = artifactType === "example" ? "examples" : "instructions";
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const filePrefix = artifactType === "example" ? "recovery-example" : "recovery-rule";
+      const path = `${folder}/${filePrefix}-${stamp}.md`;
+
+      try {
+        const result = await call<CreateResult>("context/create", {
+          connection: activeConnection,
+          path,
+          content: artifactContent,
+        });
+
+        if (!result.success) {
+          return { success: false, error: result.error || "Failed to create recovery artifact." };
+        }
+
+        await fetchTree();
+        setSelectedFile({ connection: activeConnection, path });
+        setSelectedTreeNode({ connection: activeConnection, folder, file: path });
+        await fetchFile(activeConnection, path);
+
+        return { success: true, path };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to create recovery artifact.",
+        };
+      }
+    },
+    [
+      activeConnection,
+      call,
+      fetchFile,
+      fetchTree,
+      setSelectedFile,
+      setSelectedTreeNode,
+    ],
+  );
+
   // Resize handling
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -497,6 +564,18 @@ export default function ContextPage() {
         <div className="mb-4 p-3 bg-red-950 border border-red-800 rounded text-red-300 text-sm">
           {treeError || fileError}
         </div>
+      )}
+
+      {recoveryWizardEnabled && (
+        <RecoveryWizard
+          enabled={recoveryWizardEnabled}
+          activeConnection={activeConnection}
+          source={recoverySource}
+          artifact={recoveryArtifact}
+          draft={recoveryDraft}
+          returnTo={recoveryReturnTo}
+          onCreateArtifact={handleCreateRecoveryArtifact}
+        />
       )}
 
       {/* Main content - split pane */}

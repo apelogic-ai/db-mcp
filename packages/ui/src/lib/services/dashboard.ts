@@ -16,11 +16,72 @@ export interface DashboardSummary {
     metrics: number;
   };
   queue: ActionQueueItem[];
+  openItems: number;
   recent: {
     traces: number;
     errors: number;
     validationFailures: number;
     totalDurationMs: number;
+    knowledgeCaptured?: number;
+  };
+}
+
+export interface DashboardSummaryEndpointResult {
+  setup?: {
+    hasConnection?: boolean;
+    activeConnection?: string | null;
+    hasSchema?: boolean;
+    hasDomain?: boolean;
+  };
+  semantic?: {
+    score?: number;
+    maxScore?: number;
+    examples?: number;
+    rules?: number;
+    metrics?: number;
+    hasSchema?: boolean;
+    hasDomain?: boolean;
+  };
+  queue?: {
+    openItems?: number;
+    items?: ActionQueueItem[];
+  };
+  recent?: {
+    traces?: number;
+    errors?: number;
+    validationFailures?: number;
+    totalDurationMs?: number;
+    knowledgeCaptured?: number;
+  };
+}
+
+export function normalizeDashboardSummary(
+  data: DashboardSummaryEndpointResult,
+  activeConnection: string | null,
+): DashboardSummary {
+  return {
+    setup: {
+      hasConnection: data.setup?.hasConnection ?? Boolean(activeConnection),
+      activeConnection: data.setup?.activeConnection ?? activeConnection,
+      hasSchema: data.setup?.hasSchema ?? false,
+      hasDomain: data.setup?.hasDomain ?? false,
+    },
+    semantic: {
+      score: data.semantic?.score ?? 0,
+      maxScore: data.semantic?.maxScore ?? 5,
+      examples: data.semantic?.examples ?? 0,
+      rules: data.semantic?.rules ?? 0,
+      metrics: data.semantic?.metrics ?? 0,
+    },
+    queue: data.queue?.items ?? [],
+    openItems: data.queue?.openItems ?? (data.queue?.items?.length ?? 0),
+    recent: {
+      traces: data.recent?.traces ?? 0,
+      errors: data.recent?.errors ?? 0,
+      validationFailures: data.recent?.validationFailures ?? 0,
+      totalDurationMs: data.recent?.totalDurationMs ?? 0,
+      knowledgeCaptured: data.recent?.knowledgeCaptured ?? 0,
+    },
   };
 }
 
@@ -107,6 +168,7 @@ export function buildDashboardSummary(
   analysis: InsightsAnalysis,
   activeConnection: string | null,
 ): DashboardSummary {
+  const queue = buildActionQueue(analysis);
   const semanticScore = [
     analysis.knowledgeStatus.hasSchema,
     analysis.knowledgeStatus.hasDomain,
@@ -129,12 +191,14 @@ export function buildDashboardSummary(
       rules: analysis.knowledgeStatus.ruleCount,
       metrics: analysis.knowledgeStatus.metricCount,
     },
-    queue: buildActionQueue(analysis),
+    queue,
+    openItems: queue.length,
     recent: {
       traces: analysis.traceCount,
       errors: analysis.errorCount,
       validationFailures: analysis.validationFailureCount,
       totalDurationMs: analysis.totalDurationMs,
+      knowledgeCaptured: analysis.knowledgeCaptureCount,
     },
   };
 }

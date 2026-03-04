@@ -47,6 +47,25 @@ test.describe("Traces Page", () => {
     await expect(main.getByText("1200.0ms")).toBeVisible();
   });
 
+  test("actionable error trace shows Create Fix CTA", async ({ page, bicpMock }) => {
+    const tracesWithError = JSON.parse(JSON.stringify(mockData.TRACES_SIMPLE));
+    tracesWithError.traces[0].spans[0].status = "error";
+    tracesWithError.traces[0].spans[0].attributes["error.message"] =
+      "Table 'analytics.users' does not exist";
+    tracesWithError.traces[0].spans[0].attributes["sql.preview"] =
+      "SELECT * FROM analytics.users";
+    bicpMock.on("traces/list", () => tracesWithError);
+
+    await page.goto("/traces");
+    const main = page.locator("main");
+
+    await main.getByText("get_data").click();
+
+    const cta = main.getByRole("link", { name: "Create Fix" });
+    await expect(cta).toBeVisible();
+    await expect(cta).toHaveAttribute("href", /\/context\/?\?wizard=recovery/);
+  });
+
   test("groups consecutive get_result traces and expands on click", async ({
     page,
     bicpMock,

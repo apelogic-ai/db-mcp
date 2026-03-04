@@ -115,6 +115,9 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["insights/analyze"] = self._handle_insights_analyze
         self._method_handlers["gaps/dismiss"] = self._handle_gaps_dismiss
         self._method_handlers["insights/save-example"] = self._handle_insights_save_example
+        self._method_handlers["dashboard/summary"] = self._handle_dashboard_summary
+        self._method_handlers["wizard/state/get"] = self._handle_wizard_state_get
+        self._method_handlers["wizard/state/save"] = self._handle_wizard_state_save
 
         # Metrics & dimensions handlers
         self._method_handlers["metrics/list"] = self._handle_metrics_list
@@ -1908,6 +1911,51 @@ This knowledge helps the AI generate better queries over time.
         """Get the connections directory path."""
         return Path.home() / ".db-mcp" / "connections"
 
+    def _resolve_connection_name_and_path(
+        self, requested_connection: str | None
+    ) -> tuple[str | None, Path | None]:
+        """Resolve connection name/path from explicit or active connection context."""
+        if requested_connection:
+            conn_path = self._get_connections_dir() / requested_connection
+            if conn_path.exists():
+                return requested_connection, conn_path
+            return requested_connection, None
+
+        active_path = self._get_active_connection_path()
+        if active_path:
+            return active_path.name, active_path
+        return None, None
+
+    def _wizard_state_store_path(self, connection_name: str | None) -> Path:
+        """Get wizard state storage path scoped per connection."""
+        state_dir = Path.home() / ".db-mcp" / "state" / "wizards"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        key = connection_name or "none"
+        return state_dir / f"{key}.json"
+
+    def _load_wizard_state_store(self, connection_name: str | None) -> dict[str, Any]:
+        """Load per-connection wizard state map from disk."""
+        import json
+
+        store_path = self._wizard_state_store_path(connection_name)
+        if not store_path.exists():
+            return {}
+
+        try:
+            data = json.loads(store_path.read_text())
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            logger.warning("Failed to read wizard state store: %s", store_path)
+        return {}
+
+    def _save_wizard_state_store(self, connection_name: str | None, data: dict[str, Any]) -> None:
+        """Persist per-connection wizard state map."""
+        import json
+
+        store_path = self._wizard_state_store_path(connection_name)
+        store_path.write_text(json.dumps(data, indent=2))
+
     def _is_git_enabled(self, conn_path: Path) -> bool:
         """Check if git is enabled for a connection directory."""
         return (conn_path / ".git").exists()
@@ -3171,6 +3219,197 @@ This knowledge helps the AI generate better queries over time.
                 logger.warning(f"Failed to auto-resolve knowledge gaps: {e}")
 
         return {"success": True, "analysis": analysis}
+
+    async def _handle_dashboard_summary(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Return an operator-oriented dashboard summary for the selected connection."""
+        requested_connection = params.get("connection")
+        connection_name, connection_path = self._resolve_connection_name_and_path(
+            requested_connection
+        )
+
+        connections_result = await self._handle_connections_list({})
+        all_connections = connections_result.get("connections", [])
+
+        active_meta = next(
+            (c for c in all_connections if c.get("name") == connection_name),
+            None,
+        )
+
+        setup = {
+            "hasConnection": connection_name is not None,
+            "activeConnection": connection_name,
+            "totalConnections": len(all_connections),
+            "hasSchema": bool(active_meta.get("hasSchema")) if active_meta else False,
+            "hasDomain": bool(active_meta.get("hasDomain")) if active_meta else False,
+            "hasCredentials": bool(active_meta.get("hasCredentials")) if active_meta else False,
+        }
+
+        empty_semantic = {
+            "score": 0,
+            "maxScore": 5,
+            "hasSchema": False,
+            "hasDomain": False,
+            "examples": 0,
+            "rules": 0,
+            "metrics": 0,
+        }
+        empty_queue = {"openItems": 0, "items": []}
+        empty_recent = {
+            "traces": 0,
+            "errors": 0,
+            "validationFailures": 0,
+            "knowledgeCaptured": 0,
+        }
+
+        if not connection_name or not connection_path:
+            return {
+                "setup": setup,
+                "semantic": empty_semantic,
+                "queue": empty_queue,
+                "recent": empty_recent,
+            }
+
+        insights_result = await self._handle_insights_analyze({"days": 7})
+        if not insights_result.get("success"):
+            return {
+                "setup": setup,
+                "semantic": empty_semantic,
+                "queue": empty_queue,
+                "recent": empty_recent,
+            }
+
+        analysis = insights_result.get("analysis", {})
+        knowledge = analysis.get("knowledgeStatus", {})
+
+        semantic_score = sum(
+            [
+                1 if knowledge.get("hasSchema") else 0,
+                1 if knowledge.get("hasDomain") else 0,
+                1 if (knowledge.get("exampleCount", 0) > 0) else 0,
+                1 if (knowledge.get("ruleCount", 0) > 0) else 0,
+                1 if (knowledge.get("metricCount", 0) > 0) else 0,
+            ]
+        )
+
+        open_gaps = [
+            g
+            for g in analysis.get("vocabularyGaps", [])
+            if g.get("status", "open") not in ("resolved", "dismissed")
+        ]
+        unsaved_patterns = [
+            q for q in analysis.get("repeatedQueries", []) if not q.get("is_example")
+        ]
+        unsaved_errors = [
+            e
+            for e in analysis.get("errors", [])
+            if e.get("error_type") == "soft" and e.get("sql") and not e.get("is_saved")
+        ]
+
+        queue_items = [
+            {
+                "id": "queue-vocabulary",
+                "title": "Resolve unmapped terms",
+                "detail": f"{len(open_gaps)} open term gap(s)",
+                "ctaLabel": "Open triage",
+                "ctaUrl": "/insights?wizard=triage&days=7#queue-vocabulary",
+                "status": "open" if open_gaps else "done",
+            },
+            {
+                "id": "queue-sql-patterns",
+                "title": "Save repeated SQL patterns",
+                "detail": f"{len(unsaved_patterns)} unsaved pattern(s)",
+                "ctaLabel": "Review patterns",
+                "ctaUrl": "/insights?wizard=triage&days=7#queue-sql-patterns",
+                "status": "open" if unsaved_patterns else "done",
+            },
+            {
+                "id": "queue-error-learnings",
+                "title": "Capture error learnings",
+                "detail": f"{len(unsaved_errors)} unsaved learning(s)",
+                "ctaLabel": "Review errors",
+                "ctaUrl": "/insights?wizard=triage&days=7#queue-error-learnings",
+                "status": "open" if unsaved_errors else "done",
+            },
+        ]
+
+        queue_open = sum(1 for item in queue_items if item["status"] == "open")
+
+        return {
+            "setup": setup,
+            "semantic": {
+                "score": semantic_score,
+                "maxScore": 5,
+                "hasSchema": bool(knowledge.get("hasSchema")),
+                "hasDomain": bool(knowledge.get("hasDomain")),
+                "examples": int(knowledge.get("exampleCount", 0)),
+                "rules": int(knowledge.get("ruleCount", 0)),
+                "metrics": int(knowledge.get("metricCount", 0)),
+            },
+            "queue": {
+                "openItems": queue_open,
+                "items": queue_items,
+            },
+            "recent": {
+                "traces": int(analysis.get("traceCount", 0)),
+                "errors": int(analysis.get("errorCount", 0)),
+                "validationFailures": int(analysis.get("validationFailureCount", 0)),
+                "knowledgeCaptured": int(analysis.get("knowledgeCaptureCount", 0)),
+            },
+        }
+
+    async def _handle_wizard_state_get(self, params: dict[str, Any]) -> dict[str, Any] | None:
+        """Return saved wizard state for a wizard/connection pair."""
+        wizard_id = params.get("wizardId")
+        if wizard_id not in {"onboarding", "triage", "recovery"}:
+            return None
+
+        requested_connection = params.get("connection")
+        connection_name, connection_path = self._resolve_connection_name_and_path(
+            requested_connection
+        )
+
+        # If caller requested a specific connection that does not exist, return no state.
+        if requested_connection and connection_path is None:
+            return None
+
+        store = self._load_wizard_state_store(connection_name)
+        state = store.get(wizard_id)
+        if isinstance(state, dict):
+            return state
+        return None
+
+    async def _handle_wizard_state_save(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Persist wizard state for the selected connection."""
+        from datetime import datetime, timezone
+
+        wizard_id = params.get("wizardId")
+        if wizard_id not in {"onboarding", "triage", "recovery"}:
+            return {"success": False, "error": "wizardId must be onboarding, triage, or recovery"}
+
+        requested_connection = params.get("connection")
+        connection_name, connection_path = self._resolve_connection_name_and_path(
+            requested_connection
+        )
+
+        # Preserve explicit connection strings even if inactive, but reject missing directories.
+        if requested_connection and connection_path is None:
+            return {"success": False, "error": f"Connection '{requested_connection}' not found"}
+
+        normalized_state = {
+            "wizardId": wizard_id,
+            "step": str(params.get("step", "")),
+            "completedSteps": [str(s) for s in params.get("completedSteps", [])],
+            "skippedSteps": [str(s) for s in params.get("skippedSteps", [])],
+            "connection": connection_name,
+            "updatedAt": params.get("updatedAt")
+            or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+
+        store = self._load_wizard_state_store(connection_name)
+        store[wizard_id] = normalized_state
+        self._save_wizard_state_store(connection_name, store)
+
+        return {"success": True}
 
     # ========== Metrics & Dimensions Methods ==========
 

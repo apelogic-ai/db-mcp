@@ -75,6 +75,9 @@ export class BICPMock {
 
     // Insights
     this.on("insights/analyze", () => mockData.INSIGHTS_HAPPY);
+    this.on("dashboard/summary", () => mockData.DASHBOARD_SUMMARY_HAPPY);
+    this.on("wizard/state/get", () => null);
+    this.on("wizard/state/save", () => ({ success: true }));
 
     // Rules
     this.on("context/add-rule", () => mockData.ADD_RULE_SUCCESS);

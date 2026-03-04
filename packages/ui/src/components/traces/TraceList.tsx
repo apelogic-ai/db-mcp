@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { Trace } from "@/lib/bicp";
 import { SpanTimeline } from "./SpanTimeline";
@@ -70,6 +71,65 @@ function getTraceName(trace: Trace): string {
   );
 }
 
+function getActionableTraceContext(trace: Trace): { error: string; sql?: string } | null {
+  for (const span of trace.spans) {
+    const status = (span.status || "").toLowerCase();
+    const errorMessage =
+      (span.attributes?.["error.message"] as string | undefined) ||
+      (span.attributes?.["error"] as string | undefined) ||
+      (span.attributes?.["exception.message"] as string | undefined);
+    const sql =
+      (span.attributes?.["sql.preview"] as string | undefined) ||
+      (span.attributes?.["sql"] as string | undefined);
+
+    if ((status && status !== "ok" && status !== "unset") || errorMessage) {
+      return {
+        error: errorMessage || `Trace span '${span.name}' reported status '${span.status}'.`,
+        sql,
+      };
+    }
+  }
+  return null;
+}
+
+function buildRecoveryHref(trace: Trace): string | null {
+  const context = getActionableTraceContext(trace);
+  if (!context) {
+    return null;
+  }
+
+  const toolName = getTraceName(trace);
+  const lines = [
+    "# Recovery Rule",
+    "",
+    "## Incident",
+    `- Trace ID: ${trace.trace_id}`,
+    `- Tool: ${toolName}`,
+    `- Error: ${context.error}`,
+    "",
+  ];
+
+  if (context.sql) {
+    lines.push("## Failing SQL", "```sql", context.sql, "```", "");
+  }
+
+  lines.push(
+    "## Rule",
+    "- Describe what should happen instead.",
+    "- Include the expected schema objects and naming.",
+    "",
+  );
+
+  const params = new URLSearchParams({
+    wizard: "recovery",
+    source: "trace",
+    artifact: "rule",
+    returnTo: "/traces",
+    draft: lines.join("\n"),
+  });
+  return `/context?${params.toString()}`;
+}
+
 /** A single trace or a group of consecutive traces with the same name. */
 type TraceEntry =
   | { kind: "single"; trace: Trace }
@@ -116,6 +176,7 @@ function SingleTraceRow({
 }) {
   const rootName = getTraceName(trace);
   const highlight = extractHighlight(trace);
+  const recoveryHref = buildRecoveryHref(trace);
 
   return (
     <div className="border border-gray-800 rounded-md overflow-hidden">
@@ -170,6 +231,16 @@ function SingleTraceRow({
             traceDurationMs={trace.duration_ms}
             traceStartTime={trace.start_time}
           />
+          {recoveryHref && (
+            <div className="mt-3 flex justify-end">
+              <Link
+                href={recoveryHref}
+                className="rounded-md border border-[#EF8626] px-2.5 py-1.5 text-xs text-[#EF8626] hover:bg-[#EF8626]/10"
+              >
+                Create Fix
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

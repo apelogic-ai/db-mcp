@@ -1,6 +1,26 @@
 import { test, expect, mockData } from "./fixtures";
 
 test.describe("Context Page", () => {
+  test("recovery wizard renders from deep link and can create artifact", async ({
+    page,
+    bicpMock,
+  }) => {
+    const draft = encodeURIComponent("# Recovery Rule\\n\\n- fix naming mismatch");
+    await page.goto(
+      `/context?wizard=recovery&source=trace&artifact=rule&draft=${draft}&returnTo=%2Ftraces`,
+    );
+
+    const main = page.locator("main");
+    await expect(main.getByText("Recovery Wizard")).toBeVisible();
+    await expect(main.getByText("1. Review Incident")).toBeVisible();
+
+    await main.getByRole("button", { name: "2. Create Fix" }).click();
+    await main.getByRole("button", { name: "Create Fix Artifact" }).click();
+
+    const calls = bicpMock.getCalls("context/create");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+  });
+
   test("renders tree with connections", async ({ page }) => {
     await page.goto("/context");
 
