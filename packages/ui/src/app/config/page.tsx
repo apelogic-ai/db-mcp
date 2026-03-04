@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Card,
   CardHeader,
@@ -13,8 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBICP } from "@/lib/bicp-context";
 import { useConnections } from "@/lib/connection-context";
+import { useViewMode } from "@/lib/view-mode-context";
 import AgentConfig from "@/components/AgentConfig";
 import { DialectIcon } from "@/components/DialectIcon";
+import { OnboardingWizard } from "@/features/wizards/onboarding/OnboardingWizard";
 import { StatusIndicator } from "@/features/config/status-indicator";
 import {
   type Connection,
@@ -29,9 +32,11 @@ import {
 import { maskDatabaseUrl, parseConnectArgsFromUrl } from "@/features/config/utils";
 
 export default function ConfigPage() {
+  const searchParams = useSearchParams();
   const { isInitialized, isLoading, error, serverInfo, initialize, call } =
     useBICP();
-  const { activeConnection, switchConnection } = useConnections();
+  const { activeConnection, switchConnection, refreshConnections } = useConnections();
+  const { viewMode } = useViewMode();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(false);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
@@ -90,9 +95,11 @@ export default function ConfigPage() {
   }, []);
 
   const hasPlayground = connections.some((c) => c.name === "playground");
+  const onboardingWizardEnabled = searchParams.get("wizard") === "onboarding";
   const hasNoConnections =
     connections.length === 0 && !connectionsLoading && hasFetched;
-  const showOnboardingBubble = hasNoConnections && !onboardingDismissed;
+  const showOnboardingBubble =
+    !onboardingWizardEnabled && hasNoConnections && !onboardingDismissed;
   const showPlaygroundButton =
     !hasNoConnections && !hasPlayground && hasFetched && !connectionsLoading;
 
@@ -922,6 +929,24 @@ export default function ConfigPage() {
         </div>
       )}
 
+      {onboardingWizardEnabled && (
+        <OnboardingWizard
+          enabled={onboardingWizardEnabled}
+          connections={connections}
+          activeConnection={activeConnection}
+          refreshConnections={async () => {
+            await fetchConnections();
+            await refreshConnections();
+          }}
+          onInstallPlayground={handleInstallPlayground}
+          playgroundInstalling={playgroundInstalling}
+          onOpenCreateDatabase={() => {
+            resetFormState();
+            setShowCreateSqlForm(true);
+          }}
+        />
+      )}
+
       {/* Onboarding bubble when no connections exist */}
       {showOnboardingBubble && isInitialized && (
         <div className="border border-[#EF8626] rounded-lg p-6 bg-[#EF8626]/5">
@@ -984,30 +1009,32 @@ export default function ConfigPage() {
             </div>
             {isInitialized && !showCreateSqlForm && (
               <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={fetchConnections}
-                  disabled={connectionsLoading}
-                  className="text-gray-400 hover:text-white hover:bg-gray-800"
-                  title="Refresh"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={connectionsLoading ? "animate-spin" : ""}
+                {viewMode === "advanced" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={fetchConnections}
+                    disabled={connectionsLoading}
+                    className="text-gray-400 hover:text-white hover:bg-gray-800"
+                    title="Refresh"
                   >
-                    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-                    <path d="M21 3v5h-5" />
-                  </svg>
-                </Button>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={connectionsLoading ? "animate-spin" : ""}
+                    >
+                      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                      <path d="M21 3v5h-5" />
+                    </svg>
+                  </Button>
+                )}
                 <Button
                   onClick={() => {
                     resetFormState();
@@ -1178,30 +1205,32 @@ export default function ConfigPage() {
             </div>
             {isInitialized && !showCreateFileForm && (
               <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={fetchConnections}
-                  disabled={connectionsLoading}
-                  className="text-gray-400 hover:text-white hover:bg-gray-800"
-                  title="Refresh"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={connectionsLoading ? "animate-spin" : ""}
+                {viewMode === "advanced" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={fetchConnections}
+                    disabled={connectionsLoading}
+                    className="text-gray-400 hover:text-white hover:bg-gray-800"
+                    title="Refresh"
                   >
-                    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-                    <path d="M21 3v5h-5" />
-                  </svg>
-                </Button>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={connectionsLoading ? "animate-spin" : ""}
+                    >
+                      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                      <path d="M21 3v5h-5" />
+                    </svg>
+                  </Button>
+                )}
                 <Button
                   onClick={() => {
                     resetFormState();
@@ -1364,30 +1393,32 @@ export default function ConfigPage() {
             </div>
             {isInitialized && !showCreateApiForm && (
               <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={fetchConnections}
-                  disabled={connectionsLoading}
-                  className="text-gray-400 hover:text-white hover:bg-gray-800"
-                  title="Refresh"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={connectionsLoading ? "animate-spin" : ""}
+                {viewMode === "advanced" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={fetchConnections}
+                    disabled={connectionsLoading}
+                    className="text-gray-400 hover:text-white hover:bg-gray-800"
+                    title="Refresh"
                   >
-                    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-                    <path d="M21 3v5h-5" />
-                  </svg>
-                </Button>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={connectionsLoading ? "animate-spin" : ""}
+                    >
+                      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                      <path d="M21 3v5h-5" />
+                    </svg>
+                  </Button>
+                )}
                 <Button
                   onClick={() => {
                     resetFormState();
@@ -1571,30 +1602,62 @@ export default function ConfigPage() {
                   {/* Discover & Sync buttons for API connections */}
                   {editingConnection !== conn.name && (
                     <div className="flex flex-col gap-1.5 mt-2">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleDiscoverEndpoints(conn.name)}
-                          disabled={discoverLoading === conn.name}
-                          className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
-                        >
-                          {discoverLoading === conn.name
-                            ? "Discovering..."
-                            : "Discover Endpoints"}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleSyncConnection(conn.name)}
-                          disabled={syncLoading === conn.name}
-                          className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
-                        >
-                          {syncLoading === conn.name
-                            ? "Syncing..."
-                            : "Sync Data"}
-                        </Button>
-                      </div>
+                      {viewMode === "advanced" ? (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDiscoverEndpoints(conn.name)}
+                            disabled={discoverLoading === conn.name}
+                            className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                          >
+                            {discoverLoading === conn.name
+                              ? "Discovering..."
+                              : "Discover Endpoints"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSyncConnection(conn.name)}
+                            disabled={syncLoading === conn.name}
+                            className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                          >
+                            {syncLoading === conn.name
+                              ? "Syncing..."
+                              : "Sync Data"}
+                          </Button>
+                        </div>
+                      ) : (
+                        <details>
+                          <summary className="cursor-pointer text-xs text-gray-400 hover:text-gray-200">
+                            Advanced API controls
+                          </summary>
+                          <div className="mt-2 flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDiscoverEndpoints(conn.name)}
+                              disabled={discoverLoading === conn.name}
+                              className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                            >
+                              {discoverLoading === conn.name
+                                ? "Discovering..."
+                                : "Discover Endpoints"}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleSyncConnection(conn.name)}
+                              disabled={syncLoading === conn.name}
+                              className="border-gray-700 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs"
+                            >
+                              {syncLoading === conn.name
+                                ? "Syncing..."
+                                : "Sync Data"}
+                            </Button>
+                          </div>
+                        </details>
+                      )}
                       {discoverResult && discoverLoading === null && (
                         <span
                           className={`text-xs ${discoverResult.success ? "text-green-400" : "text-yellow-400"}`}
@@ -1619,7 +1682,9 @@ export default function ConfigPage() {
       </Card>
 
       {/* Section 4: Agent Configuration */}
-      <AgentConfig />
+      <div id="agent-configuration">
+        <AgentConfig />
+      </div>
     </div>
   );
 }

@@ -1,6 +1,33 @@
 import { test, expect, mockData } from "./fixtures";
 
 test.describe("Config Page", () => {
+  test("onboarding wizard renders when query param is set", async ({
+    page,
+    bicpMock,
+  }) => {
+    bicpMock.on("connections/list", () => mockData.CONNECTIONS_EMPTY);
+    await page.goto("/config?wizard=onboarding");
+
+    await expect(page.getByText("Onboarding Wizard")).toBeVisible();
+    await expect(page.getByText("1. Select Source")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use Playground DB" })).toBeVisible();
+  });
+
+  test("onboarding wizard can run connection verification step", async ({
+    page,
+    bicpMock,
+  }) => {
+    bicpMock.on("connections/list", () => mockData.CONNECTIONS_HAPPY);
+    await page.goto("/config?wizard=onboarding");
+
+    await page.getByRole("button", { name: "2. Verify Connection" }).click();
+    await page.getByRole("button", { name: "Run Connection Test" }).click();
+
+    const calls = bicpMock.getCalls("connections/test");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0].params).toMatchObject({ name: "production" });
+  });
+
   test("displays connection list with badges", async ({ page }) => {
     await page.goto("/config");
 
@@ -174,8 +201,8 @@ test.describe("Config Page", () => {
     // API connection visible
     await expect(main.getByText("stripe-api")).toBeVisible();
 
-    // Sync button visible for API connections
-    await expect(main.getByRole("button", { name: "Sync Data" })).toBeVisible();
+    // Essentials mode collapses API power controls behind a disclosure
+    await expect(main.getByText("Advanced API controls")).toBeVisible();
   });
 
   test("API empty state shows add button", async ({ page, bicpMock }) => {
@@ -251,6 +278,12 @@ test.describe("Config Page", () => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
     await page.goto("/config");
 
+    // Switch to Advanced view mode to expose controls directly
+    await page
+      .getByRole("group", { name: "View mode" })
+      .getByRole("button", { name: "Advanced" })
+      .click();
+
     // Click Discover Endpoints button
     await page.getByRole("button", { name: "Discover Endpoints" }).click();
 
@@ -268,6 +301,12 @@ test.describe("Config Page", () => {
   test("sync API connection", async ({ page, bicpMock }) => {
     bicpMock.on("connections/list", () => mockData.CONNECTIONS_WITH_API);
     await page.goto("/config");
+
+    // Switch to Advanced view mode to expose controls directly
+    await page
+      .getByRole("group", { name: "View mode" })
+      .getByRole("button", { name: "Advanced" })
+      .click();
 
     // Click Sync Data button
     await page.getByRole("button", { name: "Sync Data" }).click();
