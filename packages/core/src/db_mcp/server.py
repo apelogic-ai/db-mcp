@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 from db_mcp.config import get_settings
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
+from db_mcp.tool_catalog import build_tool_catalog, render_python_sdk, search_tool_catalog
 from db_mcp.tools.api import (
     _api_describe_endpoint,
     _api_discover,
@@ -884,6 +885,76 @@ def _create_server() -> FastMCP:
     server.tool(name="ping")(_ping)
     server.tool(name="get_config")(_get_config)
     server.tool(name="list_connections")(_list_connections)
+
+    async def _search_tools(
+        query: str = "",
+        limit: int = 12,
+        category: str | None = None,
+        include_parameters: bool = False,
+    ) -> dict:
+        """Search active MCP tools and return the best matches.
+
+        Useful for code-execution workflows where the agent should discover a
+        narrow tool set first, then generate wrapper code only for matching tools.
+        """
+        catalog = build_tool_catalog(server)
+        matches = search_tool_catalog(catalog=catalog, query=query, limit=limit, category=category)
+        result_tools: list[dict] = []
+        for item in matches:
+            tool_entry = {
+                "name": item["name"],
+                "category": item["category"],
+                "description": item["description"],
+                "required": item["required"],
+            }
+            if include_parameters:
+                tool_entry["properties"] = item["properties"]
+            result_tools.append(tool_entry)
+
+        return {
+            "query": query,
+            "category": category,
+            "count": len(result_tools),
+            "tools": result_tools,
+        }
+
+    async def _export_tool_sdk(
+        language: str = "python",
+        query: str = "",
+        limit: int = 40,
+        category: str | None = None,
+    ) -> dict:
+        """Export a small SDK wrapper for active tools (Python MVP).
+
+        Use `query` and/or `category` to generate wrappers for a focused subset.
+        """
+        normalized = language.strip().lower()
+        if normalized != "python":
+            return {
+                "status": "error",
+                "error": "Unsupported language. Currently supported: python",
+            }
+
+        catalog = build_tool_catalog(server)
+        selected = search_tool_catalog(
+            catalog=catalog,
+            query=query,
+            limit=limit,
+            category=category,
+        )
+        code = render_python_sdk(selected)
+        return {
+            "status": "ok",
+            "language": "python",
+            "query": query,
+            "category": category,
+            "tool_count": len(selected),
+            "tool_names": [item["name"] for item in selected],
+            "code": code,
+        }
+
+    server.tool(name="search_tools")(_search_tools)
+    server.tool(name="export_tool_sdk")(_export_tool_sdk)
 
     # =========================================================================
     # Shell tool - with mode-specific description

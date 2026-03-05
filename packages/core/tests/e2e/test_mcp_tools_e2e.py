@@ -96,6 +96,12 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         calls["ping"] = await _call(client, "ping", {})
         calls["get_config"] = await _call(client, "get_config", {})
         calls["list_connections"] = await _call(client, "list_connections", {})
+        calls["search_tools"] = await _call(client, "search_tools", {"query": "sql", "limit": 5})
+        calls["export_tool_sdk"] = await _call(
+            client,
+            "export_tool_sdk",
+            {"language": "python", "query": "sql", "limit": 5},
+        )
         calls["protocol"] = await _call(client, "protocol", {"connection": connection})
 
         # insights: create a fake insight file via shell to have something to dismiss

@@ -128,6 +128,8 @@ def get_expected_tools_for_config(
             "ping",
             "get_config",
             "list_connections",
+            "search_tools",
+            "export_tool_sdk",
             "shell",
             "protocol",
         ]
