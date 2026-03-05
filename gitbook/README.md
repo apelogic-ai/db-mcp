@@ -15,6 +15,7 @@ This documentation covers:
 - installing and configuring db-mcp
 - running it via CLI and Web UI
 - connecting agent clients (Claude Desktop, Claude Code, Codex, OpenClaw)
+- configuring connector profiles (SQL, API, file, and hybrid BI)
 - understanding the MCP tool surface
 - using advanced workflows (knowledge management, insights, collaboration)
 
@@ -23,6 +24,7 @@ Start here:
 - [Quickstart](quickstart.md)
 - [How-To Guides](how-to-guides.md)
 - [Install and Configuration](install-and-configuration.md)
+- [Connector Profiles](connector-profiles.md)
 - [Using the CLI](using-cli.md)
 - [Using the Web UI](using-web-ui.md)
 - [Working with Agents](working-with-agents.md)

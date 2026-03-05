@@ -97,6 +97,8 @@ db-mcp use mydb
 db-mcp status
 ```
 
+`db-mcp init` supports SQL databases (PostgreSQL, ClickHouse, MySQL, SQL Server, Trino, DuckDB), REST APIs (including SQL-like APIs such as Dune Analytics), and hybrid BI tools (Superset, Metabase). See [Connector Profiles](connector-profiles.md) for the full list.
+
 Use Playground for first-run testing, then switch to your real connection.
 
 Next:

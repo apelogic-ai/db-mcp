@@ -66,6 +66,16 @@ Collaborative subgroup commands:
 
 ![Collaboration status output](assets/cli-collab-status.png)
 
+## Connector profiles
+
+Each connection can declare a connector profile (`sql_db`, `api_sql`, `api_openapi`, `api_probe`, `file_local`, `hybrid_bi`) that controls default capabilities and tool behavior. See [Connector Profiles](connector-profiles.md) for the full reference.
+
+Validate your connector configuration:
+
+```bash
+db-mcp connector validate ~/.db-mcp/connections/mydb/connector.yaml
+```
+
 ## Multi-connection operations
 
 For stable behavior in mixed workloads:
@@ -106,6 +116,32 @@ The `shell` tool is intentionally constrained:
 - no overwrite redirection (`>`)
 
 This is by design to protect vault integrity and credentials.
+
+## Protocol acknowledgment
+
+db-mcp can require agents to read `PROTOCOL.md` before executing SQL queries. This adds a safety gate that ensures the agent has loaded the connection's context before running anything.
+
+Configuration:
+
+- Set `DB_MCP_REQUIRE_PROTOCOL_ACK=true` to enable
+- `DB_MCP_PROTOCOL_ACK_TTL_SECONDS` controls how long an acknowledgment stays valid (default: 6 hours)
+- The agent reads `PROTOCOL.md` via the `protocol` tool, which records a fresh acknowledgment
+- If the acknowledgment expires or is missing, `run_sql` returns an error asking the agent to re-read the protocol
+
+This is useful for long-running sessions where context might drift.
+
+## Execution engine
+
+SQL execution in db-mcp flows through an execution engine that handles both synchronous and asynchronous queries:
+
+- **Synchronous**: the query runs and returns results immediately (standard SQL databases)
+- **Asynchronous**: the query is submitted, returns an execution ID, and results are polled via `get_result` (common with SQL-like APIs such as Dune Analytics)
+
+The execution engine automatically handles:
+
+- Query store for tracking execution state
+- Timeout and polling behavior for async providers
+- Result caching for completed executions
 
 ## Migrations and compatibility
 

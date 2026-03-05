@@ -22,9 +22,11 @@ db-mcp stores global and per-connection state in `~/.db-mcp`.
 ├── config.yaml
 └── connections/{name}/
     ├── .env                         # credentials/secrets (gitignored)
-    ├── connector.yaml               # connector type/capabilities (optional for plain SQL)
+    ├── connector.yaml               # connector type, profile, capabilities (see Connector Profiles)
     ├── PROTOCOL.md                  # system-managed agent protocol
     ├── state.yaml                   # onboarding progress/state
+    ├── state/
+    │   └── protocol_ack.json        # protocol acknowledgment marker (auto-managed)
     ├── knowledge_gaps.yaml          # detected/resolved term gaps (created when used)
     ├── feedback_log.yaml            # SQL feedback history (created when used)
     ├── .insights.json               # pending insights queue (created when used)
@@ -47,6 +49,8 @@ db-mcp stores global and per-connection state in `~/.db-mcp`.
     ├── traces/{user_id}/*.jsonl     # when traces are enabled
     └── .collab.yaml                 # when collaboration is initialized
 ```
+
+See [Connector Profiles](connector-profiles.md) for details on `connector.yaml` structure, profiles, and the versioned contract.
 
 ## `connector.yaml` vs `.env`
 
@@ -96,6 +100,8 @@ db-mcp remove mydb
 - `CONNECTIONS_DIR`: base directory for all connections
 - `LOG_LEVEL`: runtime logging level
 - `TOOL_MODE`: MCP tool exposure mode (`detailed` or `shell`)
+- `DB_MCP_REQUIRE_PROTOCOL_ACK`: when set to `true`, requires agents to read `PROTOCOL.md` before executing SQL
+- `DB_MCP_PROTOCOL_ACK_TTL_SECONDS`: how long a protocol acknowledgment stays valid (default: 6 hours)
 
 ## Validate setup
 
@@ -119,12 +125,12 @@ Expected validation signals:
 
 ## UI check
 
-Use the Config page to verify connection settings and agent integration:
+Use the Setup page (`/config`) to verify connection settings and agent integration:
 
-![Config screen — manage connections and agents](assets/ui-config.jpg)
+![Setup screen — manage connections and agents](assets/ui-config.jpg)
 
-Use the Context page to confirm schema/domain/examples/rules files are present:
+Use the Knowledge page (`/context`) to confirm schema/domain/examples/rules files are present:
 
-![Context viewer — browse schema, domain, examples, and rules](assets/ui-context.jpg)
+![Knowledge viewer — browse schema, domain, examples, and rules](assets/ui-context.jpg)
 
 If setup looks good, continue to [Using the CLI](using-cli.md) and [Working with Agents](working-with-agents.md).

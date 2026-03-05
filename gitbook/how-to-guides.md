@@ -104,8 +104,8 @@ db-mcp ui
 Workflow:
 
 1. Ask real questions from your agent.
-2. Review `/insights` for unmapped terms and query patterns.
-3. Add business rules/examples in `/context`.
+2. Review Insights (`/insights`) for unmapped terms and query patterns.
+3. Add business rules/examples in Knowledge (`/context`).
 4. Re-run key prompts and confirm improved SQL quality.
 
 ![Insights — semantic layer gaps and usage patterns](assets/ui-insights.jpg)
