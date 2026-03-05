@@ -31,8 +31,11 @@ Default behavior:
 - `db-mcp start`
 - `db-mcp ui`
 - `db-mcp console`
-- `db-mcp playground install`
-- `db-mcp playground status`
+
+### Playground
+
+- `db-mcp playground install` — install the built-in Chinook SQLite sample database
+- `db-mcp playground status` — check Playground installation and connection state
 
 ### Agent integration
 
@@ -46,9 +49,14 @@ Default behavior:
 - `db-mcp discover --connection NAME`
 - `db-mcp discover --url <database_url>`
 - `db-mcp doctor -c NAME`
+- `db-mcp doctor -c NAME --json` — machine-readable diagnostics output
 - `db-mcp traces on`
 - `db-mcp traces off`
 - `db-mcp traces status`
+
+### Connector validation
+
+- `db-mcp connector validate <connector.yaml>` — validate a connector file against the versioned contract schema
 
 ### Git and team sync
 
@@ -119,9 +127,10 @@ db-mcp sync analytics
 
 `db-mcp --help` includes these command groups:
 
-- `agents`, `collab`, `discover`, `traces`
+- `agents`, `collab`, `connector`, `discover`, `traces`
 - `init`, `start`, `status`, `ui`, `console`, `doctor`
 - `git-init`, `pull`, `sync`, `migrate`
+- `playground`
 
 `db-mcp collab --help` includes:
 

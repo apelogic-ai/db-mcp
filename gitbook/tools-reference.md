@@ -49,6 +49,8 @@ Best practice:
 
 - `test_connection` (detailed mode)
 - `detect_dialect` (detailed mode)
+- `get_dialect_rules` (detailed mode) — returns SQL dialect rules for the connection's database type
+- `get_connection_dialect` (detailed mode) — returns the detected dialect name for the active connection
 - `list_catalogs` (detailed mode)
 - `list_schemas` (detailed mode)
 - `list_tables` (detailed mode)

@@ -67,6 +67,8 @@ Legacy `dbmeta` entries are removed when applicable.
 
 - `~/.openclaw/workspace/config/mcporter.json`
 
+Note: OpenClaw integration requires `mcporter` to be installed (`npm i -g mcporter`). If `mcporter` is not found, `db-mcp agents` will show a warning but still write the config — you can install mcporter afterward.
+
 ## Manual snippets
 
 ### JSON-based clients
@@ -105,10 +107,10 @@ args = ["start"]
 
 ## UI validation
 
-Use `/config` to confirm connection and agent setup visually:
+Use the Setup page (`/config`) to confirm connection and agent setup visually:
 
-![Config screen — manage connections and agents](assets/ui-config.jpg)
+![Setup screen — manage connections and agents](assets/ui-config.jpg)
 
-Use `/traces` to validate real tool activity after restart:
+Use Traces (`/traces`) to validate real tool activity after restart:
 
 ![Traces — OpenTelemetry viewer for MCP operations](assets/ui-traces.jpg)
