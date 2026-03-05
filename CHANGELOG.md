@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.6.6] - 2026-03-04
+
+## Highlights
+- Introduced connector profiles as first-class runtime behavior (`sql_db`, `api_sql`, `api_openapi`, `api_probe`, `file_local`, `hybrid_bi`) with normalized defaults across CLI and server tool gating.
+- Added a versioned connector contract (`spec_version`) and published JSON schema artifacts under `packages/core/contracts/connector/v1`.
+- Added a new CLI validator command: `db-mcp connector validate <connector.yaml>`.
+- Shipped operator-first UI navigation foundation (`Home`, `Setup`, `Knowledge`, `Insights`, `Advanced`) and essentials/advanced view mode.
+
+## Breaking changes
+- None
+
+## Features
+- PR #49: connector profiles + versioned connector contract support, runtime validation, schema export pipeline, connector docs update.
+- PR #44: operator-first home dashboard and navigation IA update with progressive disclosure foundations.
+- New script: `packages/core/scripts/export_connector_contract_schema.py`.
+- New command group: `db-mcp connector ...`.
+
+## Fixes
+- PR #48: API critical bugfix follow-up and CI version consistency enforcement (`scripts/check_version_consistency.py`).
+- Improved connector contract safety: if `spec_version` is present, invalid contracts fail fast during connector loading.
+- Playground/API/BICP-generated connector files now persist explicit contract/version metadata.
+
+## Security
+- None
+
+## Upgrade notes
+- Existing connector files without `spec_version` continue to work.
+- To adopt the contract explicitly, add:
+  - `spec_version: 1.0.0`
+  - appropriate `type` and `profile`
+- Validate connector files before rollout:
+  - `db-mcp connector validate ~/.db-mcp/connections/<name>/connector.yaml`
+
+## Known issues
+- `uv run pytest tests/ -v` still reports an existing warning in `tests/test_database.py::test_connection` (`PytestReturnNotNoneWarning`).
+
+
 ## [0.6.5] - 2026-03-04
 
 ## Overview
