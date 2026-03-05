@@ -570,6 +570,8 @@ def test_shell_auto_profile_reduces_tool_surface(tmp_path):
     assert "protocol" in tools
     assert "run_sql" in tools
     assert "validate_sql" in tools
+    assert "search_tools" in tools
+    assert "export_tool_sdk" in tools
     assert "mcp_setup_status" not in tools
     assert "mcp_suggest_improvement" not in tools
     assert "list_tables" not in tools
@@ -602,6 +604,8 @@ def test_detailed_query_profile_reduces_tool_surface(tmp_path):
     tools = _get_tool_names(server)
     assert "run_sql" in tools
     assert "validate_sql" in tools
+    assert "search_tools" in tools
+    assert "export_tool_sdk" in tools
     assert "mcp_setup_status" not in tools
     assert "mcp_suggest_improvement" not in tools
     assert "list_tables" not in tools
@@ -634,8 +638,77 @@ def test_shell_full_profile_keeps_admin_tools(tmp_path):
     tools = _get_tool_names(server)
     assert "mcp_setup_status" in tools
     assert "mcp_suggest_improvement" in tools
+    assert "search_tools" in tools
+    assert "export_tool_sdk" in tools
     # Detailed-only helper tools remain off in shell mode.
     assert "list_tables" not in tools
+
+
+@pytest.mark.asyncio
+async def test_search_tools_returns_relevant_matches(tmp_path):
+    """search_tools should surface best matching active tools."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql", "database_url": "sqlite:///tmp/test.db"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_reg_cls.get_instance.return_value = mock_registry
+        mock_settings.return_value.tool_mode = "detailed"
+        mock_settings.return_value.tool_profile = "full"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "test"
+
+        server = _create_server()
+        async with Client(server) as client:
+            result = (await client.call_tool("search_tools", {"query": "sql", "limit": 5})).data
+            payload = _tool_payload(result)
+
+    names = [item["name"] for item in payload["tools"]]
+    assert "run_sql" in names
+    assert payload["count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_export_tool_sdk_renders_python_wrappers(tmp_path):
+    """export_tool_sdk should return runnable Python wrapper code."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql", "database_url": "sqlite:///tmp/test.db"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_reg_cls.get_instance.return_value = mock_registry
+        mock_settings.return_value.tool_mode = "detailed"
+        mock_settings.return_value.tool_profile = "full"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "test"
+
+        server = _create_server()
+        async with Client(server) as client:
+            result = (
+                await client.call_tool("export_tool_sdk", {"language": "python", "query": "sql"})
+            ).data
+            payload = _tool_payload(result)
+
+    assert payload["status"] == "ok"
+    assert payload["language"] == "python"
+    assert "class DbMcpTools:" in payload["code"]
+    assert "async def run_sql(" in payload["code"]
 
 
 def test_all_db_mcp_modules_importable():
