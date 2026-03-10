@@ -7,6 +7,25 @@ from db_mcp import ui_server
 from db_mcp.ui_server import JSONRPCResponse
 
 
+def test_connection_new_route_serves_wizard_shell(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    connection_dir = static_dir / "connection"
+    new_dir = connection_dir / "new"
+    new_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+    (new_dir / "index.html").write_text("<html><body>wizard shell</body></html>")
+    (connection_dir / "index.html").write_text("<html><body>connection shell</body></html>")
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+        response = client.get("/connection/new")
+
+    assert response.status_code == 200
+    assert "wizard shell" in response.text
+
+
 def test_connection_detail_route_serves_exported_shell(tmp_path, monkeypatch):
     static_dir = tmp_path / "static"
     connection_dir = static_dir / "connection"

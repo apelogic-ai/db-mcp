@@ -705,6 +705,7 @@ class DBMCPAgent(BICPAgent):
                 has_domain = (conn_path / "domain" / "model.md").exists()
                 has_credentials = (conn_path / ".env").exists()
                 has_state = (conn_path / "state.yaml").exists()
+                has_discovery = has_schema
 
                 # Detect connector type from connector.yaml
                 connector_type = "sql"
@@ -722,6 +723,7 @@ class DBMCPAgent(BICPAgent):
                             if connector_type == "api":
                                 api_title = cdata.get("api_title")
                                 base_url = cdata.get("base_url", "")
+                                has_discovery = bool(cdata.get("endpoints"))
                     except Exception:
                         pass
 
@@ -784,6 +786,7 @@ class DBMCPAgent(BICPAgent):
                         "name": name,
                         "isActive": name == active_connection,
                         "hasSchema": has_schema,
+                        "hasDiscovery": has_discovery,
                         "hasDomain": has_domain,
                         "hasCredentials": has_credentials,
                         "connectorType": connector_type,
@@ -1035,10 +1038,9 @@ class DBMCPAgent(BICPAgent):
         header_name = params.get("headerName", "").strip()
 
         # Build connector.yaml data
-        auth_data: dict[str, Any] = {
-            "type": auth_type,
-            "token_env": token_env or "API_KEY",
-        }
+        auth_data: dict[str, Any] = {"type": auth_type}
+        if auth_type != "none":
+            auth_data["token_env"] = token_env or "API_KEY"
         if auth_type == "header" and header_name:
             auth_data["header_name"] = header_name
 
@@ -1062,15 +1064,16 @@ class DBMCPAgent(BICPAgent):
             yaml.dump(connector_data, f, default_flow_style=False)
 
         # Write .env with API key if provided
-        env_var_name = token_env or "API_KEY"
         env_file = conn_path / ".env"
         with open(env_file, "w") as f:
             f.write("# API connection credentials\n")
             f.write("# This file is gitignored - do not commit\n\n")
-            if api_key:
-                f.write(f"{env_var_name}={api_key}\n")
-            else:
-                f.write(f"# {env_var_name}=your_api_key_here\n")
+            if auth_type != "none":
+                env_var_name = token_env or "API_KEY"
+                if api_key:
+                    f.write(f"{env_var_name}={api_key}\n")
+                else:
+                    f.write(f"# {env_var_name}=your_api_key_here\n")
 
         # Create data directory for JSONL files
         data_dir = conn_path / "data"
@@ -1209,6 +1212,35 @@ class DBMCPAgent(BICPAgent):
             if result.get("endpoints_found", 0) > 0:
                 connector.save_connector_yaml(connector_yaml)
 
+                state = load_state(connection_path=conn_path) or create_initial_state(name)
+                state.provider_id = name
+                state.phase = OnboardingPhase.DOMAIN
+                state.database_url_configured = True
+                state.connection_verified = True
+                state.dialect_detected = (
+                    config.api_title or state.dialect_detected or "api"
+                )
+
+                discovered_endpoints = sorted(
+                    {
+                        str(endpoint.get("path") or endpoint.get("name") or "").strip()
+                        for endpoint in result.get("endpoints", [])
+                        if str(endpoint.get("path") or endpoint.get("name") or "").strip()
+                    }
+                )
+                state.tables_discovered = discovered_endpoints
+                state.tables_total = len(discovered_endpoints)
+                if discovered_endpoints:
+                    state.current_table = discovered_endpoints[0]
+
+                state_result = save_state(state, connection_path=conn_path)
+                if not state_result.get("saved"):
+                    return {
+                        "success": False,
+                        "error": state_result.get("error")
+                        or "Failed to save onboarding state",
+                    }
+
             return {
                 "success": True,
                 **result,
@@ -1329,7 +1361,7 @@ class DBMCPAgent(BICPAgent):
         api_key = params.get("apiKey", "").strip()
         auth_type = params.get("authType", "bearer")
         header_name = params.get("headerName", "Authorization")
-        token_env = params.get("tokenEnv", "API_KEY")
+        token_env = "" if auth_type == "none" else params.get("tokenEnv", "API_KEY")
 
         # Build auth config
         auth = APIAuthConfig(
@@ -1809,12 +1841,13 @@ class DBMCPAgent(BICPAgent):
                     cdata["base_url"] = params["baseUrl"]
                 if "auth" in params:
                     auth = params["auth"]
-                    cdata["auth"] = {
-                        "type": auth.get("type", "bearer"),
-                        "token_env": auth.get("tokenEnv", ""),
-                        "header_name": auth.get("headerName", "Authorization"),
-                        "param_name": auth.get("paramName", "api_key"),
-                    }
+                    auth_type = auth.get("type", "bearer")
+                    auth_data: dict[str, Any] = {"type": auth_type}
+                    if auth_type != "none":
+                        auth_data["token_env"] = auth.get("tokenEnv", "")
+                        auth_data["header_name"] = auth.get("headerName", "Authorization")
+                        auth_data["param_name"] = auth.get("paramName", "api_key")
+                    cdata["auth"] = auth_data
                 if "endpoints" in params:
                     cdata["endpoints"] = [
                         {
@@ -1840,10 +1873,11 @@ class DBMCPAgent(BICPAgent):
                 # Update API key in .env if provided
                 api_key = params.get("apiKey", "").strip()
                 if api_key:
-                    token_env = cdata.get("auth", {}).get("token_env", "API_KEY")
-                    env_file = conn_path / ".env"
-                    with open(env_file, "w") as f:
-                        f.write(f"{token_env}={api_key}\n")
+                    token_env = cdata.get("auth", {}).get("token_env", "").strip()
+                    if token_env:
+                        env_file = conn_path / ".env"
+                        with open(env_file, "w") as f:
+                            f.write(f"{token_env}={api_key}\n")
 
                 with open(connector_yaml, "w") as f:
                     yaml.dump(cdata, f, default_flow_style=False)

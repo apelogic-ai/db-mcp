@@ -281,6 +281,12 @@ def create_app() -> FastAPI:
         """Redirect the root path to the connections landing page."""
         return RedirectResponse(url="/connections/")
 
+    @app.get("/connection/new")
+    @app.get("/connection/new/")
+    async def serve_connection_new():
+        """Serve the connection wizard shell."""
+        return _serve_exported_page("connection/new")
+
     @app.get("/connection/{name}")
     @app.get("/connection/{name}/")
     async def serve_connection_detail(name: str):

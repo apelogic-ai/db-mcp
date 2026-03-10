@@ -142,7 +142,7 @@ type WizardCheckpointStatus = "idle" | "active" | "done";
 
 export function getWizardResumeStep(connection: Pick<
   ConnectionSummary,
-  "onboardingPhase" | "hasSchema" | "hasDomain" | "hasCredentials" | "connectorType"
+  "onboardingPhase" | "hasSchema" | "hasDiscovery" | "hasDomain" | "hasCredentials" | "connectorType"
 >): WizardStep {
   const statuses = getPersistedWizardStatuses(connection);
 
@@ -163,19 +163,14 @@ export function getWizardResumeStep(connection: Pick<
 
 export function getPersistedWizardStatuses(connection: Pick<
   ConnectionSummary,
-  "onboardingPhase" | "hasSchema" | "hasDomain" | "hasCredentials" | "connectorType"
+  "onboardingPhase" | "hasSchema" | "hasDiscovery" | "hasDomain" | "hasCredentials" | "connectorType"
 >): Record<WizardStep, WizardCheckpointStatus> {
   const complete = (connection.onboardingPhase || "").toLowerCase() === "complete";
   const phase = (connection.onboardingPhase || "").toLowerCase();
   const connectDone = Boolean(connection.hasCredentials);
-  const discoverDone =
-    connection.connectorType === "api"
-      ? ["discover", "sample", "review", "complete"].includes(phase)
-      : Boolean(connection.hasSchema) || ["discover", "sample", "review", "complete"].includes(phase);
-  const sampleDone =
-    connection.connectorType === "api"
-      ? connectDone && discoverDone
-      : complete;
+  const discoverDone = Boolean(connection.hasDiscovery) ||
+    ["discover", "sample", "review", "complete"].includes(phase);
+  const sampleDone = connection.connectorType === "api" ? discoverDone : complete;
   const resumeStep = complete
     ? connection.connectorType === "api"
       ? "discover"
@@ -305,6 +300,7 @@ export type ConnectionOnboardingTone = "complete" | "partial" | "missing";
 export function getConnectionOnboardingTone(connection: {
   onboardingPhase?: string | null;
   hasSchema?: boolean;
+  hasDiscovery?: boolean;
   hasDomain?: boolean;
   hasCredentials?: boolean;
   connectorType?: ConnectorType;
@@ -312,6 +308,7 @@ export function getConnectionOnboardingTone(connection: {
   const statuses = getPersistedWizardStatuses({
     onboardingPhase: connection.onboardingPhase ?? null,
     hasSchema: connection.hasSchema ?? false,
+    hasDiscovery: connection.hasDiscovery ?? false,
     hasDomain: connection.hasDomain ?? false,
     hasCredentials: connection.hasCredentials ?? false,
     connectorType: connection.connectorType,
@@ -331,7 +328,7 @@ export function getConnectionOnboardingTone(connection: {
 export function getConnectionOnboardingDotClass(
   connection: Pick<
     ConnectionSummary,
-    "onboardingPhase" | "hasSchema" | "hasDomain" | "hasCredentials" | "connectorType"
+    "onboardingPhase" | "hasSchema" | "hasDiscovery" | "hasDomain" | "hasCredentials" | "connectorType"
   >,
 ): string {
   const tone = getConnectionOnboardingTone(connection);

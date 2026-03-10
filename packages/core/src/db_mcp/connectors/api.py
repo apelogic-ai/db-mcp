@@ -96,7 +96,7 @@ class APIPaginationConfig:
 class APIAuthConfig:
     """Authentication configuration."""
 
-    type: str = "bearer"  # bearer | header | query_param | jwt_login
+    type: str = "bearer"  # none | bearer | header | query_param | jwt_login
     token_env: str = ""  # env var name for the token (always resolved as env var name)
     header_name: str = "Authorization"
     param_name: str = "api_key"
@@ -241,6 +241,9 @@ class APIConnector(FileConnector):
     def _resolve_auth_headers(self) -> dict[str, str]:
         """Build auth headers from config + .env."""
         auth_type = self.api_config.auth.type
+
+        if auth_type == "none":
+            return {}
 
         if auth_type == "jwt_login":
             if self._jwt_token is None:

@@ -124,6 +124,24 @@ class TestAPIConnectorConfig:
         assert config.rate_limit_rps == 10.0
 
 
+def test_resolve_auth_headers_none_does_not_require_env(tmp_path, data_dir):
+    from db_mcp.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+
+    connector = APIConnector(
+        APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(type="none", token_env="API_KEY"),
+        ),
+        data_dir=str(data_dir),
+        env_path=str(env_file),
+    )
+
+    assert connector._resolve_auth_headers() == {}
+
+
 # ---------------------------------------------------------------------------
 # Protocol compliance
 # ---------------------------------------------------------------------------

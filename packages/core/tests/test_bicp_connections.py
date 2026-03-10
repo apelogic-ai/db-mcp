@@ -182,6 +182,40 @@ async def test_connections_list_prefers_config_over_connection_name_env(monkeypa
     assert result["connections"][1]["isActive"] is True
 
 
+@pytest.mark.asyncio
+async def test_connections_list_marks_api_discovery_from_saved_endpoints(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "dune"
+        conn_path.mkdir(parents=True)
+        (conn_path / ".env").write_text("API_KEY=test\n")
+        (conn_path / "connector.yaml").write_text(
+            "type: api\n"
+            "base_url: https://api.dune.com/api/v1\n"
+            "auth:\n"
+            "  type: bearer\n"
+            "  token_env: API_KEY\n"
+            "endpoints:\n"
+            "  - name: execute_sql\n"
+            "    path: /sql/execute\n"
+            "    method: POST\n"
+        )
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "sqlite"
+
+        result = await agent._handle_connections_list({})
+
+    assert result["connections"][0]["name"] == "dune"
+    assert result["connections"][0]["connectorType"] == "api"
+    assert result["connections"][0]["hasDiscovery"] is True
+
+
 def test_get_active_connection_path_falls_back_to_connection_name_env(monkeypatch):
     from db_mcp.bicp.agent import DBMCPAgent
 
@@ -363,6 +397,96 @@ async def test_connections_complete_onboarding_marks_connection_complete(monkeyp
         assert state.phase == OnboardingPhase.COMPLETE
         assert state.tables_discovered == ["main.Album"]
         assert state.tables_total == 1
+
+
+@pytest.mark.asyncio
+async def test_connections_discover_api_persists_onboarding_state(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+    from db_mcp.connectors.api import APIConnectorConfig
+    from db_mcp.onboarding.state import load_state
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "dune"
+        conn_path.mkdir(parents=True)
+        (conn_path / "connector.yaml").write_text(
+            "type: api\nbase_url: https://api.dune.com/api/v1\nendpoints: []\n"
+        )
+        (conn_path / ".env").write_text("# API_KEY=placeholder\n")
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        mock_config = APIConnectorConfig(base_url="https://api.dune.com/api/v1")
+        mock_connector = MagicMock()
+        mock_connector.discover.return_value = {
+            "strategy": "openapi",
+            "endpoints_found": 2,
+            "endpoints": [
+                {"name": "execute_sql", "path": "/sql/execute", "fields": 3},
+                {
+                    "name": "execution_status",
+                    "path": "/execution/{execution_id}/status",
+                    "fields": 2,
+                },
+            ],
+        }
+
+        with (
+            patch("db_mcp.connectors.ConnectorConfig.from_yaml", return_value=mock_config),
+            patch("db_mcp.connectors.api.APIConnector", return_value=mock_connector),
+        ):
+            result = await agent._handle_connections_discover({"name": "dune"})
+
+        assert result["success"] is True
+        assert result["endpoints_found"] == 2
+
+        state = load_state(connection_path=conn_path)
+        assert state is not None
+        assert state.phase == OnboardingPhase.DOMAIN
+        assert state.connection_verified is True
+        assert state.database_url_configured is True
+        assert state.tables_discovered == [
+            "/execution/{execution_id}/status",
+            "/sql/execute",
+        ]
+        assert state.tables_total == 2
+
+
+@pytest.mark.asyncio
+async def test_connections_test_api_without_auth_does_not_require_token_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        mock_connector = MagicMock()
+        mock_connector.test_connection.return_value = {
+            "connected": True,
+            "dialect": "duckdb",
+            "endpoints": 0,
+        }
+
+        with patch("db_mcp.connectors.api.APIConnector", return_value=mock_connector) as api_cls:
+            result = await agent._handle_connections_test(
+                {
+                    "connectorType": "api",
+                    "baseUrl": "https://gamma-api.polymarket.com/",
+                    "authType": "none",
+                }
+            )
+
+        assert result["success"] is True
+        passed_config = api_cls.call_args.args[0]
+        assert passed_config.auth.type == "none"
+        assert passed_config.auth.token_env == ""
 
 
 @pytest.mark.asyncio

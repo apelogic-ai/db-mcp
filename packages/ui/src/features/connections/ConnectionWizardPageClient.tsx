@@ -240,6 +240,7 @@ function summarizeDiscoveryStatus(
   connection: {
     onboardingPhase?: string | null;
     hasSchema?: boolean;
+    hasDiscovery?: boolean;
     hasDomain?: boolean;
     hasCredentials?: boolean;
     connectorType?: ConnectorType;
@@ -256,6 +257,7 @@ function summarizeDiscoveryStatus(
   const persistedStatuses = getPersistedWizardStatuses({
     onboardingPhase: connection.onboardingPhase ?? null,
     hasSchema: connection.hasSchema ?? false,
+    hasDiscovery: connection.hasDiscovery ?? false,
     hasDomain: connection.hasDomain ?? false,
     hasCredentials: connection.hasCredentials ?? false,
     connectorType: connection.connectorType ?? "sql",
@@ -1341,6 +1343,7 @@ export function ConnectionWizardPageClient() {
                     onChange={(event) => setConnectionName(event.target.value)}
                     disabled={Boolean(existingName)}
                     placeholder="my-connection"
+                    data-testid="connection-name-input"
                     className="border-gray-700 bg-gray-950 text-white"
                   />
                 </div>
@@ -1355,6 +1358,7 @@ export function ConnectionWizardPageClient() {
                           setDatabaseUrl(event.target.value);
                         }}
                         placeholder="trino://user:pass@host:443/catalog/schema"
+                        data-testid="connection-url-input"
                         className="border-gray-700 bg-gray-950 font-mono text-white"
                       />
                     </div>
@@ -1396,6 +1400,7 @@ export function ConnectionWizardPageClient() {
                         value={directory}
                         onChange={(event) => setDirectory(event.target.value)}
                         placeholder="/path/to/data"
+                        data-testid="connection-directory-input"
                         className="border-gray-700 bg-gray-950 text-white"
                       />
                     </div>
@@ -1437,6 +1442,7 @@ export function ConnectionWizardPageClient() {
                         value={baseUrl}
                         onChange={(event) => setBaseUrl(event.target.value)}
                         placeholder="https://api.example.com/v1"
+                        data-testid="connection-url-input"
                         className="border-gray-700 bg-gray-950 text-white"
                       />
                     </div>
@@ -1476,22 +1482,31 @@ export function ConnectionWizardPageClient() {
                           onChange={(event) => setApiAuthType(event.target.value)}
                           className="h-10 rounded-md border border-gray-700 bg-gray-950 px-3 text-sm text-white"
                         >
+                          <option value="none">None</option>
                           <option value="bearer">Bearer</option>
                           <option value="header">Header</option>
                           <option value="query_param">Query param</option>
                         </select>
-                        <Input
-                          value={apiTokenEnv}
-                          onChange={(event) => setApiTokenEnv(event.target.value)}
-                          placeholder="API_KEY"
-                          className="border-gray-700 bg-gray-950 text-white"
-                        />
-                        <Input
-                          value={apiHeaderName}
-                          onChange={(event) => setApiHeaderName(event.target.value)}
-                          placeholder="Authorization"
-                          className="border-gray-700 bg-gray-950 text-white"
-                        />
+                        {apiAuthType === "none" ? (
+                          <div className="md:col-span-2 flex items-center text-sm text-gray-500">
+                            No auth headers or tokens required.
+                          </div>
+                        ) : (
+                          <>
+                            <Input
+                              value={apiTokenEnv}
+                              onChange={(event) => setApiTokenEnv(event.target.value)}
+                              placeholder="API_KEY"
+                              className="border-gray-700 bg-gray-950 text-white"
+                            />
+                            <Input
+                              value={apiHeaderName}
+                              onChange={(event) => setApiHeaderName(event.target.value)}
+                              placeholder="Authorization"
+                              className="border-gray-700 bg-gray-950 text-white"
+                            />
+                          </>
+                        )}
                       </div>
                     </div>
                   </>

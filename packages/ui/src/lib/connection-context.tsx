@@ -18,6 +18,7 @@ export interface ConnectionSummary {
   connectorType?: "sql" | "file" | "api";
   hasCredentials?: boolean;
   hasSchema?: boolean;
+  hasDiscovery?: boolean;
   hasDomain?: boolean;
   onboardingPhase?: string | null;
 }

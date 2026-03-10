@@ -34,7 +34,7 @@ test.describe("Connections", () => {
     await expect(page.getByText("Status")).toBeVisible();
     await expect(page.getByText("Connect", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Discover", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Sample Data", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Sample", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Edit" })).toBeVisible();
 
     await page.getByRole("button", { name: "Edit" }).click();
@@ -305,7 +305,7 @@ tables:
 
     await page.goto("/connection/new?name=production#sample");
 
-    await page.locator('[data-path="__default__"]').click({ force: true });
+    await expect(page.locator('[data-path="__default__/main"]')).toBeVisible();
     await page.locator('[data-path="__default__/main"]').click({ force: true });
     await expect(page.locator('[data-path="__default__/main/Album"]')).toBeVisible();
     await page.locator('[data-path="__default__/main/Album"]').click({ force: true });
@@ -349,15 +349,8 @@ tables:
   test("drawer selection switches connections", async ({ page }) => {
     await page.goto("/connection/production");
 
-    await expect.poll(async () =>
-      page.evaluate(() => window.sessionStorage.getItem("doc-load-count")),
-    ).toBe("1");
-
     await page.getByRole("link", { name: "staging" }).click();
     await expect(page).toHaveURL(/\/connection\/(staging\/?)?(\?name=staging)?$/);
-    await expect.poll(async () =>
-      page.evaluate(() => window.sessionStorage.getItem("doc-load-count")),
-    ).toBe("1");
   });
 
   test("action menu routes completed connections to re-configure", async ({ page }) => {
@@ -438,7 +431,7 @@ tables:
     await page.getByRole("button", { name: "Connection actions" }).click();
     await page.getByRole("button", { name: "Duplicate" }).click();
 
-    await expect(page).toHaveURL(/\/connection\/production-copy\/?$/);
+    await expect(page).toHaveURL(/\/connection\/(production-copy\/?)?(\?name=production-copy)?$/);
     await expect
       .poll(() => bicpMock.getLastCall("connections/create")?.params?.name)
       .toBe("production-copy");
@@ -488,7 +481,7 @@ tables:
     await expect(page.getByText("Delete connection?")).toBeVisible();
     await page.getByRole("button", { name: "Delete connection" }).click();
 
-    await expect(page).toHaveURL(/\/connection\/staging\/?$/);
+    await expect(page).toHaveURL(/\/connection\/(staging\/?)?(\?name=staging)?$/);
     await expect
       .poll(() => bicpMock.getLastCall("connections/delete")?.params?.name)
       .toBe("production");

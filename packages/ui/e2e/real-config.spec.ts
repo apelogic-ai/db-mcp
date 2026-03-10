@@ -8,8 +8,8 @@ const POLYMARKET_BASE_URL =
   process.env.E2E_POLYMARKET_BASE_URL || "https://gamma-api.polymarket.com/";
 
 async function completeConnectStep(page: Page, name: string) {
-  await page.getByPlaceholder("my-connection").fill(name);
-  await page.getByRole("button", { name: "Test" }).click();
+  await page.getByTestId("connection-name-input").fill(name);
+  await page.getByRole("button", { name: /^Test$/ }).click();
   await expect(page.getByText(/Successfully connected/i)).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: /Next >/i }).click();
 }
@@ -22,16 +22,14 @@ test.describe("E2E: real config", () => {
 
     // Database connector
     await page.goto("/connection/new?type=sql#connect", { waitUntil: "domcontentloaded" });
-    await page
-      .getByPlaceholder("trino://user:pass@host:443/catalog/schema")
-      .fill(POSTGRES_URL);
+    await page.getByTestId("connection-url-input").fill(POSTGRES_URL);
     await completeConnectStep(page, dbName);
     await expect(page.getByText(dbName)).toBeVisible({ timeout: 15_000 });
 
     // API connector
     await page.goto("/connection/new?type=api#connect", { waitUntil: "domcontentloaded" });
-    await page.getByPlaceholder("https://api.example.com/v1").fill(POLYMARKET_BASE_URL);
-    await page.getByPlaceholder("API_KEY").fill("API_KEY");
+    await page.getByTestId("connection-url-input").fill(POLYMARKET_BASE_URL);
+    await page.getByRole("combobox").last().selectOption("none");
     await completeConnectStep(page, apiName);
     await expect(page.getByText(apiName)).toBeVisible({ timeout: 15_000 });
 
@@ -45,7 +43,7 @@ test.describe("E2E: real config", () => {
     fs.writeFileSync(path.join(dir, "sample.csv"), "id,name\n1,alice\n2,bob\n", "utf8");
 
     await page.goto("/connection/new?type=file#connect", { waitUntil: "domcontentloaded" });
-    await page.getByPlaceholder("/path/to/data").fill(dir);
+    await page.getByTestId("connection-directory-input").fill(dir);
     await completeConnectStep(page, fileName);
     await expect(page.getByText(fileName)).toBeVisible({ timeout: 15_000 });
   });
