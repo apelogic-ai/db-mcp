@@ -49,11 +49,24 @@ export class BICPMock {
     this.on("connections/switch", () => mockData.CONNECTION_SWITCH_SUCCESS);
     this.on("connections/sync", () => mockData.CONNECTION_SYNC_SUCCESS);
     this.on("connections/discover", () => mockData.CONNECTION_DISCOVER_SUCCESS);
+    this.on("connections/save-discovery", () => mockData.CONNECTION_SAVE_DISCOVERY_SUCCESS);
+    this.on(
+      "connections/complete-onboarding",
+      () => mockData.CONNECTION_COMPLETE_ONBOARDING_SUCCESS,
+    );
+    this.on("schema/catalogs", () => mockData.SCHEMA_CATALOGS_HAPPY);
+    this.on("schema/schemas", () => mockData.SCHEMA_SCHEMAS_HAPPY);
+    this.on("schema/tables", () => mockData.SCHEMA_TABLES_HAPPY);
+    this.on("schema/columns", () => mockData.SCHEMA_COLUMNS_HAPPY);
+    this.on("sample_table", () => mockData.SAMPLE_TABLE_HAPPY);
 
     // Context
     this.on("context/tree", () => mockData.CONTEXT_TREE_HAPPY);
     this.on("context/read", (params) => {
       const path = params?.path as string | undefined;
+      if (path === "connector.yaml") {
+        return mockData.CONTEXT_READ_CONNECTOR;
+      }
       if (path && path.includes("/")) {
         return mockData.CONTEXT_READ_YAML;
       }

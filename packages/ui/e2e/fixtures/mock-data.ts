@@ -32,6 +32,7 @@ export const CONNECTIONS_HAPPY = {
       hasCredentials: true,
       dialect: "postgresql",
       onboardingPhase: "complete",
+      connectorType: "sql",
     },
     {
       name: "staging",
@@ -41,6 +42,7 @@ export const CONNECTIONS_HAPPY = {
       hasCredentials: true,
       dialect: "clickhouse",
       onboardingPhase: "review",
+      connectorType: "sql",
     },
   ],
   activeConnection: "production",
@@ -54,6 +56,7 @@ export const CONNECTIONS_EMPTY = {
 export const CONNECTION_GET_PRODUCTION = {
   success: true,
   name: "production",
+  connectorType: "sql",
   databaseUrl: "postgresql://admin:s3cret@db.example.com:5432/analytics",
 };
 
@@ -107,6 +110,19 @@ export const CONNECTION_DISCOVER_SUCCESS = {
   ],
   pagination: { type: "cursor", data_field: "data" },
   errors: [],
+};
+
+export const CONNECTION_SAVE_DISCOVERY_SUCCESS = {
+  success: true,
+  tableCount: 2,
+  schemaCount: 1,
+  catalogCount: 1,
+  phase: "domain",
+};
+
+export const CONNECTION_COMPLETE_ONBOARDING_SUCCESS = {
+  success: true,
+  phase: "complete",
 };
 
 export const CONNECTIONS_WITH_API = {
@@ -169,6 +185,58 @@ export const CONNECTION_GET_API = {
     dataField: "data",
   },
   rateLimitRps: 25,
+};
+
+export const SCHEMA_CATALOGS_HAPPY = {
+  success: true,
+  catalogs: ["main"],
+};
+
+export const SCHEMA_SCHEMAS_HAPPY = {
+  success: true,
+  schemas: [{ name: "public", catalog: "main", tableCount: 2 }],
+};
+
+export const SCHEMA_TABLES_HAPPY = {
+  success: true,
+  tables: [
+    { name: "users", description: "Application users" },
+    { name: "orders", description: "Customer orders" },
+  ],
+};
+
+export const SCHEMA_COLUMNS_HAPPY = {
+  success: true,
+  columns: [
+    {
+      name: "id",
+      type: "uuid",
+      nullable: false,
+      description: "Primary key",
+      isPrimaryKey: true,
+    },
+    {
+      name: "email",
+      type: "varchar",
+      nullable: false,
+      description: "User email address",
+      isPrimaryKey: false,
+    },
+  ],
+};
+
+export const SAMPLE_TABLE_HAPPY = {
+  table_name: "users",
+  schema: "public",
+  catalog: "main",
+  full_name: "main.public.users",
+  rows: [
+    { id: "u_1", email: "alice@example.com" },
+    { id: "u_2", email: "bob@example.com" },
+  ],
+  row_count: 2,
+  limit: 5,
+  error: null,
 };
 
 // ── Context / Tree ──────────────────────────────────────────
@@ -309,6 +377,16 @@ tables:
         description: "FK to users table"
       total:
         description: "Order total in cents"
+`,
+  isStockReadme: false,
+};
+
+export const CONTEXT_READ_CONNECTOR = {
+  success: true,
+  content: `type: sql
+database_url: postgresql://admin:s3cret@db.example.com:5432/analytics
+capabilities:
+  supports_validate_sql: false
 `,
   isStockReadme: false,
 };

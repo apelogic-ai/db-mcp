@@ -163,6 +163,14 @@ interface ParsedLink {
   column: string | null;
 }
 
+function normalizeCatalogKey(catalog: string | null): string {
+  return catalog ?? "__default__";
+}
+
+function catalogLabel(catalog: string | null): string {
+  return catalog || "default";
+}
+
 interface SchemaExplorerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -183,7 +191,7 @@ export function SchemaExplorer({
   const [searchQuery, setSearchQuery] = useState("");
 
   // Data
-  const [catalogs, setCatalogs] = useState<string[]>([]);
+  const [catalogs, setCatalogs] = useState<Array<string | null>>([]);
   const [schemas, setSchemas] = useState<Record<string, SchemaInfo[]>>({});
   const [tables, setTables] = useState<Record<string, TableInfo[]>>({});
   const [columns, setColumns] = useState<Record<string, ColumnInfo[]>>({});
@@ -214,13 +222,13 @@ export function SchemaExplorer({
     }
   }, [isOpen, targetLink]);
 
-  const loadCatalogs = async () => {
+  const loadCatalogs = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       const result = await bicpCall<{
         success: boolean;
-        catalogs: string[];
+        catalogs: Array<string | null>;
         error?: string;
       }>("schema/catalogs", {});
 
@@ -228,7 +236,7 @@ export function SchemaExplorer({
         setCatalogs(result.catalogs);
         // Auto-expand if only one catalog
         if (result.catalogs.length === 1) {
-          setExpandedCatalogs(new Set([result.catalogs[0]]));
+          setExpandedCatalogs(new Set([normalizeCatalogKey(result.catalogs[0] ?? null)]));
           loadSchemas(result.catalogs[0]);
         }
       } else {
@@ -239,9 +247,9 @@ export function SchemaExplorer({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const loadSchemas = async (catalog: string) => {
+  const loadSchemas = useCallback(async (catalog: string | null) => {
     try {
       const result = await bicpCall<{
         success: boolean;
@@ -250,15 +258,15 @@ export function SchemaExplorer({
       }>("schema/schemas", { catalog });
 
       if (result.success) {
-        setSchemas((prev) => ({ ...prev, [catalog]: result.schemas }));
+        setSchemas((prev) => ({ ...prev, [normalizeCatalogKey(catalog)]: result.schemas }));
       }
     } catch (e) {
       console.error("Failed to load schemas:", e);
     }
-  };
+  }, []);
 
-  const loadTables = async (catalog: string, schema: string) => {
-    const key = `${catalog}/${schema}`;
+  const loadTables = useCallback(async (catalog: string | null, schema: string) => {
+    const key = `${normalizeCatalogKey(catalog)}/${schema}`;
     try {
       const result = await bicpCall<{
         success: boolean;
@@ -272,14 +280,14 @@ export function SchemaExplorer({
     } catch (e) {
       console.error("Failed to load tables:", e);
     }
-  };
+  }, []);
 
-  const loadColumns = async (
-    catalog: string,
+  const loadColumns = useCallback(async (
+    catalog: string | null,
     schema: string,
     table: string
   ) => {
-    const key = `${catalog}/${schema}/${table}`;
+    const key = `${normalizeCatalogKey(catalog)}/${schema}/${table}`;
     try {
       const result = await bicpCall<{
         success: boolean;
@@ -293,31 +301,28 @@ export function SchemaExplorer({
     } catch (e) {
       console.error("Failed to load columns:", e);
     }
-  };
+  }, []);
 
-  const navigateToTarget = async (target: ParsedLink) => {
+  const navigateToTarget = useCallback(async (target: ParsedLink) => {
     const { catalog, schema, table, column } = target;
+    const catalogKey = normalizeCatalogKey(catalog);
 
     // Build highlight path
-    let path = "";
-    if (catalog) path += catalog;
-    if (schema) path += `/${schema}`;
-    if (table) path += `/${table}`;
-    if (column) path += `/${column}`;
+    const path = [catalogKey, schema, table, column].filter(Boolean).join("/");
     setHighlightedPath(path);
 
     // Expand path to target
-    if (catalog) {
-      setExpandedCatalogs((prev) => new Set([...prev, catalog]));
+    if (catalogKey) {
+      setExpandedCatalogs((prev) => new Set([...prev, catalogKey]));
       await loadSchemas(catalog);
 
       if (schema) {
-        const schemaKey = `${catalog}/${schema}`;
+        const schemaKey = `${catalogKey}/${schema}`;
         setExpandedSchemas((prev) => new Set([...prev, schemaKey]));
         await loadTables(catalog, schema);
 
         if (table) {
-          const tableKey = `${catalog}/${schema}/${table}`;
+          const tableKey = `${catalogKey}/${schema}/${table}`;
           setExpandedTables((prev) => new Set([...prev, tableKey]));
           await loadColumns(catalog, schema, table);
         }
@@ -331,17 +336,18 @@ export function SchemaExplorer({
         element.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }, 100);
-  };
+  }, [loadColumns, loadSchemas, loadTables]);
 
   const toggleCatalog = useCallback(
-    (catalog: string) => {
+    (catalog: string | null) => {
+      const catalogKey = normalizeCatalogKey(catalog);
       setExpandedCatalogs((prev) => {
         const next = new Set(prev);
-        if (next.has(catalog)) {
-          next.delete(catalog);
+        if (next.has(catalogKey)) {
+          next.delete(catalogKey);
         } else {
-          next.add(catalog);
-          if (!schemas[catalog]) {
+          next.add(catalogKey);
+          if (!schemas[catalogKey]) {
             loadSchemas(catalog);
           }
         }
@@ -352,8 +358,8 @@ export function SchemaExplorer({
   );
 
   const toggleSchema = useCallback(
-    (catalog: string, schema: string) => {
-      const key = `${catalog}/${schema}`;
+    (catalog: string | null, schema: string) => {
+      const key = `${normalizeCatalogKey(catalog)}/${schema}`;
       setExpandedSchemas((prev) => {
         const next = new Set(prev);
         if (next.has(key)) {
@@ -371,8 +377,8 @@ export function SchemaExplorer({
   );
 
   const toggleTable = useCallback(
-    (catalog: string, schema: string, table: string) => {
-      const key = `${catalog}/${schema}/${table}`;
+    (catalog: string | null, schema: string, table: string) => {
+      const key = `${normalizeCatalogKey(catalog)}/${schema}/${table}`;
       setExpandedTables((prev) => {
         const next = new Set(prev);
         if (next.has(key)) {
@@ -390,16 +396,14 @@ export function SchemaExplorer({
   );
 
   const handleElementClick = (
-    catalog: string,
+    catalog: string | null,
     schema?: string,
     table?: string,
     column?: string
   ) => {
     if (onInsertLink) {
-      let link = `db://${catalog}`;
-      if (schema) link += `/${schema}`;
-      if (table) link += `/${table}`;
-      if (column) link += `/${column}`;
+      const path = [normalizeCatalogKey(catalog), schema, table, column].filter(Boolean).join("/");
+      const link = `db://${path}`;
       onInsertLink(link);
     }
   };
@@ -412,7 +416,7 @@ export function SchemaExplorer({
   if (!isOpen) return null;
 
   return (
-    <div className="w-96 border-l border-gray-700 bg-gray-900 flex flex-col h-full">
+    <div className="w-full min-w-0 border-l border-gray-700 bg-gray-900 flex h-full flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <div className="flex items-center gap-2">
@@ -457,12 +461,12 @@ export function SchemaExplorer({
           <div className="space-y-0.5">
             {catalogs.map((catalog) => (
               <CatalogNode
-                key={catalog}
+                key={normalizeCatalogKey(catalog)}
                 catalog={catalog}
-                schemas={schemas[catalog] || []}
+                schemas={schemas[normalizeCatalogKey(catalog)] || []}
                 tables={tables}
                 columns={columns}
-                isExpanded={expandedCatalogs.has(catalog)}
+                isExpanded={expandedCatalogs.has(normalizeCatalogKey(catalog))}
                 expandedSchemas={expandedSchemas}
                 expandedTables={expandedTables}
                 highlightedPath={highlightedPath}
@@ -488,7 +492,7 @@ export function SchemaExplorer({
 
 // Catalog node component
 interface CatalogNodeProps {
-  catalog: string;
+  catalog: string | null;
   schemas: SchemaInfo[];
   tables: Record<string, TableInfo[]>;
   columns: Record<string, ColumnInfo[]>;
@@ -497,11 +501,11 @@ interface CatalogNodeProps {
   expandedTables: Set<string>;
   highlightedPath: string | null;
   searchQuery: string;
-  onToggleCatalog: (catalog: string) => void;
-  onToggleSchema: (catalog: string, schema: string) => void;
-  onToggleTable: (catalog: string, schema: string, table: string) => void;
+  onToggleCatalog: (catalog: string | null) => void;
+  onToggleSchema: (catalog: string | null, schema: string) => void;
+  onToggleTable: (catalog: string | null, schema: string, table: string) => void;
   onElementClick: (
-    catalog: string,
+    catalog: string | null,
     schema?: string,
     table?: string,
     column?: string
@@ -525,7 +529,7 @@ function CatalogNode({
   onElementClick,
   filterMatches,
 }: CatalogNodeProps) {
-  const path = catalog;
+  const path = normalizeCatalogKey(catalog);
   const isHighlighted = highlightedPath === path;
 
   // Filter schemas if searching
@@ -533,7 +537,7 @@ function CatalogNode({
     ? schemas.filter((s) => filterMatches(s.name))
     : schemas;
 
-  if (searchQuery && visibleSchemas.length === 0 && !filterMatches(catalog)) {
+  if (searchQuery && visibleSchemas.length === 0 && !filterMatches(catalog || "")) {
     return null;
   }
 
@@ -555,7 +559,7 @@ function CatalogNode({
           )}
         />
         <DatabaseIcon className="text-purple-400" />
-        <span className="text-sm text-gray-300 flex-1 truncate">{catalog}</span>
+        <span className="text-sm text-gray-300 flex-1 truncate">{catalogLabel(catalog)}</span>
       </div>
 
       {isExpanded && (
@@ -565,9 +569,9 @@ function CatalogNode({
               key={schema.name}
               catalog={catalog}
               schema={schema}
-              tables={tables[`${catalog}/${schema.name}`] || []}
+              tables={tables[`${normalizeCatalogKey(catalog)}/${schema.name}`] || []}
               columns={columns}
-              isExpanded={expandedSchemas.has(`${catalog}/${schema.name}`)}
+              isExpanded={expandedSchemas.has(`${normalizeCatalogKey(catalog)}/${schema.name}`)}
               expandedTables={expandedTables}
               highlightedPath={highlightedPath}
               searchQuery={searchQuery}
@@ -585,7 +589,7 @@ function CatalogNode({
 
 // Schema node component
 interface SchemaNodeProps {
-  catalog: string;
+  catalog: string | null;
   schema: SchemaInfo;
   tables: TableInfo[];
   columns: Record<string, ColumnInfo[]>;
@@ -593,10 +597,10 @@ interface SchemaNodeProps {
   expandedTables: Set<string>;
   highlightedPath: string | null;
   searchQuery: string;
-  onToggleSchema: (catalog: string, schema: string) => void;
-  onToggleTable: (catalog: string, schema: string, table: string) => void;
+  onToggleSchema: (catalog: string | null, schema: string) => void;
+  onToggleTable: (catalog: string | null, schema: string, table: string) => void;
   onElementClick: (
-    catalog: string,
+    catalog: string | null,
     schema?: string,
     table?: string,
     column?: string
@@ -618,7 +622,7 @@ function SchemaNode({
   onElementClick,
   filterMatches,
 }: SchemaNodeProps) {
-  const path = `${catalog}/${schema.name}`;
+  const path = `${normalizeCatalogKey(catalog)}/${schema.name}`;
   const isHighlighted = highlightedPath === path;
 
   // Filter tables if searching
@@ -668,9 +672,9 @@ function SchemaNode({
               catalog={catalog}
               schema={schema.name}
               table={table}
-              columns={columns[`${catalog}/${schema.name}/${table.name}`] || []}
+              columns={columns[`${normalizeCatalogKey(catalog)}/${schema.name}/${table.name}`] || []}
               isExpanded={expandedTables.has(
-                `${catalog}/${schema.name}/${table.name}`
+                `${normalizeCatalogKey(catalog)}/${schema.name}/${table.name}`
               )}
               highlightedPath={highlightedPath}
               searchQuery={searchQuery}
@@ -687,16 +691,16 @@ function SchemaNode({
 
 // Table node component
 interface TableNodeProps {
-  catalog: string;
+  catalog: string | null;
   schema: string;
   table: TableInfo;
   columns: ColumnInfo[];
   isExpanded: boolean;
   highlightedPath: string | null;
   searchQuery: string;
-  onToggleTable: (catalog: string, schema: string, table: string) => void;
+  onToggleTable: (catalog: string | null, schema: string, table: string) => void;
   onElementClick: (
-    catalog: string,
+    catalog: string | null,
     schema?: string,
     table?: string,
     column?: string
@@ -716,7 +720,7 @@ function TableNode({
   onElementClick,
   filterMatches,
 }: TableNodeProps) {
-  const path = `${catalog}/${schema}/${table.name}`;
+  const path = `${normalizeCatalogKey(catalog)}/${schema}/${table.name}`;
   const isHighlighted = highlightedPath === path;
 
   // Filter columns if searching
@@ -740,7 +744,10 @@ function TableNode({
           "flex items-center gap-1 px-2 py-1 rounded cursor-pointer hover:bg-gray-800 group",
           isHighlighted && "bg-blue-900/30 ring-1 ring-blue-500"
         )}
-        onClick={() => onToggleTable(catalog, schema, table.name)}
+        onClick={() => {
+          onToggleTable(catalog, schema, table.name);
+          onElementClick(catalog, schema, table.name);
+        }}
         onDoubleClick={() => onElementClick(catalog, schema, table.name)}
       >
         <ChevronRightIcon
@@ -782,13 +789,13 @@ function TableNode({
 
 // Column node component
 interface ColumnNodeProps {
-  catalog: string;
+  catalog: string | null;
   schema: string;
   table: string;
   column: ColumnInfo;
   highlightedPath: string | null;
   onElementClick: (
-    catalog: string,
+    catalog: string | null,
     schema?: string,
     table?: string,
     column?: string
@@ -803,7 +810,7 @@ function ColumnNode({
   highlightedPath,
   onElementClick,
 }: ColumnNodeProps) {
-  const path = `${catalog}/${schema}/${table}/${column.name}`;
+  const path = `${normalizeCatalogKey(catalog)}/${schema}/${table}/${column.name}`;
   const isHighlighted = highlightedPath === path;
 
   return (
@@ -836,7 +843,7 @@ export function parseDbLink(link: string): ParsedLink | null {
 
   const parts = link.slice(5).split("/");
   return {
-    catalog: parts[0] || null,
+    catalog: parts[0] && parts[0] !== "__default__" ? parts[0] : null,
     schema: parts[1] || null,
     table: parts[2] || null,
     column: parts[3] || null,

@@ -15,6 +15,18 @@ const nextConfig = {
 
     return [
       {
+        source: "/connection/:name/insights",
+        destination: "/connection/insights?name=:name",
+      },
+      {
+        source: "/connection/:name/knowledge",
+        destination: "/connection/knowledge?name=:name",
+      },
+      {
+        source: "/connection/:name",
+        destination: "/connection?name=:name",
+      },
+      {
         source: "/api/:path*",
         destination: `${target}/api/:path*`,
       },

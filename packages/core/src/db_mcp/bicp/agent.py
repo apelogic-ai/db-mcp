@@ -33,13 +33,20 @@ from bicp_agent import (
     TableInfo,
 )
 from bicp_agent.session import QueryState
+from db_mcp_models import OnboardingPhase
 from sqlalchemy import text
 
 from db_mcp.config import get_settings
 from db_mcp.connectors import get_connector, get_connector_capabilities
 from db_mcp.connectors.sql import SQLConnector
 from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
-from db_mcp.onboarding.schema_store import load_schema_descriptions
+from db_mcp.onboarding.schema_store import (
+    create_initial_schema,
+    load_schema_descriptions,
+    rediscover_schema,
+    save_schema_descriptions,
+)
+from db_mcp.onboarding.state import create_initial_state, load_state, save_state
 from db_mcp.training.store import load_examples
 from db_mcp.validation.explain import (
     ExplainResult,
@@ -93,6 +100,12 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["connections/delete"] = self._handle_connections_delete
         self._method_handlers["connections/get"] = self._handle_connections_get
         self._method_handlers["connections/update"] = self._handle_connections_update
+        self._method_handlers["connections/save-discovery"] = (
+            self._handle_connections_save_discovery
+        )
+        self._method_handlers["connections/complete-onboarding"] = (
+            self._handle_connections_complete_onboarding
+        )
 
         # Context viewer handlers
         self._method_handlers["context/tree"] = self._handle_context_tree
@@ -147,6 +160,7 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["schema/tables"] = self._handle_schema_tables
         self._method_handlers["schema/columns"] = self._handle_schema_columns
         self._method_handlers["schema/validate-link"] = self._handle_schema_validate_link
+        self._method_handlers["sample_table"] = self._handle_sample_table
 
     def _detect_dialect(self) -> str:
         """Detect the database dialect from configuration."""
@@ -691,6 +705,7 @@ class DBMCPAgent(BICPAgent):
                 has_domain = (conn_path / "domain" / "model.md").exists()
                 has_credentials = (conn_path / ".env").exists()
                 has_state = (conn_path / "state.yaml").exists()
+                has_discovery = has_schema
 
                 # Detect connector type from connector.yaml
                 connector_type = "sql"
@@ -708,6 +723,7 @@ class DBMCPAgent(BICPAgent):
                             if connector_type == "api":
                                 api_title = cdata.get("api_title")
                                 base_url = cdata.get("base_url", "")
+                                has_discovery = bool(cdata.get("endpoints"))
                     except Exception:
                         pass
 
@@ -770,6 +786,7 @@ class DBMCPAgent(BICPAgent):
                         "name": name,
                         "isActive": name == active_connection,
                         "hasSchema": has_schema,
+                        "hasDiscovery": has_discovery,
                         "hasDomain": has_domain,
                         "hasCredentials": has_credentials,
                         "connectorType": connector_type,
@@ -1021,10 +1038,9 @@ class DBMCPAgent(BICPAgent):
         header_name = params.get("headerName", "").strip()
 
         # Build connector.yaml data
-        auth_data: dict[str, Any] = {
-            "type": auth_type,
-            "token_env": token_env or "API_KEY",
-        }
+        auth_data: dict[str, Any] = {"type": auth_type}
+        if auth_type != "none":
+            auth_data["token_env"] = token_env or "API_KEY"
         if auth_type == "header" and header_name:
             auth_data["header_name"] = header_name
 
@@ -1048,15 +1064,16 @@ class DBMCPAgent(BICPAgent):
             yaml.dump(connector_data, f, default_flow_style=False)
 
         # Write .env with API key if provided
-        env_var_name = token_env or "API_KEY"
         env_file = conn_path / ".env"
         with open(env_file, "w") as f:
             f.write("# API connection credentials\n")
             f.write("# This file is gitignored - do not commit\n\n")
-            if api_key:
-                f.write(f"{env_var_name}={api_key}\n")
-            else:
-                f.write(f"# {env_var_name}=your_api_key_here\n")
+            if auth_type != "none":
+                env_var_name = token_env or "API_KEY"
+                if api_key:
+                    f.write(f"{env_var_name}={api_key}\n")
+                else:
+                    f.write(f"# {env_var_name}=your_api_key_here\n")
 
         # Create data directory for JSONL files
         data_dir = conn_path / "data"
@@ -1195,6 +1212,35 @@ class DBMCPAgent(BICPAgent):
             if result.get("endpoints_found", 0) > 0:
                 connector.save_connector_yaml(connector_yaml)
 
+                state = load_state(connection_path=conn_path) or create_initial_state(name)
+                state.provider_id = name
+                state.phase = OnboardingPhase.DOMAIN
+                state.database_url_configured = True
+                state.connection_verified = True
+                state.dialect_detected = (
+                    config.api_title or state.dialect_detected or "api"
+                )
+
+                discovered_endpoints = sorted(
+                    {
+                        str(endpoint.get("path") or endpoint.get("name") or "").strip()
+                        for endpoint in result.get("endpoints", [])
+                        if str(endpoint.get("path") or endpoint.get("name") or "").strip()
+                    }
+                )
+                state.tables_discovered = discovered_endpoints
+                state.tables_total = len(discovered_endpoints)
+                if discovered_endpoints:
+                    state.current_table = discovered_endpoints[0]
+
+                state_result = save_state(state, connection_path=conn_path)
+                if not state_result.get("saved"):
+                    return {
+                        "success": False,
+                        "error": state_result.get("error")
+                        or "Failed to save onboarding state",
+                    }
+
             return {
                 "success": True,
                 **result,
@@ -1315,7 +1361,7 @@ class DBMCPAgent(BICPAgent):
         api_key = params.get("apiKey", "").strip()
         auth_type = params.get("authType", "bearer")
         header_name = params.get("headerName", "Authorization")
-        token_env = params.get("tokenEnv", "API_KEY")
+        token_env = "" if auth_type == "none" else params.get("tokenEnv", "API_KEY")
 
         # Build auth config
         auth = APIAuthConfig(
@@ -1526,29 +1572,31 @@ class DBMCPAgent(BICPAgent):
         if not conn_path.exists():
             return {"success": False, "error": f"Connection '{name}' not found"}
 
+        connector_data: dict[str, Any] = {}
+
         # Detect connector type
         connector_yaml = conn_path / "connector.yaml"
         if connector_yaml.exists():
             with open(connector_yaml) as f:
-                cdata = yaml.safe_load(f) or {}
-            connector_type = cdata.get("type", "sql")
+                connector_data = yaml.safe_load(f) or {}
+            connector_type = connector_data.get("type", "sql")
             if connector_type == "file":
                 return {
                     "success": True,
                     "name": name,
                     "connectorType": "file",
-                    "directory": cdata.get("directory", ""),
+                    "directory": connector_data.get("directory", ""),
                 }
             if connector_type == "api":
-                auth = cdata.get("auth", {})
-                endpoints = cdata.get("endpoints", [])
-                pagination = cdata.get("pagination", {})
-                rate_limit = cdata.get("rate_limit", {})
+                auth = connector_data.get("auth", {})
+                endpoints = connector_data.get("endpoints", [])
+                pagination = connector_data.get("pagination", {})
+                rate_limit = connector_data.get("rate_limit", {})
                 return {
                     "success": True,
                     "name": name,
                     "connectorType": "api",
-                    "baseUrl": cdata.get("base_url", ""),
+                    "baseUrl": connector_data.get("base_url", ""),
                     "auth": {
                         "type": auth.get("type", "bearer"),
                         "tokenEnv": auth.get("token_env", ""),
@@ -1580,6 +1628,9 @@ class DBMCPAgent(BICPAgent):
         if env_file.exists():
             env_vars = dotenv_values(env_file)
             database_url = env_vars.get("DATABASE_URL", "")
+        connector_database_url = connector_data.get("database_url")
+        if isinstance(connector_database_url, str) and connector_database_url.strip():
+            database_url = connector_database_url.strip()
 
         return {
             "success": True,
@@ -1587,6 +1638,165 @@ class DBMCPAgent(BICPAgent):
             "connectorType": "sql",
             "databaseUrl": database_url,
         }
+
+    async def _handle_connections_save_discovery(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Persist discovered schema facts for a connection.
+
+        Args:
+            params: {
+                "name": str,
+                "dialect": str | None,
+                "tables": list[{
+                    "name": str,
+                    "schema": str | None,
+                    "catalog": str | None,
+                    "full_name": str | None,
+                    "columns": list[{"name": str, "type": str | None}],
+                }],
+            }
+
+        Returns:
+            {"success": bool, "tableCount": int, "schemaCount": int, "error": str | None}
+        """
+        name = params.get("name")
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+
+        tables = params.get("tables") or []
+        if not isinstance(tables, list):
+            return {"success": False, "error": "Discovered tables are required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        conn_path = connections_dir / name
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' not found"}
+
+        dialect = params.get("dialect")
+
+        try:
+            existing_schema = load_schema_descriptions(name, connection_path=conn_path)
+            if existing_schema is not None:
+                schema = rediscover_schema(existing_schema, tables)["schema"]
+                if dialect:
+                    schema.dialect = dialect
+            else:
+                schema = create_initial_schema(name, dialect, tables)
+
+            schema_result = save_schema_descriptions(schema, connection_path=conn_path)
+            if not schema_result.get("saved"):
+                return {
+                    "success": False,
+                    "error": schema_result.get("error") or "Failed to save schema descriptions",
+                }
+
+            state = load_state(connection_path=conn_path) or create_initial_state(name)
+            state.provider_id = name
+            state.phase = OnboardingPhase.DOMAIN
+            state.database_url_configured = True
+            state.connection_verified = True
+            state.dialect_detected = dialect or state.dialect_detected
+
+            catalogs_discovered = sorted(
+                {
+                    str(table.get("catalog")).strip()
+                    for table in tables
+                    if table.get("catalog") not in (None, "", "null", "undefined")
+                }
+            )
+            schemas_discovered = sorted(
+                {
+                    str(table.get("schema") or "default").strip()
+                    for table in tables
+                    if str(table.get("schema") or "default").strip()
+                }
+            )
+            tables_discovered = [
+                str(table.get("full_name") or table.get("name") or "").strip()
+                for table in tables
+                if str(table.get("full_name") or table.get("name") or "").strip()
+            ]
+
+            state.catalogs_discovered = catalogs_discovered
+            state.schemas_discovered = schemas_discovered
+            state.tables_discovered = tables_discovered
+            state.tables_total = len(tables_discovered)
+            if tables_discovered:
+                state.current_table = tables_discovered[0]
+
+            state_result = save_state(state, connection_path=conn_path)
+            if not state_result.get("saved"):
+                return {
+                    "success": False,
+                    "error": state_result.get("error") or "Failed to save onboarding state",
+                }
+
+            return {
+                "success": True,
+                "tableCount": len(tables_discovered),
+                "schemaCount": len(schemas_discovered),
+                "catalogCount": len(catalogs_discovered),
+                "phase": state.phase.value,
+            }
+        except Exception as e:
+            logger.exception("Failed to persist discovery for %s: %s", name, e)
+            return {"success": False, "error": str(e)}
+
+    async def _handle_connections_complete_onboarding(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Mark a connection as fully onboarded after wizard completion."""
+        name = params.get("name")
+        if not name:
+            return {"success": False, "error": "Connection name is required"}
+
+        connections_dir = Path.home() / ".db-mcp" / "connections"
+        conn_path = connections_dir / name
+        if not conn_path.exists():
+            return {"success": False, "error": f"Connection '{name}' not found"}
+
+        try:
+            state = load_state(connection_path=conn_path) or create_initial_state(name)
+            state.provider_id = name
+            state.phase = OnboardingPhase.COMPLETE
+            state.database_url_configured = True
+            state.connection_verified = True
+
+            existing_schema = load_schema_descriptions(name, connection_path=conn_path)
+            if existing_schema is not None:
+                discovered_tables = [
+                    table.full_name or table.get_full_name()
+                    for table in existing_schema.tables
+                    if (table.full_name or table.get_full_name())
+                ]
+                state.tables_discovered = discovered_tables
+                state.tables_total = len(discovered_tables)
+                state.schemas_discovered = sorted(
+                    {table.schema_name for table in existing_schema.tables if table.schema_name}
+                )
+                state.catalogs_discovered = sorted(
+                    {
+                        table.catalog_name
+                        for table in existing_schema.tables
+                        if table.catalog_name not in (None, "", "null", "undefined")
+                    }
+                )
+                if existing_schema.dialect:
+                    state.dialect_detected = existing_schema.dialect
+
+            state_result = save_state(state, connection_path=conn_path)
+            if not state_result.get("saved"):
+                return {
+                    "success": False,
+                    "error": state_result.get("error") or "Failed to save onboarding state",
+                }
+
+            return {
+                "success": True,
+                "phase": state.phase.value,
+            }
+        except Exception as e:
+            logger.exception("Failed to complete onboarding for %s: %s", name, e)
+            return {"success": False, "error": str(e)}
 
     async def _handle_connections_update(self, params: dict[str, Any]) -> dict[str, Any]:
         """Update a connection.
@@ -1631,12 +1841,13 @@ class DBMCPAgent(BICPAgent):
                     cdata["base_url"] = params["baseUrl"]
                 if "auth" in params:
                     auth = params["auth"]
-                    cdata["auth"] = {
-                        "type": auth.get("type", "bearer"),
-                        "token_env": auth.get("tokenEnv", ""),
-                        "header_name": auth.get("headerName", "Authorization"),
-                        "param_name": auth.get("paramName", "api_key"),
-                    }
+                    auth_type = auth.get("type", "bearer")
+                    auth_data: dict[str, Any] = {"type": auth_type}
+                    if auth_type != "none":
+                        auth_data["token_env"] = auth.get("tokenEnv", "")
+                        auth_data["header_name"] = auth.get("headerName", "Authorization")
+                        auth_data["param_name"] = auth.get("paramName", "api_key")
+                    cdata["auth"] = auth_data
                 if "endpoints" in params:
                     cdata["endpoints"] = [
                         {
@@ -1662,10 +1873,11 @@ class DBMCPAgent(BICPAgent):
                 # Update API key in .env if provided
                 api_key = params.get("apiKey", "").strip()
                 if api_key:
-                    token_env = cdata.get("auth", {}).get("token_env", "API_KEY")
-                    env_file = conn_path / ".env"
-                    with open(env_file, "w") as f:
-                        f.write(f"{token_env}={api_key}\n")
+                    token_env = cdata.get("auth", {}).get("token_env", "").strip()
+                    if token_env:
+                        env_file = conn_path / ".env"
+                        with open(env_file, "w") as f:
+                            f.write(f"{token_env}={api_key}\n")
 
                 with open(connector_yaml, "w") as f:
                     yaml.dump(cdata, f, default_flow_style=False)
@@ -2263,7 +2475,7 @@ This knowledge helps the AI generate better queries over time.
         file_path = conn_path / path
 
         if not conn_path.exists():
-            return {"success": False, "error": f"Connection '{connection}' not found"}
+            conn_path.mkdir(parents=True, exist_ok=True)
 
         if file_path.exists():
             return {"success": False, "error": f"File already exists: {path}"}
@@ -3860,6 +4072,60 @@ This knowledge helps the AI generate better queries over time.
             return {"success": False, "error": "Configuration failed"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    async def _handle_sample_table(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Return sample rows for a table in the named connection."""
+        connection = params.get("connection")
+        table_name = params.get("table_name")
+        schema = params.get("schema")
+        catalog = params.get("catalog")
+        limit = params.get("limit", 5)
+
+        if not connection:
+            return {"error": "connection is required", "rows": [], "row_count": 0, "limit": 0}
+        if not table_name:
+            return {"error": "table_name is required", "rows": [], "row_count": 0, "limit": 0}
+
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 5
+
+        limit_value = max(1, min(limit_value, 100))
+        full_name = ".".join(part for part in [catalog, schema, table_name] if part)
+
+        try:
+            connector = get_connector(
+                connection_path=self._get_connections_dir() / str(connection)
+            )
+            rows = connector.get_table_sample(
+                str(table_name),
+                schema=str(schema) if schema else None,
+                catalog=str(catalog) if catalog else None,
+                limit=limit_value,
+            )
+            return {
+                "table_name": table_name,
+                "schema": schema,
+                "catalog": catalog,
+                "full_name": full_name or str(table_name),
+                "rows": rows,
+                "row_count": len(rows),
+                "limit": limit_value,
+                "error": None,
+            }
+        except Exception as e:
+            logger.exception("Failed to sample table %s: %s", table_name, e)
+            return {
+                "table_name": table_name,
+                "schema": schema,
+                "catalog": catalog,
+                "full_name": full_name or str(table_name),
+                "rows": [],
+                "row_count": 0,
+                "limit": limit_value,
+                "error": str(e),
+            }
 
     async def _handle_agents_remove(self, params: dict[str, Any]) -> dict[str, Any]:
         """Remove db-mcp from an agent's MCP config."""

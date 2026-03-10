@@ -171,6 +171,7 @@ interface TreeViewProps {
   onToggleConnection: (name: string) => void;
   onToggleFolder: (key: string) => void;
   usage?: UsageData | null;
+  hideConnectionLevel?: boolean;
 }
 
 // Helper functions for usage badges
@@ -216,6 +217,7 @@ export function TreeView({
   onToggleConnection,
   onToggleFolder,
   usage,
+  hideConnectionLevel = false,
 }: TreeViewProps) {
   const isFileSelected = (connection: string, path: string) => {
     return (
@@ -254,6 +256,185 @@ export function TreeView({
     return undefined;
   };
 
+  const renderConnectionContents = (conn: ConnectionNode, nested: boolean) => (
+    <div className={nested ? "ml-4" : ""}>
+      {conn.folders.map((folder) => {
+        const folderKey = `${conn.name}/${folder.name}`;
+        const isFolderExpanded = expandedFolders.has(folderKey);
+        const isEmptyClickable =
+          folder.isEmpty && folder.hasReadme && folder.importance;
+        const isSelected = isFolderSelected(conn.name, folder.name);
+
+        return (
+          <div key={folderKey}>
+            <div
+              className={cn(
+                "flex items-center gap-1 px-2 py-1 rounded",
+                !folder.isEmpty &&
+                  "cursor-pointer hover:bg-gray-800",
+                isEmptyClickable &&
+                  "cursor-pointer hover:bg-gray-800",
+                folder.isEmpty &&
+                  !isEmptyClickable &&
+                  "cursor-default",
+                isSelected && "bg-blue-900/50",
+              )}
+              onClick={() => {
+                if (!folder.isEmpty) {
+                  onToggleFolder(folderKey);
+                } else if (isEmptyClickable) {
+                  onSelectFolder(conn.name, folder.name);
+                }
+              }}
+              title={getImportanceTooltip(folder)}
+            >
+              <ChevronRight
+                className={cn(
+                  "text-gray-500 transition-transform",
+                  isFolderExpanded && "rotate-90",
+                  folder.isEmpty && "invisible",
+                )}
+              />
+              <FolderIcon
+                className={cn(
+                  "text-yellow-600",
+                  folder.isEmpty && "text-gray-600",
+                  isEmptyClickable &&
+                    folder.importance === "critical" &&
+                    "text-red-400",
+                  isEmptyClickable &&
+                    folder.importance === "recommended" &&
+                    "text-yellow-500",
+                )}
+              />
+              <span
+                className={cn(
+                  "text-gray-400",
+                  folder.isEmpty &&
+                    !isEmptyClickable &&
+                    "text-gray-600 italic",
+                  isEmptyClickable && "text-gray-300",
+                  isSelected && "text-white",
+                )}
+              >
+                {folder.name}
+                {folder.isEmpty && !isEmptyClickable && " (empty)"}
+              </span>
+              {getImportanceIcon(folder)}
+              {usage && (
+                <UsageBadge
+                  count={usage.folders[`${conn.name}/${folder.name}`]?.count || 0}
+                  lastUsed={usage.folders[`${conn.name}/${folder.name}`]?.lastUsed || 0}
+                  className="ml-auto"
+                />
+              )}
+            </div>
+
+            {isFolderExpanded && !folder.isEmpty && (
+              <div className="ml-4">
+                {folder.files.map((file) => {
+                  const isSelected = isFileSelected(conn.name, file.path);
+
+                  return (
+                    <div
+                      key={file.path}
+                      className={cn(
+                        "flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-gray-800 rounded",
+                        isSelected && "bg-blue-900/50",
+                      )}
+                      onClick={() => onSelectFile(conn.name, file.path)}
+                    >
+                      <span className="w-4" />
+                      <FileIcon
+                        className={cn(
+                          "text-gray-500",
+                          file.name.endsWith(".yaml") ||
+                            file.name.endsWith(".yml")
+                            ? "text-purple-400"
+                            : "text-blue-400",
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          "text-gray-400",
+                          isSelected && "text-white",
+                        )}
+                      >
+                        {file.name}
+                      </span>
+                      {usage && (
+                        <UsageBadge
+                          count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
+                          lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
+                          className="ml-2"
+                        />
+                      )}
+                      {file.size !== undefined && (
+                        <span className="text-gray-600 text-xs ml-auto">
+                          {formatFileSize(file.size)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {conn.rootFiles && conn.rootFiles.length > 0 && (
+        <>
+          {conn.rootFiles.map((file) => {
+            const isSelected = isFileSelected(conn.name, file.path);
+
+            return (
+              <div
+                key={file.path}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-gray-800 rounded",
+                  isSelected && "bg-blue-900/50",
+                )}
+                onClick={() => onSelectFile(conn.name, file.path)}
+              >
+                <span className="w-4" />
+                <FileIcon
+                  className={cn(
+                    "text-gray-500",
+                    file.name.endsWith(".yaml") ||
+                      file.name.endsWith(".yml")
+                      ? "text-purple-400"
+                      : "text-blue-400",
+                  )}
+                />
+                <span
+                  className={cn(
+                    "text-gray-400",
+                    isSelected && "text-white",
+                  )}
+                >
+                  {file.name}
+                </span>
+                {usage && (
+                  <UsageBadge
+                    count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
+                    lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
+                    className="ml-2"
+                  />
+                )}
+                {file.size !== undefined && (
+                  <span className="text-gray-600 text-xs ml-auto">
+                    {formatFileSize(file.size)}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div className="text-sm">
       {connections.length === 0 ? (
@@ -270,6 +451,10 @@ export function TreeView({
             selectedTreeNode?.connection === conn.name &&
             !selectedTreeNode?.folder &&
             !selectedTreeNode?.file;
+
+          if (hideConnectionLevel) {
+            return <div key={conn.name}>{renderConnectionContents(conn, false)}</div>;
+          }
 
           return (
             <div key={conn.name}>
@@ -318,194 +503,7 @@ export function TreeView({
               </div>
 
               {/* Folders */}
-              {isExpanded && (
-                <div className="ml-4">
-                  {conn.folders.map((folder) => {
-                    const folderKey = `${conn.name}/${folder.name}`;
-                    const isFolderExpanded = expandedFolders.has(folderKey);
-                    const isEmptyClickable =
-                      folder.isEmpty && folder.hasReadme && folder.importance;
-                    const isSelected = isFolderSelected(conn.name, folder.name);
-
-                    return (
-                      <div key={folderKey}>
-                        {/* Folder node */}
-                        <div
-                          className={cn(
-                            "flex items-center gap-1 px-2 py-1 rounded",
-                            !folder.isEmpty &&
-                              "cursor-pointer hover:bg-gray-800",
-                            isEmptyClickable &&
-                              "cursor-pointer hover:bg-gray-800",
-                            folder.isEmpty &&
-                              !isEmptyClickable &&
-                              "cursor-default",
-                            isSelected && "bg-blue-900/50",
-                          )}
-                          onClick={() => {
-                            if (!folder.isEmpty) {
-                              // Non-empty folder: toggle expansion
-                              onToggleFolder(folderKey);
-                            } else if (isEmptyClickable) {
-                              // Empty folder with README: show help content
-                              onSelectFolder(conn.name, folder.name);
-                            }
-                          }}
-                          title={getImportanceTooltip(folder)}
-                        >
-                          <ChevronRight
-                            className={cn(
-                              "text-gray-500 transition-transform",
-                              isFolderExpanded && "rotate-90",
-                              folder.isEmpty && "invisible",
-                            )}
-                          />
-                          <FolderIcon
-                            className={cn(
-                              "text-yellow-600",
-                              folder.isEmpty && "text-gray-600",
-                              isEmptyClickable &&
-                                folder.importance === "critical" &&
-                                "text-red-400",
-                              isEmptyClickable &&
-                                folder.importance === "recommended" &&
-                                "text-yellow-500",
-                            )}
-                          />
-                          <span
-                            className={cn(
-                              "text-gray-400",
-                              folder.isEmpty &&
-                                !isEmptyClickable &&
-                                "text-gray-600 italic",
-                              isEmptyClickable && "text-gray-300",
-                              isSelected && "text-white",
-                            )}
-                          >
-                            {folder.name}
-                            {folder.isEmpty && !isEmptyClickable && " (empty)"}
-                          </span>
-                          {getImportanceIcon(folder)}
-                          {usage && (
-                            <UsageBadge
-                              count={usage.folders[`${conn.name}/${folder.name}`]?.count || 0}
-                              lastUsed={usage.folders[`${conn.name}/${folder.name}`]?.lastUsed || 0}
-                              className="ml-auto"
-                            />
-                          )}
-                        </div>
-
-                        {/* Files */}
-                        {isFolderExpanded && !folder.isEmpty && (
-                          <div className="ml-4">
-                            {folder.files.map((file) => {
-                              const isSelected = isFileSelected(
-                                conn.name,
-                                file.path,
-                              );
-
-                              return (
-                                <div
-                                  key={file.path}
-                                  className={cn(
-                                    "flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-gray-800 rounded",
-                                    isSelected && "bg-blue-900/50",
-                                  )}
-                                  onClick={() =>
-                                    onSelectFile(conn.name, file.path)
-                                  }
-                                >
-                                  <span className="w-4" /> {/* Spacer */}
-                                  <FileIcon
-                                    className={cn(
-                                      "text-gray-500",
-                                      file.name.endsWith(".yaml") ||
-                                        file.name.endsWith(".yml")
-                                        ? "text-purple-400"
-                                        : "text-blue-400",
-                                    )}
-                                  />
-                                  <span
-                                    className={cn(
-                                      "text-gray-400",
-                                      isSelected && "text-white",
-                                    )}
-                                  >
-                                    {file.name}
-                                  </span>
-                                  {usage && (
-                                    <UsageBadge
-                                      count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
-                                      lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
-                                      className="ml-2"
-                                    />
-                                  )}
-                                  {file.size !== undefined && (
-                                    <span className="text-gray-600 text-xs ml-auto">
-                                      {formatFileSize(file.size)}
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {/* Root-level files */}
-                  {conn.rootFiles && conn.rootFiles.length > 0 && (
-                    <>
-                      {conn.rootFiles.map((file) => {
-                        const isSelected = isFileSelected(conn.name, file.path);
-
-                        return (
-                          <div
-                            key={file.path}
-                            className={cn(
-                              "flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-gray-800 rounded",
-                              isSelected && "bg-blue-900/50",
-                            )}
-                            onClick={() => onSelectFile(conn.name, file.path)}
-                          >
-                            <span className="w-4" /> {/* Spacer for chevron */}
-                            <FileIcon
-                              className={cn(
-                                "text-gray-500",
-                                file.name.endsWith(".yaml") ||
-                                  file.name.endsWith(".yml")
-                                  ? "text-purple-400"
-                                  : "text-blue-400",
-                              )}
-                            />
-                            <span
-                              className={cn(
-                                "text-gray-400",
-                                isSelected && "text-white",
-                              )}
-                            >
-                              {file.name}
-                            </span>
-                            {usage && (
-                              <UsageBadge
-                                count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
-                                lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
-                                className="ml-2"
-                              />
-                            )}
-                            {file.size !== undefined && (
-                              <span className="text-gray-600 text-xs ml-auto">
-                                {formatFileSize(file.size)}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </>
-                  )}
-                </div>
-              )}
+              {isExpanded && renderConnectionContents(conn, true)}
             </div>
           );
         })

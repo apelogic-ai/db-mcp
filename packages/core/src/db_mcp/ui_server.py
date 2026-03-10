@@ -17,7 +17,7 @@ from typing import Any
 from bicp_agent.types import JsonRpcRequest
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -124,6 +124,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    def _serve_exported_page(*segments: str):
+        page_path = STATIC_DIR.joinpath(*segments, "index.html")
+        if page_path.exists():
+            return FileResponse(page_path)
+        return JSONResponse(
+            content={"message": "UI not built. Run UI build first."},
+            status_code=404,
+        )
+
     @app.get("/health")
     async def health_check() -> dict[str, str]:
         """Health check endpoint."""
@@ -210,7 +219,7 @@ def create_app() -> FastAPI:
             response = await _agent.handle_request(rpc_request)
 
             # Return the response from the agent
-            return JSONResponse(content=response.model_dump(exclude_none=True))
+            return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
 
         except ValueError as e:
             # Invalid request
@@ -269,14 +278,35 @@ def create_app() -> FastAPI:
     # Serve index.html for root
     @app.get("/")
     async def serve_root():
-        """Serve index.html for the root path."""
-        index_path = STATIC_DIR / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path)
-        return JSONResponse(
-            content={"message": "UI not built. Run UI build first."},
-            status_code=404,
-        )
+        """Redirect the root path to the connections landing page."""
+        return RedirectResponse(url="/connections/")
+
+    @app.get("/connection/new")
+    @app.get("/connection/new/")
+    async def serve_connection_new():
+        """Serve the connection wizard shell."""
+        return _serve_exported_page("connection/new")
+
+    @app.get("/connection/{name}")
+    @app.get("/connection/{name}/")
+    async def serve_connection_detail(name: str):
+        """Serve the connection detail shell for connection-first routes."""
+        del name
+        return _serve_exported_page("connection")
+
+    @app.get("/connection/{name}/insights")
+    @app.get("/connection/{name}/insights/")
+    async def serve_connection_insights(name: str):
+        """Serve the connection-scoped insights shell."""
+        del name
+        return _serve_exported_page("connection/insights")
+
+    @app.get("/connection/{name}/knowledge")
+    @app.get("/connection/{name}/knowledge/")
+    async def serve_connection_knowledge(name: str):
+        """Serve the connection-scoped knowledge shell."""
+        del name
+        return _serve_exported_page("connection/knowledge")
 
     # Mount static files if directory exists
     if STATIC_DIR.exists():
