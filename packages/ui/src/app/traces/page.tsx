@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { listTraces, clearTraces, getTraceDates } from "@/lib/bicp";
 import type { Trace } from "@/lib/bicp";
 import { TraceList } from "@/components/traces/TraceList";
+import { ConnectionWorkspaceShell } from "@/features/connections/ConnectionWorkspaceShell";
 import { cn } from "@/lib/utils";
 
 /** Local-time YYYY-MM-DD (matches JSONL filenames written with local date). */
@@ -170,138 +171,138 @@ export default function TracesPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Traces</h1>
-          <p className="text-gray-400 mt-1">
-            OpenTelemetry trace viewer for MCP server operations
-          </p>
-        </div>
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-          title="Refresh traces"
-        >
-          <svg
-            className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
+    <ConnectionWorkspaceShell currentView={null} currentAdvancedView="traces">
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Traces</h1>
+            <p className="mt-1 text-gray-400">
+              OpenTelemetry trace viewer for MCP server operations
+            </p>
+          </div>
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="rounded p-1.5 text-gray-400 transition-colors hover:bg-gray-800 hover:text-gray-200 disabled:opacity-50"
+            title="Refresh traces"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-        </button>
-      </div>
-
-      {error && (
-        <div className="text-center py-4 text-red-400 text-sm">{error}</div>
-      )}
-
-      {loading && dayEntries.every((d) => d.traceCount <= 0) && (
-        <div className="text-center py-8 text-gray-500">Loading traces...</div>
-      )}
-
-      <div className="space-y-2">
-        {dayEntries.map(({ key, label, traces, traceCount, isToday }) => {
-          const isExpanded = expandedDays.has(key);
-          const notLoaded = traceCount === -1;
-
-          return (
-            <div
-              key={key}
-              className="border border-gray-800 rounded-lg overflow-hidden"
+            <svg
+              className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
             >
-              <button
-                className={cn(
-                  "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
-                  isExpanded
-                    ? "bg-gray-800/50"
-                    : "bg-gray-900 hover:bg-gray-800/30",
-                )}
-                onClick={() => toggleDay(key)}
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {error && (
+          <div className="py-4 text-center text-sm text-red-400">{error}</div>
+        )}
+
+        {loading && dayEntries.every((d) => d.traceCount <= 0) && (
+          <div className="py-8 text-center text-gray-500">Loading traces...</div>
+        )}
+
+        <div className="space-y-2">
+          {dayEntries.map(({ key, label, traces, traceCount, isToday }) => {
+            const isExpanded = expandedDays.has(key);
+            const notLoaded = traceCount === -1;
+
+            return (
+              <div
+                key={key}
+                className="overflow-hidden rounded-lg border border-gray-800"
               >
-                <svg
+                <button
                   className={cn(
-                    "w-3 h-3 text-gray-500 transition-transform shrink-0",
-                    isExpanded && "rotate-90",
+                    "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
+                    isExpanded
+                      ? "bg-gray-800/50"
+                      : "bg-gray-900 hover:bg-gray-800/30",
                   )}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
+                  onClick={() => toggleDay(key)}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-
-                <span className="text-sm font-medium text-white flex-1">
-                  {label}
-                </span>
-
-                {/* Green pulse when live traces are flowing into today */}
-                {isToday && hasLive && (
-                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                )}
-
-                <span className="text-xs text-gray-500 tabular-nums">
-                  {notLoaded
-                    ? "click to load"
-                    : `${traceCount} trace${traceCount !== 1 ? "s" : ""}`}
-                </span>
-
-                {/* Clear live traces button — only on today when live is active */}
-                {isToday && hasLive && (
-                  <button
-                    onClick={handleClear}
-                    className="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors ml-1"
-                    title="Clear live traces"
+                  <svg
+                    className={cn(
+                      "h-3 w-3 shrink-0 text-gray-500 transition-transform",
+                      isExpanded && "rotate-90",
+                    )}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
                   >
-                    <svg
-                      className="w-3.5 h-3.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-                      />
-                    </svg>
-                  </button>
-                )}
-              </button>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
 
-              {isExpanded && (
-                <div className="px-4 py-3 border-t border-gray-800 bg-gray-950">
-                  {notLoaded && traces.length === 0 ? (
-                    <div className="text-center py-4 text-gray-500 text-sm">
-                      Loading...
-                    </div>
-                  ) : (
-                    <TraceList traces={traces} />
+                  <span className="flex-1 text-sm font-medium text-white">
+                    {label}
+                  </span>
+
+                  {isToday && hasLive && (
+                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
                   )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
 
-      <div className="text-center text-xs text-gray-600">
-        Live traces auto-refresh every 3 seconds
+                  <span className="tabular-nums text-xs text-gray-500">
+                    {notLoaded
+                      ? "click to load"
+                      : `${traceCount} trace${traceCount !== 1 ? "s" : ""}`}
+                  </span>
+
+                  {isToday && hasLive && (
+                    <button
+                      onClick={handleClear}
+                      className="ml-1 rounded p-1 text-gray-500 transition-colors hover:bg-gray-700 hover:text-gray-300"
+                      title="Clear live traces"
+                    >
+                      <svg
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                </button>
+
+                {isExpanded && (
+                  <div className="border-t border-gray-800 bg-gray-950 px-4 py-3">
+                    {notLoaded && traces.length === 0 ? (
+                      <div className="py-4 text-center text-sm text-gray-500">
+                        Loading...
+                      </div>
+                    ) : (
+                      <TraceList traces={traces} />
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="text-center text-xs text-gray-600">
+          Live traces auto-refresh every 3 seconds
+        </div>
       </div>
-    </div>
+    </ConnectionWorkspaceShell>
   );
 }

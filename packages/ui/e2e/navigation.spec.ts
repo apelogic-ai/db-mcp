@@ -1,12 +1,14 @@
 import { test, expect } from "./fixtures";
 
 test.describe("Navigation", () => {
-  test("root redirects to /home when connections exist", async ({ page }) => {
+  test("root redirects to connections", async ({
+    page,
+  }) => {
     await page.goto("/");
-    await expect(page).toHaveURL(/\/home\/?$/);
+    await expect(page).toHaveURL(/\/connections\/?$/);
   });
 
-  test("root redirects to onboarding when no connections exist", async ({
+  test("root still redirects to connections when no connections exist", async ({
     page,
     bicpMock,
   }) => {
@@ -15,49 +17,45 @@ test.describe("Navigation", () => {
       activeConnection: null,
     }));
     await page.goto("/");
-    await expect(page).toHaveURL(/\/config\/\?wizard=onboarding/);
+    await expect(page).toHaveURL(/\/connection\/new\/#connect$/);
   });
 
-  test("essentials nav renders core items and advanced group", async ({
+  test("drawer renders connections and advanced links", async ({
     page,
   }) => {
-    await page.goto("/home");
-    const nav = page.locator("nav");
-    await expect(nav.getByText("Home")).toBeVisible();
-    await expect(nav.getByText("Setup")).toBeVisible();
-    await expect(nav.getByText("Knowledge")).toBeVisible();
-    await expect(nav.getByText("Insights")).toBeVisible();
-    await expect(nav.locator("summary").filter({ hasText: "Advanced" })).toBeVisible();
-    await expect(nav.getByText("Metrics")).not.toBeVisible();
-    await expect(nav.getByText("Traces")).not.toBeVisible();
+    await page.goto("/connection/production");
+    await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Advanced" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Metrics" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Traces" })).toBeVisible();
+    await expect(page.getByRole("link", { name: /^\+ New$/ })).toBeVisible();
   });
 
-  test("navigate between tabs", async ({ page }) => {
-    await page.goto("/home");
+  test("advanced drawer links navigate between utility pages", async ({ page }) => {
+    await page.goto("/connection/production");
 
-    await page.getByRole("link", { name: "Knowledge" }).click();
-    await expect(page).toHaveURL(/\/context/);
-
-    await page.getByRole("link", { name: "Setup" }).click();
-    await expect(page).toHaveURL(/\/config/);
+    await page.getByRole("link", { name: "Traces" }).click();
+    await expect(page).toHaveURL(/\/traces/);
   });
 
-  test("active tab is highlighted", async ({ page }) => {
-    await page.goto("/home");
-    const homeLink = page.locator("nav").getByText("Home");
-    await expect(homeLink).toHaveClass(/text-brand/);
+  test("connection tabs use the active underline state", async ({ page }) => {
+    await page.goto("/connection/production");
+    const overviewLink = page.getByRole("link", { name: "Overview" });
+    await expect(overviewLink).toHaveClass(/border-brand/);
 
-    const setupLink = page.locator("nav").getByText("Setup");
-    await expect(setupLink).not.toHaveClass(/text-brand/);
+    const insightsLink = page.getByRole("link", { name: "Insights" });
+    await expect(insightsLink).not.toHaveClass(/border-brand/);
   });
 
-  test("advanced mode shows metrics and traces in top nav", async ({ page }) => {
-    await page.goto("/home");
-    const nav = page.locator("nav");
+  test("connection drawer links switch routes", async ({ page }) => {
+    await page.goto("/connection/production");
+    await page.getByRole("link", { name: "staging" }).click();
+    await expect(page).toHaveURL(/\/connection\/staging\/?$/);
+  });
 
-    await nav.getByRole("button", { name: "Advanced" }).click();
-
-    await expect(nav.getByRole("link", { name: "Metrics" })).toBeVisible();
-    await expect(nav.getByRole("link", { name: "Traces" })).toBeVisible();
+  test("new connection button opens the wizard", async ({ page }) => {
+    await page.goto("/connection/production");
+    await page.getByRole("link", { name: /^\+ New$/ }).click();
+    await expect(page).toHaveURL(/\/connection\/new\/#connect$/);
   });
 });

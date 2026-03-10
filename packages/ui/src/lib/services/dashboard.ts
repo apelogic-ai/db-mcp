@@ -1,5 +1,7 @@
 import type { InsightsAnalysis } from "@/lib/bicp";
+import type { ConnectionSummary } from "@/lib/connection-context";
 import type { ActionQueueItem } from "@/lib/ui-types";
+import { buildConnectionAppHref, buildWizardHref, getWizardResumeStep } from "@/features/connections/utils";
 
 export interface DashboardSummary {
   setup: {
@@ -24,8 +26,28 @@ export interface DashboardSummary {
   };
 }
 
-export function buildActionQueue(analysis: InsightsAnalysis): ActionQueueItem[] {
+export function buildActionQueue(
+  analysis: InsightsAnalysis,
+  activeConnection: string | null,
+  connectionSummary?: Pick<
+    ConnectionSummary,
+    "onboardingPhase" | "hasSchema" | "hasDomain" | "hasCredentials" | "connectorType"
+  > | null,
+): ActionQueueItem[] {
   const queue: ActionQueueItem[] = [];
+  const overviewUrl = activeConnection ? buildConnectionAppHref(activeConnection) : "/connections";
+  const setupStep =
+    activeConnection && connectionSummary ? getWizardResumeStep(connectionSummary) : "connect";
+  const discoverUrl = activeConnection
+    ? buildWizardHref(setupStep, { name: activeConnection })
+    : "/connection/new#discover";
+  const insightsUrl = activeConnection
+    ? `${buildConnectionAppHref(activeConnection, "insights")}&wizard=triage&days=7`
+    : "/connections";
+  const knowledgeUrl = activeConnection
+    ? buildConnectionAppHref(activeConnection, "knowledge")
+    : "/connections";
+  const metricsUrl = "/metrics";
 
   const openVocabularyGaps = (analysis.vocabularyGaps || []).filter(
     (gap) => (gap.status ?? "open") === "open",
@@ -41,7 +63,7 @@ export function buildActionQueue(analysis: InsightsAnalysis): ActionQueueItem[] 
         openVocabularyGaps.length === 1 ? "" : "s"
       } need review`,
       ctaLabel: "Open triage",
-      ctaUrl: "/insights?wizard=triage&days=7",
+      ctaUrl: insightsUrl,
       status: "open",
     });
   }
@@ -69,20 +91,46 @@ export function buildActionQueue(analysis: InsightsAnalysis): ActionQueueItem[] 
         analysis.validationFailureCount === 1 ? "" : "s"
       }`,
       ctaLabel: "Review insights",
-      ctaUrl: "/insights?wizard=triage&days=7",
+      ctaUrl: insightsUrl,
       status: "open",
     });
   }
 
-  if (!analysis.knowledgeStatus.hasSchema || !analysis.knowledgeStatus.hasDomain) {
+  if (!analysis.knowledgeStatus.hasSchema) {
     queue.push({
-      id: "complete-knowledge-layer",
+      id: "add-schema-descriptions",
       source: "setup",
       severity: "info",
-      title: "Complete semantic layer setup",
-      detail: "Schema descriptions or domain model are incomplete",
+      title: "Add schema descriptions",
+      detail: "No schema descriptions file is available for this connection yet",
       ctaLabel: "Open setup",
-      ctaUrl: "/config?wizard=onboarding",
+      ctaUrl: discoverUrl,
+      status: "open",
+    });
+  }
+
+  if (!analysis.knowledgeStatus.hasDomain) {
+    queue.push({
+      id: "add-domain-model",
+      source: "setup",
+      severity: "info",
+      title: "Add domain model",
+      detail: "No domain model file is available yet",
+      ctaLabel: "Open knowledge",
+      ctaUrl: knowledgeUrl,
+      status: "open",
+    });
+  }
+
+  if (analysis.knowledgeStatus.exampleCount === 0) {
+    queue.push({
+      id: "add-training-examples",
+      source: "setup",
+      severity: "info",
+      title: "Add training examples",
+      detail: "No reusable query examples have been saved yet",
+      ctaLabel: "Open knowledge",
+      ctaUrl: knowledgeUrl,
       status: "open",
     });
   }
@@ -93,9 +141,22 @@ export function buildActionQueue(analysis: InsightsAnalysis): ActionQueueItem[] 
       source: "setup",
       severity: "info",
       title: "Add business rules",
-      detail: "No approved business rules yet",
+      detail: "No approved business rules file is available yet",
       ctaLabel: "Open knowledge",
-      ctaUrl: "/context",
+      ctaUrl: knowledgeUrl,
+      status: "open",
+    });
+  }
+
+  if ((analysis.knowledgeStatus.metricCount ?? 0) === 0) {
+    queue.push({
+      id: "define-metrics",
+      source: "setup",
+      severity: "info",
+      title: "Define metrics",
+      detail: "No approved metrics catalog entries are available yet",
+      ctaLabel: "Open metrics",
+      ctaUrl: metricsUrl,
       status: "open",
     });
   }
@@ -106,6 +167,10 @@ export function buildActionQueue(analysis: InsightsAnalysis): ActionQueueItem[] 
 export function buildDashboardSummary(
   analysis: InsightsAnalysis,
   activeConnection: string | null,
+  connectionSummary?: Pick<
+    ConnectionSummary,
+    "onboardingPhase" | "hasSchema" | "hasDomain" | "hasCredentials" | "connectorType"
+  > | null,
 ): DashboardSummary {
   const semanticScore = [
     analysis.knowledgeStatus.hasSchema,
@@ -129,7 +194,7 @@ export function buildDashboardSummary(
       rules: analysis.knowledgeStatus.ruleCount,
       metrics: analysis.knowledgeStatus.metricCount,
     },
-    queue: buildActionQueue(analysis),
+    queue: buildActionQueue(analysis, activeConnection, connectionSummary),
     recent: {
       traces: analysis.traceCount,
       errors: analysis.errorCount,

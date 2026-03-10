@@ -21,6 +21,7 @@ import {
   type MetricCandidateResult,
 } from "@/lib/bicp";
 import { useConnections } from "@/lib/connection-context";
+import { ConnectionWorkspaceShell } from "@/features/connections/ConnectionWorkspaceShell";
 
 // =============================================================================
 // Helpers
@@ -870,76 +871,81 @@ export default function MetricsPage() {
 
   if (loading || connectionsLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-gray-400">Loading metrics...</p>
-      </div>
+      <ConnectionWorkspaceShell currentView={null} currentAdvancedView="metrics">
+        <div className="flex h-64 items-center justify-center">
+          <p className="text-gray-400">Loading metrics...</p>
+        </div>
+      </ConnectionWorkspaceShell>
     );
   }
 
   if (!activeConnection) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-gray-400">
-          No active connection. Create or select a connection first.
-        </p>
-      </div>
+      <ConnectionWorkspaceShell currentView={null} currentAdvancedView="metrics">
+        <div className="flex h-64 items-center justify-center">
+          <p className="text-gray-400">
+            No active connection. Create or select a connection first.
+          </p>
+        </div>
+      </ConnectionWorkspaceShell>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Metrics</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          Define business metrics with their dimensions. Mine the knowledge
-          vault to discover candidates automatically.
-        </p>
-      </div>
-
-      {error && (
-        <div className="bg-red-900/30 border border-red-700 rounded p-3 text-sm text-red-300">
-          {error}
+    <ConnectionWorkspaceShell currentView={null} currentAdvancedView="metrics">
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Metrics</h1>
+          <p className="mt-1 text-sm text-gray-400">
+            Define business metrics with their dimensions. Mine the knowledge
+            vault to discover candidates automatically.
+          </p>
         </div>
-      )}
 
-      {/* Tabs */}
-      <div className="inline-flex h-9 items-center justify-center rounded-lg bg-gray-900 p-1 text-gray-400">
-        <button
-          onClick={() => setTab("catalog")}
-          className={`inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all ${
-            tab === "catalog"
-              ? "bg-gray-800 text-white shadow"
-              : "text-gray-400 hover:text-gray-200"
-          }`}
-        >
-          Catalog ({metrics.length})
-        </button>
-        <button
-          onClick={() => setTab("candidates")}
-          className={`inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all ${
-            tab === "candidates"
-              ? "bg-gray-800 text-white shadow"
-              : "text-gray-400 hover:text-gray-200"
-          }`}
-        >
-          Candidates{candidateCount !== null ? ` (${candidateCount})` : ""}
-        </button>
+        {error && (
+          <div className="rounded border border-red-700 bg-red-900/30 p-3 text-sm text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div className="inline-flex h-9 items-center justify-center rounded-lg bg-gray-900 p-1 text-gray-400">
+          <button
+            onClick={() => setTab("catalog")}
+            className={`inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all ${
+              tab === "catalog"
+                ? "bg-gray-800 text-white shadow"
+                : "text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            Catalog ({metrics.length})
+          </button>
+          <button
+            onClick={() => setTab("candidates")}
+            className={`inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all ${
+              tab === "candidates"
+                ? "bg-gray-800 text-white shadow"
+                : "text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            Candidates{candidateCount !== null ? ` (${candidateCount})` : ""}
+          </button>
+        </div>
+
+        {tab === "catalog" ? (
+          <CatalogTab
+            metrics={metrics}
+            dimensions={dimensions}
+            connection={activeConnection}
+            onRefresh={loadData}
+          />
+        ) : (
+          <CandidatesTab
+            connection={activeConnection}
+            onRefresh={loadData}
+            onCandidateCount={setCandidateCount}
+          />
+        )}
       </div>
-
-      {tab === "catalog" ? (
-        <CatalogTab
-          metrics={metrics}
-          dimensions={dimensions}
-          connection={activeConnection}
-          onRefresh={loadData}
-        />
-      ) : (
-        <CandidatesTab
-          connection={activeConnection}
-          onRefresh={loadData}
-          onCandidateCount={setCandidateCount}
-        />
-      )}
-    </div>
+    </ConnectionWorkspaceShell>
   );
 }

@@ -15,6 +15,11 @@ export interface ConnectionSummary {
   name: string;
   isActive: boolean;
   dialect: string | null;
+  connectorType?: "sql" | "file" | "api";
+  hasCredentials?: boolean;
+  hasSchema?: boolean;
+  hasDomain?: boolean;
+  onboardingPhase?: string | null;
 }
 
 interface ConnectionsListResult {
