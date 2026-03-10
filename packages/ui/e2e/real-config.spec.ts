@@ -22,7 +22,9 @@ test.describe("E2E: real config", () => {
 
     // Database connector
     await page.goto("/connection/new?type=sql#connect", { waitUntil: "domcontentloaded" });
-    await page.locator("input").nth(1).fill(POSTGRES_URL);
+    await page
+      .getByPlaceholder("trino://user:pass@host:443/catalog/schema")
+      .fill(POSTGRES_URL);
     await completeConnectStep(page, dbName);
     await expect(page.getByText(dbName)).toBeVisible({ timeout: 15_000 });
 
