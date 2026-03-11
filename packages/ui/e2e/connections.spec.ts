@@ -11,7 +11,7 @@ test.describe("Connections", () => {
   test("connections landing page opens the active connection workspace", async ({ page }) => {
     await page.goto("/connections");
 
-    await expect(page).toHaveURL(/\/connection\/production\/?$/);
+    await expect(page).toHaveURL(/\/connection(\/production\/?|\?name=production)$/);
     await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
     await expect(page.getByRole("link", { name: "production" })).toBeVisible();
     await expect(page.getByRole("link", { name: "staging" })).toBeVisible();
@@ -320,7 +320,7 @@ tables:
   });
 
   test("connection detail route opens the overview shell", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
 
     await expect(page.getByRole("link", { name: "production" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
@@ -330,7 +330,7 @@ tables:
   });
 
   test("connection insights route renders scoped insights", async ({ page }) => {
-    await page.goto("/connection/production/insights");
+    await page.goto("/connection/insights?name=production");
 
     await expect(page.getByRole("link", { name: "production" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Insights" })).toBeVisible();
@@ -338,7 +338,7 @@ tables:
   });
 
   test("connection knowledge route renders scoped knowledge", async ({ page }) => {
-    await page.goto("/connection/production/knowledge");
+    await page.goto("/connection/knowledge?name=production");
 
     await expect(page.getByRole("link", { name: "production" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Knowledge", exact: true })).toBeVisible();
@@ -347,14 +347,14 @@ tables:
   });
 
   test("drawer selection switches connections", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
 
     await page.getByRole("link", { name: "staging" }).click();
     await expect(page).toHaveURL(/\/connection\/(staging\/?)?(\?name=staging)?$/);
   });
 
   test("action menu routes completed connections to re-configure", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
 
     await page.getByRole("button", { name: "Connection actions" }).click();
     await page.getByRole("link", { name: "Re-configure" }).click();
@@ -363,7 +363,7 @@ tables:
   });
 
   test("action menu shows configure for incomplete connections", async ({ page }) => {
-    await page.goto("/connection/staging");
+    await page.goto("/connection?name=staging");
 
     await page.getByRole("button", { name: "Connection actions" }).click();
     await expect(page.getByRole("link", { name: "Configure" })).toBeVisible();
@@ -427,7 +427,7 @@ tables:
       return { success: true, name: copyName, dialect: "postgresql" };
     });
 
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
     await page.getByRole("button", { name: "Connection actions" }).click();
     await page.getByRole("button", { name: "Duplicate" }).click();
 
@@ -474,7 +474,7 @@ tables:
       return { success: true };
     });
 
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
     await page.getByRole("button", { name: "Connection actions" }).click();
     await page.getByRole("button", { name: "Delete" }).click();
 
