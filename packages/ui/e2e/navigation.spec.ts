@@ -23,7 +23,7 @@ test.describe("Navigation", () => {
   test("drawer renders connections and advanced links", async ({
     page,
   }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
     await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Advanced" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Metrics" })).toBeVisible();
@@ -32,14 +32,14 @@ test.describe("Navigation", () => {
   });
 
   test("advanced drawer links navigate between utility pages", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
 
     await page.getByRole("link", { name: "Traces" }).click();
     await expect(page).toHaveURL(/\/traces/);
   });
 
   test("connection tabs use the active underline state", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
     const overviewLink = page.getByRole("link", { name: "Overview" });
     await expect(overviewLink).toHaveClass(/border-brand/);
 
@@ -48,13 +48,13 @@ test.describe("Navigation", () => {
   });
 
   test("connection drawer links switch routes", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
     await page.getByRole("link", { name: "staging" }).click();
-    await expect(page).toHaveURL(/\/connection\/staging\/?$/);
+    await expect(page).toHaveURL(/\/connection\/(staging\/?)?(\?name=staging)?$/);
   });
 
   test("new connection button opens the wizard", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
     await page.getByRole("link", { name: /^\+ New$/ }).click();
     await expect(page).toHaveURL(/\/connection\/new\/#connect$/);
   });
