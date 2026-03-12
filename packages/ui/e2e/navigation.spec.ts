@@ -55,7 +55,7 @@ test.describe("Navigation", () => {
   });
 
   test("connection tabs keep pretty routes and client-side navigation", async ({ page }) => {
-    await page.goto("/connection/production");
+    await page.goto("/connection?name=production");
     await expect(page).toHaveURL(/\/connection\/production\/?$/);
     await expect(page.evaluate(() => window.sessionStorage.getItem("doc-load-count"))).resolves.toBe(
       "1",
