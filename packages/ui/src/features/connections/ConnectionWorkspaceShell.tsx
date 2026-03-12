@@ -7,7 +7,7 @@ import { DialectIcon } from "@/components/DialectIcon";
 import { Button } from "@/components/ui/button";
 import { useConnections } from "@/lib/connection-context";
 import { cn } from "@/lib/utils";
-import { buildConnectionAppHref, getConnectionOnboardingDotClass } from "./utils";
+import { buildConnectionAppHref, buildConnectionRoute, getConnectionOnboardingDotClass } from "./utils";
 
 type WorkspaceView = "overview" | "insights" | "knowledge" | null;
 type AdvancedView = "metrics" | "traces" | null;
@@ -28,12 +28,15 @@ export function ConnectionWorkspaceShell({
 
   const drawerItems = useMemo(
     () =>
-      connections.map((connection) => ({
-        ...connection,
-        href: buildConnectionAppHref(connection.name, currentView ?? "overview"),
-        isSelected: connection.name === selectedName,
-        isActive: connection.name === activeConnection,
-      })),
+      connections.map((connection) => {
+        const route = buildConnectionRoute(connection.name, currentView ?? "overview");
+        return {
+          ...connection,
+          href: route.appHref,
+          isSelected: connection.name === selectedName,
+          isActive: connection.name === activeConnection,
+        };
+      }),
     [activeConnection, connections, currentView, selectedName],
   );
 

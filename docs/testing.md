@@ -2,15 +2,16 @@
 
 ## Overview
 
-db-mcp has three layers of testing across Python and TypeScript:
+db-mcp has four practical test surfaces across Python and TypeScript:
 
-| Layer | Tool | Location | Tests | What it covers |
-|-------|------|----------|-------|----------------|
-| Python unit | pytest | `packages/core/tests/` | 49 | Core logic: onboarding, config, dialect, introspection, server |
-| UI unit | Vitest | `packages/ui/src/__tests__/` | 20 | Pure functions: BICP client, utilities, link parsing |
-| UI E2E | Playwright | `packages/ui/e2e/` | 24 | Full user flows: connectors, context viewer, navigation |
+| Surface | Tool | Entry point | What code it exercises |
+|--------|------|-------------|-------------------------|
+| Python unit | pytest | `packages/core/tests/` | Python source in `packages/core/src/db_mcp/**` with mocked I/O |
+| UI unit | Vitest | `packages/ui/src/**/*.test.ts` | Isolated TS/React modules in `packages/ui/src/**` |
+| Mocked browser E2E | Playwright | `packages/ui/playwright.config.ts` | Next dev server from `packages/ui/src/**` with mocked BICP responses |
+| Static/server E2E | Playwright | `packages/ui/playwright.real.config.ts` | Built `packages/ui/dist`, staged into `packages/core/src/db_mcp/static`, then served by `db_mcp.ui_server` |
 
-**Total: 93 tests**
+The key distinction is the last row: release binaries and `db-mcp ui` do not run the Next dev server. They serve the staged static bundle from `packages/core/src/db_mcp/static`.
 
 ## Running Tests
 
@@ -51,20 +52,48 @@ bunx vitest run --coverage
 ```bash
 cd packages/ui
 
-# Run all E2E tests (headless, starts dev server automatically)
+# Run mocked browser E2E against Next dev
 bunx playwright test
 
-# Interactive UI mode (best for debugging)
+# Run static/server E2E against the Python UI server
+bun run test:e2e:real
+
+# Run the release-gating static navigation smoke only
+bun run test:e2e:static
+
+# Interactive UI mode for mocked E2E
 bunx playwright test --ui
 
 # Watch tests run in browser
 bunx playwright test --headed
 
-# Run a single spec
+# Run a single mocked spec
 bunx playwright test connectors.spec.ts
 ```
 
 First-time setup: `bunx playwright install chromium`
+
+## Static UI Staging
+
+`packages/core/src/db_mcp/static` is a generated build artifact, not source. Always stage it through:
+
+```bash
+./scripts/stage_ui_static.sh --build --label local
+```
+
+That script copies `packages/ui/dist` into `packages/core/src/db_mcp/static` and writes provenance to `packages/core/src/db_mcp/static/.build-info.json` with:
+- git SHA
+- dirty flag
+- UTC build timestamp
+- staging label
+- UI source hash
+
+When running `db-mcp ui` from source, the Python UI server validates that the staged bundle hash matches the current `packages/ui` sources and refuses to start if it is stale. The only bypass is `DB_MCP_UI_SKIP_STATIC_CHECK=1`.
+
+The same staging script is used by:
+- `scripts/dev.sh`
+- `packages/ui/playwright.real.config.ts`
+- `.github/workflows/release.yml`
 
 ## CI/CD
 
@@ -73,8 +102,9 @@ All tests run automatically via GitHub Actions:
 | Workflow | File | Trigger | What it runs |
 |----------|------|---------|--------------|
 | Lint & Unit Tests | `.github/workflows/lint.yml` | Push to `main`, all PRs | Ruff + pytest (Python), ESLint + tsc + Vitest (UI) |
-| E2E Tests | `.github/workflows/e2e.yml` | Push to `main`, PRs touching `packages/ui/**` | Playwright (Chromium only) |
-| Release | `.github/workflows/release.yml` | Version tags (`v*`) | Platform binary builds |
+| Mocked E2E | `.github/workflows/e2e.yml` | Push to `main`, PRs touching `packages/ui/**` | Playwright against Next dev with mocked BICP |
+| Static/server E2E | `.github/workflows/e2e-real.yml` | Push to `main`, PRs touching app/runtime paths | Playwright against the Python UI server serving staged static assets |
+| Release | `.github/workflows/release.yml` | Version tags (`v*`) | Static navigation smoke, then platform binary builds |
 
 ## Test Architecture
 
@@ -112,7 +142,7 @@ Fast, isolated tests for exported pure functions. Uses jsdom environment with `@
 | `utils.test.ts` | 7 | `cn` utility (class merging, tailwind dedup, edge cases) |
 | `parse-db-link.test.ts` | 6 | `parseDbLink` (full/partial links, invalid inputs) |
 
-### UI E2E Tests (Playwright)
+### Mocked Browser E2E (Playwright)
 
 Browser-level tests that mock all BICP (JSON-RPC) calls at the network layer via `page.route()`. No real backend needed — tests are fast and deterministic.
 
@@ -179,3 +209,13 @@ Browser-level tests that mock all BICP (JSON-RPC) calls at the network layer via
 3. Override BICP responses with `bicpMock.on("method", handler)` for non-happy-path tests
 4. Use `bicpMock.getCalls("method")` to assert the UI sent correct params
 5. Run: `bunx playwright test your-file.spec.ts`
+
+### Static/Server E2E (Playwright)
+
+These tests use `packages/ui/playwright.real.config.ts`. That config:
+- builds `packages/ui/dist`
+- stages the bundle through `./scripts/stage_ui_static.sh`
+- starts `db_mcp.ui_server`
+- tests the same serving path used by `db-mcp ui`
+
+Use this surface for routing, asset-loading, and release-path regressions.

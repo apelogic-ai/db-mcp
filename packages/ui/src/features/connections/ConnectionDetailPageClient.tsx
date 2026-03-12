@@ -15,8 +15,8 @@ import { ConnectionStatusSteps, type ConnectionStepStatus } from "./ConnectionSt
 import type { ConnectionGetResult, CreateResult, DeleteResult } from "./types";
 import { ConnectionWorkspaceShell } from "./ConnectionWorkspaceShell";
 import {
+  buildConnectionRoute,
   buildConnectionAppHref,
-  buildConnectionHref,
   buildWizardHref,
   getConnectionOnboardingTone,
   getPersistedWizardStatuses,
@@ -105,7 +105,7 @@ export function ConnectionDetailPageClient({
   }, [loadPageData]);
 
   useEffect(() => {
-    const nextUrl = buildConnectionHref(name, view);
+    const nextUrl = buildConnectionRoute(name, view).href;
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     if (currentUrl !== nextUrl) {
       window.history.replaceState(window.history.state, "", nextUrl);
@@ -113,9 +113,21 @@ export function ConnectionDetailPageClient({
   }, [name, view]);
 
   const sectionLinks: Array<{ id: DetailView; label: string; href: string }> = [
-    { id: "overview", label: "Overview", href: buildConnectionAppHref(name) },
-    { id: "insights", label: "Insights", href: buildConnectionAppHref(name, "insights") },
-    { id: "knowledge", label: "Knowledge", href: buildConnectionAppHref(name, "knowledge") },
+    {
+      id: "overview",
+      label: "Overview",
+      href: buildConnectionRoute(name).appHref,
+    },
+    {
+      id: "insights",
+      label: "Insights",
+      href: buildConnectionRoute(name, "insights").appHref,
+    },
+    {
+      id: "knowledge",
+      label: "Knowledge",
+      href: buildConnectionRoute(name, "knowledge").appHref,
+    },
   ];
 
   const currentConnection = useMemo(
@@ -138,6 +150,19 @@ export function ConnectionDetailPageClient({
   const semanticCircleOffset = summary
     ? 100 - (100 * summary.semantic.score) / summary.semantic.maxScore
     : 100;
+  const currentAppHref = buildConnectionAppHref(name, view);
+
+  const navigateToSection = useCallback((targetHref: string) => {
+    const currentVisibleUrl =
+      typeof window === "undefined"
+        ? currentAppHref
+        : `${window.location.pathname}${window.location.search}`;
+
+    if (currentVisibleUrl !== currentAppHref) {
+      window.history.replaceState(window.history.state, "", currentAppHref);
+    }
+    router.push(targetHref, { scroll: false });
+  }, [currentAppHref, router]);
 
   const setupRows = useMemo(() => {
     return [
@@ -250,6 +275,10 @@ export function ConnectionDetailPageClient({
               <Link
                 key={section.id}
                 href={section.href}
+                onClick={(event) => {
+                  event.preventDefault();
+                  navigateToSection(section.href);
+                }}
                 className={`inline-flex items-center justify-center whitespace-nowrap border-b-2 px-3 py-1 text-sm font-medium transition-all ${
                   view === section.id
                     ? "border-brand text-brand"

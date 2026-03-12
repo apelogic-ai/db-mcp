@@ -192,28 +192,37 @@ export function buildConnectionHref(
   name: string,
   section: "overview" | "insights" | "knowledge" = "overview",
 ): string {
-  const encodedName = encodeURIComponent(name);
-  if (section === "insights") {
-    return `/connection/${encodedName}/insights`;
-  }
-  if (section === "knowledge") {
-    return `/connection/${encodedName}/knowledge`;
-  }
-  return `/connection/${encodedName}`;
+  return buildConnectionRoute(name, section).href;
 }
 
 export function buildConnectionAppHref(
   name: string,
   section: "overview" | "insights" | "knowledge" = "overview",
 ): string {
+  return buildConnectionRoute(name, section).appHref;
+}
+
+export function buildConnectionRoute(
+  name: string,
+  section: "overview" | "insights" | "knowledge" = "overview",
+): { href: string; appHref: string } {
   const encodedName = encodeURIComponent(name);
   if (section === "insights") {
-    return `/connection/insights?name=${encodedName}`;
+    return {
+      href: `/connection/${encodedName}/insights`,
+      appHref: `/connection/insights?name=${encodedName}`,
+    };
   }
   if (section === "knowledge") {
-    return `/connection/knowledge?name=${encodedName}`;
+    return {
+      href: `/connection/${encodedName}/knowledge`,
+      appHref: `/connection/knowledge?name=${encodedName}`,
+    };
   }
-  return `/connection?name=${encodedName}`;
+  return {
+    href: `/connection/${encodedName}`,
+    appHref: `/connection?name=${encodedName}`,
+  };
 }
 
 export function resolveConnectionName(

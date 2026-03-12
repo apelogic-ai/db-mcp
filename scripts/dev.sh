@@ -8,14 +8,11 @@ cd "$(dirname "$0")/.."
 echo "Building UI..."
 cd packages/ui
 bun install --frozen-lockfile 2>/dev/null || bun install
-bun run build
-
-echo "Copying to static directory..."
-rm -rf ../core/src/db_mcp/static
-cp -r dist ../core/src/db_mcp/static
+cd ../..
+bash ./scripts/stage_ui_static.sh --build --label dev-sh
 
 echo "Starting backend server..."
-cd ../core
+cd packages/core
 
 # Open browser after short delay
 (sleep 2 && open http://localhost:8080) &

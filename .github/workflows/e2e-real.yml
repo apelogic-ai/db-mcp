@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "packages/**"
+      - "scripts/stage_ui_static.sh"
       - "uv.lock"
       - "pyproject.toml"
       - ".github/workflows/e2e-real.yml"
@@ -47,19 +48,10 @@ jobs:
         working-directory: packages/ui
         run: bun install
 
-      - name: Build UI static export
-        working-directory: packages/ui
-        run: bunx next build
-
-      - name: Copy UI build to Python static dir
-        run: |
-          rm -rf packages/core/src/db_mcp/static
-          cp -r packages/ui/dist packages/core/src/db_mcp/static
-
       - name: Install Playwright Chromium
         working-directory: packages/ui
         run: bunx playwright install chromium --with-deps
 
-      - name: Run real E2E (db-mcp UI server + connectors)
+      - name: Run real E2E (build static UI, stage it, serve via Python UI server)
         working-directory: packages/ui
         run: bun run test:e2e:real

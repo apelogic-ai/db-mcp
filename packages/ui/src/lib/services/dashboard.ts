@@ -42,7 +42,7 @@ export function buildActionQueue(
     ? buildWizardHref(setupStep, { name: activeConnection })
     : "/connection/new#discover";
   const insightsUrl = activeConnection
-    ? `${buildConnectionAppHref(activeConnection, "insights")}&wizard=triage&days=7`
+    ? `${buildConnectionAppHref(activeConnection, "insights")}?wizard=triage&days=7`
     : "/connections";
   const knowledgeUrl = activeConnection
     ? buildConnectionAppHref(activeConnection, "knowledge")

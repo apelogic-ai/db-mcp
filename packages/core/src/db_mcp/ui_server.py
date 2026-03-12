@@ -9,7 +9,10 @@ This module provides a FastAPI server that:
 
 import json
 import logging
+import os
+import subprocess
 from contextlib import asynccontextmanager
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,92 @@ def get_static_dir() -> Path:
     else:
         # Running from source
         return Path(__file__).parent / "static"
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def _compute_ui_source_hash(ui_dir: Path) -> str:
+    targets = [
+        ui_dir / "src",
+        ui_dir / "public",
+        ui_dir / "next.config.js",
+        ui_dir / "package.json",
+        ui_dir / "postcss.config.js",
+        ui_dir / "tailwind.config.js",
+        ui_dir / "tsconfig.json",
+    ]
+    digest = sha256()
+    for target in targets:
+        if target.is_dir():
+            paths = sorted(path for path in target.rglob("*") if path.is_file())
+        elif target.is_file():
+            paths = [target]
+        else:
+            continue
+
+        for path in paths:
+            relative = path.relative_to(ui_dir)
+            digest.update(str(relative).encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def validate_static_bundle_provenance() -> None:
+    """Fail fast when source-mode UI server would serve stale staged assets."""
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return
+    if STATIC_DIR.exists() is False:
+        raise RuntimeError(
+            "Static UI bundle missing. Run ./scripts/stage_ui_static.sh --build before db-mcp ui."
+        )
+    if (STATIC_DIR / ".build-info.json").exists() is False:
+        raise RuntimeError(
+            "Static UI provenance missing. "
+            "Re-stage the UI with ./scripts/stage_ui_static.sh --build."
+        )
+    if os.environ.get("DB_MCP_UI_SKIP_STATIC_CHECK", "").strip() == "1":
+        logger.warning("Skipping static UI provenance check because DB_MCP_UI_SKIP_STATIC_CHECK=1")
+        return
+
+    build_info = json.loads((STATIC_DIR / ".build-info.json").read_text())
+    repo_root = _repo_root()
+    ui_dir = repo_root / "packages" / "ui"
+    current_source_hash = _compute_ui_source_hash(ui_dir)
+    current_git_sha = "unknown"
+    try:
+        current_git_sha = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+    except Exception:
+        pass
+
+    if build_info.get("uiSourceHash") != current_source_hash:
+        raise RuntimeError(
+            "Static UI bundle is stale for the current packages/ui sources. "
+            "Run ./scripts/stage_ui_static.sh --build before starting db-mcp ui."
+        )
+
+    built_sha = build_info.get("gitSha")
+    sha_mismatch = (
+        built_sha
+        and built_sha != "unknown"
+        and current_git_sha != "unknown"
+        and built_sha != current_git_sha
+    )
+    if sha_mismatch:
+        logger.warning(
+            "Static UI bundle was staged from git SHA %s but current checkout is %s. "
+            "Source hash matched, so startup is allowed.",
+            built_sha,
+            current_git_sha,
+        )
 
 
 # Static files directory (UI build output)
@@ -83,6 +172,7 @@ async def lifespan(app: FastAPI):
 
     # Startup
     logger.info("Starting db-mcp UI server")
+    validate_static_bundle_provenance()
     _agent = DBMCPAgent()
     logger.info("BICP agent initialized")
 

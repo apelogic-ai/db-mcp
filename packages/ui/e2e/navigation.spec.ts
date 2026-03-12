@@ -1,11 +1,18 @@
 import { test, expect } from "./fixtures";
 
 test.describe("Navigation", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      const count = Number(window.sessionStorage.getItem("doc-load-count") || "0");
+      window.sessionStorage.setItem("doc-load-count", String(count + 1));
+    });
+  });
+
   test("root redirects to connections", async ({
     page,
   }) => {
     await page.goto("/");
-    await expect(page).toHaveURL(/\/connections\/?$/);
+    await expect(page).toHaveURL(/\/connection\/(production\/?)?(\?name=production)?$/);
   });
 
   test("root still redirects to connections when no connections exist", async ({
@@ -45,6 +52,26 @@ test.describe("Navigation", () => {
 
     const insightsLink = page.getByRole("link", { name: "Insights" });
     await expect(insightsLink).not.toHaveClass(/border-brand/);
+  });
+
+  test("connection tabs keep pretty routes and client-side navigation", async ({ page }) => {
+    await page.goto("/connection/production");
+    await expect(page).toHaveURL(/\/connection\/production\/?$/);
+    await expect(page.evaluate(() => window.sessionStorage.getItem("doc-load-count"))).resolves.toBe(
+      "1",
+    );
+
+    await page.getByRole("link", { name: "Insights" }).click();
+    await expect(page).toHaveURL(/\/connection\/production\/insights\/?$/);
+    await expect(page.evaluate(() => window.sessionStorage.getItem("doc-load-count"))).resolves.toBe(
+      "1",
+    );
+
+    await page.getByRole("link", { name: "Knowledge" }).click();
+    await expect(page).toHaveURL(/\/connection\/production\/knowledge\/?$/);
+    await expect(page.evaluate(() => window.sessionStorage.getItem("doc-load-count"))).resolves.toBe(
+      "1",
+    );
   });
 
   test("connection drawer links switch routes", async ({ page }) => {

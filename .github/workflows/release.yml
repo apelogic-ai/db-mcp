@@ -56,9 +56,47 @@ jobs:
           print(f"Version OK: {version}")
           PY
 
+  verify-static-ui:
+    name: Verify Static UI Navigation
+    needs: guard
+    runs-on: ubuntu-latest
+
+    env:
+      PW_PORT: "18080"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.x"
+
+      - name: Install Python deps
+        run: uv sync --all-packages
+
+      - name: Install UI deps
+        working-directory: packages/ui
+        run: bun install
+
+      - name: Install Playwright Chromium
+        working-directory: packages/ui
+        run: bunx playwright install chromium --with-deps
+
+      - name: Verify staged static UI navigation
+        working-directory: packages/ui
+        run: bun run test:e2e:static
+
   build:
     name: Build ${{ matrix.platform }}
-    needs: guard
+    needs: [guard, verify-static-ui]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -104,12 +142,9 @@ jobs:
           bun install
           bun run build
 
-      - name: Copy UI to static directory
+      - name: Stage UI for packaged server
         shell: bash
-        run: |
-          rm -rf packages/core/src/db_mcp/static || true
-          mkdir -p packages/core/src/db_mcp/static
-          cp -r packages/ui/dist/* packages/core/src/db_mcp/static/
+        run: ./scripts/stage_ui_static.sh --label release
 
       - name: Install dependencies
         working-directory: packages/core

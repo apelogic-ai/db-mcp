@@ -12,7 +12,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
-    "test:e2e:real": "playwright test -c playwright.real.config.ts"
+    "test:e2e:real": "playwright test -c playwright.real.config.ts",
+    "test:e2e:static": "playwright test -c playwright.real.config.ts e2e/static-navigation.spec.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
@@ -50,5 +51,5 @@
     "typescript": "^5.4.0",
     "vitest": "^4.0.18"
   },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  "packageManager": "bun@1.2.21"
 }

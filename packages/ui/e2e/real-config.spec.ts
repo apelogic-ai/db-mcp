@@ -15,6 +15,13 @@ async function completeConnectStep(page: Page, name: string) {
 }
 
 test.describe("E2E: real config", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      const count = Number(window.sessionStorage.getItem("doc-load-count") || "0");
+      window.sessionStorage.setItem("doc-load-count", String(count + 1));
+    });
+  });
+
   test("can create + test DB/API/File connectors", async ({ page }, testInfo) => {
     const dbName = `mrna-${Date.now()}`;
     const apiName = `polymarket-${Date.now()}`;
