@@ -9,6 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.6.9] - 2026-03-13
+
+## Highlights
+- Added knowledge vault usage visibility in the explorer so high-value files and folders show actual access counts instead of raw byte size.
+- Hardened connection navigation across Next dev, staged static UI, and packaged `db-mcp ui` so release-path routing is tested and gated before builds ship.
+- Enabled agent trace capture by default and auto-generated a stable trace user ID on first capture so persisted traces appear without manual setup.
+
+## Breaking changes
+- None
+
+## Features
+- PR #55: fetched and rendered `context/usage` in the connection Knowledge workspace, with usage-first explorer badges and regression coverage in both core and UI tests.
+- Expanded backend usage aggregation to include root vault files, traced file-path references, and more context surfaces so usage counts better reflect what the agent actually touched.
+- Added explicit static UI staging/provenance validation and static navigation smoke coverage to align shipped `db-mcp ui` assets with the checked-in Next source.
+
+## Fixes
+- Fixed connection tab navigation so pretty URLs, internal app routes, and packaged static navigation no longer drift across dev and release paths.
+- Fixed the mocked Playwright entry-path regression for connection tabs and made the CI failure reporter visible.
+- Fixed the trace startup gap where enabled agent traces would still fail to persist if no `user_id` had been configured yet.
+- Restored the preserved design/runtime docs that were missing from the branch after cleanup.
+
+## Security
+- None
+
+## Upgrade notes
+- Existing connections and vault content remain compatible.
+- First agent startup after upgrade may write a new `user_id` into `~/.db-mcp/config.yaml` and begin creating `traces/<user_id>/YYYY-MM-DD.jsonl` files automatically.
+- Release and packaged UI verification now depend on the static navigation smoke passing before binaries are built.
+
+## Known issues
+- `uv run pytest packages/core/tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `packages/core/tests/test_database.py::test_connection`.
+- `bun run lint` still reports existing React hook warnings in `packages/ui/src/components/context/CodeEditor.tsx` and `packages/ui/src/components/context/SchemaExplorer.tsx`.
+
+
+## [0.6.8] - 2026-03-09
+
+## Highlights
+- Rebuilt the web UI around connection-first navigation, with every connection getting a first-class workspace and URL.
+- Added a multi-step connection setup wizard for new and incomplete connections, including inline connector configuration editing.
+- Improved onboarding state tracking across the drawer, Overview, and wizard so setup progress is clearer and more consistent.
+
+## Breaking changes
+- None
+
+## Features
+- PR #52: new `/connections`, `/connection/:name`, and `/connection/new` flows with a persistent connection drawer and per-connection Overview, Insights, and Knowledge surfaces.
+- PR #52: new connection setup wizard with `Connect and Test`, `Discover`, and `Sample Data` steps, plus connection-scoped resume behavior for configure/re-configure actions.
+- PR #52: inline `connector.yaml` create/edit support directly inside the wizard, including draft connection support before the initial save.
+- PR #52: operator-facing Overview redesign with a shared connection summary card, semantic-layer progress, and recommended actions tied to onboarding checkpoints.
+
+## Fixes
+- Fixed direct `/connection/...` UI routing and nested connection pages in the backend UI server.
+- Fixed wizard test behavior to merge draft DB URL values with `connector.yaml` settings so connection checks follow the same path as the MCP server.
+- Fixed discovery/sample persistence so re-configure reuses saved schema state instead of losing prior onboarding progress.
+- Fixed BICP JSON serialization for `date` values returned from sampling results.
+- Updated real and mocked Playwright coverage to follow the new wizard-based onboarding flow.
+
+## Security
+- None
+
+## Upgrade notes
+- Existing connections remain compatible and now open in the new connection workspace automatically.
+- Hosts serving the exported UI should continue to route `/connection/:name` and nested connection URLs through the Python UI server.
+
+## Known issues
+- The broad mocked GitHub Playwright workflow can still hang before surfacing the first failing spec, even though targeted local connection E2E and real config smoke runs pass.
+- `bun run lint` still reports existing React hook warnings in `packages/ui/src/components/context/CodeEditor.tsx` and `packages/ui/src/components/context/SchemaExplorer.tsx`.
+
 ## [0.6.7] - 2026-03-05
 
 ## Highlights
