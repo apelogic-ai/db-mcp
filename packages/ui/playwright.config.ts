@@ -33,7 +33,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: `bun run dev --port ${port}`,
+    command: `DISABLE_BICP_PROXY=1 bun run dev --port ${port}`,
     url: `http://localhost:${port}`,
     reuseExistingServer: false,
   },

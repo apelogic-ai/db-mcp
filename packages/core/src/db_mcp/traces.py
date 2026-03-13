@@ -51,9 +51,9 @@ def is_traces_enabled() -> bool:
     from db_mcp.cli import CONFIG_FILE, load_config
 
     if not CONFIG_FILE.exists():
-        return False
+        return True
     config = load_config()
-    return config.get("traces_enabled", False)
+    return config.get("traces_enabled", True)
 
 
 def get_traces_dir(connection_path: Path, user_id: str) -> Path:
@@ -168,8 +168,9 @@ def setup_trace_exporter(connection_path: Path) -> JSONLSpanExporter | None:
 
     user_id = get_user_id_from_config()
     if not user_id:
-        logger.warning("Traces enabled but no user_id configured")
-        return None
+        user_id = generate_user_id()
+        set_user_id_in_config(user_id)
+        logger.info(f"Generated trace user_id: {user_id}")
 
     logger.info(f"Setting up trace exporter: {connection_path}/traces/{user_id}/")
 

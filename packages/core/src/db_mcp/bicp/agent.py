@@ -2710,6 +2710,38 @@ This knowledge helps the AI generate better queries over time.
 
         file_counts = defaultdict(int)
         file_last_used = {}
+        ctx_dirs = (
+            "schema",
+            "examples",
+            "instructions",
+            "domain",
+            "data",
+            "learnings",
+            "metrics",
+        )
+        root_files = ("PROTOCOL.md", "connector.yaml", "knowledge_gaps.yaml")
+
+        def _normalize_context_path(raw_path: str | None) -> str | None:
+            if not raw_path or not isinstance(raw_path, str):
+                return None
+
+            import urllib.parse
+
+            cleaned = urllib.parse.unquote(raw_path.replace("file://", "")).strip().strip("\"'")
+            path_obj = Path(cleaned)
+
+            if path_obj.is_absolute() and conn_path not in path_obj.parents:
+                return None
+
+            if path_obj.name in root_files:
+                return path_obj.name
+
+            parts = path_obj.parts
+            for idx, part in enumerate(parts):
+                if part in ctx_dirs and idx + 1 < len(parts):
+                    return "/".join(parts[idx:])
+
+            return None
 
         # Process traces from each user_id and date
         for user_id in user_ids:
@@ -2737,16 +2769,6 @@ This knowledge helps the AI generate better queries over time.
                         attrs = span.get("attributes", {})
                         span_timestamp = span.get("start_time", 0)
 
-                        ctx_dirs = (
-                            "schema",
-                            "examples",
-                            "instructions",
-                            "domain",
-                            "data",
-                            "learnings",
-                            "metrics",
-                        )
-
                         def _track(file_key: str) -> None:
                             file_counts[file_key] += 1
                             prev = file_last_used.get(file_key, 0)
@@ -2767,26 +2789,30 @@ This knowledge helps the AI generate better queries over time.
                             ):
                                 fk = f"{m.group(1)}/{m.group(2)}"
                                 _track(fk)
+                            for root_file in _re.findall(
+                                r"(?:^|[\s/])("
+                                + "|".join(_re.escape(name) for name in root_files)
+                                + r")(?=$|[\s;|>&])",
+                                command,
+                            ):
+                                _track(root_file)
+
+                        if tool_name == "protocol_tool":
+                            _track("PROTOCOL.md")
 
                         # Source 2: Knowledge file loads
                         files_used = attrs.get("knowledge.files_used")
                         if files_used:
                             for fp in files_used:
-                                _track(fp)
+                                normalized = _normalize_context_path(fp)
+                                if normalized:
+                                    _track(normalized)
 
-                        # Source 3: Resource reads (MCP)
-                        if span.get("name") == "resources/read":
-                            uri = attrs.get("resource.uri")
-                            if uri and uri.startswith("file://"):
-                                import urllib.parse
-
-                                fp = urllib.parse.unquote(uri.replace("file://", ""))
-                                for cd in ctx_dirs:
-                                    if cd in fp:
-                                        parts = fp.split(cd, 1)
-                                        if len(parts) > 1:
-                                            _track(f"{cd}{parts[1]}")
-                                            break
+                        # Source 3: Generic traced path references
+                        for attr_name in ("path", "file_path", "resource.uri"):
+                            normalized = _normalize_context_path(attrs.get(attr_name))
+                            if normalized:
+                                _track(normalized)
 
         # Aggregate folder counts
         folder_counts = defaultdict(int)

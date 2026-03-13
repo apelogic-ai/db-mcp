@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CodeEditor } from "@/components/context/CodeEditor";
-import { type ConnectionNode, TreeView } from "@/components/context/TreeView";
+import { type ConnectionNode, TreeView, type UsageData } from "@/components/context/TreeView";
 import { useBICP } from "@/lib/bicp-context";
 
 interface ContextTreeResult {
@@ -53,6 +53,7 @@ export function ConnectionKnowledgeWorkspace({
   const [treeWidth, setTreeWidth] = useState(320);
   const [treeLoading, setTreeLoading] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
+  const [usage, setUsage] = useState<UsageData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -121,6 +122,31 @@ export function ConnectionKnowledgeWorkspace({
     [call, connectionName],
   );
 
+  const fetchUsage = useCallback(async () => {
+    if (!isInitialized) {
+      setUsage(null);
+      return;
+    }
+
+    try {
+      const result = await call<UsageData>("context/usage", {
+        connection: connectionName,
+        days: 7,
+      });
+      setUsage({
+        files: Object.fromEntries(
+          Object.entries(result.files).map(([key, value]) => [`${connectionName}/${key}`, value]),
+        ),
+        folders: Object.fromEntries(
+          Object.entries(result.folders).map(([key, value]) => [`${connectionName}/${key}`, value]),
+        ),
+      });
+    } catch (err) {
+      console.error(`Failed to fetch usage data for ${connectionName}:`, err);
+      setUsage(null);
+    }
+  }, [call, connectionName, isInitialized]);
+
   useEffect(() => {
     setSelectedFile(null);
     setSelectedTreeNode(null);
@@ -128,8 +154,10 @@ export function ConnectionKnowledgeWorkspace({
     setOriginalContent("");
     setIsStockReadme(false);
     setExpandedFolders(new Set());
+    setUsage(null);
     fetchTree();
-  }, [connectionName, fetchTree]);
+    fetchUsage();
+  }, [connectionName, fetchTree, fetchUsage]);
 
   const confirmDiscard = () => {
     if (!isDirty) {
@@ -336,6 +364,7 @@ export function ConnectionKnowledgeWorkspace({
                 return next;
               });
             }}
+            usage={usage}
             hideConnectionLevel
           />
         </div>

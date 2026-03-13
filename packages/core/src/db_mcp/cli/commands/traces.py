@@ -31,19 +31,20 @@ def traces_on():
     A unique user_id is generated on first enable to identify
     your traces when sharing with the team.
     """
-    from db_mcp.traces import generate_user_id, get_user_id_from_config
+    from db_mcp.traces import generate_user_id, get_user_id_from_config, is_traces_enabled
 
     config = load_config()
+    already_enabled = is_traces_enabled()
+    existing_user_id = get_user_id_from_config()
 
     # Check if already enabled
-    if config.get("traces_enabled"):
+    if config.get("traces_enabled") is True and existing_user_id:
         console.print("[dim]Traces already enabled.[/dim]")
-        user_id = config.get("user_id", "unknown")
-        console.print(f"[dim]User ID: {user_id}[/dim]")
+        console.print(f"[dim]User ID: {existing_user_id}[/dim]")
         return
 
     # Generate user_id if not exists
-    user_id = get_user_id_from_config()
+    user_id = existing_user_id
     if not user_id:
         user_id = generate_user_id()
         config["user_id"] = user_id
@@ -53,7 +54,10 @@ def traces_on():
     config["traces_enabled"] = True
     save_config(config)
 
-    console.print("[green]✓ Traces enabled[/green]")
+    message = "[green]✓ Traces enabled[/green]"
+    if already_enabled:
+        message = "[green]✓ Traces explicitly enabled[/green]"
+    console.print(message)
     console.print(f"[dim]User ID: {user_id}[/dim]")
     console.print("[dim]Restart Claude Desktop to start capturing traces.[/dim]")
 
@@ -80,9 +84,11 @@ def traces_off():
 @traces.command("status")
 def traces_status():
     """Show trace capture status and file locations."""
+    from db_mcp.traces import is_traces_enabled
+
     config = load_config()
 
-    enabled = config.get("traces_enabled", False)
+    enabled = is_traces_enabled()
     user_id = config.get("user_id")
 
     console.print("[bold]Trace Capture[/bold]")
@@ -91,7 +97,7 @@ def traces_status():
     if user_id:
         console.print(f"  User ID: [cyan]{user_id}[/cyan]")
     else:
-        console.print("  User ID: [dim]not set (will generate on enable)[/dim]")
+        console.print("  User ID: [dim]not set (will auto-generate on first capture)[/dim]")
 
     # Show trace files for active connection
     active = get_active_connection()
