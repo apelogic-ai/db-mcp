@@ -62,6 +62,7 @@ export class BICPMock {
 
     // Context
     this.on("context/tree", () => mockData.CONTEXT_TREE_HAPPY);
+    this.on("context/usage", () => mockData.CONTEXT_USAGE_HAPPY);
     this.on("context/read", (params) => {
       const path = params?.path as string | undefined;
       if (path === "connector.yaml") {

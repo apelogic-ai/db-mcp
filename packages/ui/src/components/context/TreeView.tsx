@@ -1,5 +1,7 @@
 "use client";
 
+import React from "react";
+
 import { cn } from "@/lib/utils";
 import type { SelectedTreeNode } from "@/lib/context-viewer-context";
 
@@ -186,20 +188,30 @@ function formatTimeAgo(timestamp: number): string {
   return `${Math.floor(diff / 604800)}w ago`;
 }
 
-function UsageBadge({ count, lastUsed, className }: { count: number; lastUsed: number; className?: string }) {
-  if (count === 0) return null;
-  
+function UsageBadge({
+  count,
+  lastUsed,
+  className,
+  showZero = false,
+}: {
+  count: number;
+  lastUsed: number;
+  className?: string;
+  showZero?: boolean;
+}) {
+  if (count === 0 && !showZero) return null;
+
   const isHighUsage = count > 20;
-  const timeAgo = formatTimeAgo(lastUsed);
-  
+  const timeAgo = count > 0 ? formatTimeAgo(lastUsed) : null;
+
   return (
     <span
       className={cn(
         "text-xs",
-        isHighUsage ? "text-orange-400" : "text-gray-500",
-        className
+        count === 0 ? "text-gray-700" : isHighUsage ? "text-orange-400" : "text-gray-500",
+        className,
       )}
-      title={`Used ${count} times, last ${timeAgo}`}
+      title={count > 0 ? `Used ${count} times, last ${timeAgo}` : "No tracked usage yet"}
     >
       {count}x
     </span>
@@ -326,6 +338,7 @@ export function TreeView({
                   count={usage.folders[`${conn.name}/${folder.name}`]?.count || 0}
                   lastUsed={usage.folders[`${conn.name}/${folder.name}`]?.lastUsed || 0}
                   className="ml-auto"
+                  showZero
                 />
               )}
             </div>
@@ -366,10 +379,11 @@ export function TreeView({
                         <UsageBadge
                           count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
                           lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
-                          className="ml-2"
+                          className="ml-auto"
+                          showZero
                         />
                       )}
-                      {file.size !== undefined && (
+                      {!usage && file.size !== undefined && (
                         <span className="text-gray-600 text-xs ml-auto">
                           {formatFileSize(file.size)}
                         </span>
@@ -419,10 +433,11 @@ export function TreeView({
                   <UsageBadge
                     count={usage.files[`${conn.name}/${file.path}`]?.count || 0}
                     lastUsed={usage.files[`${conn.name}/${file.path}`]?.lastUsed || 0}
-                    className="ml-2"
+                    className="ml-auto"
+                    showZero
                   />
                 )}
-                {file.size !== undefined && (
+                {!usage && file.size !== undefined && (
                   <span className="text-gray-600 text-xs ml-auto">
                     {formatFileSize(file.size)}
                   </span>

@@ -349,6 +349,19 @@ export const CONTEXT_TREE_HAPPY = {
   ],
 };
 
+export const CONTEXT_USAGE_HAPPY = {
+  files: {
+    "schema/descriptions.yaml": { count: 12, lastUsed: 1741000000 },
+    "domain/model.yaml": { count: 3, lastUsed: 1741000000 },
+    "instructions/business_rules.yaml": { count: 5, lastUsed: 1741000000 },
+  },
+  folders: {
+    schema: { count: 12, lastUsed: 1741000000 },
+    domain: { count: 3, lastUsed: 1741000000 },
+    instructions: { count: 5, lastUsed: 1741000000 },
+  },
+};
+
 export const CONTEXT_TREE_EMPTY = {
   connections: [],
 };

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+import db_mcp.traces as trace_capture
 from db_mcp.bicp.traces import (
     _extract_sql,
     analyze_traces,
@@ -283,6 +284,53 @@ class TestGetActiveConnectionPath:
         config = yaml.safe_load(config_file.read_text()) or {}
         active = config.get("active_connection")
         assert active is None
+
+
+# ========== trace capture defaults ==========
+
+
+class TestTraceCaptureDefaults:
+    def test_is_traces_enabled_defaults_true_when_config_missing(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+
+        with patch("db_mcp.cli.CONFIG_FILE", config_file):
+            assert trace_capture.is_traces_enabled() is True
+
+    def test_is_traces_enabled_defaults_true_when_key_missing(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("user_id: abcd1234\n")
+
+        with (
+            patch("db_mcp.cli.CONFIG_FILE", config_file),
+            patch("db_mcp.cli.load_config", return_value={"user_id": "abcd1234"}),
+        ):
+            assert trace_capture.is_traces_enabled() is True
+
+    def test_is_traces_enabled_respects_explicit_false(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("traces_enabled: false\n")
+
+        with (
+            patch("db_mcp.cli.CONFIG_FILE", config_file),
+            patch("db_mcp.cli.load_config", return_value={"traces_enabled": False}),
+        ):
+            assert trace_capture.is_traces_enabled() is False
+
+    def test_setup_trace_exporter_generates_user_id_on_first_run(self, tmp_path):
+        connection_path = tmp_path / "top-ledger"
+        connection_path.mkdir()
+
+        with (
+            patch("db_mcp.traces.is_traces_enabled", return_value=True),
+            patch("db_mcp.traces.get_user_id_from_config", return_value=None),
+            patch("db_mcp.traces.generate_user_id", return_value="abcd1234"),
+            patch("db_mcp.traces.set_user_id_in_config") as set_user_id,
+        ):
+            exporter = trace_capture.setup_trace_exporter(connection_path)
+
+        assert isinstance(exporter, trace_capture.JSONLSpanExporter)
+        assert exporter.user_id == "abcd1234"
+        set_user_id.assert_called_once_with("abcd1234")
 
 
 # ========== _extract_sql ==========
