@@ -185,12 +185,13 @@ class Settings(BaseSettings):
     )
 
     # MCP server configuration
-    tool_mode: Literal["detailed", "shell"] = Field(
+    tool_mode: Literal["detailed", "shell", "exec-only"] = Field(
         default="detailed",
         description=(
             "Tool exposure mode: "
             "'detailed' exposes all tools (schema discovery, query helpers, etc.), "
-            "'shell' exposes only the shell tool for query work (agent uses vault filesystem)"
+            "'shell' exposes only the shell tool for query work (agent uses vault filesystem), "
+            "'exec-only' exposes a single container-backed exec tool"
         ),
     )
     tool_profile: Literal["auto", "full", "query"] = Field(

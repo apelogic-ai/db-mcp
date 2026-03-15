@@ -12,6 +12,7 @@ from db_mcp.benchmark.connection import resolve_sql_connection_access
 from db_mcp.benchmark.driver import ClaudeCliDriver, DriverResult, build_claude_command
 from db_mcp.benchmark.loader import load_case_pack
 from db_mcp.benchmark.runner import (
+    EXEC_ONLY_SCENARIO,
     _extract_answer_payload,
     run_benchmark_suite,
     summarize_run_directory,
@@ -38,7 +39,13 @@ class FakeDriver:
         debug_log_path: Path,
         tools: list[str],
     ) -> DriverResult:
-        scenario = "db_mcp" if "db-mcp" in mcp_config_path.read_text() else "raw_dsn"
+        config_text = mcp_config_path.read_text()
+        if '"exec-only"' in config_text:
+            scenario = EXEC_ONLY_SCENARIO
+        elif "db-mcp" in config_text:
+            scenario = "db_mcp"
+        else:
+            scenario = "raw_dsn"
         self.calls.append(
             {
                 "scenario": scenario,
@@ -48,7 +55,15 @@ class FakeDriver:
                 "prompt": prompt,
             }
         )
-        debug_log_path.write_text('{"tool_name":"Bash"}\n{"tool_name":"Bash","status":"error"}\n')
+        if scenario == EXEC_ONLY_SCENARIO:
+            debug_log_path.write_text(
+                '{"tool_name":"mcp__db-mcp__exec"}\n'
+                '{"tool_name":"mcp__db-mcp__exec","status":"error"}\n'
+            )
+        else:
+            debug_log_path.write_text(
+                '{"tool_name":"Bash"}\n{"tool_name":"Bash","status":"error"}\n'
+            )
         return DriverResult(
             stdout=json.dumps(self.outputs[scenario]),
             stderr="",
@@ -488,6 +503,26 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
                 "failure_reason": None,
             },
         },
+        EXEC_ONLY_SCENARIO: {
+            "type": "result",
+            "subtype": "success",
+            "total_cost_usd": 0.09,
+            "usage": {
+                "input_tokens": 90,
+                "output_tokens": 19,
+                "cache_read_input_tokens": 7,
+                "cache_creation_input_tokens": 0,
+            },
+            "structured_output": {
+                "task_id": "count_items",
+                "status": "answered",
+                "answer_value": 3,
+                "answer_text": "3",
+                "evidence_sql": "SELECT COUNT(*) FROM items",
+                "confidence": 0.7,
+                "failure_reason": None,
+            },
+        },
         "raw_dsn": {
             "type": "result",
             "subtype": "success",
@@ -524,21 +559,33 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert (run_dir / "summary.json").exists()
     assert (run_dir / "summary.csv").exists()
     attempts = list((run_dir / "attempts").iterdir())
-    assert len(attempts) == 2
+    assert len(attempts) == 3
 
     summary = summarize_run_directory(run_dir)
-    assert summary["totals"]["attempts"] == 2
+    assert summary["totals"]["attempts"] == 3
     assert summary["scenario_summary"]["db_mcp"]["correct"] == 1
+    assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"]["raw_dsn"]["correct"] == 0
     assert summary["scenario_summary"]["db_mcp"]["input_tokens"] == 100
     assert summary["scenario_summary"]["db_mcp"]["output_tokens"] == 20
     assert summary["scenario_summary"]["db_mcp"]["cache_read_input_tokens"] == 40
     assert summary["scenario_summary"]["db_mcp"]["cache_creation_input_tokens"] == 10
     assert summary["scenario_summary"]["db_mcp"]["total_cost_usd"] == 0.12
+    assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["input_tokens"] == 90
+    assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["output_tokens"] == 19
+    assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["total_cost_usd"] == 0.09
     assert summary["scenario_summary"]["raw_dsn"]["input_tokens"] == 80
     assert summary["scenario_summary"]["raw_dsn"]["output_tokens"] == 18
     assert summary["scenario_summary"]["raw_dsn"]["total_cost_usd"] == 0.08
-    assert len(driver.calls) == 2
+    assert len(driver.calls) == 3
+    by_scenario = {call["scenario"]: call for call in driver.calls}
+    assert by_scenario[EXEC_ONLY_SCENARIO]["tools"] == ["Read"]
+    assert "cat PROTOCOL.md" in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
+    assert "You do not have db-mcp." in str(by_scenario["raw_dsn"]["prompt"])
+    exec_attempt = next(path for path in attempts if EXEC_ONLY_SCENARIO in path.name)
+    exec_mcp_config = (exec_attempt / "mcp-config.json").read_text()
+    assert '"--mode"' in exec_mcp_config
+    assert '"exec-only"' in exec_mcp_config
 
 
 def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_path):
@@ -550,6 +597,15 @@ def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_
             "answer_text": "3",
             "evidence_sql": "SELECT COUNT(*) FROM items",
             "confidence": 0.9,
+            "failure_reason": None,
+        },
+        EXEC_ONLY_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.7,
             "failure_reason": None,
         },
         "raw_dsn": {
@@ -577,10 +633,14 @@ def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_
         progress_callback=progress_updates.append,
     )
 
-    assert len(progress_updates) == 2
-    assert [update["completed_attempts"] for update in progress_updates] == [1, 2]
-    assert all(update["total_attempts"] == 2 for update in progress_updates)
-    assert {update["scenario"] for update in progress_updates} == {"db_mcp", "raw_dsn"}
+    assert len(progress_updates) == 3
+    assert [update["completed_attempts"] for update in progress_updates] == [1, 2, 3]
+    assert all(update["total_attempts"] == 3 for update in progress_updates)
+    assert {update["scenario"] for update in progress_updates} == {
+        "db_mcp",
+        EXEC_ONLY_SCENARIO,
+        "raw_dsn",
+    }
     assert progress_updates[0]["case_id"] == "count_items"
     assert isinstance(progress_updates[0]["duration_ms"], float)
     assert progress_updates[0]["result"] in {"PASS", "FAIL"}
