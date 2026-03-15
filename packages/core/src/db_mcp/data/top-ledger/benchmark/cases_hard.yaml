@@ -1,0 +1,88 @@
+cases:
+  - id: copy_trading_top_pair_feb15
+    category: bot_detection
+    prompt: Which pair of high-frequency wallets had the most same-slot same-token co-buys on 2026-02-15, excluding SOL, USDC, and USDT? Return the pair as `wallet_a | wallet_b`.
+    gold_sql: |
+      WITH hf_wallets AS (
+        SELECT signer
+        FROM iceberg.solana.dex_trades
+        WHERE block_date = DATE '2026-02-15'
+        GROUP BY signer
+        HAVING COUNT(*) >= 500
+      ),
+      hf_trades AS (
+        SELECT DISTINCT d.signer, d.token_bought_mint, d.block_slot
+        FROM iceberg.solana.dex_trades d
+        INNER JOIN hf_wallets h ON d.signer = h.signer
+        WHERE d.block_date = DATE '2026-02-15'
+          AND d.token_bought_mint NOT IN (
+            'So11111111111111111111111111111111111111112',
+            'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
+          )
+      )
+      SELECT
+        a.signer || ' | ' || b.signer AS answer
+      FROM hf_trades a
+      JOIN hf_trades b
+        ON a.block_slot = b.block_slot
+       AND a.token_bought_mint = b.token_bought_mint
+       AND a.signer < b.signer
+      GROUP BY a.signer, b.signer
+      HAVING COUNT(*) >= 10
+      ORDER BY COUNT(*) DESC, a.signer ASC, b.signer ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: non_canonical_top_trader_density_symbol_feb10
+    category: token_activity
+    prompt: Which named non-canonical token symbol had the highest trade-events-per-unique-trader ratio on 2026-02-10, among tokens with at least 100 unique traders?
+    gold_sql: |
+      WITH token_meta AS (
+        SELECT
+          address,
+          MAX(symbol) AS symbol,
+          MAX(name) AS name
+        FROM iceberg.solana.fungible_token_info
+        GROUP BY address
+      )
+      SELECT
+        COALESCE(m.symbol, 'unknown') AS answer
+      FROM iceberg.temp.token_daily_activity t
+      LEFT JOIN token_meta m ON t.mint = m.address
+      WHERE t.block_date = DATE '2026-02-10'
+        AND t.unique_traders >= 100
+        AND t.mint NOT IN (
+          'So11111111111111111111111111111111111111112',
+          'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+          'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
+        )
+        AND m.name IS NOT NULL
+      ORDER BY CAST(t.trade_events AS double) / NULLIF(t.unique_traders, 0) DESC, t.mint ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+      - lower
+
+  - id: top_outer_program_avg_fee_feb15
+    category: protocol
+    prompt: What was the average transaction fee in SOL for the outer program with the highest average txn_fee per trade on 2026-02-15, considering only programs with at least 100,000 trades?
+    gold_sql: |
+      SELECT
+        ROUND(AVG(txn_fee), 9) AS answer
+      FROM iceberg.solana.dex_trades
+      WHERE block_date = DATE '2026-02-15'
+        AND outer_program = (
+          SELECT outer_program
+          FROM iceberg.solana.dex_trades
+          WHERE block_date = DATE '2026-02-15'
+          GROUP BY outer_program
+          HAVING COUNT(*) >= 100000
+          ORDER BY AVG(txn_fee) DESC, outer_program ASC
+          LIMIT 1
+        )
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.000000001
