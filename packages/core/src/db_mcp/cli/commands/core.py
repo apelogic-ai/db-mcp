@@ -163,7 +163,13 @@ def init(name: str, source: str | None):
 
 @click.command()
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
-def start(connection: str | None):
+@click.option(
+    "--mode",
+    type=click.Choice(["detailed", "shell", "exec-only"]),
+    default=None,
+    help="Optional tool startup mode override.",
+)
+def start(connection: str | None, mode: str | None):
     """Start the MCP server (stdio mode for Claude Desktop)."""
     if not CONFIG_FILE.exists():
         console.print("[red]No config found. Run 'db-mcp init' first.[/red]")
@@ -187,7 +193,7 @@ def start(connection: str | None):
     os.environ["DATABASE_URL"] = database_url
     os.environ["CONNECTION_NAME"] = conn_name
     os.environ["CONNECTION_PATH"] = str(connection_path)
-    os.environ["TOOL_MODE"] = config.get("tool_mode", "shell")
+    os.environ["TOOL_MODE"] = mode or config.get("tool_mode", "shell")
     os.environ["LOG_LEVEL"] = config.get("log_level", "INFO")
     os.environ["MCP_TRANSPORT"] = "stdio"  # Always stdio for CLI
 
