@@ -1,0 +1,87 @@
+cases:
+  - id: top_artist_by_revenue_name
+    category: revenue
+    prompt: Which artist has generated the most sales revenue?
+    gold_sql: |
+      SELECT
+        a.Name AS answer
+      FROM InvoiceLine il
+      JOIN Track t ON t.TrackId = il.TrackId
+      JOIN Album al ON al.AlbumId = t.AlbumId
+      JOIN Artist a ON a.ArtistId = al.ArtistId
+      GROUP BY a.ArtistId, a.Name
+      ORDER BY ROUND(SUM(il.UnitPrice * il.Quantity), 2) DESC, a.ArtistId ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: top_artist_by_revenue_total
+    category: revenue
+    prompt: How much sales revenue has the top-selling artist generated?
+    gold_sql: |
+      SELECT
+        ROUND(SUM(il.UnitPrice * il.Quantity), 2) AS answer
+      FROM InvoiceLine il
+      JOIN Track t ON t.TrackId = il.TrackId
+      JOIN Album al ON al.AlbumId = t.AlbumId
+      JOIN Artist a ON a.ArtistId = al.ArtistId
+      GROUP BY a.ArtistId, a.Name
+      ORDER BY answer DESC, a.ArtistId ASC
+      LIMIT 1
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.01
+
+  - id: customer_with_most_distinct_artists
+    category: customer_behavior
+    prompt: Which customer has purchased tracks from the greatest number of distinct artists?
+    gold_sql: |
+      SELECT
+        c.FirstName || ' ' || c.LastName AS answer
+      FROM Customer c
+      JOIN Invoice i ON i.CustomerId = c.CustomerId
+      JOIN InvoiceLine il ON il.InvoiceId = i.InvoiceId
+      JOIN Track t ON t.TrackId = il.TrackId
+      JOIN Album al ON al.AlbumId = t.AlbumId
+      JOIN Artist a ON a.ArtistId = al.ArtistId
+      GROUP BY c.CustomerId, c.FirstName, c.LastName
+      ORDER BY COUNT(DISTINCT a.ArtistId) DESC, c.CustomerId ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: top_support_rep_by_revenue
+    category: staff
+    prompt: Which sales support agent manages the highest total invoice revenue from their assigned customers?
+    gold_sql: |
+      SELECT
+        e.FirstName || ' ' || e.LastName AS answer
+      FROM Employee e
+      JOIN Customer c ON c.SupportRepId = e.EmployeeId
+      JOIN Invoice i ON i.CustomerId = c.CustomerId
+      GROUP BY e.EmployeeId, e.FirstName, e.LastName
+      ORDER BY ROUND(SUM(i.Total), 2) DESC, e.EmployeeId ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: top_video_customer
+    category: customer_behavior
+    prompt: Which customer has spent the most on video tracks?
+    gold_sql: |
+      SELECT
+        c.FirstName || ' ' || c.LastName AS answer
+      FROM Customer c
+      JOIN Invoice i ON i.CustomerId = c.CustomerId
+      JOIN InvoiceLine il ON il.InvoiceId = i.InvoiceId
+      JOIN Track t ON t.TrackId = il.TrackId
+      JOIN MediaType m ON m.MediaTypeId = t.MediaTypeId
+      WHERE m.Name LIKE '%video%' COLLATE NOCASE
+      GROUP BY c.CustomerId, c.FirstName, c.LastName
+      ORDER BY ROUND(SUM(il.UnitPrice * il.Quantity), 2) DESC, c.CustomerId ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip

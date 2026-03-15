@@ -1,0 +1,121 @@
+cases:
+  - id: total_customers
+    category: aggregate
+    prompt: How many customers are in the database?
+    gold_sql: |
+      SELECT COUNT(*) AS answer
+      FROM Customer
+    comparison: scalar_exact
+
+  - id: invoice_countries
+    category: set
+    prompt: Which billing countries have at least one invoice?
+    gold_sql: |
+      SELECT DISTINCT BillingCountry
+      FROM Invoice
+    comparison: set_unordered
+    normalization:
+      - strip
+      - lower
+
+  - id: average_invoice_total
+    category: aggregate
+    prompt: What is the average invoice total?
+    gold_sql: |
+      SELECT AVG(Total) AS answer
+      FROM Invoice
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.01
+
+  - id: top_customer_by_spend_name
+    category: ranking
+    prompt: Which customer has spent the most in total?
+    gold_sql: |
+      SELECT
+        c.FirstName || ' ' || c.LastName AS answer
+      FROM Customer c
+      JOIN Invoice i ON i.CustomerId = c.CustomerId
+      GROUP BY c.CustomerId, c.FirstName, c.LastName
+      ORDER BY ROUND(SUM(i.Total), 2) DESC, c.CustomerId ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: top_customer_by_spend_total
+    category: ranking
+    prompt: How much has the top-spending customer spent in total?
+    gold_sql: |
+      SELECT
+        ROUND(SUM(i.Total), 2) AS answer
+      FROM Customer c
+      JOIN Invoice i ON i.CustomerId = c.CustomerId
+      GROUP BY c.CustomerId, c.FirstName, c.LastName
+      ORDER BY answer DESC, c.CustomerId ASC
+      LIMIT 1
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.01
+
+  - id: top_country_by_revenue
+    category: geography
+    prompt: Which billing country has generated the most invoice revenue?
+    gold_sql: |
+      SELECT
+        BillingCountry AS answer
+      FROM Invoice
+      GROUP BY BillingCountry
+      ORDER BY ROUND(SUM(Total), 2) DESC, BillingCountry ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: rock_track_count
+    category: genre
+    prompt: How many tracks are in the Rock genre?
+    gold_sql: |
+      SELECT COUNT(*) AS answer
+      FROM Track t
+      JOIN Genre g ON g.GenreId = t.GenreId
+      WHERE g.Name = 'Rock'
+    comparison: scalar_exact
+
+  - id: top_sales_support_agent
+    category: staff
+    prompt: Which sales support agent is assigned to the most customers?
+    gold_sql: |
+      SELECT
+        e.FirstName || ' ' || e.LastName AS answer
+      FROM Employee e
+      JOIN Customer c ON c.SupportRepId = e.EmployeeId
+      GROUP BY e.EmployeeId, e.FirstName, e.LastName
+      ORDER BY COUNT(c.CustomerId) DESC, e.EmployeeId ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: longest_track
+    category: content
+    prompt: What is the longest track in the catalog?
+    gold_sql: |
+      SELECT
+        Name AS answer
+      FROM Track
+      ORDER BY Milliseconds DESC, TrackId ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: playlists_mentioning_music
+    category: text
+    prompt: "Answer in a sentence: how many playlists have the word Music in their name?"
+    gold_sql: |
+      SELECT COUNT(*) AS answer
+      FROM Playlist
+      WHERE Name LIKE '%Music%'
+    comparison: contains_text
+    normalization:
+      - strip
+      - lower

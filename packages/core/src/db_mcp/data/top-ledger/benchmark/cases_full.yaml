@@ -1,0 +1,242 @@
+cases:
+  - id: sol_symbol_lookup
+    category: metadata
+    prompt: What is the token symbol for the SOL mint address `So11111111111111111111111111111111111111112`?
+    gold_sql: |
+      SELECT MAX(symbol) AS answer
+      FROM iceberg.solana.fungible_token_info
+      WHERE address = 'So11111111111111111111111111111111111111112'
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: usdc_decimals
+    category: metadata
+    prompt: How many decimals does the USDC mint use?
+    gold_sql: |
+      SELECT MAX(decimals) AS answer
+      FROM iceberg.solana.fungible_token_info
+      WHERE address = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+    comparison: scalar_exact
+
+  - id: canonical_token_symbols
+    category: metadata
+    prompt: Which symbols correspond to the SOL, USDC, and USDT mint addresses in the token metadata table?
+    gold_sql: |
+      SELECT DISTINCT symbol
+      FROM iceberg.solana.fungible_token_info
+      WHERE address IN (
+        'So11111111111111111111111111111111111111112',
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
+      )
+    comparison: set_unordered
+    normalization:
+      - strip
+      - lower
+
+  - id: latest_sol_price_feb15
+    category: prices
+    prompt: What was the latest recorded SOL price in USD on 2026-02-15?
+    gold_sql: |
+      SELECT ROUND(price_in_usd, 6) AS answer
+      FROM iceberg.solana.token_prices_1m
+      WHERE block_date = DATE '2026-02-15'
+        AND mint = 'So11111111111111111111111111111111111111112'
+      ORDER BY minute DESC
+      LIMIT 1
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.000001
+
+  - id: top_dex_program_name_feb15
+    category: protocol
+    prompt: Which DEX outer program had the most trades on 2026-02-15?
+    gold_sql: |
+      SELECT outer_program AS answer
+      FROM iceberg.solana.dex_trades
+      WHERE block_date = DATE '2026-02-15'
+      GROUP BY outer_program
+      ORDER BY COUNT(*) DESC, outer_program ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: top_dex_program_trade_count_feb15
+    category: protocol
+    prompt: How many trades did the busiest DEX outer program execute on 2026-02-15?
+    gold_sql: |
+      SELECT COUNT(*) AS answer
+      FROM iceberg.solana.dex_trades
+      WHERE block_date = DATE '2026-02-15'
+        AND outer_program = (
+          SELECT outer_program
+          FROM iceberg.solana.dex_trades
+          WHERE block_date = DATE '2026-02-15'
+          GROUP BY outer_program
+          ORDER BY COUNT(*) DESC, outer_program ASC
+          LIMIT 1
+        )
+    comparison: scalar_exact
+
+  - id: unique_traders_feb01
+    category: activity
+    prompt: How many unique traders were active in DEX trades on 2026-02-01?
+    gold_sql: |
+      SELECT COUNT(DISTINCT signer) AS answer
+      FROM iceberg.solana.dex_trades
+      WHERE block_date = DATE '2026-02-01'
+    comparison: scalar_exact
+
+  - id: most_active_token_mint_feb10
+    category: token_activity
+    prompt: Which mint had the most trade events in the pre-aggregated token_daily_activity table on 2026-02-10?
+    gold_sql: |
+      SELECT mint AS answer
+      FROM iceberg.temp.token_daily_activity
+      WHERE block_date = DATE '2026-02-10'
+      ORDER BY trade_events DESC, mint ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: unique_pools_sentence_feb01
+    category: activity
+    prompt: "Answer in a sentence: how many unique pools traded on 2026-02-01?"
+    gold_sql: |
+      SELECT COUNT(DISTINCT pool_address) AS answer
+      FROM iceberg.solana.dex_trades
+      WHERE block_date = DATE '2026-02-01'
+    comparison: contains_text
+    normalization:
+      - strip
+      - lower
+
+  - id: top_named_token_by_buy_count_feb15
+    category: token_activity
+    prompt: Which token symbol was bought most often on 2026-02-15?
+    gold_sql: |
+      WITH top_mints AS (
+        SELECT
+          token_bought_mint AS mint,
+          COUNT(*) AS buy_count
+        FROM iceberg.solana.dex_trades
+        WHERE block_date = DATE '2026-02-15'
+        GROUP BY token_bought_mint
+        ORDER BY buy_count DESC, mint ASC
+        LIMIT 1
+      ),
+      token_meta AS (
+        SELECT
+          address,
+          MAX(symbol) AS symbol
+        FROM iceberg.solana.fungible_token_info
+        GROUP BY address
+      )
+      SELECT COALESCE(m.symbol, 'unknown') AS answer
+      FROM top_mints t
+      LEFT JOIN token_meta m ON t.mint = m.address
+    comparison: scalar_exact
+    normalization:
+      - strip
+      - lower
+
+  - id: top_token_by_unique_traders_symbol_feb10
+    category: token_activity
+    prompt: Which token symbol had the highest unique trader count on 2026-02-10?
+    gold_sql: |
+      WITH token_meta AS (
+        SELECT
+          address,
+          MAX(symbol) AS symbol
+        FROM iceberg.solana.fungible_token_info
+        GROUP BY address
+      )
+      SELECT COALESCE(m.symbol, 'unknown') AS answer
+      FROM iceberg.temp.token_daily_activity t
+      LEFT JOIN token_meta m ON t.mint = m.address
+      WHERE t.block_date = DATE '2026-02-10'
+      ORDER BY t.unique_traders DESC, t.mint ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+      - lower
+
+  - id: top_token_by_unique_traders_count_feb10
+    category: token_activity
+    prompt: How many unique traders did the busiest token have on 2026-02-10?
+    gold_sql: |
+      SELECT unique_traders AS answer
+      FROM iceberg.temp.token_daily_activity
+      WHERE block_date = DATE '2026-02-10'
+      ORDER BY unique_traders DESC, mint ASC
+      LIMIT 1
+    comparison: scalar_exact
+
+  - id: top_fee_program_name_feb15
+    category: protocol
+    prompt: Which DEX outer program generated the most total transaction fees on 2026-02-15?
+    gold_sql: |
+      SELECT outer_program AS answer
+      FROM iceberg.solana.dex_trades
+      WHERE block_date = DATE '2026-02-15'
+      GROUP BY outer_program
+      ORDER BY ROUND(SUM(txn_fee), 6) DESC, outer_program ASC
+      LIMIT 1
+    comparison: scalar_exact
+    normalization:
+      - strip
+
+  - id: top_fee_program_total_feb15
+    category: protocol
+    prompt: How much total transaction fee in SOL did the highest-fee DEX outer program generate on 2026-02-15?
+    gold_sql: |
+      SELECT ROUND(SUM(txn_fee), 6) AS answer
+      FROM iceberg.solana.dex_trades
+      WHERE block_date = DATE '2026-02-15'
+        AND outer_program = (
+          SELECT outer_program
+          FROM iceberg.solana.dex_trades
+          WHERE block_date = DATE '2026-02-15'
+          GROUP BY outer_program
+          ORDER BY ROUND(SUM(txn_fee), 6) DESC, outer_program ASC
+          LIMIT 1
+        )
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.000001
+
+  - id: top_named_token_buy_volume_feb15
+    category: token_activity
+    prompt: What was the approximate normalized buy volume for the most frequently bought named token on 2026-02-15?
+    gold_sql: |
+      WITH token_meta AS (
+        SELECT
+          address,
+          MAX(symbol) AS symbol,
+          MAX(decimals) AS decimals
+        FROM iceberg.solana.fungible_token_info
+        GROUP BY address
+      ),
+      token_rankings AS (
+        SELECT
+          d.token_bought_mint AS mint,
+          COUNT(*) AS buy_count,
+          ROUND(
+            SUM(
+              d.token_bought_amount / POWER(10, COALESCE(m.decimals, 6))
+            ),
+            6
+          ) AS normalized_buy_volume
+        FROM iceberg.solana.dex_trades d
+        LEFT JOIN token_meta m ON d.token_bought_mint = m.address
+        WHERE d.block_date = DATE '2026-02-15'
+        GROUP BY d.token_bought_mint
+      )
+      SELECT normalized_buy_volume AS answer
+      FROM token_rankings
+      ORDER BY buy_count DESC, mint ASC
+      LIMIT 1
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.000001

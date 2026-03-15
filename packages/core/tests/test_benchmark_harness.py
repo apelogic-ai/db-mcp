@@ -1,0 +1,628 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import uuid
+from pathlib import Path
+
+import pytest
+import yaml
+
+from db_mcp.benchmark.connection import resolve_sql_connection_access
+from db_mcp.benchmark.driver import ClaudeCliDriver, DriverResult, build_claude_command
+from db_mcp.benchmark.loader import load_case_pack
+from db_mcp.benchmark.runner import (
+    _extract_answer_payload,
+    run_benchmark_suite,
+    summarize_run_directory,
+)
+from db_mcp.benchmark.scoring import execute_gold_sql, score_case
+from db_mcp.config import reset_settings
+from db_mcp.registry import ConnectionRegistry
+
+
+class FakeDriver:
+    def __init__(self, outputs: dict[str, dict]) -> None:
+        self.outputs = outputs
+        self.calls: list[dict[str, object]] = []
+
+    def run(
+        self,
+        *,
+        prompt: str,
+        json_schema: dict,
+        session_id: str,
+        mcp_config_path: Path,
+        model: str,
+        workdir: Path,
+        debug_log_path: Path,
+        tools: list[str],
+    ) -> DriverResult:
+        scenario = "db_mcp" if "db-mcp" in mcp_config_path.read_text() else "raw_dsn"
+        self.calls.append(
+            {
+                "scenario": scenario,
+                "session_id": session_id,
+                "model": model,
+                "tools": tools,
+                "prompt": prompt,
+            }
+        )
+        debug_log_path.write_text('{"tool_name":"Bash"}\n{"tool_name":"Bash","status":"error"}\n')
+        return DriverResult(
+            stdout=json.dumps(self.outputs[scenario]),
+            stderr="",
+            exit_code=0,
+            duration_ms=123.0,
+            debug_log_path=debug_log_path,
+        )
+
+
+@pytest.fixture()
+def benchmark_connection(tmp_path, monkeypatch):
+    connections_dir = tmp_path / "connections"
+    conn_path = connections_dir / "bench"
+    conn_path.mkdir(parents=True)
+
+    db_path = tmp_path / "bench.sqlite"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE items(id INTEGER PRIMARY KEY, category TEXT, amount INTEGER)")
+        conn.execute("INSERT INTO items(category, amount) VALUES ('a', 10), ('b', 20), ('a', 30)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    (conn_path / "connector.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "type": "sql",
+                "database_url": f"sqlite:///{db_path}",
+                "capabilities": {"connect_args": {"timeout": 30}},
+            },
+            sort_keys=False,
+        )
+    )
+    (conn_path / "benchmark").mkdir()
+    (conn_path / "benchmark" / "cases.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "cases": [
+                    {
+                        "id": "count_items",
+                        "category": "aggregate",
+                        "prompt": "How many items are there?",
+                        "gold_sql": "SELECT COUNT(*) AS answer FROM items",
+                        "comparison": "scalar_exact",
+                    },
+                    {
+                        "id": "cats",
+                        "category": "set",
+                        "prompt": "What categories exist?",
+                        "gold_sql": "SELECT DISTINCT category FROM items",
+                        "comparison": "set_unordered",
+                        "normalization": ["lower", "strip"],
+                    },
+                ]
+            },
+            sort_keys=False,
+        )
+    )
+    (conn_path / "benchmark" / "cases_complex.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "cases": [
+                    {
+                        "id": "top_category",
+                        "category": "ranking",
+                        "prompt": "Which category has the highest total amount?",
+                        "gold_sql": (
+                            "SELECT category AS answer FROM items "
+                            "GROUP BY category ORDER BY SUM(amount) DESC, category ASC LIMIT 1"
+                        ),
+                        "comparison": "scalar_exact",
+                    }
+                ]
+            },
+            sort_keys=False,
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
+    monkeypatch.setenv("CONNECTION_NAME", "bench")
+    ConnectionRegistry.reset()
+    reset_settings()
+
+    return conn_path
+
+
+def test_load_case_pack_reads_connection_benchmark_cases(benchmark_connection):
+    cases = load_case_pack(benchmark_connection)
+    assert [case.id for case in cases] == ["count_items", "cats"]
+    assert cases[0].comparison == "scalar_exact"
+
+
+def test_load_case_pack_reads_custom_case_pack(benchmark_connection):
+    cases = load_case_pack(benchmark_connection, case_pack="cases_complex.yaml")
+    assert [case.id for case in cases] == ["top_category"]
+
+
+def test_repo_playground_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "playground"
+
+    cases = load_case_pack(connection_path)
+
+    assert len(cases) >= 1
+    assert cases[-1].id == "playlists_mentioning_music"
+    case_by_id = {case.id: case for case in cases}
+    assert case_by_id["top_country_by_revenue"].comparison == "scalar_exact"
+    assert case_by_id["top_sales_support_agent"].comparison == "scalar_exact"
+    assert case_by_id["longest_track"].comparison == "scalar_exact"
+    assert case_by_id["top_customer_by_spend_name"].comparison == "scalar_exact"
+    assert case_by_id["top_customer_by_spend_total"].comparison == "scalar_numeric_tolerance"
+
+
+def test_repo_playground_complex_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "playground"
+
+    cases = load_case_pack(connection_path, case_pack="cases_complex.yaml")
+
+    assert len(cases) == 5
+    assert {case.id for case in cases} == {
+        "top_artist_by_revenue_name",
+        "top_artist_by_revenue_total",
+        "customer_with_most_distinct_artists",
+        "top_support_rep_by_revenue",
+        "top_video_customer",
+    }
+
+
+def test_repo_playground_full_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "playground"
+
+    cases = load_case_pack(connection_path, case_pack="cases_full.yaml")
+
+    assert len(cases) == 15
+    assert len({case.id for case in cases}) == 15
+    assert cases[0].id == "total_customers"
+    assert cases[-1].id == "top_video_customer"
+
+
+def test_repo_top_ledger_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "top-ledger"
+
+    cases = load_case_pack(connection_path)
+
+    assert len(cases) == 10
+    assert cases[0].id == "sol_symbol_lookup"
+    assert cases[-1].id == "top_named_token_by_buy_count_feb15"
+    case_by_id = {case.id: case for case in cases}
+    assert case_by_id["canonical_token_symbols"].comparison == "set_unordered"
+    assert case_by_id["latest_sol_price_feb15"].comparison == "scalar_numeric_tolerance"
+    assert case_by_id["unique_pools_sentence_feb01"].comparison == "contains_text"
+
+
+def test_repo_top_ledger_complex_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "top-ledger"
+
+    cases = load_case_pack(connection_path, case_pack="cases_complex.yaml")
+
+    assert len(cases) == 5
+    assert {case.id for case in cases} == {
+        "top_token_by_unique_traders_symbol_feb10",
+        "top_token_by_unique_traders_count_feb10",
+        "top_fee_program_name_feb15",
+        "top_fee_program_total_feb15",
+        "top_named_token_buy_volume_feb15",
+    }
+
+
+def test_repo_top_ledger_full_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "top-ledger"
+
+    cases = load_case_pack(connection_path, case_pack="cases_full.yaml")
+
+    assert len(cases) == 15
+    assert len({case.id for case in cases}) == 15
+    assert cases[0].id == "sol_symbol_lookup"
+    assert cases[-1].id == "top_named_token_buy_volume_feb15"
+
+
+def test_repo_top_ledger_hard_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "top-ledger"
+
+    cases = load_case_pack(connection_path, case_pack="cases_hard.yaml")
+
+    assert len(cases) == 3
+    assert {case.id for case in cases} == {
+        "copy_trading_top_pair_feb15",
+        "non_canonical_top_trader_density_symbol_feb10",
+        "top_outer_program_avg_fee_feb15",
+    }
+
+
+def test_load_case_pack_rejects_missing_gold_sql(tmp_path):
+    conn_path = tmp_path / "broken"
+    (conn_path / "benchmark").mkdir(parents=True)
+    (conn_path / "benchmark" / "cases.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "cases": [
+                    {
+                        "id": "bad",
+                        "category": "x",
+                        "prompt": "?",
+                        "comparison": "scalar_exact",
+                    }
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(ValueError):
+        load_case_pack(conn_path)
+
+
+def test_resolve_sql_connection_access_returns_database_url_and_connect_args(benchmark_connection):
+    access = resolve_sql_connection_access("bench")
+    assert access.connection_name == "bench"
+    assert access.database_url.startswith("sqlite:///")
+    assert access.connect_args == {"timeout": 30}
+
+
+def test_execute_gold_sql_and_score_cases(benchmark_connection):
+    access = resolve_sql_connection_access("bench")
+    cases = load_case_pack(benchmark_connection)
+
+    expected_scalar = execute_gold_sql(access.connector, cases[0])
+    score_scalar = score_case(
+        cases[0],
+        expected_scalar,
+        {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "There are 3 items.",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.8,
+            "failure_reason": None,
+        },
+    )
+    assert score_scalar.correct is True
+
+    expected_set = execute_gold_sql(access.connector, cases[1])
+    score_set = score_case(
+        cases[1],
+        expected_set,
+        {
+            "task_id": "cats",
+            "status": "answered",
+            "answer_value": ["B", "A"],
+            "answer_text": "A and B",
+            "evidence_sql": None,
+            "confidence": None,
+            "failure_reason": None,
+        },
+    )
+    assert score_set.correct is True
+
+
+def test_score_case_scalar_exact_accepts_semantically_equivalent_object_answer():
+    score = score_case(
+        type("Case", (), {"id": "customer", "comparison": "scalar_exact", "normalization": []})(),
+        [{"answer": "Marc Dubois"}],
+        {
+            "task_id": "customer",
+            "status": "answered",
+            "answer_value": {
+                "customer_id": 41,
+                "first_name": "Marc",
+                "last_name": "Dubois",
+                "distinct_artists": 22,
+            },
+            "answer_text": (
+                "Marc Dubois (CustomerId: 41) has purchased tracks from the greatest "
+                "number of distinct artists."
+            ),
+            "evidence_sql": None,
+            "confidence": None,
+            "failure_reason": None,
+        },
+    )
+
+    assert score.correct is True
+
+
+def test_score_case_scalar_exact_accepts_numeric_value_from_object_answer():
+    case = type(
+        "Case",
+        (),
+        {"id": "trader_count", "comparison": "scalar_exact", "normalization": []},
+    )()
+    score = score_case(
+        case,
+        [{"answer": 1279725}],
+        {
+            "task_id": "trader_count",
+            "status": "answered",
+            "answer_value": {
+                "symbol": "SOL",
+                "unique_traders": 1279725,
+            },
+            "answer_text": "SOL had 1279725 unique traders.",
+            "evidence_sql": None,
+            "confidence": None,
+            "failure_reason": None,
+        },
+    )
+
+    assert score.correct is True
+
+
+def test_score_case_set_unordered_accepts_object_keys_for_symbol_mapping():
+    score = score_case(
+        type(
+            "Case",
+            (),
+            {
+                "id": "symbols",
+                "comparison": "set_unordered",
+                "normalization": ["strip", "lower"],
+            },
+        )(),
+        [{"symbol": "SOL"}, {"symbol": "USDC"}, {"symbol": "USDT"}],
+        {
+            "task_id": "symbols",
+            "status": "answered",
+            "answer_value": {
+                "SOL": "So11111111111111111111111111111111111111112",
+                "USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "USDT": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+            },
+            "answer_text": "SOL, USDC, USDT",
+            "evidence_sql": None,
+            "confidence": None,
+            "failure_reason": None,
+        },
+    )
+
+    assert score.correct is True
+
+
+def test_score_case_contains_text_accepts_formatted_numeric_text():
+    score = score_case(
+        type(
+            "Case",
+            (),
+            {
+                "id": "sentence_count",
+                "comparison": "contains_text",
+                "normalization": ["strip", "lower"],
+            },
+        )(),
+        [{"answer": 108948}],
+        {
+            "task_id": "sentence_count",
+            "status": "answered",
+            "answer_value": 108948,
+            "answer_text": "On 2026-02-01, there were 108,948 unique pools that traded.",
+            "evidence_sql": None,
+            "confidence": None,
+            "failure_reason": None,
+        },
+    )
+
+    assert score.correct is True
+
+
+def test_build_claude_command_includes_strict_mcp_and_schema(tmp_path):
+    cmd = build_claude_command(
+        prompt="answer",
+        model="claude-sonnet-4-5-20250929",
+        session_id=str(uuid.uuid4()),
+        mcp_config_path=tmp_path / "mcp.json",
+        json_schema={"type": "object"},
+        debug_log_path=tmp_path / "debug.log",
+        workdir=tmp_path,
+        tools=["Read", "Bash"],
+    )
+    assert "--print" in cmd
+    assert "--strict-mcp-config" in cmd
+    assert "--json-schema" in cmd
+    assert "--mcp-config" in cmd
+    assert "--tools" in cmd
+    assert cmd[-2] == "--"
+    assert cmd[-1] == "answer"
+
+
+def test_extract_answer_payload_uses_structured_output_wrapper():
+    payload = _extract_answer_payload(
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "structured_output": {
+                    "task_id": "count_items",
+                    "status": "answered",
+                    "answer_value": 3,
+                    "answer_text": "3",
+                    "evidence_sql": "SELECT COUNT(*) FROM items",
+                    "confidence": 0.9,
+                    "failure_reason": None,
+                },
+            }
+        )
+    )
+
+    assert payload["task_id"] == "count_items"
+    assert payload["status"] == "answered"
+    assert payload["answer_value"] == 3
+
+
+def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp_path):
+    outputs = {
+        "db_mcp": {
+            "type": "result",
+            "subtype": "success",
+            "total_cost_usd": 0.12,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 40,
+                "cache_creation_input_tokens": 10,
+            },
+            "structured_output": {
+                "task_id": "count_items",
+                "status": "answered",
+                "answer_value": 3,
+                "answer_text": "3",
+                "evidence_sql": "SELECT COUNT(*) FROM items",
+                "confidence": 0.9,
+                "failure_reason": None,
+            },
+        },
+        "raw_dsn": {
+            "type": "result",
+            "subtype": "success",
+            "total_cost_usd": 0.08,
+            "usage": {
+                "input_tokens": 80,
+                "output_tokens": 18,
+                "cache_read_input_tokens": 5,
+                "cache_creation_input_tokens": 0,
+            },
+            "structured_output": {
+                "task_id": "count_items",
+                "status": "answered",
+                "answer_value": 2,
+                "answer_text": "2",
+                "evidence_sql": "SELECT COUNT(*) FROM items",
+                "confidence": 0.3,
+                "failure_reason": None,
+            },
+        },
+    }
+    driver = FakeDriver(outputs)
+    run_dir = run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["count_items"],
+        output_root=tmp_path,
+        driver=driver,
+        shuffle_seed=7,
+    )
+
+    assert (run_dir / "summary.json").exists()
+    assert (run_dir / "summary.csv").exists()
+    attempts = list((run_dir / "attempts").iterdir())
+    assert len(attempts) == 2
+
+    summary = summarize_run_directory(run_dir)
+    assert summary["totals"]["attempts"] == 2
+    assert summary["scenario_summary"]["db_mcp"]["correct"] == 1
+    assert summary["scenario_summary"]["raw_dsn"]["correct"] == 0
+    assert summary["scenario_summary"]["db_mcp"]["input_tokens"] == 100
+    assert summary["scenario_summary"]["db_mcp"]["output_tokens"] == 20
+    assert summary["scenario_summary"]["db_mcp"]["cache_read_input_tokens"] == 40
+    assert summary["scenario_summary"]["db_mcp"]["cache_creation_input_tokens"] == 10
+    assert summary["scenario_summary"]["db_mcp"]["total_cost_usd"] == 0.12
+    assert summary["scenario_summary"]["raw_dsn"]["input_tokens"] == 80
+    assert summary["scenario_summary"]["raw_dsn"]["output_tokens"] == 18
+    assert summary["scenario_summary"]["raw_dsn"]["total_cost_usd"] == 0.08
+    assert len(driver.calls) == 2
+
+
+def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_path):
+    outputs = {
+        "db_mcp": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.9,
+            "failure_reason": None,
+        },
+        "raw_dsn": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 2,
+            "answer_text": "2",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.3,
+            "failure_reason": None,
+        },
+    }
+    driver = FakeDriver(outputs)
+    progress_updates: list[dict[str, object]] = []
+
+    run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["count_items"],
+        output_root=tmp_path,
+        driver=driver,
+        shuffle_seed=7,
+        progress_callback=progress_updates.append,
+    )
+
+    assert len(progress_updates) == 2
+    assert [update["completed_attempts"] for update in progress_updates] == [1, 2]
+    assert all(update["total_attempts"] == 2 for update in progress_updates)
+    assert {update["scenario"] for update in progress_updates} == {"db_mcp", "raw_dsn"}
+    assert progress_updates[0]["case_id"] == "count_items"
+    assert isinstance(progress_updates[0]["duration_ms"], float)
+    assert progress_updates[0]["result"] in {"PASS", "FAIL"}
+
+
+def test_claude_cli_driver_interrupts_active_process(monkeypatch, tmp_path):
+    events: list[tuple[str, int | None]] = []
+
+    class FakeProcess:
+        pid = 43210
+
+        def communicate(self):
+            raise KeyboardInterrupt
+
+        def wait(self, timeout=None):
+            events.append(("wait", timeout))
+            return 130
+
+        def kill(self):
+            events.append(("kill", None))
+
+    def fake_popen(*args, **kwargs):
+        events.append(("popen", None))
+        return FakeProcess()
+
+    def fake_killpg(pid, sig):
+        events.append(("killpg", pid))
+
+    monkeypatch.setattr("db_mcp.benchmark.driver.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("db_mcp.benchmark.driver.os.killpg", fake_killpg)
+
+    driver = ClaudeCliDriver()
+    with pytest.raises(KeyboardInterrupt):
+        driver.run(
+            prompt="answer",
+            json_schema={"type": "object"},
+            session_id=str(uuid.uuid4()),
+            mcp_config_path=tmp_path / "mcp.json",
+            model="claude-sonnet-4-5-20250929",
+            workdir=tmp_path,
+            debug_log_path=tmp_path / "debug.log",
+            tools=["Read", "Bash"],
+        )
+
+    assert ("killpg", 43210) in events

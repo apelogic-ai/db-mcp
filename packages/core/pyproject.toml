@@ -30,6 +30,7 @@ dependencies = [
 
 [project.scripts]
 db-mcp = "db_mcp.cli:main"
+db-mcp-benchmark = "db_mcp.benchmark:main"
 
 [tool.uv.sources]
 db-mcp-models = { workspace = true }
