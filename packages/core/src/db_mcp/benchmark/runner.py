@@ -24,9 +24,11 @@ from db_mcp.cli.utils import get_db_mcp_binary_path
 from db_mcp.traces import get_user_id_from_config
 
 DB_MCP_SCENARIO = "db_mcp"
+EXEC_ONLY_SCENARIO = "exec_only"
 RAW_DSN_SCENARIO = "raw_dsn"
-SCENARIOS = [DB_MCP_SCENARIO, RAW_DSN_SCENARIO]
+SCENARIOS = [DB_MCP_SCENARIO, EXEC_ONLY_SCENARIO, RAW_DSN_SCENARIO]
 DEFAULT_TOOLS = ["Read", "Bash"]
+EXEC_ONLY_TOOLS = [""]
 
 
 def _mask_database_url(database_url: str) -> str:
@@ -57,6 +59,27 @@ def _build_db_mcp_config(path: Path, *, connection_name: str, connections_dir: P
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def _build_exec_only_mcp_config(
+    path: Path,
+    *,
+    connection_name: str,
+    connections_dir: Path,
+) -> None:
+    payload = {
+        "mcpServers": {
+            "db-mcp": {
+                "command": get_db_mcp_binary_path(),
+                "args": ["start", "-c", connection_name, "--mode", "exec-only"],
+                "env": {
+                    "CONNECTIONS_DIR": str(connections_dir),
+                    "CONNECTION_NAME": connection_name,
+                },
+            }
+        }
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def _build_prompt(
     case,
     scenario: str,
@@ -75,6 +98,16 @@ def _build_prompt(
             "\nUse the available db-mcp tools and any built-in tools if helpful. "
             "Do not ask for clarification; produce your best answer."
         )
+    if scenario == EXEC_ONLY_SCENARIO:
+        return base + (
+            "\nYou have db-mcp available only through one MCP tool: "
+            '`exec(connection="...", command="...")`.\n'
+            "Start by reading PROTOCOL.md with:\n"
+            '`exec(connection="...", command="cat PROTOCOL.md")`\n'
+            "Use exec for all further inspection and querying. "
+            "Do not rely on any built-in tools.\n"
+            "Do not ask for clarification; produce your best answer."
+        )
 
     raw_block = {
         "database_url": database_url,
@@ -90,14 +123,44 @@ def _build_prompt(
 
 def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
     text = debug_log_path.read_text() if debug_log_path.exists() else ""
-    bash_calls = len(re.findall(r'tool_name"?\s*[:=]\s*"?Bash"?', text))
-    failures = len(re.findall(r"error", text, re.IGNORECASE))
-    db_exec = len(re.findall(r"(sqlite3|psql|mysql|sqlalchemy|duckdb)", text, re.IGNORECASE))
+    bash_calls = len(
+        re.findall(
+            r'(?:tool_name"?\s*[:=]\s*"?Bash"?|executePreToolHooks called for tool: Bash)',
+            text,
+        )
+    )
+    read_calls = len(
+        re.findall(
+            r'(?:tool_name"?\s*[:=]\s*"?Read"?|executePreToolHooks called for tool: Read)',
+            text,
+        )
+    )
+    exec_calls = len(
+        re.findall(
+            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?exec"?|'
+            r"executePreToolHooks called for tool: mcp__db-mcp__exec)",
+            text,
+        )
+    )
+    failures = len(
+        re.findall(
+            r'(?:status"?\s*[:=]\s*"?error"?|validation error|Tool call failed)',
+            text,
+            re.IGNORECASE,
+        )
+    )
+    db_exec = len(re.findall(r"(sqlite3|psql|mysql|sqlalchemy|duckdb|trino)", text, re.IGNORECASE))
     return {
-        "exploratory_steps": bash_calls,
+        "exploratory_steps": bash_calls + read_calls + exec_calls,
         "failed_executions": failures,
         "db_executions": db_exec,
     }
+
+
+def _tools_for_scenario(scenario: str) -> list[str]:
+    if scenario == EXEC_ONLY_SCENARIO:
+        return EXEC_ONLY_TOOLS
+    return DEFAULT_TOOLS
 
 
 def _collect_db_mcp_metrics(
@@ -377,6 +440,12 @@ def run_benchmark_suite(
                         connection_name=connection_name,
                         connections_dir=connections_dir,
                     )
+                elif scenario == EXEC_ONLY_SCENARIO:
+                    _build_exec_only_mcp_config(
+                        mcp_config_path,
+                        connection_name=connection_name,
+                        connections_dir=connections_dir,
+                    )
                 else:
                     _build_empty_mcp_config(mcp_config_path)
 
@@ -391,7 +460,7 @@ def run_benchmark_suite(
                     model=model,
                     workdir=attempt_dir,
                     debug_log_path=debug_log_path,
-                    tools=DEFAULT_TOOLS,
+                    tools=_tools_for_scenario(scenario),
                 )
                 ended_ns = time.time_ns()
 

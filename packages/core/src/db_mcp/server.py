@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from db_mcp.config import get_settings
+from db_mcp.exec_runtime import shutdown_exec_session_manager
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
 from db_mcp.tool_catalog import build_tool_catalog, render_python_sdk, search_tool_catalog
@@ -40,6 +41,7 @@ from db_mcp.tools.domain import (
     _domain_skip,
     _domain_status,
 )
+from db_mcp.tools.exec import _exec
 from db_mcp.tools.gaps import _dismiss_knowledge_gap, _get_knowledge_gaps
 from db_mcp.tools.generation import (
     _export_results,
@@ -177,6 +179,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        shutdown_exec_session_manager()
         # Shutdown: Push collab changes (session mode — push-on-stop)
         if collab_user_name and collab_connection_path:
             try:
@@ -318,6 +321,34 @@ If you can clarify any, use `query_add_rule` to add the mapping.
 DO NOT look for other schema discovery tools. Use `shell` to explore the vault.
 """
 
+INSTRUCTIONS_EXEC_ONLY = """
+Database query server - EXEC-ONLY MODE
+
+## YOU HAVE EXACTLY ONE TOOL: exec
+
+Use `exec(connection="...", command="...")` for all work. The command runs inside
+a sandboxed container whose working directory is the selected connection vault.
+
+## IMMEDIATE FIRST STEP
+
+```
+exec(connection="...", command="cat PROTOCOL.md")
+```
+
+The mounted workspace contains the same structure as normal db-mcp connections:
+- PROTOCOL.md
+- schema/
+- domain/
+- instructions/
+- examples/
+- learnings/
+- metrics/
+- connector.yaml
+
+Python and SQLAlchemy are installed in the container. Use local files, Python,
+and shell commands to inspect the vault and query the selected data source.
+"""
+
 
 # =============================================================================
 # Server Creation
@@ -393,6 +424,7 @@ def _create_server() -> FastMCP:
 
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
+    is_exec_mode = settings.tool_mode == "exec-only"
     tool_profile = _resolve_tool_profile(settings, is_shell_mode)
     is_full_profile = tool_profile == "full"
 
@@ -470,10 +502,13 @@ def _create_server() -> FastMCP:
         supports_validate = has_validate
         supports_async_jobs = has_async_jobs
 
-    instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
+    if is_exec_mode:
+        instructions = INSTRUCTIONS_EXEC_ONLY
+    else:
+        instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
 
     # Adapt instructions when validate_sql is not supported
-    if not supports_validate:
+    if not is_exec_mode and not supports_validate:
         instructions = _strip_validate_sql_from_instructions(instructions)
 
     # Append multi-connection section when multiple connections are configured
@@ -685,6 +720,10 @@ def _create_server() -> FastMCP:
             "the appropriate MCP tool\n"
             "4. Dismiss the insight when resolved"
         )
+
+    if is_exec_mode:
+        server.tool(name="exec")(_exec)
+        return server
 
     # =========================================================================
     # Core tools - always available

@@ -35,7 +35,7 @@ def _infer_category(name: str) -> str:
         return "training"
     if name.startswith("metrics_"):
         return "metrics"
-    if name in {"shell", "protocol"}:
+    if name in {"shell", "protocol", "exec"}:
         return "shell"
     if name in {"dismiss_insight", "mark_insights_processed"} or name.startswith("mcp_"):
         return "insights"
