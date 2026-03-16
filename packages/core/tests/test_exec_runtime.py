@@ -168,11 +168,33 @@ def test_auto_detect_exec_backend_prefers_available_oci_runtime(monkeypatch):
         "db_mcp.exec_runtime.which",
         lambda cmd: "/usr/bin/podman" if cmd == "podman" else None,
     )
+    monkeypatch.setattr(
+        "db_mcp.exec_runtime._oci_runtime_is_available",
+        lambda runtime, **_: runtime == "podman",
+        raising=False,
+    )
 
     backend = auto_detect_exec_backend()
 
     assert isinstance(backend, OciExecSandboxBackend)
     assert backend.runtime == "podman"
+
+
+def test_auto_detect_exec_backend_falls_back_when_oci_daemon_is_unreachable(monkeypatch):
+    monkeypatch.delenv("DB_MCP_EXEC_BACKEND", raising=False)
+    monkeypatch.setattr(
+        "db_mcp.exec_runtime.which",
+        lambda cmd: "/usr/bin/docker" if cmd == "docker" else None,
+    )
+    monkeypatch.setattr(
+        "db_mcp.exec_runtime._oci_runtime_is_available",
+        lambda runtime, **_: False,
+        raising=False,
+    )
+
+    backend = auto_detect_exec_backend()
+
+    assert isinstance(backend, ProcessExecSandboxBackend)
 
 
 def test_auto_detect_exec_backend_falls_back_to_process(monkeypatch):

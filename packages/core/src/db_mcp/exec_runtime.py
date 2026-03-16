@@ -153,6 +153,30 @@ def _truncate_text(text: str, limit: int) -> tuple[str, bool]:
     return text[:keep] + marker, True
 
 
+def _oci_runtime_is_available(
+    runtime: str,
+    *,
+    runner=subprocess.run,
+    timeout_seconds: int = 3,
+) -> bool:
+    """Return whether an OCI runtime is installed and reachable."""
+    if not which(runtime):
+        return False
+
+    try:
+        completed = runner(
+            [runtime, "info"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return False
+
+    return completed.returncode == 0
+
+
 class OciExecSandboxBackend:
     """OCI runtime-backed implementation for exec-only sandboxes."""
 
@@ -397,7 +421,7 @@ def auto_detect_exec_backend() -> ExecSandboxBackend:
 
     runtimes = DEFAULT_RUNTIME_ORDER if forced == "auto" else (forced,)
     for runtime in runtimes:
-        if runtime in {"docker", "podman", "nerdctl"} and which(runtime):
+        if runtime in {"docker", "podman", "nerdctl"} and _oci_runtime_is_available(runtime):
             return OciExecSandboxBackend(runtime=runtime)
 
     return ProcessExecSandboxBackend()
