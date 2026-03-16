@@ -57,8 +57,8 @@ class FakeDriver:
         )
         if scenario == EXEC_ONLY_SCENARIO:
             debug_log_path.write_text(
-                '{"tool_name":"mcp__db-mcp__exec"}\n'
-                '{"tool_name":"mcp__db-mcp__exec","status":"error"}\n'
+                "executePreToolHooks called for tool: mcp__db-mcp__exec\n"
+                "Tool call failed: exec returned non-zero exit code\n"
             )
         else:
             debug_log_path.write_text(
@@ -574,13 +574,16 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["input_tokens"] == 90
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["output_tokens"] == 19
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["total_cost_usd"] == 0.09
+    assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["exploratory_steps"] == 1
+    assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["failed_executions"] == 1
     assert summary["scenario_summary"]["raw_dsn"]["input_tokens"] == 80
     assert summary["scenario_summary"]["raw_dsn"]["output_tokens"] == 18
     assert summary["scenario_summary"]["raw_dsn"]["total_cost_usd"] == 0.08
     assert len(driver.calls) == 3
     by_scenario = {call["scenario"]: call for call in driver.calls}
-    assert by_scenario[EXEC_ONLY_SCENARIO]["tools"] == ["Read"]
+    assert by_scenario[EXEC_ONLY_SCENARIO]["tools"] == [""]
     assert "cat PROTOCOL.md" in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
+    assert "Do not rely on any built-in tools." in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
     assert "You do not have db-mcp." in str(by_scenario["raw_dsn"]["prompt"])
     exec_attempt = next(path for path in attempts if EXEC_ONLY_SCENARIO in path.name)
     exec_mcp_config = (exec_attempt / "mcp-config.json").read_text()
