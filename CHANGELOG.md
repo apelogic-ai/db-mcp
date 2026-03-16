@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.6.10] - 2026-03-16
+
+## Highlights
+- Added an `exec-only` MCP server mode that exposes a single `exec` tool over the existing connection vault layout.
+- Added a benchmark harness with first-class `db_mcp`, `exec_only`, and `raw_dsn` scenarios for side-by-side comparison.
+- Hardened `exec-only` backend selection so OCI runtimes are used only when they are actually reachable, with automatic fallback to local process mode otherwise.
+
+## Breaking changes
+- None
+
+## Features
+- PR #57: added `db-mcp start --mode exec-only`, session-scoped `exec(connection=..., command=...)`, protocol-read enforcement, and the container/process sandbox runtime.
+- PR #57: added benchmark support for the `exec_only` scenario so the single-tool mode can be compared directly against structured `db_mcp` and naked `raw_dsn` flows.
+- PR #56: added the benchmark runner, scoring, case-pack loader, CLI entrypoint, and bundled benchmark case packs for `playground` and `top-ledger`.
+
+## Fixes
+- Fixed `exec-only` backend auto-detection so `docker`/`podman`/`nerdctl` are selected only when the runtime CLI exists and `runtime info` succeeds.
+- Fixed the local benchmark harness to keep `raw_dsn` as a DSN-only baseline while letting `exec_only` run through the single MCP tool path.
+- Fixed `exec-only` protocol handling so agents must read `PROTOCOL.md` before running arbitrary commands, and must re-read it if the file changes.
+
+## Security
+- None
+
+## Upgrade notes
+- Existing connections and knowledge vault directories remain compatible.
+- `exec-only` mode now works on machines without a reachable OCI daemon by falling back to the built-in process backend automatically.
+- Strong isolation is still best-effort on process fallback; install a reachable OCI runtime if you want container-backed execution.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `tests/test_database.py::test_connection`.
+
+
 ## [0.6.9] - 2026-03-13
 
 ## Highlights
