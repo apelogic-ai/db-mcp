@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import signal
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +23,7 @@ DEFAULT_IDLE_TTL_SECONDS = 900
 DEFAULT_MAX_SESSIONS = 16
 DEFAULT_OUTPUT_CHARS = 64_000
 DEFAULT_RUNTIME_ORDER = ("podman", "nerdctl", "docker")
+_LEADING_PYTHON3_RE = re.compile(r"^(\s*)python3(?=\s|$)")
 
 DEFAULT_PORTS = {
     "clickhouse": 9000,
@@ -358,20 +361,25 @@ class ProcessExecSandboxBackend:
         if spec is None:
             raise ExecRuntimeError(f"unknown exec session: {container_id}")
 
+        current_python_bin = str(Path(sys.executable).parent)
+        default_exec_path = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        configured_path = os.environ.get("DB_MCP_EXEC_PATH", default_exec_path)
+        path_entries = [entry for entry in configured_path.split(os.pathsep) if entry]
+        if current_python_bin not in path_entries:
+            path_entries.insert(0, current_python_bin)
+
         env = {
-            "PATH": os.environ.get(
-                "DB_MCP_EXEC_PATH",
-                "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-            ),
+            "PATH": os.pathsep.join(path_entries),
             "HOME": str(spec.connection_path),
             "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
             "LANG": os.environ.get("LANG", "C.UTF-8"),
         }
         env.update(spec.environment)
+        shell_command = self._rewrite_python_command(command)
 
         started = self._clock()
         process = subprocess.Popen(
-            ["/bin/bash", "-lc", command],
+            ["/bin/bash", "-c", shell_command],
             cwd=spec.connection_path,
             env=env,
             stdout=subprocess.PIPE,
@@ -403,6 +411,10 @@ class ProcessExecSandboxBackend:
 
     def _session_key(self, spec: ExecSandboxSpec) -> str:
         return f"process:{spec.session_id}:{spec.connection}"
+
+    def _rewrite_python_command(self, command: str) -> str:
+        current_python = shlex.quote(sys.executable)
+        return _LEADING_PYTHON3_RE.sub(rf"\1{current_python}", command, count=1)
 
     def _terminate_process_group(self, pid: int) -> None:
         try:
