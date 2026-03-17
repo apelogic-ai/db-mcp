@@ -24,6 +24,7 @@ from db_mcp.tools.api import (
     _api_mutate,
     _api_query,
 )
+from db_mcp.tools.code import _code
 from db_mcp.tools.database import (
     _describe_table,
     _detect_dialect,
@@ -349,6 +350,38 @@ Python and SQLAlchemy are installed in the container. Use local files, Python,
 and shell commands to inspect the vault and query the selected data source.
 """
 
+INSTRUCTIONS_CODE = """
+Database query server - CODE MODE
+
+## YOU HAVE EXACTLY ONE TOOL: code
+
+Use `code(connection="...", code="...")` for all work. The code runs as Python
+inside the selected connection workspace.
+
+## IMMEDIATE FIRST STEP
+
+```
+code(connection="...", code="print(dbmcp.read_protocol())")
+```
+
+## BUILT-IN PYTHON HELPER
+
+Your code gets a helper object named `dbmcp`.
+
+Use these helpers first:
+- `dbmcp.read_protocol()`
+- `dbmcp.connector()`
+- `dbmcp.schema_descriptions()`
+- `dbmcp.domain_model()`
+- `dbmcp.sql_rules()`
+- `dbmcp.query(sql)`
+- `dbmcp.scalar(sql)`
+- `dbmcp.execute(sql)`
+
+If a statement may write, re-run the tool with `confirmed=True`.
+Do not rely on shell semantics in this mode.
+"""
+
 
 # =============================================================================
 # Server Creation
@@ -425,6 +458,7 @@ def _create_server() -> FastMCP:
     settings = get_settings()
     is_shell_mode = settings.tool_mode == "shell"
     is_exec_mode = settings.tool_mode == "exec-only"
+    is_code_mode = settings.tool_mode == "code"
     tool_profile = _resolve_tool_profile(settings, is_shell_mode)
     is_full_profile = tool_profile == "full"
 
@@ -504,11 +538,13 @@ def _create_server() -> FastMCP:
 
     if is_exec_mode:
         instructions = INSTRUCTIONS_EXEC_ONLY
+    elif is_code_mode:
+        instructions = INSTRUCTIONS_CODE
     else:
         instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
 
     # Adapt instructions when validate_sql is not supported
-    if not is_exec_mode and not supports_validate:
+    if not is_exec_mode and not is_code_mode and not supports_validate:
         instructions = _strip_validate_sql_from_instructions(instructions)
 
     # Append multi-connection section when multiple connections are configured
@@ -723,6 +759,9 @@ def _create_server() -> FastMCP:
 
     if is_exec_mode:
         server.tool(name="exec")(_exec)
+        return server
+    if is_code_mode:
+        server.tool(name="code")(_code)
         return server
 
     # =========================================================================

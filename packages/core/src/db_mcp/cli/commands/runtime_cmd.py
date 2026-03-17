@@ -1,0 +1,176 @@
+"""Non-MCP runtime commands for native code-mode execution."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+import click
+
+from db_mcp.code_runtime import CodeModeHost
+from db_mcp.code_runtime.http import start_runtime_server
+
+
+@click.group("runtime")
+def runtime_group() -> None:
+    """Run db-mcp code mode outside MCP."""
+
+
+@runtime_group.command("prompt")
+@click.option("-c", "--connection", required=True, help="Connection name")
+@click.option("--json", "as_json", is_flag=True, help="Emit structured contract JSON")
+def runtime_prompt(connection: str, as_json: bool) -> None:
+    """Print the agent-facing native runtime contract."""
+    host = CodeModeHost(connection=connection)
+    if as_json:
+        click.echo(json.dumps(host.contract(), indent=2) + "\n", nl=False)
+        return
+    click.echo(host.instructions())
+
+
+@runtime_group.command("run")
+@click.option("-c", "--connection", required=True, help="Connection name")
+@click.option("--code", "inline_code", help="Inline Python code to execute")
+@click.option("--file", "code_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--session-id", default=None, help="Stable runtime session id")
+@click.option("--timeout-seconds", default=30, show_default=True, type=int)
+@click.option("--confirmed", is_flag=True, help="Allow write statements for this execution")
+@click.option("--json", "as_json", is_flag=True, help="Emit full structured result JSON")
+def runtime_run(
+    connection: str,
+    inline_code: str | None,
+    code_file: Path | None,
+    session_id: str | None,
+    timeout_seconds: int,
+    confirmed: bool,
+    as_json: bool,
+) -> None:
+    """Execute Python code in the shared db-mcp code runtime."""
+    if bool(inline_code) == bool(code_file):
+        raise click.UsageError("Provide exactly one of --code or --file.")
+
+    host = CodeModeHost(connection=connection, session_id=session_id)
+    if code_file is not None:
+        result = host.run_file(
+            code_file,
+            timeout_seconds=timeout_seconds,
+            confirmed=confirmed,
+        )
+    else:
+        result = host.run(
+            inline_code or "",
+            timeout_seconds=timeout_seconds,
+            confirmed=confirmed,
+        )
+
+    if as_json:
+        click.echo(json.dumps(result.to_dict(), indent=2) + "\n", nl=False)
+        raise click.exceptions.Exit(result.exit_code)
+
+    if result.stdout:
+        click.echo(result.stdout, nl=not result.stdout.endswith("\n"))
+
+    err_text = result.stderr or result.message or ""
+    if err_text:
+        click.echo(err_text, err=True, nl=not err_text.endswith("\n"))
+
+    raise click.exceptions.Exit(result.exit_code)
+
+
+def _load_code(inline_code: str | None, code_file: Path | None) -> str:
+    if bool(inline_code) == bool(code_file):
+        raise click.UsageError("Provide exactly one of --code or --file.")
+    if code_file is not None:
+        return code_file.read_text()
+    return inline_code or ""
+
+
+def _emit_runtime_result(result: dict[str, object], *, as_json: bool) -> None:
+    exit_code = int(result.get("exit_code", 1) or 0)
+    if as_json:
+        click.echo(json.dumps(result, indent=2) + "\n", nl=False)
+        raise click.exceptions.Exit(exit_code)
+
+    stdout = str(result.get("stdout", "") or "")
+    stderr = str(result.get("stderr", "") or result.get("message", "") or "")
+    if stdout:
+        click.echo(stdout, nl=not stdout.endswith("\n"))
+    if stderr:
+        click.echo(stderr, err=True, nl=not stderr.endswith("\n"))
+    raise click.exceptions.Exit(exit_code)
+
+
+def _parse_http_error(exc: HTTPError) -> str:
+    body = exc.read().decode("utf-8", errors="replace")
+    if not body:
+        return f"Runtime server error: HTTP {exc.code}"
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message") or payload.get("error")
+        if detail:
+            return str(detail)
+    return body
+
+
+@runtime_group.command("exec")
+@click.option("--server-url", required=True, help="Runtime server base URL")
+@click.option("-c", "--connection", required=True, help="Connection name")
+@click.option("--code", "inline_code", help="Inline Python code to execute")
+@click.option("--file", "code_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--session-id", required=True, help="Stable runtime session id")
+@click.option("--timeout-seconds", default=30, show_default=True, type=int)
+@click.option("--confirmed", is_flag=True, help="Allow write statements for this execution")
+@click.option("--json", "as_json", is_flag=True, help="Emit full structured result JSON")
+def runtime_exec(
+    server_url: str,
+    connection: str,
+    inline_code: str | None,
+    code_file: Path | None,
+    session_id: str,
+    timeout_seconds: int,
+    confirmed: bool,
+    as_json: bool,
+) -> None:
+    """Execute Python code through a persistent runtime server."""
+    code = _load_code(inline_code, code_file)
+    payload = {
+        "connection": connection,
+        "code": code,
+        "session_id": session_id,
+        "timeout_seconds": timeout_seconds,
+        "confirmed": confirmed,
+    }
+    request = Request(
+        f"{server_url.rstrip('/')}/api/runtime/run",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=timeout_seconds + 5) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise click.ClickException(_parse_http_error(exc)) from exc
+    except URLError as exc:
+        raise click.ClickException(f"Unable to reach runtime server: {exc.reason}") from exc
+
+    _emit_runtime_result(result, as_json=as_json)
+
+
+@runtime_group.command("serve")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
+@click.option("--port", default=8091, show_default=True, type=int, help="Port to listen on")
+def runtime_serve(host: str, port: int) -> None:
+    """Start the persistent runtime HTTP server."""
+    start_runtime_server(host=host, port=port)
+
+
+def register_commands(main_group: click.Group) -> None:
+    """Register runtime commands with the main group."""
+    main_group.add_command(runtime_group)

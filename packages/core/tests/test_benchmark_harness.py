@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from pathlib import Path
 
@@ -9,11 +10,20 @@ import pytest
 import yaml
 
 from db_mcp.benchmark.connection import resolve_sql_connection_access
-from db_mcp.benchmark.driver import ClaudeCliDriver, DriverResult, build_claude_command
+from db_mcp.benchmark.driver import (
+    ClaudeCliDriver,
+    DriverResult,
+    LoopBreakerConfig,
+    _watch_runtime_loop,
+    build_claude_command,
+)
 from db_mcp.benchmark.loader import load_case_pack
 from db_mcp.benchmark.runner import (
+    CODE_MODE_SCENARIO,
     EXEC_ONLY_SCENARIO,
+    RUNTIME_CODE_SCENARIO,
     _extract_answer_payload,
+    _resolve_benchmark_db_mcp_binary,
     run_benchmark_suite,
     summarize_run_directory,
 )
@@ -38,10 +48,16 @@ class FakeDriver:
         workdir: Path,
         debug_log_path: Path,
         tools: list[str],
+        env: dict[str, str] | None = None,
+        loop_breaker=None,
     ) -> DriverResult:
         config_text = mcp_config_path.read_text()
         if '"exec-only"' in config_text:
             scenario = EXEC_ONLY_SCENARIO
+        elif '"code"' in config_text:
+            scenario = CODE_MODE_SCENARIO
+        elif "from dbmcp_host import dbmcp" in prompt:
+            scenario = RUNTIME_CODE_SCENARIO
         elif "db-mcp" in config_text:
             scenario = "db_mcp"
         else:
@@ -53,12 +69,49 @@ class FakeDriver:
                 "model": model,
                 "tools": tools,
                 "prompt": prompt,
+                "env": env or {},
             }
         )
+        if env and env.get("DB_MCP_BENCH_RUNTIME_LOG"):
+            capture_dir = Path(env["DB_MCP_BENCH_RUNTIME_CAPTURE_DIR"])
+            capture_dir.mkdir(parents=True, exist_ok=True)
+            captured_file = capture_dir / "000-runtime.py"
+            captured_file.write_text(
+                "from dbmcp_host import dbmcp\n"
+                "_ = dbmcp.read_protocol()\n"
+                "print(dbmcp.scalar('SELECT COUNT(*) FROM items'))\n"
+            )
+            Path(env["DB_MCP_BENCH_RUNTIME_LOG"]).write_text(
+                json.dumps(
+                    {
+                        "argv": ["python3", "/tmp/runtime.py"],
+                        "captured_file": str(captured_file),
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "kind": "host_client_call",
+                        "method": "scalar",
+                        "session_id": "runtime-session",
+                    }
+                )
+                + "\n"
+            )
         if scenario == EXEC_ONLY_SCENARIO:
             debug_log_path.write_text(
                 "executePreToolHooks called for tool: mcp__db-mcp__exec\n"
                 "Tool call failed: exec returned non-zero exit code\n"
+            )
+        elif scenario == CODE_MODE_SCENARIO:
+            debug_log_path.write_text(
+                "executePreToolHooks called for tool: mcp__db-mcp__code\n"
+                "Tool call failed: code returned non-zero exit code\n"
+            )
+        elif scenario == RUNTIME_CODE_SCENARIO:
+            debug_log_path.write_text(
+                '{"tool_name":"Bash"}\n'
+                "python3 /tmp/runtime.py\n"
             )
         else:
             debug_log_path.write_text(
@@ -71,6 +124,57 @@ class FakeDriver:
             duration_ms=123.0,
             debug_log_path=debug_log_path,
         )
+
+
+class FakeRuntimeServerContext:
+    def __init__(self, url: str = "http://127.0.0.1:8765") -> None:
+        self.url = url
+
+    def __enter__(self) -> str:
+        return self.url
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class NoRuntimeInvocationDriver(FakeDriver):
+    def run(self, **kwargs) -> DriverResult:
+        result = super().run(**kwargs)
+        env = kwargs.get("env") or {}
+        if env.get("DB_MCP_BENCH_RUNTIME_LOG"):
+            Path(env["DB_MCP_BENCH_RUNTIME_LOG"]).write_text("")
+        return result
+
+
+class RuntimeImportPreambleDriver(FakeDriver):
+    def run(self, **kwargs) -> DriverResult:
+        result = super().run(**kwargs)
+        env = kwargs.get("env") or {}
+        if env.get("DB_MCP_BENCH_RUNTIME_LOG"):
+            capture_dir = Path(env["DB_MCP_BENCH_RUNTIME_CAPTURE_DIR"])
+            capture_dir.mkdir(parents=True, exist_ok=True)
+            captured_file = capture_dir / "000-runtime.py"
+            captured_file.write_text(
+                'import json\n\n_ = dbmcp.read_protocol()\nprint(json.dumps({"ok": True}))\n'
+            )
+            Path(env["DB_MCP_BENCH_RUNTIME_LOG"]).write_text(
+                json.dumps(
+                    {
+                        "argv": ["python3", "/tmp/runtime.py"],
+                        "captured_file": str(captured_file),
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "kind": "host_client_call",
+                        "method": "read_protocol",
+                        "session_id": "runtime-session",
+                    }
+                )
+                + "\n"
+            )
+        return result
 
 
 @pytest.fixture()
@@ -523,6 +627,46 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
                 "failure_reason": None,
             },
         },
+        CODE_MODE_SCENARIO: {
+            "type": "result",
+            "subtype": "success",
+            "total_cost_usd": 0.1,
+            "usage": {
+                "input_tokens": 95,
+                "output_tokens": 21,
+                "cache_read_input_tokens": 8,
+                "cache_creation_input_tokens": 0,
+            },
+            "structured_output": {
+                "task_id": "count_items",
+                "status": "answered",
+                "answer_value": 3,
+                "answer_text": "3",
+                "evidence_sql": "SELECT COUNT(*) FROM items",
+                "confidence": 0.75,
+                "failure_reason": None,
+            },
+        },
+        RUNTIME_CODE_SCENARIO: {
+            "type": "result",
+            "subtype": "success",
+            "total_cost_usd": 0.11,
+            "usage": {
+                "input_tokens": 88,
+                "output_tokens": 24,
+                "cache_read_input_tokens": 7,
+                "cache_creation_input_tokens": 0,
+            },
+            "structured_output": {
+                "task_id": "count_items",
+                "status": "answered",
+                "answer_value": 3,
+                "answer_text": "3",
+                "evidence_sql": "SELECT COUNT(*) FROM items",
+                "confidence": 0.73,
+                "failure_reason": None,
+            },
+        },
         "raw_dsn": {
             "type": "result",
             "subtype": "success",
@@ -545,6 +689,17 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
         },
     }
     driver = FakeDriver(outputs)
+    runtime_server_calls: list[tuple[str, Path]] = []
+
+    class FakeRuntimeServer:
+        def __enter__(self):
+            runtime_server_calls.append(("enter", Path("/tmp/fake")))
+            return "http://127.0.0.1:8765"
+
+        def __exit__(self, exc_type, exc, tb):
+            runtime_server_calls.append(("exit", Path("/tmp/fake")))
+            return False
+
     run_dir = run_benchmark_suite(
         connection_name="bench",
         connection_path=benchmark_connection,
@@ -554,17 +709,20 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
         output_root=tmp_path,
         driver=driver,
         shuffle_seed=7,
+        runtime_server_factory=lambda **_: FakeRuntimeServer(),
     )
 
     assert (run_dir / "summary.json").exists()
     assert (run_dir / "summary.csv").exists()
     attempts = list((run_dir / "attempts").iterdir())
-    assert len(attempts) == 3
+    assert len(attempts) == 5
 
     summary = summarize_run_directory(run_dir)
-    assert summary["totals"]["attempts"] == 3
+    assert summary["totals"]["attempts"] == 5
     assert summary["scenario_summary"]["db_mcp"]["correct"] == 1
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["correct"] == 1
+    assert summary["scenario_summary"][CODE_MODE_SCENARIO]["correct"] == 1
+    assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"]["raw_dsn"]["correct"] == 0
     assert summary["scenario_summary"]["db_mcp"]["input_tokens"] == 100
     assert summary["scenario_summary"]["db_mcp"]["output_tokens"] == 20
@@ -576,19 +734,93 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["total_cost_usd"] == 0.09
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["exploratory_steps"] == 1
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["failed_executions"] == 1
+    assert summary["scenario_summary"][CODE_MODE_SCENARIO]["input_tokens"] == 95
+    assert summary["scenario_summary"][CODE_MODE_SCENARIO]["output_tokens"] == 21
+    assert summary["scenario_summary"][CODE_MODE_SCENARIO]["total_cost_usd"] == 0.1
+    assert summary["scenario_summary"][CODE_MODE_SCENARIO]["exploratory_steps"] == 1
+    assert summary["scenario_summary"][CODE_MODE_SCENARIO]["failed_executions"] == 1
+    assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["input_tokens"] == 88
+    assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["output_tokens"] == 24
+    assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["total_cost_usd"] == 0.11
+    assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["exploratory_steps"] == 1
+    assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["failed_executions"] == 0
     assert summary["scenario_summary"]["raw_dsn"]["input_tokens"] == 80
     assert summary["scenario_summary"]["raw_dsn"]["output_tokens"] == 18
     assert summary["scenario_summary"]["raw_dsn"]["total_cost_usd"] == 0.08
-    assert len(driver.calls) == 3
+    assert len(driver.calls) == 5
     by_scenario = {call["scenario"]: call for call in driver.calls}
     assert by_scenario[EXEC_ONLY_SCENARIO]["tools"] == [""]
     assert "cat PROTOCOL.md" in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
     assert "Do not rely on any built-in tools." in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
+    assert by_scenario[CODE_MODE_SCENARIO]["tools"] == [""]
+    assert "/db-mcp-code-benchmark" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "print(dbmcp.read_protocol())" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "`dbmcp.read_protocol()` returns markdown text" in str(
+        by_scenario[CODE_MODE_SCENARIO]["prompt"]
+    )
+    assert "Python helper object `dbmcp`" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "dbmcp.find_table(...)" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "dbmcp.describe_table(...)" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "dbmcp.find_columns(...)" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "write the SQL yourself" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "Print the final JSON object yourself" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert "Do not guess table or column names" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert by_scenario[RUNTIME_CODE_SCENARIO]["tools"] == ["Bash"]
+    assert "/db-mcp-runtime-benchmark" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert "from dbmcp_host import dbmcp" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert "python3 /tmp/dbmcp_runtime.py" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert (
+        "The first executable statement in the first runtime script must be "
+        "`_ = dbmcp.read_protocol()`."
+        in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    )
+    assert (
+        "After the protocol acknowledgment, inspect schema with `dbmcp.find_table(...)`, "
+        "`dbmcp.describe_table(...)`, `dbmcp.find_columns(...)`, or "
+        "`dbmcp.schema_descriptions()` and then write the SQL yourself."
+        in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    )
+    assert "For scalar questions, prefer a direct `dbmcp.scalar(\"SELECT ...\")` query" in str(
+        by_scenario[RUNTIME_CODE_SCENARIO]["prompt"]
+    )
+    assert "Do not use `dbmcp.plan(...)` to generate SQL for you." in str(
+        by_scenario[RUNTIME_CODE_SCENARIO]["prompt"]
+    )
+    assert "dbmcp.find_table(...)" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert "dbmcp.describe_table(...)" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert "dbmcp.find_columns(...)" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert "dbmcp.schema_descriptions()" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert '"task_id"' in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert '"status"' in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert '"answer_text"' in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert "Do not guess table or column names" in str(
+        by_scenario[RUNTIME_CODE_SCENARIO]["prompt"]
+    )
+    assert "Do not rerun an identical discovery script after it succeeds." in str(
+        by_scenario[RUNTIME_CODE_SCENARIO]["prompt"]
+    )
+    assert "_ = dbmcp.read_protocol()" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
+    assert "Do not print the full protocol or full schema" in str(
+        by_scenario[RUNTIME_CODE_SCENARIO]["prompt"]
+    )
     assert "You do not have db-mcp." in str(by_scenario["raw_dsn"]["prompt"])
     exec_attempt = next(path for path in attempts if EXEC_ONLY_SCENARIO in path.name)
     exec_mcp_config = (exec_attempt / "mcp-config.json").read_text()
     assert '"--mode"' in exec_mcp_config
     assert '"exec-only"' in exec_mcp_config
+    code_attempt = next(path for path in attempts if CODE_MODE_SCENARIO in path.name)
+    code_mcp_config = (code_attempt / "mcp-config.json").read_text()
+    assert '"--mode"' in code_mcp_config
+    assert '"code"' in code_mcp_config
+    runtime_attempt = next(path for path in attempts if RUNTIME_CODE_SCENARIO in path.name)
+    runtime_mcp_config = (runtime_attempt / "mcp-config.json").read_text()
+    assert runtime_mcp_config.strip() == '{\n  "mcpServers": {}\n}'
+    assert runtime_server_calls == [("enter", Path("/tmp/fake")), ("exit", Path("/tmp/fake"))]
+    assert (code_attempt / ".claude" / "skills" / "db-mcp-code-benchmark" / "SKILL.md").exists()
+    assert (
+        runtime_attempt / ".claude" / "skills" / "db-mcp-runtime-benchmark" / "SKILL.md"
+    ).exists()
+    assert (runtime_attempt / "dbmcp_host.py").exists()
 
 
 def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_path):
@@ -609,6 +841,24 @@ def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_
             "answer_text": "3",
             "evidence_sql": "SELECT COUNT(*) FROM items",
             "confidence": 0.7,
+            "failure_reason": None,
+        },
+        CODE_MODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.75,
+            "failure_reason": None,
+        },
+        RUNTIME_CODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.73,
             "failure_reason": None,
         },
         "raw_dsn": {
@@ -634,14 +884,17 @@ def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_
         driver=driver,
         shuffle_seed=7,
         progress_callback=progress_updates.append,
+        runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
     )
 
-    assert len(progress_updates) == 3
-    assert [update["completed_attempts"] for update in progress_updates] == [1, 2, 3]
-    assert all(update["total_attempts"] == 3 for update in progress_updates)
+    assert len(progress_updates) == 5
+    assert [update["completed_attempts"] for update in progress_updates] == [1, 2, 3, 4, 5]
+    assert all(update["total_attempts"] == 5 for update in progress_updates)
     assert {update["scenario"] for update in progress_updates} == {
         "db_mcp",
         EXEC_ONLY_SCENARIO,
+        CODE_MODE_SCENARIO,
+        RUNTIME_CODE_SCENARIO,
         "raw_dsn",
     }
     assert progress_updates[0]["case_id"] == "count_items"
@@ -689,3 +942,360 @@ def test_claude_cli_driver_interrupts_active_process(monkeypatch, tmp_path):
         )
 
     assert ("killpg", 43210) in events
+
+
+def test_claude_cli_driver_passes_custom_environment(monkeypatch, tmp_path):
+    captured_env: dict[str, str] = {}
+
+    class FakeProcess:
+        pid = 54321
+        returncode = 0
+
+        def communicate(self):
+            return ("{}", "")
+
+    def fake_popen(*args, **kwargs):
+        nonlocal captured_env
+        captured_env = kwargs["env"]
+        return FakeProcess()
+
+    monkeypatch.setattr("db_mcp.benchmark.driver.subprocess.Popen", fake_popen)
+
+    driver = ClaudeCliDriver()
+    driver.run(
+        prompt="answer",
+        json_schema={"type": "object"},
+        session_id=str(uuid.uuid4()),
+        mcp_config_path=tmp_path / "mcp.json",
+        model="claude-sonnet-4-5-20250929",
+        workdir=tmp_path,
+        debug_log_path=tmp_path / "debug.log",
+        tools=["Bash"],
+        env={"DB_MCP_BENCHMARK": "1"},
+    )
+
+    assert captured_env["DB_MCP_BENCHMARK"] == "1"
+
+
+def test_claude_cli_driver_loop_breaker_kills_repeated_runtime_scripts(monkeypatch, tmp_path):
+    runtime_log = tmp_path / "runtime-invocations.jsonl"
+    capture = tmp_path / "runtime.py"
+    capture.write_text("print('same script')\n")
+    runtime_log.write_text(
+        "\n".join(
+            json.dumps({"captured_file": str(capture)})
+            for _ in range(3)
+        )
+        + "\n"
+    )
+
+    killed: list[int] = []
+    stop_event = threading.Event()
+
+    def fake_killpg(pid, sig):
+        killed.append(pid)
+
+    monkeypatch.setattr("db_mcp.benchmark.driver.os.killpg", fake_killpg)
+
+    _watch_runtime_loop(
+        12345,
+        LoopBreakerConfig(
+            runtime_log_path=runtime_log,
+            repetition_limit=3,
+            poll_interval_seconds=0,
+        ),
+        stop_event,
+    )
+
+    assert killed == [12345]
+
+
+def test_resolve_benchmark_db_mcp_binary_prefers_repo_dist(monkeypatch):
+    expected = "/Users/lbelyaev/dev/db-mcp/packages/core/dist/db-mcp"
+    monkeypatch.delenv("DB_MCP_BENCHMARK_BINARY", raising=False)
+    monkeypatch.setattr("db_mcp.benchmark.runner.which", lambda _: "/tmp/venv/bin/db-mcp")
+
+    resolved = _resolve_benchmark_db_mcp_binary()
+
+    assert resolved == expected
+
+
+def test_runtime_code_attempt_persists_prompt_and_invocation_log(benchmark_connection, tmp_path):
+    outputs = {
+        "db_mcp": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.9,
+            "failure_reason": None,
+        },
+        EXEC_ONLY_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.7,
+            "failure_reason": None,
+        },
+        CODE_MODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.75,
+            "failure_reason": None,
+        },
+        RUNTIME_CODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.73,
+            "failure_reason": None,
+        },
+        "raw_dsn": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 2,
+            "answer_text": "2",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.3,
+            "failure_reason": None,
+        },
+    }
+    driver = FakeDriver(outputs)
+
+    run_dir = run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["count_items"],
+        output_root=tmp_path,
+        driver=driver,
+        shuffle_seed=7,
+        runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+    )
+
+    runtime_attempt = next(
+        path for path in (run_dir / "attempts").iterdir() if RUNTIME_CODE_SCENARIO in path.name
+    )
+
+    prompt_text = (runtime_attempt / "prompt.txt").read_text()
+    invocation = json.loads(
+        (runtime_attempt / "runtime-invocations.jsonl").read_text().splitlines()[0]
+    )
+    skill_text = (
+        runtime_attempt / ".claude" / "skills" / "db-mcp-runtime-benchmark" / "SKILL.md"
+    ).read_text()
+
+    assert "from dbmcp_host import dbmcp" in prompt_text
+    assert "python3 /tmp/dbmcp_runtime.py" in prompt_text
+    assert (
+        "The first executable statement in the first runtime script must be "
+        "`_ = dbmcp.read_protocol()`."
+        in prompt_text
+    )
+    assert (
+        "After the protocol acknowledgment, inspect schema with `dbmcp.find_table(...)`, "
+        "`dbmcp.describe_table(...)`, `dbmcp.find_columns(...)`, or "
+        "`dbmcp.schema_descriptions()` and then write the SQL yourself."
+        in prompt_text
+    )
+    assert (
+        "For scalar questions, prefer a direct `dbmcp.scalar(\"SELECT ...\")` query"
+        in prompt_text
+    )
+    assert "Do not use `dbmcp.plan(...)` to generate SQL for you." in prompt_text
+    assert "dbmcp.find_table(...)" in prompt_text
+    assert "dbmcp.describe_table(...)" in prompt_text
+    assert "dbmcp.find_columns(...)" in prompt_text
+    assert "dbmcp.schema_descriptions()" in prompt_text
+    assert '"task_id"' in prompt_text
+    assert '"status"' in prompt_text
+    assert '"answer_text"' in prompt_text
+    assert "Do not guess table or column names" in prompt_text
+    assert "Do not rerun an identical discovery script after it succeeds." in prompt_text
+    assert "_ = dbmcp.read_protocol()" in prompt_text
+    assert "Do not print the full protocol or full schema" in prompt_text
+    assert invocation["argv"] == ["python3", "/tmp/runtime.py"]
+    assert Path(invocation["captured_file"]).exists()
+    assert "`from dbmcp_host import dbmcp`" in skill_text
+    assert (
+        "The first executable statement in the first script must be "
+        "`_ = dbmcp.read_protocol()`."
+        in skill_text
+    )
+    assert "inspect schema with `dbmcp.find_table(...)`" in skill_text
+    assert "`dbmcp.describe_table(...)`" in skill_text
+    assert '`value = dbmcp.scalar("SELECT ...")`' in skill_text
+    assert "Do not use `dbmcp.plan(...)` to generate SQL for you." in skill_text
+    assert "dbmcp.find_table(...)" in skill_text
+    assert "dbmcp.describe_table(...)" in skill_text
+    assert "dbmcp.find_columns(...)" in skill_text
+    assert "dbmcp.schema_descriptions()" in skill_text
+    assert "If discovery succeeds, do not repeat it. Run the final query next." in skill_text
+    assert "`dbmcp.read_protocol()` returns markdown text." in skill_text
+    assert "Acknowledge the protocol silently" in skill_text
+    assert '"task_id"' in skill_text
+    assert '"status"' in skill_text
+    assert '"answer_text"' in skill_text
+    assert (runtime_attempt / "dbmcp_host.py").exists()
+    wrapper_text = (runtime_attempt / ".runtime-bin" / "python3").read_text()
+    assert '"$DB_MCP_REAL_PYTHON" - "$@" <<' in wrapper_text
+    assert 'exec "$DB_MCP_REAL_PYTHON" "$@"' in wrapper_text
+
+
+def test_runtime_code_attempt_fails_without_runtime_invocation(benchmark_connection, tmp_path):
+    outputs = {
+        "db_mcp": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.9,
+            "failure_reason": None,
+        },
+        EXEC_ONLY_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.7,
+            "failure_reason": None,
+        },
+        CODE_MODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.75,
+            "failure_reason": None,
+        },
+        RUNTIME_CODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.73,
+            "failure_reason": None,
+        },
+        "raw_dsn": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 2,
+            "answer_text": "2",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.3,
+            "failure_reason": None,
+        },
+    }
+    driver = NoRuntimeInvocationDriver(outputs)
+
+    run_dir = run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["count_items"],
+        output_root=tmp_path,
+        driver=driver,
+        shuffle_seed=7,
+        runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+    )
+
+    runtime_attempt = next(
+        path for path in (run_dir / "attempts").iterdir() if RUNTIME_CODE_SCENARIO in path.name
+    )
+    answer = json.loads((runtime_attempt / "answer.json").read_text())
+    score = json.loads((runtime_attempt / "score.json").read_text())
+    summary = json.loads((run_dir / "summary.json").read_text())
+
+    assert answer["status"] == "failed"
+    assert "dbmcp host runtime client" in answer["failure_reason"]
+    assert score["correct"] is False
+    assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["correct"] == 0
+
+
+def test_runtime_code_attempt_allows_import_preamble_before_protocol_ack(
+    benchmark_connection, tmp_path
+):
+    outputs = {
+        "db_mcp": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.9,
+            "failure_reason": None,
+        },
+        EXEC_ONLY_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.7,
+            "failure_reason": None,
+        },
+        CODE_MODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.75,
+            "failure_reason": None,
+        },
+        RUNTIME_CODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.73,
+            "failure_reason": None,
+        },
+        "raw_dsn": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 2,
+            "answer_text": "2",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.3,
+            "failure_reason": None,
+        },
+    }
+    driver = RuntimeImportPreambleDriver(outputs)
+
+    run_dir = run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["count_items"],
+        output_root=tmp_path,
+        driver=driver,
+        shuffle_seed=7,
+        runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+    )
+
+    runtime_attempt = next(
+        path for path in (run_dir / "attempts").iterdir() if RUNTIME_CODE_SCENARIO in path.name
+    )
+    answer = json.loads((runtime_attempt / "answer.json").read_text())
+    score = json.loads((runtime_attempt / "score.json").read_text())
+
+    assert answer["status"] == "answered"
+    assert answer["failure_reason"] is None
+    assert score["correct"] is True

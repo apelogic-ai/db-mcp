@@ -481,6 +481,14 @@ class ExecSessionManager:
             self._backend.close_session(active.container_id)
         self._sessions.clear()
 
+    def close_session(self, *, session_id: str, connection: str) -> bool:
+        key = (session_id, connection)
+        active = self._sessions.pop(key, None)
+        if active is None:
+            return False
+        self._backend.close_session(active.container_id)
+        return True
+
     def _evict_if_needed(self) -> None:
         if len(self._sessions) < self._max_sessions:
             return

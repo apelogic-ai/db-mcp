@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 from rich.panel import Panel
 
+from db_mcp.cli.commands.core import start as start_cmd
 from db_mcp.cli.connection import (
     _load_connection_env,
     get_connection_path,
@@ -178,6 +179,40 @@ def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
         console.print("\n[dim]Server stopped.[/dim]")
 
 
+@click.group("serve")
+def serve_group() -> None:
+    """Serve db-mcp over mirrored MCP and UI entry points."""
+
+
+@serve_group.command("mcp")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+@click.option(
+    "--mode",
+    type=click.Choice(["detailed", "shell", "exec-only", "code"]),
+    default=None,
+    help="Optional tool startup mode override.",
+)
+def serve_mcp(connection: str | None, mode: str | None) -> None:
+    """Start the stdio MCP server using the shared db-mcp runtime."""
+    callback = start_cmd.callback
+    if callback is None:  # pragma: no cover - defensive guard
+        raise click.ClickException("start command is unavailable")
+    callback(connection, mode)
+
+
+@serve_group.command("ui")
+@click.option("--host", "-h", default="0.0.0.0", help="Host to bind to")
+@click.option("--port", "-p", default=8080, help="Port to listen on")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+@click.option("-v", "--verbose", is_flag=True, help="Show server logs in terminal")
+def serve_ui(host: str, port: int, connection: str | None, verbose: bool) -> None:
+    """Start the HTTP UI server using the shared db-mcp runtime."""
+    callback = ui_cmd.callback
+    if callback is None:  # pragma: no cover - defensive guard
+        raise click.ClickException("ui command is unavailable")
+    callback(host, port, connection, verbose)
+
+
 @click.group()
 def playground():
     """Manage the playground connection with Chinook SQLite database.
@@ -258,5 +293,6 @@ def playground_status():
 def register_commands(main_group: click.Group) -> None:
     """Register service commands with the main group."""
     main_group.add_command(console_cmd)
+    main_group.add_command(serve_group)
     main_group.add_command(ui_cmd)
     main_group.add_command(playground)

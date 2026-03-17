@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import signal
 from pathlib import Path
 
 import click
@@ -87,6 +88,8 @@ def run(
     seed: int | None,
 ):
     """Run the benchmark suite."""
+    previous_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         run_dir = run_benchmark_suite_from_cli(
             connection=connection,
@@ -100,6 +103,8 @@ def run(
         )
     except KeyboardInterrupt as exc:
         raise click.Abort() from exc
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
     click.echo(f"Benchmark run saved to {run_dir}")
 
 

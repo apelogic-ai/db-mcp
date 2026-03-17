@@ -11,6 +11,7 @@ from db_mcp.cli.commands.connector_cmd import register_commands as register_conn
 from db_mcp.cli.commands.core import register_commands as register_core
 from db_mcp.cli.commands.discover_cmd import register_commands as register_discover
 from db_mcp.cli.commands.git_cmds import register_commands as register_git
+from db_mcp.cli.commands.runtime_cmd import register_commands as register_runtime
 from db_mcp.cli.commands.services import register_commands as register_services
 from db_mcp.cli.commands.traces import register_commands as register_traces
 from db_mcp.cli.utils import _get_cli_version
@@ -29,6 +30,7 @@ register_collab(main)
 register_traces(main)
 register_git(main)
 register_discover(main)
+register_runtime(main)
 register_services(main)
 register_connector(main)
 

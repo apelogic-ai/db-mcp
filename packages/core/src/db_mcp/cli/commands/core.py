@@ -165,7 +165,7 @@ def init(name: str, source: str | None):
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
 @click.option(
     "--mode",
-    type=click.Choice(["detailed", "shell", "exec-only"]),
+    type=click.Choice(["detailed", "shell", "exec-only", "code"]),
     default=None,
     help="Optional tool startup mode override.",
 )
