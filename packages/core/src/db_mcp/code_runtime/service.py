@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
-from db_mcp.code_runtime.backend import CodeResult
+from db_mcp.code_runtime.backend import CodeResult, HostDbMcpRuntime
 from db_mcp.code_runtime.contract import build_code_mode_contract, build_code_mode_instructions
 from db_mcp.code_runtime.runtime import CodeModeRuntime
 from db_mcp.exec_runtime import ExecSessionManager, get_exec_session_manager
@@ -25,6 +25,7 @@ class CodeRuntimeService:
 
     manager: ExecSessionManager = field(default_factory=get_exec_session_manager)
     _sessions: dict[str, CodeRuntimeHostSession] = field(default_factory=dict)
+    _host_runtimes: dict[str, HostDbMcpRuntime] = field(default_factory=dict)
 
     def instructions(self, connection: str) -> str:
         return build_code_mode_instructions(connection)
@@ -53,6 +54,7 @@ class CodeRuntimeService:
             connection=connection,
         )
         self._sessions[resolved_session_id] = session
+        self._host_runtimes[resolved_session_id] = HostDbMcpRuntime(connection)
         return session
 
     def get_session(self, session_id: str) -> CodeRuntimeHostSession:
@@ -104,10 +106,35 @@ class CodeRuntimeService:
 
     def close_session(self, session_id: str) -> bool:
         session = self._sessions.pop(session_id, None)
+        self._host_runtimes.pop(session_id, None)
         if session is None:
             return False
         self.manager.close_session(session_id=session.session_id, connection=session.connection)
         return True
+
+    def invoke_session_method(
+        self,
+        session_id: str,
+        method: str,
+        *,
+        args: list[object] | None = None,
+        kwargs: dict[str, object] | None = None,
+        confirmed: bool = False,
+    ) -> object:
+        session = self.get_session(session_id)
+        runtime = self._host_runtimes.get(session_id)
+        if (
+            runtime is None
+            or runtime.connection != session.connection
+            or runtime.confirmed != confirmed
+        ):
+            runtime = HostDbMcpRuntime(session.connection, confirmed=confirmed)
+            self._host_runtimes[session_id] = runtime
+
+        target = getattr(runtime, method, None)
+        if target is None or method.startswith("_"):
+            raise AttributeError(f"unknown runtime sdk method: {method}")
+        return target(*(args or []), **(kwargs or {}))
 
 
 _service: CodeRuntimeService | None = None

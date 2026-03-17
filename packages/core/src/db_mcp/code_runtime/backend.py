@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
 
 from db_mcp.exec_runtime import ExecRuntimeError, ExecSandboxSpec, ExecSessionManager
 from db_mcp.tools.utils import require_connection, resolve_connection
@@ -505,6 +506,377 @@ class _RuntimeSessionState:
 
 
 _runtime_session_states: dict[tuple[str, str], _RuntimeSessionState] = {}
+
+
+def _read_yaml_file(path: Path) -> object:
+    import yaml
+
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text()) or {}
+
+
+def _camel_case_words(value: str) -> str:
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
+
+
+def _normalize_text(value: object) -> str:
+    text_value = _camel_case_words(str(value or ""))
+    return " ".join(part for part in re.split(r"[^a-z0-9]+", text_value.lower()) if part)
+
+
+def _tokenize(value: object) -> set[str]:
+    tokens = set()
+    for token in _normalize_text(value).split():
+        tokens.add(token)
+        if token.endswith("s") and len(token) > 3:
+            tokens.add(token[:-1])
+    return tokens
+
+
+def _score_text_match(query: str, *values: object) -> int:
+    query_norm = _normalize_text(query)
+    query_tokens = _tokenize(query)
+    if not query_tokens and not query_norm:
+        return 0
+
+    score = 0
+    for value in values:
+        value_norm = _normalize_text(value)
+        value_tokens = _tokenize(value)
+        if not value_norm and not value_tokens:
+            continue
+        overlap = query_tokens & value_tokens
+        if overlap:
+            score += len(overlap) * 10
+        if query_norm and value_norm:
+            if query_norm in value_norm:
+                score += 15
+            if value_norm in query_norm:
+                score += 8
+    return score
+
+
+def _leading_keyword(sql: str) -> str:
+    stripped = sql.lstrip()
+    while stripped.startswith("--"):
+        _, _, stripped = stripped.partition("\n")
+        stripped = stripped.lstrip()
+    while stripped.startswith("/*"):
+        _, _, stripped = stripped.partition("*/")
+        stripped = stripped.lstrip()
+    token = stripped.split(None, 1)[0] if stripped else ""
+    return token.upper()
+
+
+def _is_write_sql(sql: str) -> bool:
+    first = _leading_keyword(sql)
+    return first not in {"", "SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN", "PRAGMA"}
+
+
+class HostDbMcpRuntime:
+    """Main-process runtime SDK for host-managed sessions."""
+
+    def __init__(self, connection: str, *, confirmed: bool = False):
+        connector, connection_name, connection_path = resolve_connection(
+            require_connection(connection)
+        )
+        self.connection = connection_name
+        self.connection_path = Path(connection_path)
+        self.connector_impl = connector
+        self.confirmed = confirmed
+        self._connector_payload: dict[str, object] | None = None
+
+    def read_text(self, relative_path: str) -> str:
+        return (self.connection_path / relative_path).read_text()
+
+    def read_yaml(self, relative_path: str) -> object:
+        return _read_yaml_file(self.connection_path / relative_path)
+
+    def read_protocol(self) -> str:
+        return self.read_text("PROTOCOL.md")
+
+    def ack_protocol(self) -> str:
+        return self.read_protocol()
+
+    def protocol_text(self) -> str:
+        return self.read_protocol()
+
+    def connector(self) -> dict[str, object]:
+        if self._connector_payload is None:
+            payload = _read_yaml_file(self.connection_path / "connector.yaml")
+            self._connector_payload = payload if isinstance(payload, dict) else {}
+        return self._connector_payload
+
+    def schema_descriptions(self) -> dict[str, object]:
+        payload = self.read_yaml("schema/descriptions.yaml")
+        return payload if isinstance(payload, dict) else {}
+
+    def _schema_tables(self) -> list[dict[str, Any]]:
+        schema = self.schema_descriptions()
+        tables = schema.get("tables", {}) if isinstance(schema, dict) else {}
+        if isinstance(tables, list):
+            return [table for table in tables if isinstance(table, dict)]
+        if isinstance(tables, dict):
+            rows: list[dict[str, Any]] = []
+            for name, payload in tables.items():
+                if isinstance(payload, dict):
+                    row = dict(payload)
+                    row.setdefault("name", name)
+                    rows.append(row)
+                else:
+                    rows.append({"name": name})
+            return rows
+        return []
+
+    def table_names(self) -> list[str]:
+        return sorted(
+            str(table.get("name") or table.get("table_name"))
+            for table in self._schema_tables()
+            if table.get("name") or table.get("table_name")
+        )
+
+    def describe_table(self, name: str) -> dict[str, object] | None:
+        query_norm = _normalize_text(name)
+        best_match: dict[str, Any] | None = None
+        best_score = -1
+        for table in self._schema_tables():
+            table_name = table.get("name") or table.get("table_name") or ""
+            score = _score_text_match(query_norm, table_name, table.get("full_name"))
+            if query_norm == _normalize_text(table_name):
+                score += 100
+            if score > best_score:
+                best_score = score
+                best_match = table
+        if best_match is not None and best_score > 0:
+            payload = dict(best_match)
+            payload["name"] = payload.get("name") or payload.get("table_name")
+            payload["columns"] = [
+                dict(column) for column in payload.get("columns", []) if isinstance(column, dict)
+            ]
+            return payload
+        return None
+
+    def find_tables(self, query: str, limit: int = 5) -> list[dict[str, object]]:
+        matches = []
+        for table in self._schema_tables():
+            name = table.get("name") or table.get("table_name") or ""
+            columns = [column.get("name", "") for column in table.get("columns", [])]
+            score = _score_text_match(
+                query,
+                name,
+                table.get("full_name"),
+                table.get("description"),
+                " ".join(columns),
+            )
+            if score <= 0:
+                continue
+            matches.append(
+                {
+                    "name": name,
+                    "full_name": table.get("full_name") or name,
+                    "description": table.get("description"),
+                    "columns": columns,
+                    "score": score,
+                }
+            )
+        matches.sort(key=lambda item: (-int(item["score"]), str(item["name"])))
+        return matches[:limit]
+
+    def find_table(self, query: str) -> dict[str, object] | None:
+        matches = self.find_tables(query, limit=1)
+        return matches[0] if matches else None
+
+    def find_columns(self, query: str, limit: int = 10) -> list[dict[str, object]]:
+        matches = []
+        for table in self._schema_tables():
+            table_name = table.get("name") or table.get("table_name") or ""
+            for column in table.get("columns", []):
+                if not isinstance(column, dict):
+                    continue
+                score = _score_text_match(
+                    query,
+                    column.get("name"),
+                    column.get("description"),
+                    column.get("type"),
+                    table_name,
+                )
+                if score <= 0:
+                    continue
+                matches.append(
+                    {
+                        "table": table_name,
+                        "name": column.get("name"),
+                        "type": column.get("type"),
+                        "description": column.get("description"),
+                        "score": score,
+                    }
+                )
+        matches.sort(key=lambda item: (-int(item["score"]), str(item["table"]), str(item["name"])))
+        return matches[:limit]
+
+    def _load_examples(self) -> list[dict[str, object]]:
+        examples_dir = self.connection_path / "examples"
+        if not examples_dir.exists():
+            return []
+        records: list[dict[str, object]] = []
+        for path in sorted(examples_dir.glob("*.yaml")):
+            payload = _read_yaml_file(path)
+            if isinstance(payload, dict):
+                row = dict(payload)
+                row.setdefault("id", path.stem)
+                records.append(row)
+        return records
+
+    def relevant_examples(self, query: str, limit: int = 5) -> list[dict[str, object]]:
+        matches = []
+        for example in self._load_examples():
+            score = _score_text_match(
+                query,
+                example.get("id"),
+                example.get("intent"),
+                example.get("notes"),
+                " ".join(example.get("tables", []) or []),
+                " ".join(example.get("keywords", []) or []),
+                example.get("sql"),
+            )
+            if score <= 0:
+                continue
+            payload = dict(example)
+            payload["score"] = score
+            matches.append(payload)
+        matches.sort(key=lambda item: (-int(item["score"]), str(item.get("id", ""))))
+        return matches[:limit]
+
+    def _load_rule_entries(self) -> list[dict[str, str]]:
+        entries: list[dict[str, str]] = []
+        rules_path = self.connection_path / "instructions" / "business_rules.yaml"
+        rules_payload = _read_yaml_file(rules_path)
+        if isinstance(rules_payload, dict):
+            source = str(rules_path.relative_to(self.connection_path))
+            for text_value in rules_payload.get("rules", []) or []:
+                entries.append(
+                    {
+                        "source": source,
+                        "text": str(text_value),
+                    }
+                )
+            for text_value in rules_payload.get("candidate_rules", []) or []:
+                entries.append(
+                    {
+                        "source": source,
+                        "text": str(text_value),
+                    }
+                )
+        learnings_dir = self.connection_path / "learnings"
+        if learnings_dir.exists():
+            for path in sorted(learnings_dir.glob("*.md")):
+                for line in path.read_text().splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("- "):
+                        entries.append(
+                            {
+                                "source": str(path.relative_to(self.connection_path)),
+                                "text": stripped[2:].strip(),
+                            }
+                        )
+        return entries
+
+    def relevant_rules(self, query: str, limit: int = 5) -> list[dict[str, object]]:
+        matches = []
+        for entry in self._load_rule_entries():
+            score = _score_text_match(query, entry.get("text"), entry.get("source"))
+            if score <= 0:
+                continue
+            payload = dict(entry)
+            payload["score"] = score
+            matches.append(payload)
+        matches.sort(
+            key=lambda item: (
+                -int(item["score"]),
+                str(item["source"]),
+                str(item["text"]),
+            )
+        )
+        return matches[:limit]
+
+    def plan(self, question: str) -> dict[str, object]:
+        table = self.find_table(question)
+        columns = self.find_columns(question, limit=5)
+        examples = self.relevant_examples(question, limit=3)
+        rules = self.relevant_rules(question, limit=3)
+        suggested_sql = None
+        if table:
+            question_norm = _normalize_text(question)
+            if any(token in question_norm for token in ("how many", "count", "number", "total")):
+                suggested_sql = f"SELECT COUNT(*) AS answer FROM {table['name']}"
+        return {
+            "question": question,
+            "table": table,
+            "columns": columns,
+            "examples": examples,
+            "rules": rules,
+            "suggested_sql": suggested_sql,
+        }
+
+    def domain_model(self) -> str:
+        return self.read_text("domain/model.md")
+
+    def sql_rules(self) -> str:
+        return self.read_text("instructions/sql_rules.md")
+
+    def query(self, sql: str, params: dict[str, object] | None = None) -> list[dict[str, object]]:
+        if _is_write_sql(sql):
+            raise RuntimeError(
+                "Write statement requires confirmation. Re-run with confirmed=True."
+            )
+        rows = self.connector_impl.execute_sql(sql, params)
+        return [dict(row) for row in rows]
+
+    def scalar(self, sql: str, params: dict[str, object] | None = None) -> object:
+        rows = self.query(sql, params=params)
+        if not rows:
+            return None
+        first_row = rows[0]
+        return next(iter(first_row.values())) if first_row else None
+
+    def execute(self, sql: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        is_write = _is_write_sql(sql)
+        if is_write and not self.confirmed:
+            raise RuntimeError(
+                "Write statement requires confirmation. Re-run with confirmed=True."
+            )
+        rows = self.connector_impl.execute_sql(sql, params)
+        return {
+            "rows": [dict(row) for row in rows],
+            "statement_type": _leading_keyword(sql),
+            "is_write": is_write,
+        }
+
+    def finalize_answer(
+        self,
+        *,
+        task_id: str,
+        answer_value: object = None,
+        answer_text: str | None = None,
+        evidence_sql: str | None = None,
+        confidence: float | None = 1.0,
+        failure_reason: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, object]:
+        resolved_status = status or ("failed" if failure_reason else "answered")
+        resolved_text = answer_text
+        if resolved_text is None:
+            resolved_text = failure_reason or "" if answer_value is None else str(answer_value)
+        return {
+            "task_id": task_id,
+            "status": resolved_status,
+            "answer_value": answer_value,
+            "answer_text": resolved_text,
+            "evidence_sql": evidence_sql,
+            "confidence": confidence,
+            "failure_reason": failure_reason,
+        }
 
 
 def _load_connection_env(connection_path: Path) -> dict[str, str]:

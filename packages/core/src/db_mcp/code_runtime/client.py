@@ -62,7 +62,6 @@ class RemoteDbMcpSdk:
         self,
         method: str,
         *args: object,
-        timeout_seconds: int = 30,
         confirmed: bool = False,
         **kwargs: object,
     ) -> object:
@@ -74,28 +73,19 @@ class RemoteDbMcpSdk:
                 "connection": self.session.connection,
             }
         )
-        args_json = json.dumps(args)
-        kwargs_json = json.dumps(kwargs)
-        code = "\n".join(
-            [
-                "import json",
-                f"_args = json.loads({args_json!r})",
-                f"_kwargs = json.loads({kwargs_json!r})",
-                f"_result = dbmcp.{method}(*_args, **_kwargs)",
-                "print(json.dumps(_result))",
-            ]
+        payload = _request_json(
+            "POST",
+            (
+                f"{self.session.server_url.rstrip('/')}"
+                f"/api/runtime/sessions/{self.session.session_id}/sdk/{method}"
+            ),
+            {
+                "args": list(args),
+                "kwargs": kwargs,
+                "confirmed": confirmed,
+            },
         )
-        result = self.session.run(
-            code,
-            timeout_seconds=timeout_seconds,
-            confirmed=confirmed,
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(result.stderr or result.message or "runtime call failed")
-        output = result.stdout.strip()
-        if not output:
-            return None
-        return json.loads(output)
+        return payload.get("result")
 
     def read_protocol(self) -> str:
         return str(self._invoke("read_protocol"))
@@ -132,8 +122,8 @@ class RemoteDbMcpSdk:
     def plan(self, question: str) -> dict[str, object]:
         return dict(self._invoke("plan", question) or {})
 
-    def query(self, sql: str, params: dict[str, object] | None = None) -> dict[str, object]:
-        return dict(self._invoke("query", sql, params) or {})
+    def query(self, sql: str, params: dict[str, object] | None = None) -> list[dict[str, object]]:
+        return list(self._invoke("query", sql, params) or [])
 
     def scalar(self, sql: str, params: dict[str, object] | None = None) -> object:
         return self._invoke("scalar", sql, params)
@@ -145,9 +135,7 @@ class RemoteDbMcpSdk:
         *,
         confirmed: bool = False,
     ) -> dict[str, object]:
-        return dict(
-            self._invoke("execute", sql, params, confirmed=confirmed) or {}
-        )
+        return dict(self._invoke("execute", sql, params, confirmed=confirmed) or {})
 
     def finalize_answer(self, **kwargs: object) -> dict[str, object]:
         return dict(self._invoke("finalize_answer", **kwargs) or {})

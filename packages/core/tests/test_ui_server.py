@@ -340,3 +340,43 @@ def test_runtime_session_endpoints_use_shared_service(tmp_path, monkeypatch):
     assert run_response.json()["stdout"] == "3\n"
     assert close_response.status_code == 200
     assert close_response.json()["closed"] is True
+
+
+def test_runtime_session_sdk_invoke_endpoint_uses_shared_service(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+
+    class FakeRuntimeService:
+        def invoke_session_method(
+            self,
+            session_id: str,
+            method: str,
+            *,
+            args=None,
+            kwargs=None,
+            confirmed: bool = False,
+        ):
+            assert session_id == "session-1"
+            assert method == "scalar"
+            assert args == ["SELECT 1", None]
+            assert kwargs == {}
+            assert confirmed is False
+            return 1
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(ui_server, "validate_static_bundle_provenance", lambda: None)
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.http.get_code_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+        response = client.post(
+            "/api/runtime/sessions/session-1/sdk/scalar",
+            json={"args": ["SELECT 1", None], "kwargs": {}, "confirmed": False},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == 1

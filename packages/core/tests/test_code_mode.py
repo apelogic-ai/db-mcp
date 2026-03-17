@@ -558,6 +558,62 @@ def test_code_runtime_service_manages_explicit_host_sessions(code_mode_connectio
         service.contract_for_session(session.session_id)
 
 
+def test_code_runtime_service_invokes_sdk_methods_via_connector(monkeypatch, tmp_path):
+    connection_path = tmp_path / "dialect-demo"
+    connection_path.mkdir(parents=True)
+    (connection_path / "PROTOCOL.md").write_text("read me first\n")
+    (connection_path / "connector.yaml").write_text("type: sql\n")
+    (connection_path / "schema").mkdir()
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.safe_dump({"tables": [{"name": "items", "columns": [{"name": "amount"}]}]})
+    )
+    (connection_path / "domain").mkdir()
+    (connection_path / "domain" / "model.md").write_text("# domain\n")
+    (connection_path / "instructions").mkdir()
+    (connection_path / "instructions" / "sql_rules.md").write_text("# rules\n")
+    (connection_path / "instructions" / "business_rules.yaml").write_text("rules: []\n")
+
+    class FakeConnector:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, dict | None]] = []
+
+        def execute_sql(self, sql: str, params: dict | None = None):
+            self.queries.append((sql, params))
+            return [{"answer": 3}]
+
+    fake_connector = FakeConnector()
+
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.backend.resolve_connection",
+        lambda connection: (fake_connector, "dialect-demo", str(connection_path)),
+    )
+
+    service = CodeRuntimeService(
+        manager=ExecSessionManager(backend=ProcessExecSandboxBackend()),
+    )
+    session = service.create_session("dialect-demo", session_id="host-session-query")
+
+    protocol = service.invoke_session_method(session.session_id, "read_protocol")
+    scalar = service.invoke_session_method(
+        session.session_id,
+        "scalar",
+        args=["SELECT COUNT(*) AS answer FROM items"],
+    )
+    rows = service.invoke_session_method(
+        session.session_id,
+        "query",
+        args=["SELECT COUNT(*) AS answer FROM items"],
+    )
+
+    assert protocol == "read me first\n"
+    assert scalar == 3
+    assert rows == [{"answer": 3}]
+    assert fake_connector.queries == [
+        ("SELECT COUNT(*) AS answer FROM items", None),
+        ("SELECT COUNT(*) AS answer FROM items", None),
+    ]
+
+
 def test_code_mode_host_uses_service_managed_session(code_mode_connection):
     connection_name, _ = code_mode_connection
     service = CodeRuntimeService(
@@ -625,6 +681,10 @@ def test_code_runtime_client_uses_session_http_api(monkeypatch):
                 }
             )
         if request.method == "POST" and request.full_url.endswith(
+            "/api/runtime/sessions/client-session-1/sdk/scalar"
+        ):
+            return FakeResponse({"result": 3})
+        if request.method == "POST" and request.full_url.endswith(
             "/api/runtime/sessions/client-session-1/run"
         ):
             return FakeResponse(
@@ -647,11 +707,13 @@ def test_code_runtime_client_uses_session_http_api(monkeypatch):
     client = CodeRuntimeClient("http://127.0.0.1:8765")
     session = client.create_session("demo", session_id="client-session-1")
     contract = session.contract()
+    scalar = session.sdk().scalar("SELECT COUNT(*) FROM items")
     result = session.run("print(dbmcp.scalar('SELECT COUNT(*) FROM items'))", timeout_seconds=15)
     closed = session.close()
 
     assert session.session_id == "client-session-1"
     assert contract["connection"] == "demo"
+    assert scalar == 3
     assert result.exit_code == 0
     assert result.stdout == "3\n"
     assert closed is True
@@ -665,6 +727,15 @@ def test_code_runtime_client_uses_session_http_api(monkeypatch):
             "GET",
             "http://127.0.0.1:8765/api/runtime/sessions/client-session-1/contract",
             None,
+        ),
+        (
+            "POST",
+            "http://127.0.0.1:8765/api/runtime/sessions/client-session-1/sdk/scalar",
+            {
+                "args": ["SELECT COUNT(*) FROM items", None],
+                "kwargs": {},
+                "confirmed": False,
+            },
         ),
         (
             "POST",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db_mcp.code_runtime import get_code_runtime_service
 
@@ -31,6 +31,14 @@ class RuntimeSessionRunRequest(BaseModel):
 
     code: str
     timeout_seconds: int = 30
+    confirmed: bool = False
+
+
+class RuntimeSessionInvokeRequest(BaseModel):
+    """HTTP request body for direct SDK method invocation."""
+
+    args: list[object] = Field(default_factory=list)
+    kwargs: dict[str, object] = Field(default_factory=dict)
     confirmed: bool = False
 
 
@@ -70,6 +78,24 @@ async def runtime_session_run(session_id: str, request: RuntimeSessionRunRequest
         confirmed=request.confirmed,
     )
     return JSONResponse(content=result.to_dict())
+
+
+@runtime_router.post("/api/runtime/sessions/{session_id}/sdk/{method}")
+async def runtime_session_invoke(
+    session_id: str,
+    method: str,
+    request: RuntimeSessionInvokeRequest,
+) -> JSONResponse:
+    """Invoke one host-runtime SDK method directly on the server."""
+    service = get_code_runtime_service()
+    result = service.invoke_session_method(
+        session_id,
+        method,
+        args=request.args,
+        kwargs=request.kwargs,
+        confirmed=request.confirmed,
+    )
+    return JSONResponse(content={"result": result})
 
 
 @runtime_router.delete("/api/runtime/sessions/{session_id}")
