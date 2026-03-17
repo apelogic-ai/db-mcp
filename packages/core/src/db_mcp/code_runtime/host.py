@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from db_mcp.code_runtime.backend import CodeResult
+from db_mcp.code_runtime.interface import RUNTIME_INTERFACE_NATIVE, RuntimeInterface
 from db_mcp.code_runtime.service import CodeRuntimeHostSession, CodeRuntimeService
 from db_mcp.exec_runtime import ExecSessionManager, get_exec_session_manager
 
@@ -34,12 +35,24 @@ class CodeModeHost:
         )
         self.session_id = self.session.session_id
 
-    def instructions(self) -> str:
-        return (self.service or CodeRuntimeService()).instructions(self.connection)
+    def instructions(
+        self,
+        *,
+        interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE,
+    ) -> str:
+        return (self.service or CodeRuntimeService()).instructions(
+            self.connection,
+            interface=interface,
+        )
 
-    def contract(self) -> dict[str, object]:
+    def contract(
+        self,
+        *,
+        interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE,
+    ) -> dict[str, object]:
         return (self.service or CodeRuntimeService()).contract_for_session(
             self.session_id or "runtime",
+            interface=interface,
         )
 
     def run(

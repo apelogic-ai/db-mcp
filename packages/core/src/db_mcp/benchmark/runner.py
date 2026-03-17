@@ -26,26 +26,31 @@ from db_mcp.benchmark.loader import load_case_pack
 from db_mcp.benchmark.models import BenchmarkAnswer
 from db_mcp.benchmark.scoring import execute_gold_sql, score_case
 from db_mcp.cli.utils import get_db_mcp_binary_path
+from db_mcp.code_runtime.native_adapter import CodeRuntimeNativeAdapter
 from db_mcp.traces import get_user_id_from_config
 
 DB_MCP_SCENARIO = "db_mcp"
 EXEC_ONLY_SCENARIO = "exec_only"
 CODE_MODE_SCENARIO = "code_mode"
 RUNTIME_CODE_SCENARIO = "runtime_code"
+RUNTIME_NATIVE_SCENARIO = "runtime_native"
 RAW_DSN_SCENARIO = "raw_dsn"
 SCENARIOS = [
     DB_MCP_SCENARIO,
     EXEC_ONLY_SCENARIO,
     CODE_MODE_SCENARIO,
     RUNTIME_CODE_SCENARIO,
+    RUNTIME_NATIVE_SCENARIO,
     RAW_DSN_SCENARIO,
 ]
 DEFAULT_TOOLS = ["Read", "Bash"]
 EXEC_ONLY_TOOLS = [""]
 CODE_MODE_TOOLS = [""]
 RUNTIME_CODE_TOOLS = ["Bash"]
+RUNTIME_NATIVE_TOOLS = ["Bash"]
 CODE_MODE_SKILL_NAME = "db-mcp-code-benchmark"
 RUNTIME_CODE_SKILL_NAME = "db-mcp-runtime-benchmark"
+RUNTIME_NATIVE_SKILL_NAME = "db-mcp-runtime-native-benchmark"
 
 
 def _mask_database_url(database_url: str) -> str:
@@ -245,6 +250,55 @@ def _build_prompt(
             "Use Bash only to write and run the Python script in this scenario.\n"
             "Do not ask for clarification; produce your best answer."
         )
+    if scenario == RUNTIME_NATIVE_SCENARIO:
+        if runtime_server_url is None or runtime_session_id is None:
+            raise ValueError(
+                "runtime_native prompt requires runtime_server_url and "
+                "runtime_session_id"
+            )
+        return base + (
+            f"\nFirst, load the project skill `/{RUNTIME_NATIVE_SKILL_NAME}` and follow it.\n"
+            "\nA persistent native db-mcp runtime host is already active for this attempt.\n"
+            "Use Bash only to write and run local Python files with `python3`.\n"
+            "Inside Python, dbmcp is already available as a global native object.\n"
+            "Do not import `dbmcp` or `dbmcp_host`.\n"
+            "Start your first script with:\n"
+            "```python\n"
+            "_ = dbmcp.read_protocol()\n"
+            "```\n"
+            "Run the script with:\n"
+            "`python3 /tmp/dbmcp_runtime_native.py`\n"
+            "A good file shape is:\n"
+            "```python\n"
+            "import json\n"
+            "_ = dbmcp.read_protocol()\n"
+            "customer = dbmcp.describe_table(\"Customer\")\n"
+            "value = dbmcp.scalar(\"SELECT COUNT(*) AS answer FROM Customer\")\n"
+            "print(json.dumps({\n"
+            "    \"task_id\": \"...\",\n"
+            "    \"status\": \"answered\",\n"
+            "    \"answer_value\": value,\n"
+            "    \"answer_text\": str(value),\n"
+            "    \"evidence_sql\": \"SELECT ...\",\n"
+            "    \"confidence\": 1.0,\n"
+            "    \"failure_reason\": None,\n"
+            "})))\n"
+            "```\n"
+            "The first executable statement in the first runtime script must be "
+            "`_ = dbmcp.read_protocol()`.\n"
+            "After the protocol acknowledgment, inspect schema with `dbmcp.find_table(...)`, "
+            "`dbmcp.describe_table(...)`, `dbmcp.find_columns(...)`, or "
+            "`dbmcp.schema_descriptions()` and then write the SQL yourself.\n"
+            "For scalar questions, prefer a direct `dbmcp.scalar(\"SELECT ...\")` query.\n"
+            "Do not use `dbmcp.plan(...)` to generate SQL for you.\n"
+            "Do not use `dbmcp.finalize_answer(...)`. Print the final JSON object yourself.\n"
+            "If discovery succeeds, do it once, then run the final query next.\n"
+            "Do not guess table or column names if the helper methods can resolve them.\n"
+            "Do not print the full protocol or full schema unless blocked.\n"
+            "Your printed JSON must include at least `\"task_id\"`, `\"status\"`, and "
+            "`\"answer_text\"`.\n"
+            "Do not ask for clarification; produce your best answer."
+        )
 
     raw_block = {
         "database_url": database_url,
@@ -302,11 +356,17 @@ def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
 
 
 def _materialize_benchmark_skill(attempt_dir: Path, scenario: str, connection_name: str) -> None:
-    if scenario not in {CODE_MODE_SCENARIO, RUNTIME_CODE_SCENARIO}:
+    if scenario not in {CODE_MODE_SCENARIO, RUNTIME_CODE_SCENARIO, RUNTIME_NATIVE_SCENARIO}:
         return
 
     skill_name = (
-        CODE_MODE_SKILL_NAME if scenario == CODE_MODE_SCENARIO else RUNTIME_CODE_SKILL_NAME
+        CODE_MODE_SKILL_NAME
+        if scenario == CODE_MODE_SCENARIO
+        else (
+            RUNTIME_CODE_SKILL_NAME
+            if scenario == RUNTIME_CODE_SCENARIO
+            else RUNTIME_NATIVE_SKILL_NAME
+        )
     )
     skill_dir = attempt_dir / ".claude" / "skills" / skill_name
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -331,7 +391,7 @@ Workflow:
 9. Do not use `dbmcp.finalize_answer(...)`. Print the final JSON object yourself.
 10. Return only the required final JSON.
 """
-    else:
+    elif scenario == RUNTIME_CODE_SCENARIO:
         body = f"""# {skill_name}
 
 Use this skill for db-mcp benchmark tasks in native runtime mode.
@@ -358,6 +418,26 @@ Workflow:
 13. Do not print the full protocol or full schema unless you are blocked.
 14. Your JSON must include `"task_id"`, `"status"`, and `"answer_text"`.
 15. Return only the required final JSON.
+"""
+    else:
+        body = f"""# {skill_name}
+
+Use this skill for db-mcp benchmark tasks in native runtime host mode.
+
+Workflow:
+1. Use Bash to write a temporary Python script and run it with `python3`.
+2. Inside Python, `dbmcp` is already available as a global object. Do not import it.
+3. The first executable statement in the first script must be `_ = dbmcp.read_protocol()`.
+4. After protocol acknowledgment, inspect schema with `dbmcp.find_table(...)`,
+   `dbmcp.describe_table(...)`, `dbmcp.find_columns(...)`, or
+   `dbmcp.schema_descriptions()` and then write the SQL yourself.
+5. For scalar questions, prefer `value = dbmcp.scalar("SELECT ...")`.
+6. Do not use `dbmcp.plan(...)` to generate SQL for you.
+7. Do not use `dbmcp.finalize_answer(...)`. Print the final JSON object yourself.
+8. If discovery succeeds, do not repeat it. Run the final query next.
+9. `dbmcp.read_protocol()` returns markdown text.
+10. Your JSON must include `"task_id"`, `"status"`, and `"answer_text"`.
+11. Return only the required final JSON.
 """
 
     (skill_dir / "SKILL.md").write_text(body)
@@ -440,6 +520,21 @@ exec "$DB_MCP_REAL_PYTHON" "$@"
     }
 
 
+def _build_runtime_native_env(
+    attempt_dir: Path,
+    *,
+    connection_name: str,
+    runtime_server_url: str,
+    runtime_session_id: str,
+) -> dict[str, str]:
+    adapter = CodeRuntimeNativeAdapter(
+        server_url=runtime_server_url,
+        connection=connection_name,
+        session_id=runtime_session_id,
+    )
+    return adapter.materialize(attempt_dir).env
+
+
 def _reserve_runtime_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -517,6 +612,8 @@ def _tools_for_scenario(scenario: str) -> list[str]:
         return CODE_MODE_TOOLS
     if scenario == RUNTIME_CODE_SCENARIO:
         return RUNTIME_CODE_TOOLS
+    if scenario == RUNTIME_NATIVE_SCENARIO:
+        return RUNTIME_NATIVE_TOOLS
     return DEFAULT_TOOLS
 
 
@@ -651,7 +748,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def _runtime_code_failure_answer(case_id: str, reason: str) -> dict[str, Any]:
+def _runtime_failure_answer(case_id: str, reason: str) -> dict[str, Any]:
     return {
         "task_id": case_id,
         "status": "failed",
@@ -727,29 +824,34 @@ def _script_acknowledges_protocol_first(script: str) -> bool:
     return False
 
 
-def _validate_runtime_code_attempt(attempt_dir: Path) -> str | None:
+def _validate_runtime_attempt(attempt_dir: Path, *, scenario: str) -> str | None:
     invocations = _read_runtime_invocations(attempt_dir)
     if not invocations:
         return (
-            "runtime_code attempt never used the dbmcp host runtime client. "
+            f"{scenario} attempt never used the dbmcp host runtime client. "
             "Use the preconfigured dbmcp object before answering."
         )
 
     host_calls = [record for record in invocations if record.get("kind") == "host_client_call"]
     if not host_calls:
         return (
-            "runtime_code attempt never used the dbmcp host runtime client. "
+            f"{scenario} attempt never used the dbmcp host runtime client. "
             "Use the preconfigured dbmcp object before answering."
         )
 
     script_invocations = [record for record in invocations if record.get("captured_file")]
     if not script_invocations:
-        return "runtime_code attempt never executed a Python host script."
+        return f"{scenario} attempt never executed a Python host script."
 
     first_script = _load_runtime_script_text(script_invocations[0])
+    if scenario == RUNTIME_NATIVE_SCENARIO and "dbmcp_host" in first_script:
+        return (
+            "runtime_native attempt imported dbmcp_host instead of using the injected native "
+            "`dbmcp` object."
+        )
     if not _script_acknowledges_protocol_first(first_script):
         return (
-            "runtime_code attempt did not acknowledge the protocol as its first executable "
+            f"{scenario} attempt did not acknowledge the protocol as its first executable "
             "statement. The first runtime script must begin by calling "
             "`_ = dbmcp.read_protocol()`."
         )
@@ -922,7 +1024,7 @@ def run_benchmark_suite(
                     _build_empty_mcp_config(mcp_config_path)
 
                 runtime_server_url: str | None = None
-                if scenario == RUNTIME_CODE_SCENARIO:
+                if scenario in {RUNTIME_CODE_SCENARIO, RUNTIME_NATIVE_SCENARIO}:
                     runtime_server_cm = runtime_server_factory(
                         connection_name=connection_name,
                         connections_dir=connections_dir,
@@ -943,7 +1045,7 @@ def run_benchmark_suite(
                     LoopBreakerConfig(
                         runtime_log_path=attempt_dir / "runtime-invocations.jsonl",
                     )
-                    if scenario == RUNTIME_CODE_SCENARIO
+                    if scenario in {RUNTIME_CODE_SCENARIO, RUNTIME_NATIVE_SCENARIO}
                     else None
                 )
                 if runtime_server_context is None:
@@ -971,11 +1073,20 @@ def run_benchmark_suite(
                     ended_ns = time.time_ns()
                 else:
                     with runtime_server_context as runtime_server_url:
-                        run_env = _build_runtime_code_host_env(
-                            attempt_dir,
-                            connection_name=connection_name,
-                            runtime_server_url=runtime_server_url,
-                            runtime_session_id=session_id,
+                        run_env = (
+                            _build_runtime_code_host_env(
+                                attempt_dir,
+                                connection_name=connection_name,
+                                runtime_server_url=runtime_server_url,
+                                runtime_session_id=session_id,
+                            )
+                            if scenario == RUNTIME_CODE_SCENARIO
+                            else _build_runtime_native_env(
+                                attempt_dir,
+                                connection_name=connection_name,
+                                runtime_server_url=runtime_server_url,
+                                runtime_session_id=session_id,
+                            )
                         )
                         prompt = _build_prompt(
                             case,
@@ -1009,15 +1120,18 @@ def run_benchmark_suite(
                     answer_payload = answer.model_dump()
                 except Exception as exc:
                     structured_failure = True
-                    answer_payload = _runtime_code_failure_answer(
+                    answer_payload = _runtime_failure_answer(
                         case.id,
                         f"Invalid JSON response: {exc}",
                     )
 
-                if scenario == RUNTIME_CODE_SCENARIO:
-                    if runtime_failure := _validate_runtime_code_attempt(attempt_dir):
+                if scenario in {RUNTIME_CODE_SCENARIO, RUNTIME_NATIVE_SCENARIO}:
+                    if runtime_failure := _validate_runtime_attempt(
+                        attempt_dir,
+                        scenario=scenario,
+                    ):
                         structured_failure = True
-                        answer_payload = _runtime_code_failure_answer(
+                        answer_payload = _runtime_failure_answer(
                             case.id,
                             runtime_failure,
                         )

@@ -6,7 +6,12 @@ import uuid
 from dataclasses import dataclass, field
 
 from db_mcp.code_runtime.backend import CodeResult, HostDbMcpRuntime
-from db_mcp.code_runtime.contract import build_code_mode_contract, build_code_mode_instructions
+from db_mcp.code_runtime.interface import (
+    RUNTIME_INTERFACE_NATIVE,
+    RuntimeInterface,
+    build_runtime_contract,
+    build_runtime_instructions,
+)
 from db_mcp.code_runtime.runtime import CodeModeRuntime
 from db_mcp.exec_runtime import ExecSessionManager, get_exec_session_manager
 
@@ -27,11 +32,22 @@ class CodeRuntimeService:
     _sessions: dict[str, CodeRuntimeHostSession] = field(default_factory=dict)
     _host_runtimes: dict[str, HostDbMcpRuntime] = field(default_factory=dict)
 
-    def instructions(self, connection: str) -> str:
-        return build_code_mode_instructions(connection)
+    def instructions(
+        self,
+        connection: str,
+        *,
+        interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE,
+    ) -> str:
+        return build_runtime_instructions(connection, interface=interface)
 
-    def contract(self, connection: str, *, session_id: str | None = None) -> dict[str, object]:
-        return build_code_mode_contract(connection, session_id=session_id)
+    def contract(
+        self,
+        connection: str,
+        *,
+        session_id: str | None = None,
+        interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE,
+    ) -> dict[str, object]:
+        return build_runtime_contract(connection, interface=interface, session_id=session_id)
 
     def create_session(
         self,
@@ -63,9 +79,18 @@ class CodeRuntimeService:
         except KeyError as exc:
             raise KeyError(f"unknown runtime session: {session_id}") from exc
 
-    def contract_for_session(self, session_id: str) -> dict[str, object]:
+    def contract_for_session(
+        self,
+        session_id: str,
+        *,
+        interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE,
+    ) -> dict[str, object]:
         session = self.get_session(session_id)
-        return self.contract(session.connection, session_id=session.session_id)
+        return self.contract(
+            session.connection,
+            session_id=session.session_id,
+            interface=interface,
+        )
 
     def run(
         self,

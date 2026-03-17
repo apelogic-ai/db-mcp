@@ -10,6 +10,18 @@ from db_mcp.code_runtime.contract import (
 from db_mcp.code_runtime.host import (
     CodeModeHost,
 )
+from db_mcp.code_runtime.interface import (
+    RUNTIME_INTERFACE_CLI,
+    RUNTIME_INTERFACE_MCP,
+    RUNTIME_INTERFACE_NATIVE,
+    RuntimeInterface,
+    build_runtime_contract,
+    build_runtime_instructions,
+)
+from db_mcp.code_runtime.native_adapter import (
+    CodeRuntimeNativeAdapter,
+    NativeRuntimeMaterialization,
+)
 from db_mcp.code_runtime.runtime import CodeModeRuntime
 from db_mcp.code_runtime.service import (
     CodeRuntimeHostSession,
@@ -19,8 +31,16 @@ from db_mcp.code_runtime.service import (
 
 __all__ = [
     "HELPER_METHODS",
+    "RuntimeInterface",
+    "RUNTIME_INTERFACE_CLI",
+    "RUNTIME_INTERFACE_MCP",
+    "RUNTIME_INTERFACE_NATIVE",
     "build_code_mode_contract",
     "build_code_mode_instructions",
+    "build_runtime_contract",
+    "build_runtime_instructions",
+    "CodeRuntimeNativeAdapter",
+    "NativeRuntimeMaterialization",
     "CodeModeHost",
     "CodeRuntimeClient",
     "CodeRuntimeHostSession",

@@ -82,6 +82,30 @@ def test_runtime_prompt_json_outputs_contract(tmp_path, monkeypatch):
     assert "read_protocol" in payload["helper_methods"]
 
 
+def test_runtime_prompt_json_outputs_mcp_interface_contract(tmp_path, monkeypatch):
+    connection_name = _prepare_connection(tmp_path, monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "runtime",
+            "prompt",
+            "--connection",
+            connection_name,
+            "--interface",
+            "mcp",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["interface"] == "mcp"
+    assert payload["tool_name"] == "code"
+    assert payload["tool_mode"] == "code"
+
+
 def test_runtime_run_executes_inline_code(tmp_path, monkeypatch):
     connection_name = _prepare_connection(tmp_path, monkeypatch)
     manager = ExecSessionManager(backend=ProcessExecSandboxBackend())

@@ -179,11 +179,18 @@ def test_runtime_contract_endpoint_uses_shared_service(tmp_path, monkeypatch):
     (static_dir / "index.html").write_text("<html><body>root</body></html>")
 
     class FakeRuntimeService:
-        def contract(self, connection: str, *, session_id: str | None = None):
+        def contract(
+            self,
+            connection: str,
+            *,
+            session_id: str | None = None,
+            interface: str = "native",
+        ):
             return {
                 "kind": "db-mcp-code-runtime",
                 "connection": connection,
                 "session_id": session_id,
+                "interface": interface,
             }
 
     monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
@@ -195,10 +202,14 @@ def test_runtime_contract_endpoint_uses_shared_service(tmp_path, monkeypatch):
 
     with patch("db_mcp.ui_server.DBMCPAgent"):
         client = TestClient(ui_server.create_app())
-        response = client.get("/api/runtime/contract", params={"connection": "playground"})
+        response = client.get(
+            "/api/runtime/contract",
+            params={"connection": "playground", "interface": "mcp"},
+        )
 
     assert response.status_code == 200
     assert response.json()["connection"] == "playground"
+    assert response.json()["interface"] == "mcp"
 
 
 def test_runtime_run_endpoint_uses_shared_service(tmp_path, monkeypatch):
@@ -282,12 +293,13 @@ def test_runtime_session_endpoints_use_shared_service(tmp_path, monkeypatch):
             assert session_id == "session-1"
             return FakeSession(connection, session_id)
 
-        def contract_for_session(self, session_id: str):
+        def contract_for_session(self, session_id: str, *, interface: str = "native"):
             assert session_id == "session-1"
             return {
                 "kind": "db-mcp-code-runtime",
                 "connection": "playground",
                 "session_id": session_id,
+                "interface": interface,
             }
 
         def run_session(
@@ -320,9 +332,12 @@ def test_runtime_session_endpoints_use_shared_service(tmp_path, monkeypatch):
 
         create_response = client.post(
             "/api/runtime/sessions",
-            json={"connection": "playground", "session_id": "session-1"},
+            json={"connection": "playground", "session_id": "session-1", "interface": "cli"},
         )
-        contract_response = client.get("/api/runtime/sessions/session-1/contract")
+        contract_response = client.get(
+            "/api/runtime/sessions/session-1/contract",
+            params={"interface": "mcp"},
+        )
         run_response = client.post(
             "/api/runtime/sessions/session-1/run",
             json={
@@ -334,8 +349,10 @@ def test_runtime_session_endpoints_use_shared_service(tmp_path, monkeypatch):
 
     assert create_response.status_code == 200
     assert create_response.json()["session_id"] == "session-1"
+    assert create_response.json()["interface"] == "cli"
     assert contract_response.status_code == 200
     assert contract_response.json()["session_id"] == "session-1"
+    assert contract_response.json()["interface"] == "mcp"
     assert run_response.status_code == 200
     assert run_response.json()["stdout"] == "3\n"
     assert close_response.status_code == 200

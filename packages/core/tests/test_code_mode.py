@@ -558,6 +558,22 @@ def test_code_runtime_service_manages_explicit_host_sessions(code_mode_connectio
         service.contract_for_session(session.session_id)
 
 
+def test_code_runtime_service_can_render_non_native_contracts(code_mode_connection):
+    connection_name, _ = code_mode_connection
+    service = CodeRuntimeService(
+        manager=ExecSessionManager(backend=ProcessExecSandboxBackend()),
+    )
+    session = service.create_session(connection_name, session_id="host-session-contracts")
+
+    mcp_contract = service.contract(connection_name, interface="mcp")
+    cli_contract = service.contract_for_session(session.session_id, interface="cli")
+
+    assert mcp_contract["interface"] == "mcp"
+    assert mcp_contract["tool_name"] == "code"
+    assert cli_contract["interface"] == "cli"
+    assert "commands" in cli_contract
+
+
 def test_code_runtime_service_invokes_sdk_methods_via_connector(monkeypatch, tmp_path):
     connection_path = tmp_path / "dialect-demo"
     connection_path.mkdir(parents=True)

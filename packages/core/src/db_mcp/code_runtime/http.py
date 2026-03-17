@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db_mcp.code_runtime import get_code_runtime_service
+from db_mcp.code_runtime.interface import RUNTIME_INTERFACE_NATIVE, RuntimeInterface
 
 
 class RuntimeRunRequest(BaseModel):
@@ -24,6 +25,7 @@ class RuntimeSessionCreateRequest(BaseModel):
 
     connection: str
     session_id: str | None = None
+    interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE
 
 
 class RuntimeSessionRunRequest(BaseModel):
@@ -46,10 +48,16 @@ runtime_router = APIRouter()
 
 
 @runtime_router.get("/api/runtime/contract")
-async def runtime_contract(connection: str, session_id: str | None = None) -> JSONResponse:
+async def runtime_contract(
+    connection: str,
+    session_id: str | None = None,
+    interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE,
+) -> JSONResponse:
     """Return the shared code runtime contract for one connection."""
     service = get_code_runtime_service()
-    return JSONResponse(content=service.contract(connection, session_id=session_id))
+    return JSONResponse(
+        content=service.contract(connection, session_id=session_id, interface=interface)
+    )
 
 
 @runtime_router.post("/api/runtime/sessions")
@@ -57,14 +65,19 @@ async def runtime_create_session(request: RuntimeSessionCreateRequest) -> JSONRe
     """Create or resume a persistent host-managed runtime session."""
     service = get_code_runtime_service()
     session = service.create_session(request.connection, session_id=request.session_id)
-    return JSONResponse(content=service.contract_for_session(session.session_id))
+    return JSONResponse(
+        content=service.contract_for_session(session.session_id, interface=request.interface)
+    )
 
 
 @runtime_router.get("/api/runtime/sessions/{session_id}/contract")
-async def runtime_session_contract(session_id: str) -> JSONResponse:
+async def runtime_session_contract(
+    session_id: str,
+    interface: RuntimeInterface = RUNTIME_INTERFACE_NATIVE,
+) -> JSONResponse:
     """Return the runtime contract for an existing host-managed session."""
     service = get_code_runtime_service()
-    return JSONResponse(content=service.contract_for_session(session_id))
+    return JSONResponse(content=service.contract_for_session(session_id, interface=interface))
 
 
 @runtime_router.post("/api/runtime/sessions/{session_id}/run")

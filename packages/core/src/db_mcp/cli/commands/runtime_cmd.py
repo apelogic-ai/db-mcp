@@ -9,8 +9,9 @@ from urllib.request import Request, urlopen
 
 import click
 
-from db_mcp.code_runtime import CodeModeHost
+from db_mcp.code_runtime import CodeModeHost, build_runtime_contract, build_runtime_instructions
 from db_mcp.code_runtime.http import start_runtime_server
+from db_mcp.config import get_settings
 
 
 @click.group("runtime")
@@ -20,14 +21,28 @@ def runtime_group() -> None:
 
 @runtime_group.command("prompt")
 @click.option("-c", "--connection", required=True, help="Connection name")
+@click.option(
+    "--interface",
+    "runtime_interface",
+    type=click.Choice(["native", "mcp", "cli"]),
+    default=None,
+    help="Runtime interface contract to describe (default: configured runtime_interface)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit structured contract JSON")
-def runtime_prompt(connection: str, as_json: bool) -> None:
+def runtime_prompt(connection: str, runtime_interface: str | None, as_json: bool) -> None:
     """Print the agent-facing native runtime contract."""
-    host = CodeModeHost(connection=connection)
+    selected_interface = runtime_interface or get_settings().runtime_interface
     if as_json:
-        click.echo(json.dumps(host.contract(), indent=2) + "\n", nl=False)
+        click.echo(
+            json.dumps(
+                build_runtime_contract(connection, interface=selected_interface),
+                indent=2,
+            )
+            + "\n",
+            nl=False,
+        )
         return
-    click.echo(host.instructions())
+    click.echo(build_runtime_instructions(connection, interface=selected_interface))
 
 
 @runtime_group.command("run")

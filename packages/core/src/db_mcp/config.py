@@ -195,6 +195,15 @@ class Settings(BaseSettings):
             "'code' exposes a single Python-native code tool"
         ),
     )
+    runtime_interface: Literal["native", "mcp", "cli"] = Field(
+        default="native",
+        description=(
+            "Preferred code-runtime interface contract. "
+            "'native' exposes the host-bound dbmcp object contract, "
+            "'mcp' exposes the MCP code tool contract, "
+            "'cli' exposes the runtime CLI contract."
+        ),
+    )
     tool_profile: Literal["auto", "full", "query"] = Field(
         default="auto",
         description=(
