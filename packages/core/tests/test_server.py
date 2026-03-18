@@ -14,6 +14,7 @@ from db_mcp.config import reset_settings
 from db_mcp.insights.detector import Insight, InsightStore, load_insights, save_insights
 from db_mcp.registry import ConnectionInfo, ConnectionRegistry
 from db_mcp.server import _create_server
+from db_mcp.tools import daemon_tasks
 
 
 def _get_tool_names(server):
@@ -811,6 +812,67 @@ async def test_daemon_mode_prepare_and_execute_task(tmp_path, monkeypatch):
         assert executed_payload["status"] == "completed"
         assert executed_payload["execution"]["status"] == "success"
         assert executed_payload["execution"]["data"] == [{"answer": 1}]
+
+
+@pytest.mark.asyncio
+async def test_daemon_execute_task_resolves_async_read_inline(monkeypatch):
+    """execute_task should inline-poll async read executions to a final result."""
+    daemon_tasks._TASKS.clear()
+    daemon_tasks._register_task(
+        daemon_tasks.PreparedTask(
+            task_id="task-123",
+            connection="demo",
+            question="What is the symbol?",
+            context={},
+        )
+    )
+
+    async def fake_validate_sql(*args, **kwargs):
+        return {
+            "valid": True,
+            "query_id": "query-123",
+            "is_write": False,
+            "write_confirmation_required": False,
+        }
+
+    async def fake_run_sql(*args, **kwargs):
+        return {
+            "status": "submitted",
+            "query_id": "exec-123",
+            "execution_id": "exec-123",
+            "state": "running",
+            "is_write": False,
+        }
+
+    poll_calls = {"count": 0}
+
+    async def fake_get_result(query_id: str, connection: str):
+        assert query_id == "exec-123"
+        assert connection == "demo"
+        poll_calls["count"] += 1
+        if poll_calls["count"] == 1:
+            return {"status": "running", "query_id": query_id, "execution_id": query_id}
+        return {
+            "status": "complete",
+            "query_id": query_id,
+            "execution_id": query_id,
+            "data": [{"symbol": "SOL"}],
+            "columns": ["symbol"],
+            "rows_returned": 1,
+        }
+
+    monkeypatch.setattr(daemon_tasks, "_validate_sql", fake_validate_sql)
+    monkeypatch.setattr(daemon_tasks, "_run_sql", fake_run_sql)
+    monkeypatch.setattr(daemon_tasks, "_get_result", fake_get_result, raising=False)
+    monkeypatch.setattr(daemon_tasks, "_INLINE_RESULT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(daemon_tasks, "_INLINE_RESULT_POLL_SECONDS", 0.01)
+
+    payload = await daemon_tasks._execute_task(task_id="task-123", sql="SELECT 'SOL' AS symbol")
+
+    assert payload["status"] == "completed"
+    assert payload["execution"]["status"] == "success"
+    assert payload["execution"]["data"] == [{"symbol": "SOL"}]
+    assert poll_calls["count"] == 2
 
 
 @pytest.mark.asyncio

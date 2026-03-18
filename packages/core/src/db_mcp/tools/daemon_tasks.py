@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -11,7 +12,10 @@ from typing import Any
 
 from db_mcp.code_runtime.backend import HostDbMcpRuntime, _normalize_text, _score_text_match
 from db_mcp.registry import ConnectionRegistry
-from db_mcp.tools.generation import _run_sql, _validate_sql
+from db_mcp.tools.generation import _get_result, _run_sql, _validate_sql
+
+_INLINE_RESULT_TIMEOUT_SECONDS = 30.0
+_INLINE_RESULT_POLL_SECONDS = 1.0
 
 
 def _utc_now() -> str:
@@ -325,6 +329,61 @@ def _update_task(task: PreparedTask) -> None:
         _TASKS[task.task_id] = task
 
 
+def _is_async_read_execution(
+    *,
+    validation: dict[str, Any] | None,
+    execution: dict[str, Any],
+) -> bool:
+    status = str(execution.get("status") or "").lower()
+    if status not in {"submitted", "running", "pending"}:
+        return False
+    if validation and bool(validation.get("is_write")):
+        return False
+    if bool(execution.get("is_write")):
+        return False
+    execution_id = execution.get("execution_id") or execution.get("query_id")
+    return bool(execution_id)
+
+
+def _normalize_async_completion(execution: dict[str, Any]) -> dict[str, Any]:
+    if str(execution.get("status") or "").lower() != "complete":
+        return execution
+    normalized = dict(execution)
+    normalized["status"] = "success"
+    normalized.setdefault("mode", "async_inline")
+    return normalized
+
+
+async def _resolve_inline_execution(
+    *,
+    connection: str,
+    validation: dict[str, Any] | None,
+    execution: dict[str, Any],
+) -> dict[str, Any]:
+    if not _is_async_read_execution(validation=validation, execution=execution):
+        return execution
+
+    execution_id = str(execution.get("execution_id") or execution.get("query_id"))
+    attempts = max(1, int(_INLINE_RESULT_TIMEOUT_SECONDS / _INLINE_RESULT_POLL_SECONDS))
+    latest = execution
+
+    for _ in range(attempts):
+        polled = _unwrap_tool_payload(
+            await _get_result(query_id=execution_id, connection=connection)
+        )
+        status = str(polled.get("status") or "").lower()
+        if status == "complete":
+            return _normalize_async_completion(polled)
+        if status == "error":
+            return polled
+        latest = polled
+        if status not in {"running", "pending", "submitted"}:
+            return polled
+        await asyncio.sleep(_INLINE_RESULT_POLL_SECONDS)
+
+    return latest
+
+
 async def _prepare_task(
     question: str,
     connection: str | None = None,
@@ -384,6 +443,11 @@ async def _execute_task(
                     confirmed=confirmed,
                 )
             )
+            execution = await _resolve_inline_execution(
+                connection=task.connection,
+                validation=validation,
+                execution=execution,
+            )
             task.execution = execution
             task.status = "completed" if execution.get("status") == "success" else str(
                 execution.get("status") or "failed"
@@ -427,6 +491,11 @@ async def _execute_task(
             query_id=str(validation.get("query_id")),
             confirmed=confirmed,
         )
+    )
+    execution = await _resolve_inline_execution(
+        connection=task.connection,
+        validation=validation,
+        execution=execution,
     )
     task.execution = execution
     task.status = "completed" if execution.get("status") == "success" else str(
