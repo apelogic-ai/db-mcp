@@ -1269,7 +1269,7 @@ def test_claude_cli_driver_loop_breaker_kills_repeated_runtime_scripts(monkeypat
 
 
 def test_resolve_benchmark_db_mcp_binary_prefers_repo_dist(monkeypatch):
-    expected = "/Users/lbelyaev/dev/db-mcp/packages/core/dist/db-mcp"
+    expected = str(Path(__file__).resolve().parents[1] / "dist" / "db-mcp")
     monkeypatch.delenv("DB_MCP_BENCHMARK_BINARY", raising=False)
     monkeypatch.setattr("db_mcp.benchmark.runner.which", lambda _: "/tmp/venv/bin/db-mcp")
 
