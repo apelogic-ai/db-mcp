@@ -185,13 +185,23 @@ class Settings(BaseSettings):
     )
 
     # MCP server configuration
-    tool_mode: Literal["detailed", "shell", "exec-only"] = Field(
+    tool_mode: Literal["detailed", "shell", "exec-only", "code"] = Field(
         default="detailed",
         description=(
             "Tool exposure mode: "
             "'detailed' exposes all tools (schema discovery, query helpers, etc.), "
             "'shell' exposes only the shell tool for query work (agent uses vault filesystem), "
-            "'exec-only' exposes a single container-backed exec tool"
+            "'exec-only' exposes a single container-backed exec tool, "
+            "'code' exposes a single Python-native code tool"
+        ),
+    )
+    runtime_interface: Literal["native", "mcp", "cli"] = Field(
+        default="native",
+        description=(
+            "Preferred code-runtime interface contract. "
+            "'native' exposes the host-bound dbmcp object contract, "
+            "'mcp' exposes the MCP code tool contract, "
+            "'cli' exposes the runtime CLI contract."
         ),
     )
     tool_profile: Literal["auto", "full", "query"] = Field(

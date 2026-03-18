@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from db_mcp.exec_runtime import (
@@ -228,6 +229,59 @@ def test_process_backend_runs_command_in_connection_path_and_persists_writes(tmp
     assert result.exit_code == 0
     assert result.stdout.strip() == str(connection_path)
     assert (connection_path / "note.txt").read_text() == "bar"
+
+
+def test_process_backend_prefers_current_python_for_python3_commands(tmp_path: Path):
+    backend = ProcessExecSandboxBackend()
+    connection_path = tmp_path / "demo"
+    connection_path.mkdir()
+    spec = ExecSandboxSpec(
+        session_id="sess-1",
+        connection="demo",
+        connection_path=connection_path,
+        allowed_endpoint=None,
+        environment={},
+    )
+
+    session_id = backend.create_session(spec)
+    result = backend.exec_command(
+        session_id,
+        "python3 -c 'import sys; print(sys.executable)'",
+        timeout_seconds=5,
+    )
+
+    assert result.exit_code == 0
+    assert Path(result.stdout.strip()).resolve() == Path(sys.executable).resolve()
+
+
+def test_process_backend_uses_real_python_when_sys_executable_is_packaged_binary(
+    tmp_path: Path,
+    monkeypatch,
+):
+    backend = ProcessExecSandboxBackend()
+    connection_path = tmp_path / "demo"
+    connection_path.mkdir()
+    spec = ExecSandboxSpec(
+        session_id="sess-1",
+        connection="demo",
+        connection_path=connection_path,
+        allowed_endpoint=None,
+        environment={"DB_MCP_REAL_PYTHON": sys.executable},
+    )
+
+    monkeypatch.setattr(sys, "executable", str(connection_path / "dist" / "db-mcp"))
+
+    session_id = backend.create_session(spec)
+    result = backend.exec_command(
+        session_id,
+        "python3 -c 'import sys; print(sys.executable)'",
+        timeout_seconds=5,
+    )
+
+    assert result.exit_code == 0
+    assert Path(result.stdout.strip()).resolve() == Path(
+        spec.environment["DB_MCP_REAL_PYTHON"]
+    ).resolve()
 
 
 def test_process_backend_reports_timeout(tmp_path: Path):

@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from db_mcp.bicp import DBMCPAgent
+from db_mcp.code_runtime.http import runtime_router
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(runtime_router)
 
     def _serve_exported_page(*segments: str):
         page_path = STATIC_DIR.joinpath(*segments, "index.html")

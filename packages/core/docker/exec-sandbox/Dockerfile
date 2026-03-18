@@ -6,6 +6,7 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir \
     SQLAlchemy>=2.0.0 \
+    PyYAML>=6.0.0 \
     trino>=0.330.0 \
     clickhouse-sqlalchemy>=0.3.0 \
     psycopg2-binary>=2.9.0 \

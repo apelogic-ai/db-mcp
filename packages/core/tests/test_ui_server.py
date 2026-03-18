@@ -171,3 +171,286 @@ def test_validate_static_bundle_provenance_rejects_stale_source(tmp_path, monkey
 
     with pytest.raises(RuntimeError, match="Static UI bundle is stale"):
         ui_server.validate_static_bundle_provenance()
+
+
+def test_runtime_contract_endpoint_uses_shared_service(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+
+    class FakeRuntimeService:
+        def contract(
+            self,
+            connection: str,
+            *,
+            session_id: str | None = None,
+            interface: str = "native",
+        ):
+            return {
+                "kind": "db-mcp-code-runtime",
+                "connection": connection,
+                "session_id": session_id,
+                "interface": interface,
+            }
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(ui_server, "validate_static_bundle_provenance", lambda: None)
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.http.get_code_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+        response = client.get(
+            "/api/runtime/contract",
+            params={"connection": "playground", "interface": "mcp"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["connection"] == "playground"
+    assert response.json()["interface"] == "mcp"
+
+
+def test_runtime_run_endpoint_uses_shared_service(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+
+    class FakeResult:
+        def to_dict(self):
+            return {
+                "stdout": "59\n",
+                "stderr": "",
+                "exit_code": 0,
+                "duration_ms": 12.5,
+                "truncated": False,
+            }
+
+    class FakeRuntimeService:
+        def run(
+            self,
+            connection: str,
+            code: str,
+            *,
+            session_id: str | None = None,
+            timeout_seconds: int = 30,
+            confirmed: bool = False,
+        ):
+            assert connection == "playground"
+            assert "dbmcp.scalar" in code
+            assert session_id == "session-1"
+            assert timeout_seconds == 15
+            assert confirmed is False
+            return FakeResult()
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(ui_server, "validate_static_bundle_provenance", lambda: None)
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.http.get_code_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+        response = client.post(
+            "/api/runtime/run",
+            json={
+                "connection": "playground",
+                "code": "print(dbmcp.scalar('SELECT COUNT(*) FROM Customer'))",
+                "session_id": "session-1",
+                "timeout_seconds": 15,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["stdout"] == "59\n"
+
+
+def test_runtime_session_endpoints_use_shared_service(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+
+    class FakeSession:
+        def __init__(self, connection: str, session_id: str) -> None:
+            self.connection = connection
+            self.session_id = session_id
+
+    class FakeResult:
+        def to_dict(self):
+            return {
+                "stdout": "3\n",
+                "stderr": "",
+                "exit_code": 0,
+                "duration_ms": 10.0,
+                "truncated": False,
+            }
+
+    class FakeRuntimeService:
+        def create_session(self, connection: str, session_id: str | None = None):
+            assert connection == "playground"
+            assert session_id == "session-1"
+            return FakeSession(connection, session_id)
+
+        def contract_for_session(self, session_id: str, *, interface: str = "native"):
+            assert session_id == "session-1"
+            return {
+                "kind": "db-mcp-code-runtime",
+                "connection": "playground",
+                "session_id": session_id,
+                "interface": interface,
+            }
+
+        def run_session(
+            self,
+            session_id: str,
+            code: str,
+            *,
+            timeout_seconds: int = 30,
+            confirmed: bool = False,
+        ):
+            assert session_id == "session-1"
+            assert "dbmcp.scalar" in code
+            assert timeout_seconds == 15
+            assert confirmed is False
+            return FakeResult()
+
+        def close_session(self, session_id: str):
+            assert session_id == "session-1"
+            return True
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(ui_server, "validate_static_bundle_provenance", lambda: None)
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.http.get_code_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+
+        create_response = client.post(
+            "/api/runtime/sessions",
+            json={"connection": "playground", "session_id": "session-1", "interface": "cli"},
+        )
+        contract_response = client.get(
+            "/api/runtime/sessions/session-1/contract",
+            params={"interface": "mcp"},
+        )
+        run_response = client.post(
+            "/api/runtime/sessions/session-1/run",
+            json={
+                "code": "print(dbmcp.scalar('SELECT COUNT(*) FROM Customer'))",
+                "timeout_seconds": 15,
+            },
+        )
+        close_response = client.delete("/api/runtime/sessions/session-1")
+
+    assert create_response.status_code == 200
+    assert create_response.json()["session_id"] == "session-1"
+    assert create_response.json()["interface"] == "cli"
+    assert contract_response.status_code == 200
+    assert contract_response.json()["session_id"] == "session-1"
+    assert contract_response.json()["interface"] == "mcp"
+    assert run_response.status_code == 200
+    assert run_response.json()["stdout"] == "3\n"
+    assert close_response.status_code == 200
+    assert close_response.json()["closed"] is True
+
+
+def test_runtime_session_sdk_invoke_endpoint_uses_shared_service(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+
+    class FakeRuntimeService:
+        def invoke_session_method(
+            self,
+            session_id: str,
+            method: str,
+            *,
+            args=None,
+            kwargs=None,
+            confirmed: bool = False,
+        ):
+            assert session_id == "session-1"
+            assert method == "scalar"
+            assert args == ["SELECT 1", None]
+            assert kwargs == {}
+            assert confirmed is False
+            return 1
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(ui_server, "validate_static_bundle_provenance", lambda: None)
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.http.get_code_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+        response = client.post(
+            "/api/runtime/sessions/session-1/sdk/scalar",
+            json={"args": ["SELECT 1", None], "kwargs": {}, "confirmed": False},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == 1
+
+
+def test_runtime_session_sdk_invoke_endpoint_serializes_date_results(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+
+    class FakeRuntimeService:
+        def invoke_session_method(
+            self,
+            session_id: str,
+            method: str,
+            *,
+            args=None,
+            kwargs=None,
+            confirmed: bool = False,
+        ):
+            assert session_id == "session-1"
+            assert method == "query"
+            return [{"block_date": date(2026, 3, 9)}]
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(ui_server, "validate_static_bundle_provenance", lambda: None)
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.http.get_code_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+        response = client.post(
+            "/api/runtime/sessions/session-1/sdk/query",
+            json={"args": ["SELECT block_date FROM demo", None], "kwargs": {}, "confirmed": False},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"][0]["block_date"] == "2026-03-09"
+
+
+def test_start_runtime_server_passes_app_instance_to_uvicorn(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_run(app, **kwargs):
+        captured["app"] = app
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    from db_mcp.code_runtime.http import start_runtime_server
+
+    start_runtime_server(host="127.0.0.1", port=8099)
+
+    assert hasattr(captured["app"], "routes")
+    assert captured["kwargs"]["host"] == "127.0.0.1"
+    assert captured["kwargs"]["port"] == 8099
+    assert captured["kwargs"]["reload"] is False
+    assert captured["kwargs"]["workers"] == 1

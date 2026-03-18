@@ -44,7 +44,7 @@ class TestMainGroup:
         """Verify the main group has every expected top-level name."""
         expected = {
             "init", "start", "status", "list", "use", "doctor", "sync", "pull",
-            "discover", "agents", "console", "ui",
+            "discover", "agents", "console", "ui", "serve", "runtime",
             "collab", "traces", "playground", "connector",
         }
         registered = set(main.commands.keys())
@@ -116,10 +116,15 @@ class TestAgentsCommandHelp:
 # ---------------------------------------------------------------------------
 
 class TestServiceCommandsHelp:
-    @pytest.mark.parametrize("cmd", ["console", "ui"])
+    @pytest.mark.parametrize("cmd", ["console", "ui", "serve"])
     def test_service_command_help(self, runner, cmd):
         result = invoke_help(runner, cmd)
         assert result.exit_code == 0, f"'{cmd} --help' failed: {result.output}"
+
+    @pytest.mark.parametrize("subcmd", ["mcp", "ui"])
+    def test_serve_subcommand_help(self, runner, subcmd):
+        result = invoke_help(runner, "serve", subcmd)
+        assert result.exit_code == 0, f"'serve {subcmd} --help' failed: {result.output}"
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +148,10 @@ class TestSubgroupsHelp:
         result = invoke_help(runner, "connector")
         assert result.exit_code == 0
 
+    def test_runtime_help(self, runner):
+        result = invoke_help(runner, "runtime")
+        assert result.exit_code == 0
+
     def test_collab_is_group(self, runner):
         cmd = main.commands["collab"]
         assert isinstance(cmd, click.Group)
@@ -157,6 +166,10 @@ class TestSubgroupsHelp:
 
     def test_connector_is_group(self, runner):
         cmd = main.commands["connector"]
+        assert isinstance(cmd, click.Group)
+
+    def test_runtime_is_group(self, runner):
+        cmd = main.commands["runtime"]
         assert isinstance(cmd, click.Group)
 
 
@@ -215,10 +228,12 @@ class TestRegisterCommands:
 
     def test_register_services(self):
         from db_mcp.cli.commands.services import register_commands
+
         g = self._fresh_group()
         register_commands(g)
         assert "console" in g.commands
         assert "ui" in g.commands
+        assert "serve" in g.commands
         assert "playground" in g.commands
 
     def test_register_connector(self):
@@ -226,3 +241,10 @@ class TestRegisterCommands:
         g = self._fresh_group()
         register_commands(g)
         assert "connector" in g.commands
+
+    def test_register_runtime(self):
+        from db_mcp.cli.commands.runtime_cmd import register_commands
+
+        g = self._fresh_group()
+        register_commands(g)
+        assert "runtime" in g.commands

@@ -1,3 +1,6 @@
 
 # Built UI static files
 src/db_mcp/static/
+
+# Local benchmark output
+benchmark_runs/

@@ -671,6 +671,33 @@ def test_exec_only_mode_exposes_only_exec_tool(tmp_path):
     assert _get_tool_names(server) == {"exec"}
 
 
+def test_code_mode_exposes_only_code_tool(tmp_path):
+    """Code mode should register exactly one MCP tool."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql", "database_url": "sqlite:///tmp/test.db"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "code"
+        mock_settings.return_value.tool_profile = "auto"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "test"
+
+        server = _create_server()
+
+    assert _get_tool_names(server) == {"code"}
+
+
 @pytest.mark.asyncio
 async def test_exec_only_mode_exec_tool_routes_command(tmp_path, monkeypatch):
     """Exec-only mode should expose a working exec tool."""
@@ -899,6 +926,279 @@ async def test_exec_only_mode_invalidates_protocol_ack_when_file_changes(tmp_pat
 
     assert payload["exit_code"] == 1
     assert "PROTOCOL.md" in payload["stderr"]
+
+
+@pytest.mark.asyncio
+async def test_code_mode_routes_python_code(tmp_path, monkeypatch):
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("read me first\n")
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    fake_manager = MagicMock()
+    fake_manager.execute.side_effect = [
+        {
+            "stdout": "read me first\n",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 10.0,
+            "truncated": False,
+        },
+        {
+            "stdout": "[{'name': 'Customer', 'score': 25}]\n",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 10.0,
+            "truncated": False,
+        },
+        {
+            "stdout": "3\n",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 10.0,
+            "truncated": False,
+        },
+    ]
+
+    with (
+        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
+    ):
+        mock_settings.return_value.tool_mode = "code"
+        mock_settings.return_value.tool_profile = "auto"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = connection_name
+
+        server = _create_server()
+        async with Client(server) as client:
+            await client.call_tool(
+                "code",
+                {
+                    "connection": connection_name,
+                    "code": "print(dbmcp.read_protocol())",
+                    "timeout_seconds": 15,
+                },
+            )
+            await client.call_tool(
+                "code",
+                {
+                    "connection": connection_name,
+                    "code": "print(dbmcp.find_tables('customer'))",
+                    "timeout_seconds": 15,
+                },
+            )
+            result = (
+                await client.call_tool(
+                    "code",
+                    {
+                        "connection": connection_name,
+                        "code": "print(dbmcp.scalar('SELECT 3'))",
+                        "timeout_seconds": 15,
+                    },
+                )
+            ).data
+            payload = _tool_payload(result)
+
+    assert payload["stdout"] == "3\n"
+    assert fake_manager.execute.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_code_mode_requires_protocol_read_first(tmp_path, monkeypatch):
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("read me first\n")
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    fake_manager = MagicMock()
+
+    with (
+        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
+    ):
+        mock_settings.return_value.tool_mode = "code"
+        mock_settings.return_value.tool_profile = "auto"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = connection_name
+
+        server = _create_server()
+        async with Client(server) as client:
+            result = (
+                await client.call_tool(
+                    "code",
+                    {
+                        "connection": connection_name,
+                        "code": "print(dbmcp.scalar('SELECT 1'))",
+                        "timeout_seconds": 15,
+                    },
+                )
+            ).data
+            payload = _tool_payload(result)
+
+    assert payload["exit_code"] == 1
+    assert "PROTOCOL.md" in payload["stderr"]
+    fake_manager.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_code_mode_invalidates_protocol_ack_when_file_changes(tmp_path, monkeypatch):
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    protocol_path = connection_path / "PROTOCOL.md"
+    protocol_path.write_text("v1\n")
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    fake_manager = MagicMock()
+    fake_manager.execute.return_value = {
+        "stdout": "v1\n",
+        "stderr": "",
+        "exit_code": 0,
+        "duration_ms": 10.0,
+        "truncated": False,
+    }
+
+    with (
+        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
+    ):
+        mock_settings.return_value.tool_mode = "code"
+        mock_settings.return_value.tool_profile = "auto"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = connection_name
+
+        server = _create_server()
+        async with Client(server) as client:
+            await client.call_tool(
+                "code",
+                {
+                    "connection": connection_name,
+                    "code": "print(dbmcp.read_protocol())",
+                    "timeout_seconds": 15,
+                },
+            )
+            protocol_path.write_text("v2\n")
+            result = (
+                await client.call_tool(
+                    "code",
+                    {
+                        "connection": connection_name,
+                        "code": "print(dbmcp.scalar('SELECT 1'))",
+                        "timeout_seconds": 15,
+                    },
+                )
+            ).data
+            payload = _tool_payload(result)
+
+    assert payload["exit_code"] == 1
+    assert "PROTOCOL.md" in payload["stderr"]
+
+
+@pytest.mark.asyncio
+async def test_code_mode_surfaces_confirmation_required(tmp_path, monkeypatch):
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("read me first\n")
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    fake_manager = MagicMock()
+    fake_manager.execute.side_effect = [
+        {
+            "stdout": "read me first\n",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 10.0,
+            "truncated": False,
+        },
+        {
+            "stdout": "[{'name': 'Customer', 'score': 25}]\n",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 10.0,
+            "truncated": False,
+        },
+        {
+            "stdout": "",
+            "stderr": (
+                '{"type":"db_mcp_code_mode_error","kind":"confirm_required",'
+                '"message":"Write statement requires confirmation. '
+                'Re-run code(..., confirmed=True)."}'
+            ),
+            "exit_code": 40,
+            "duration_ms": 10.0,
+            "truncated": False,
+        },
+    ]
+
+    with (
+        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
+    ):
+        mock_settings.return_value.tool_mode = "code"
+        mock_settings.return_value.tool_profile = "auto"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = connection_name
+
+        server = _create_server()
+        async with Client(server) as client:
+            await client.call_tool(
+                "code",
+                {
+                    "connection": connection_name,
+                    "code": "print(dbmcp.read_protocol())",
+                    "timeout_seconds": 15,
+                },
+            )
+            await client.call_tool(
+                "code",
+                {
+                    "connection": connection_name,
+                    "code": "print(dbmcp.find_tables('customer'))",
+                    "timeout_seconds": 15,
+                },
+            )
+            result = (
+                await client.call_tool(
+                    "code",
+                    {
+                        "connection": connection_name,
+                        "code": 'dbmcp.execute("CREATE TABLE x(id INTEGER)")',
+                        "timeout_seconds": 15,
+                    },
+                )
+            ).data
+            payload = _tool_payload(result)
+
+    assert payload["status"] == "confirm_required"
+    assert payload["exit_code"] == 1
+    assert "confirmed=True" in payload["message"]
 
 
 @pytest.mark.asyncio
