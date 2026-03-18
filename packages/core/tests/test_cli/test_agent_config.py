@@ -22,7 +22,7 @@ class TestExtractDatabaseUrlFromClaudeConfig:
             "mcpServers": {
                 "db-mcp": {
                     "command": "/usr/local/bin/db-mcp",
-                    "args": ["start"],
+                    "args": ["runtime"],
                     "env": {
                         "DATABASE_URL": "postgresql://user:pass@localhost/mydb",
                     },
@@ -248,3 +248,35 @@ class TestConfigureClaudeDesktop:
         # confirm the binary path was passed through
         call_args = mock_configure.call_args[0]
         assert "/custom/path/db-mcp" in call_args
+
+
+class TestConfigureAgentForDbMcp:
+    def test_writes_runtime_http_config_for_json_agents(self, tmp_path, monkeypatch):
+        from db_mcp.agents import (
+            AGENTS,
+            DEFAULT_RUNTIME_MCP_URL,
+            MCPAgent,
+            configure_agent_for_dbmcp,
+            load_agent_config,
+        )
+
+        config_path = tmp_path / "claude_desktop_config.json"
+        original_agent = AGENTS["claude-desktop"]
+        monkeypatch.setitem(
+            AGENTS,
+            "claude-desktop",
+            MCPAgent(
+                name="Claude Desktop",
+                config_path=config_path,
+                config_format="json",
+                config_key="mcpServers",
+            ),
+        )
+
+        try:
+            assert configure_agent_for_dbmcp("claude-desktop", "/usr/local/bin/db-mcp") is True
+            config = load_agent_config(AGENTS["claude-desktop"])
+            assert config["mcpServers"]["db-mcp"]["type"] == "http"
+            assert config["mcpServers"]["db-mcp"]["url"] == DEFAULT_RUNTIME_MCP_URL
+        finally:
+            AGENTS["claude-desktop"] = original_agent

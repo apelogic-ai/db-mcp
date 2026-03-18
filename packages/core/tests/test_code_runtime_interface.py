@@ -30,7 +30,7 @@ def test_mcp_runtime_contract_exposes_code_tool_surface() -> None:
     assert contract["boundary"] == "mcp_tool"
     assert contract["tool_name"] == "code"
     assert contract["tool_mode"] == "code"
-    assert "--mode code" in str(contract["start_command"])
+    assert str(contract["start_command"]) == "db-mcp runtime"
 
 
 def test_cli_runtime_contract_exposes_cli_surface() -> None:
@@ -51,4 +51,5 @@ def test_runtime_instructions_change_by_interface() -> None:
 
     assert "Helper object: `dbmcp`" in native
     assert '`code(connection="...", code="...", timeout_seconds=30, confirmed=False)`' in mcp
+    assert "db-mcp runtime" in mcp
     assert "db-mcp runtime run --connection playground" in cli

@@ -33,6 +33,7 @@ from db_mcp.traces import get_user_id_from_config
 DB_MCP_SCENARIO = "db_mcp"
 EXEC_ONLY_SCENARIO = "exec_only"
 CODE_MODE_SCENARIO = "code_mode"
+RUNTIME_DAEMON_SCENARIO = "runtime_daemon"
 RUNTIME_CODE_SCENARIO = "runtime_code"
 RUNTIME_NATIVE_SCENARIO = "runtime_native"
 RAW_DSN_SCENARIO = "raw_dsn"
@@ -40,6 +41,7 @@ SCENARIOS = [
     DB_MCP_SCENARIO,
     EXEC_ONLY_SCENARIO,
     CODE_MODE_SCENARIO,
+    RUNTIME_DAEMON_SCENARIO,
     RUNTIME_CODE_SCENARIO,
     RUNTIME_NATIVE_SCENARIO,
     RAW_DSN_SCENARIO,
@@ -47,6 +49,7 @@ SCENARIOS = [
 DEFAULT_TOOLS = ["Read", "Bash"]
 EXEC_ONLY_TOOLS = [""]
 CODE_MODE_TOOLS = [""]
+RUNTIME_DAEMON_TOOLS = [""]
 RUNTIME_CODE_TOOLS = ["Bash"]
 RUNTIME_NATIVE_TOOLS = ["Bash"]
 CODE_MODE_SKILL_NAME = "db-mcp-code-benchmark"
@@ -141,6 +144,22 @@ def _build_code_mode_mcp_config(
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def _build_runtime_daemon_config(
+    path: Path,
+    *,
+    mcp_url: str,
+) -> None:
+    payload = {
+        "mcpServers": {
+            "db-mcp": {
+                "type": "http",
+                "url": mcp_url,
+            }
+        }
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def _build_prompt(
     case,
     scenario: str,
@@ -177,6 +196,28 @@ def _build_prompt(
         return base + (
             f"\nFirst, load the project skill `/{CODE_MODE_SKILL_NAME}` and follow it.\n"
             "\nYou have db-mcp available only through one MCP tool: "
+            '`code(connection="...", code="...")`.\n'
+            "Start by reading PROTOCOL.md with:\n"
+            '`code(connection="...", code="print(dbmcp.read_protocol())")`\n'
+            "Inside code mode, a Python helper object `dbmcp` is already available.\n"
+            "`dbmcp.read_protocol()` returns markdown text, not a structured schema object.\n"
+            "Use schema helpers like dbmcp.find_table(...), dbmcp.describe_table(...), "
+            "dbmcp.find_columns(...), dbmcp.schema_descriptions(), and dbmcp.table_names() "
+            "to inspect the schema, then write the SQL yourself.\n"
+            "Use dbmcp.connector(), dbmcp.query(sql), dbmcp.scalar(sql), and "
+            "dbmcp.execute(sql) as needed.\n"
+            "Do not guess table or column names if the helper methods can resolve them.\n"
+            "Do not use dbmcp.plan(...) to generate SQL for you.\n"
+            "Do not use dbmcp.finalize_answer(...). Print the final JSON object yourself.\n"
+            "Use code for all further inspection and querying. "
+            "Do not rely on any built-in tools.\n"
+            "Do not ask for clarification; produce your best answer."
+        )
+    if scenario == RUNTIME_DAEMON_SCENARIO:
+        return base + (
+            f"\nFirst, load the project skill `/{CODE_MODE_SKILL_NAME}` and follow it.\n"
+            "\nThis benchmark uses the daemonized HTTP MCP runtime entrypoint.\n"
+            "You still have db-mcp available only through one MCP tool: "
             '`code(connection="...", code="...")`.\n'
             "Start by reading PROTOCOL.md with:\n"
             '`code(connection="...", code="print(dbmcp.read_protocol())")`\n'
@@ -358,12 +399,17 @@ def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
 
 
 def _materialize_benchmark_skill(attempt_dir: Path, scenario: str, connection_name: str) -> None:
-    if scenario not in {CODE_MODE_SCENARIO, RUNTIME_CODE_SCENARIO, RUNTIME_NATIVE_SCENARIO}:
+    if scenario not in {
+        CODE_MODE_SCENARIO,
+        RUNTIME_DAEMON_SCENARIO,
+        RUNTIME_CODE_SCENARIO,
+        RUNTIME_NATIVE_SCENARIO,
+    }:
         return
 
     skill_name = (
         CODE_MODE_SKILL_NAME
-        if scenario == CODE_MODE_SCENARIO
+        if scenario in {CODE_MODE_SCENARIO, RUNTIME_DAEMON_SCENARIO}
         else (
             RUNTIME_CODE_SKILL_NAME
             if scenario == RUNTIME_CODE_SCENARIO
@@ -373,7 +419,7 @@ def _materialize_benchmark_skill(attempt_dir: Path, scenario: str, connection_na
     skill_dir = attempt_dir / ".claude" / "skills" / skill_name
     skill_dir.mkdir(parents=True, exist_ok=True)
 
-    if scenario == CODE_MODE_SCENARIO:
+    if scenario in {CODE_MODE_SCENARIO, RUNTIME_DAEMON_SCENARIO}:
         body = f"""# {skill_name}
 
 Use this skill for db-mcp benchmark tasks in MCP code mode.
@@ -537,6 +583,50 @@ def _build_runtime_native_env(
     return adapter.materialize(attempt_dir).env
 
 
+def _materialize_daemon_scripts(
+    attempt_dir: Path,
+    *,
+    connection_name: str,
+    mcp_port: int,
+    ui_port: int,
+) -> tuple[Path, Path]:
+    start_script = attempt_dir / "start-daemon.sh"
+    stop_script = attempt_dir / "stop-daemon.sh"
+    binary = _resolve_benchmark_db_mcp_binary()
+
+    start_script.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "set -eu",
+                f'exec "{binary}" up \\',
+                "  --ui-host 127.0.0.1 \\",
+                f"  --ui-port {ui_port} \\",
+                "  --mcp-host 127.0.0.1 \\",
+                f"  --mcp-port {mcp_port} \\",
+                "  --mcp-path /mcp \\",
+                f'  -c "{connection_name}"',
+                "",
+            ]
+        )
+    )
+    stop_script.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "set -eu",
+                'pid="${1:-}"',
+                '[ -n "$pid" ] || exit 0',
+                'kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true',
+                "",
+            ]
+        )
+    )
+    start_script.chmod(0o755)
+    stop_script.chmod(0o755)
+    return start_script, stop_script
+
+
 def _reserve_runtime_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -577,6 +667,40 @@ def _wait_for_runtime_server(
             last_error = exc
             time.sleep(0.1)
     raise RuntimeError(f"Runtime server did not become ready: {last_error}")
+
+
+def _wait_for_health_url(
+    health_url: str,
+    *,
+    process: subprocess.Popen[str] | None = None,
+    timeout_seconds: float = RUNTIME_SERVER_READY_TIMEOUT_SECONDS,
+    log_path: Path | None = None,
+) -> None:
+    deadline = time.time() + timeout_seconds
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        if process is not None:
+            return_code = process.poll()
+            if return_code is not None:
+                detail = ""
+                if log_path is not None and log_path.exists():
+                    try:
+                        log_text = log_path.read_text(encoding="utf-8").strip()
+                    except OSError:
+                        log_text = ""
+                    if log_text:
+                        detail = f" Log output: {log_text[-500:]}"
+                raise RuntimeError(
+                    f"Service exited before becoming ready (exit {return_code}).{detail}"
+                )
+        try:
+            with urlopen(health_url, timeout=0.5) as response:
+                if response.status == 200:
+                    return
+        except Exception as exc:  # pragma: no cover - exercised through retries
+            last_error = exc
+            time.sleep(0.1)
+    raise RuntimeError(f"Service did not become ready: {last_error}")
 
 
 @contextmanager
@@ -638,11 +762,82 @@ def _runtime_server_context(
                 process.wait(timeout=5)
 
 
+@contextmanager
+def _daemon_service_context(
+    *,
+    connection_name: str,
+    connections_dir: Path,
+    attempt_dir: Path,
+):
+    mcp_port = _reserve_runtime_port()
+    ui_port = _reserve_runtime_port()
+    mcp_url = f"http://127.0.0.1:{mcp_port}/mcp"
+    health_url = f"http://127.0.0.1:{mcp_port}/health"
+    start_script, stop_script = _materialize_daemon_scripts(
+        attempt_dir,
+        connection_name=connection_name,
+        mcp_port=mcp_port,
+        ui_port=ui_port,
+    )
+    log_path = attempt_dir / "local-service.log"
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            ["/bin/sh", str(start_script)],
+            cwd=attempt_dir,
+            env={
+                **os.environ,
+                "CONNECTIONS_DIR": str(connections_dir),
+                "CONNECTION_NAME": connection_name,
+            },
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            _wait_for_health_url(
+                health_url,
+                process=process,
+                timeout_seconds=RUNTIME_SERVER_READY_TIMEOUT_SECONDS,
+                log_path=log_path,
+            )
+            _json_dump(
+                attempt_dir / "local-service.json",
+                {
+                    "mcp_url": mcp_url,
+                    "mcp_port": mcp_port,
+                    "ui_url": f"http://127.0.0.1:{ui_port}",
+                    "ui_port": ui_port,
+                    "pid": process.pid,
+                },
+            )
+            yield mcp_url
+        finally:
+            subprocess.run(
+                ["/bin/sh", str(stop_script), str(process.pid)],
+                cwd=attempt_dir,
+                env={**os.environ},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=5)
+
+
 def _tools_for_scenario(scenario: str) -> list[str]:
     if scenario == EXEC_ONLY_SCENARIO:
         return EXEC_ONLY_TOOLS
     if scenario == CODE_MODE_SCENARIO:
         return CODE_MODE_TOOLS
+    if scenario == RUNTIME_DAEMON_SCENARIO:
+        return RUNTIME_DAEMON_TOOLS
     if scenario == RUNTIME_CODE_SCENARIO:
         return RUNTIME_CODE_TOOLS
     if scenario == RUNTIME_NATIVE_SCENARIO:
@@ -1164,6 +1359,7 @@ def run_benchmark_suite(
     shuffle_seed: int | None = None,
     progress_callback=None,
     runtime_server_factory=None,
+    daemon_service_factory=None,
 ) -> Path:
     """Run the benchmark suite for one connection."""
     access = resolve_sql_connection_access(connection_name)
@@ -1176,6 +1372,7 @@ def run_benchmark_suite(
     total_attempts = repeats * len(cases) * len(SCENARIOS)
     completed_attempts = 0
     runtime_server_factory = runtime_server_factory or _runtime_server_context
+    daemon_service_factory = daemon_service_factory or _daemon_service_context
 
     for repeat in range(1, repeats + 1):
         for case in cases:
@@ -1206,6 +1403,8 @@ def run_benchmark_suite(
                         connection_name=connection_name,
                         connections_dir=connections_dir,
                     )
+                elif scenario == RUNTIME_DAEMON_SCENARIO:
+                    _build_empty_mcp_config(mcp_config_path)
                 else:
                     _build_empty_mcp_config(mcp_config_path)
 
@@ -1223,6 +1422,15 @@ def run_benchmark_suite(
                     runtime_server_context = runtime_server_cm
                 else:
                     runtime_server_context = None
+                daemon_service_context = (
+                    daemon_service_factory(
+                        connection_name=connection_name,
+                        connections_dir=connections_dir,
+                        attempt_dir=attempt_dir,
+                    )
+                    if scenario == RUNTIME_DAEMON_SCENARIO
+                    else None
+                )
 
                 _materialize_benchmark_skill(attempt_dir, scenario, connection_name)
                 debug_log_path = attempt_dir / "debug.log"
@@ -1234,7 +1442,7 @@ def run_benchmark_suite(
                     if scenario in {RUNTIME_CODE_SCENARIO, RUNTIME_NATIVE_SCENARIO}
                     else None
                 )
-                if runtime_server_context is None:
+                if runtime_server_context is None and daemon_service_context is None:
                     prompt = _build_prompt(
                         case,
                         scenario,
@@ -1257,6 +1465,34 @@ def run_benchmark_suite(
                         loop_breaker=loop_breaker,
                     )
                     ended_ns = time.time_ns()
+                elif daemon_service_context is not None:
+                    with daemon_service_context as daemon_mcp_url:
+                        _build_runtime_daemon_config(
+                            mcp_config_path,
+                            mcp_url=daemon_mcp_url,
+                        )
+                        prompt = _build_prompt(
+                            case,
+                            scenario,
+                            connection_name,
+                            access.database_url,
+                            access.connect_args,
+                        )
+                        (attempt_dir / "prompt.txt").write_text(prompt)
+                        started_ns = time.time_ns()
+                        result = driver.run(
+                            prompt=prompt,
+                            json_schema=schema,
+                            session_id=session_id,
+                            mcp_config_path=mcp_config_path,
+                            model=model,
+                            workdir=attempt_dir,
+                            debug_log_path=debug_log_path,
+                            tools=_tools_for_scenario(scenario),
+                            env=run_env,
+                            loop_breaker=loop_breaker,
+                        )
+                        ended_ns = time.time_ns()
                 else:
                     with runtime_server_context as runtime_server_url:
                         run_env = (

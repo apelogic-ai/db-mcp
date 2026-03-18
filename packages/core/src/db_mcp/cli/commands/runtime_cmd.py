@@ -3,20 +3,69 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import click
+from fastmcp import FastMCP
 
+from db_mcp.cli.commands.core import start as start_cmd
 from db_mcp.code_runtime import CodeModeHost, build_runtime_contract, build_runtime_instructions
 from db_mcp.code_runtime.http import start_runtime_server
 from db_mcp.config import get_settings
+from db_mcp.local_service import load_local_service_state, local_service_is_healthy
 
 
-@click.group("runtime")
-def runtime_group() -> None:
-    """Run db-mcp code mode outside MCP."""
+def _proxy_runtime_to_local_service(mcp_url: str) -> None:
+    """Proxy stdio MCP traffic to the long-lived local db-mcp service."""
+    proxy = FastMCP.as_proxy(mcp_url, name="db-mcp")
+    proxy.run(show_banner=False)
+
+
+@click.group("runtime", invoke_without_command=True)
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+@click.option(
+    "--mode",
+    type=click.Choice(["detailed", "shell", "exec-only", "code"]),
+    default="code",
+    show_default=True,
+    help="MCP tool startup mode when runtime is used as the Claude/Desktop entrypoint.",
+)
+@click.option(
+    "--interface",
+    "runtime_interface",
+    type=click.Choice(["native", "mcp", "cli"]),
+    default=None,
+    help=(
+        "Runtime interface contract for the MCP runtime entrypoint "
+        "(default: configured runtime_interface)"
+    ),
+)
+@click.pass_context
+def runtime_group(
+    ctx: click.Context,
+    connection: str | None,
+    mode: str,
+    runtime_interface: str | None,
+) -> None:
+    """Run db-mcp as either the MCP runtime entrypoint or the low-level runtime CLI."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    selected_interface = runtime_interface or get_settings().runtime_interface
+    os.environ["RUNTIME_INTERFACE"] = selected_interface
+    local_service = load_local_service_state()
+    if local_service_is_healthy(local_service):
+        mcp_url = str(local_service.get("mcp_url", "") or "")
+        if mcp_url:
+            _proxy_runtime_to_local_service(mcp_url)
+            return
+    callback = start_cmd.callback
+    if callback is None:  # pragma: no cover - defensive guard
+        raise click.ClickException("start command is unavailable")
+    callback(connection, mode)
 
 
 @runtime_group.command("prompt")

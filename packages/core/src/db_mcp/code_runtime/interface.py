@@ -62,7 +62,7 @@ def _mcp_instructions(connection: str) -> str:
         "Tool: `code(connection=\"...\", code=\"...\", timeout_seconds=30, confirmed=False)`\n\n"
         "Start the MCP server with:\n"
         "```bash\n"
-        f"db-mcp start -c {connection} --mode code\n"
+        "db-mcp runtime\n"
         "```\n\n"
         "First step in the tool:\n"
         "```python\n"
@@ -139,7 +139,7 @@ def build_runtime_contract(
                     "timeout_seconds": "int",
                     "confirmed": "bool",
                 },
-                "start_command": f"db-mcp start -c {connection} --mode code",
+                "start_command": "db-mcp runtime",
             }
         )
         return base
