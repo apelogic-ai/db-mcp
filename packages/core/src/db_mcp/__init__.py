@@ -1,3 +1,3 @@
 """db-mcp: MCP server for database semantics and query intelligence."""
 
-__version__ = "0.6.10"
+__version__ = "0.7.0"

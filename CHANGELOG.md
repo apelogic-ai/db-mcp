@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.7.0] - 2026-03-18
+
+## Highlights
+- Added first-class code runtime surfaces across MCP, CLI, host sessions, and native benchmarked runtime flows.
+- Introduced standalone runtime commands and a host/session API so `db-mcp` can be used outside MCP while reusing the same connector-backed execution path.
+- Expanded the benchmark harness to compare `db_mcp`, `exec_only`, `code_mode`, `runtime_code`, `runtime_native`, and `raw_dsn` on both `playground` and `top-ledger`.
+
+## Breaking changes
+- None
+
+## Features
+- PR #58: added `db-mcp runtime prompt`, `runtime run`, `runtime serve`, and `runtime exec` for standalone code-runtime usage.
+- PR #58: added shared code-runtime modules for contracts, sessions, host integration, HTTP endpoints, native adapter bootstrap, and Python host client support.
+- PR #58: added explicit runtime interfaces (`native`, `mcp`, `cli`) so one shared runtime core can power multiple frontends without changing connection semantics.
+- PR #58: added benchmark-native runtime coverage for `runtime_code` and `runtime_native`, including per-attempt skills, invocation capture, and runtime artifacts.
+
+## Fixes
+- Fixed host runtime SDK execution to route through the shared connector layer instead of ad hoc child-process SQLAlchemy setup, preserving support across supported dialects.
+- Fixed packaged `runtime serve` startup and benchmark runtime lifecycle handling for frozen binaries, including readiness waiting and process-group teardown.
+- Fixed benchmark recovery and validation around runtime-native and runtime-code attempts so successful runtime work is not discarded because of fragile final structured output.
+- Fixed process runtime Python resolution so packaged binaries and CI environments do not accidentally execute `db-mcp` in place of a real Python interpreter.
+
+## Security
+- None
+
+## Upgrade notes
+- Existing MCP connections, vault state, and onboarding artifacts remain compatible.
+- Native runtime users can now choose between `native`, `mcp`, and `cli` interface contracts while reusing the same connection metadata and connector behavior.
+- Benchmark users should rebuild the packaged binary before comparing runtime scenarios locally so `runtime serve` and packaged benchmark paths use the latest runtime fixes.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `tests/test_database.py::test_connection`.
+
+
 ## [0.6.10] - 2026-03-16
 
 ## Highlights
