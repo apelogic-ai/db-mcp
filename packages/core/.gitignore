@@ -4,3 +4,6 @@ src/db_mcp/static/
 
 # Local benchmark output
 benchmark_runs/
+
+# Local demo database
+demo.db
