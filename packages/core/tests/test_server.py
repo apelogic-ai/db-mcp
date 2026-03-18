@@ -2,6 +2,7 @@
 
 import importlib
 import pkgutil
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,7 @@ from db_mcp.config import reset_settings
 from db_mcp.insights.detector import Insight, InsightStore, load_insights, save_insights
 from db_mcp.registry import ConnectionInfo, ConnectionRegistry
 from db_mcp.server import _create_server
+from db_mcp.tools import daemon_tasks
 
 
 def _get_tool_names(server):
@@ -696,6 +698,248 @@ def test_code_mode_exposes_only_code_tool(tmp_path):
         server = _create_server()
 
     assert _get_tool_names(server) == {"code"}
+
+
+def test_daemon_mode_exposes_only_task_tools(tmp_path):
+    """Daemon mode should expose only the executor-like task surface."""
+    connector_yaml = tmp_path / "connector.yaml"
+    connector_yaml.write_text(yaml.dump({"type": "sql", "database_url": "sqlite:///tmp/test.db"}))
+    conn_info = ConnectionInfo(
+        name="test", path=tmp_path, type="sql", dialect="", description="", is_default=True
+    )
+
+    with (
+        patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
+        patch("db_mcp.server.get_settings") as mock_settings,
+    ):
+        mock_registry = MagicMock()
+        mock_registry.discover.return_value = {"test": conn_info}
+        mock_reg_cls.get_instance.return_value = mock_registry
+
+        mock_settings.return_value.tool_mode = "daemon"
+        mock_settings.return_value.tool_profile = "auto"
+        mock_settings.return_value.auth0_enabled = False
+        mock_settings.return_value.auth0_domain = ""
+        mock_settings.return_value.connection_name = "test"
+
+        server = _create_server()
+
+    assert _get_tool_names(server) == {"prepare_task", "execute_task"}
+
+
+@pytest.mark.asyncio
+async def test_daemon_mode_prepare_and_execute_task(tmp_path, monkeypatch):
+    """Daemon mode should prepare compact context and execute SQL by task id."""
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    db_path = tmp_path / "daemon.sqlite"
+    _write_sql_connector(connection_path)
+    (connection_path / "connector.yaml").write_text(
+        yaml.dump({"type": "sql", "database_url": f"sqlite:///{db_path}"})
+    )
+    (connection_path / "PROTOCOL.md").write_text("Read protocol first.\n")
+    (connection_path / "domain").mkdir(parents=True, exist_ok=True)
+    (connection_path / "domain" / "model.md").write_text(
+        "# Revenue\nCustomers live in the Customer table.\n"
+    )
+    (connection_path / "instructions").mkdir(parents=True, exist_ok=True)
+    (connection_path / "instructions" / "business_rules.yaml").write_text(
+        yaml.dump({"rules": ["Customer counts should use the Customer table."]})
+    )
+    (connection_path / "schema").mkdir(parents=True, exist_ok=True)
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.dump(
+            {
+                "dialect": "sqlite",
+                "tables": [
+                    {
+                        "name": "Customer",
+                        "schema": "main",
+                        "full_name": "main.Customer",
+                        "description": "Customer records",
+                        "columns": [
+                            {"name": "CustomerId", "type": "INTEGER"},
+                            {"name": "Country", "type": "TEXT"},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    (connection_path / "examples").mkdir(parents=True, exist_ok=True)
+    (connection_path / "examples" / "count_customers.yaml").write_text(
+        yaml.dump(
+            {
+                "intent": "How many customers are there?",
+                "sql": "SELECT COUNT(*) AS answer FROM Customer",
+                "tables": ["Customer"],
+                "keywords": ["count", "customers"],
+            }
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.setenv("TOOL_MODE", "daemon")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    server = _create_server()
+    async with Client(server) as client:
+        prepared = (
+            await client.call_tool(
+                "prepare_task",
+                {"question": "How many customers are there?", "connection": connection_name},
+            )
+        ).data
+        prepared_payload = _tool_payload(prepared)
+        assert prepared_payload["status"] == "context_ready"
+        assert prepared_payload["connection"] == connection_name
+        assert prepared_payload["context"]["candidate_tables"][0]["identifier"] == "main.Customer"
+        assert prepared_payload["context"]["examples"][0]["sql"] == (
+            "SELECT COUNT(*) AS answer FROM Customer"
+        )
+        task_id = prepared_payload["task_id"]
+
+        executed = (
+            await client.call_tool(
+                "execute_task",
+                {"task_id": task_id, "sql": "SELECT 1 AS answer"},
+            )
+        ).data
+        executed_payload = _tool_payload(executed)
+        assert executed_payload["status"] == "completed"
+        assert executed_payload["execution"]["status"] == "success"
+        assert executed_payload["execution"]["data"] == [{"answer": 1}]
+
+
+@pytest.mark.asyncio
+async def test_daemon_execute_task_resolves_async_read_inline(monkeypatch):
+    """execute_task should inline-poll async read executions to a final result."""
+    daemon_tasks._TASKS.clear()
+    daemon_tasks._register_task(
+        daemon_tasks.PreparedTask(
+            task_id="task-123",
+            connection="demo",
+            question="What is the symbol?",
+            context={},
+        )
+    )
+
+    async def fake_validate_sql(*args, **kwargs):
+        return {
+            "valid": True,
+            "query_id": "query-123",
+            "is_write": False,
+            "write_confirmation_required": False,
+        }
+
+    async def fake_run_sql(*args, **kwargs):
+        return {
+            "status": "submitted",
+            "query_id": "exec-123",
+            "execution_id": "exec-123",
+            "state": "running",
+            "is_write": False,
+        }
+
+    poll_calls = {"count": 0}
+
+    async def fake_get_result(query_id: str, connection: str):
+        assert query_id == "exec-123"
+        assert connection == "demo"
+        poll_calls["count"] += 1
+        if poll_calls["count"] == 1:
+            return {"status": "running", "query_id": query_id, "execution_id": query_id}
+        return {
+            "status": "complete",
+            "query_id": query_id,
+            "execution_id": query_id,
+            "data": [{"symbol": "SOL"}],
+            "columns": ["symbol"],
+            "rows_returned": 1,
+        }
+
+    monkeypatch.setattr(daemon_tasks, "_validate_sql", fake_validate_sql)
+    monkeypatch.setattr(daemon_tasks, "_run_sql", fake_run_sql)
+    monkeypatch.setattr(daemon_tasks, "_get_result", fake_get_result, raising=False)
+    monkeypatch.setattr(daemon_tasks, "_INLINE_RESULT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(daemon_tasks, "_INLINE_RESULT_POLL_SECONDS", 0.01)
+
+    payload = await daemon_tasks._execute_task(task_id="task-123", sql="SELECT 'SOL' AS symbol")
+
+    assert payload["status"] == "completed"
+    assert payload["execution"]["status"] == "success"
+    assert payload["execution"]["data"] == [{"symbol": "SOL"}]
+    assert poll_calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_daemon_mode_prepare_task_serializes_date_values(tmp_path, monkeypatch):
+    """prepare_task should normalize YAML date values into JSON-safe strings."""
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("Read protocol first.\n")
+    (connection_path / "domain").mkdir(parents=True, exist_ok=True)
+    (connection_path / "domain" / "model.md").write_text("Token metadata lives in token_prices.\n")
+    (connection_path / "instructions").mkdir(parents=True, exist_ok=True)
+    (connection_path / "instructions" / "business_rules.yaml").write_text(
+        yaml.dump({"rules": ["Use token metadata for symbol lookups."]})
+    )
+    (connection_path / "schema").mkdir(parents=True, exist_ok=True)
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.dump(
+            {
+                "dialect": "sqlite",
+                "tables": [
+                    {
+                        "name": "token_prices",
+                        "schema": "main",
+                        "full_name": "main.token_prices",
+                        "description": "Token metadata snapshots",
+                        "columns": [
+                            {"name": "block_date", "type": "DATE"},
+                            {"name": "symbol", "type": "TEXT"},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    (connection_path / "examples").mkdir(parents=True, exist_ok=True)
+    (connection_path / "examples" / "latest_price.yaml").write_text(
+        yaml.dump(
+            {
+                "intent": "Get the latest SOL price",
+                "sql": "SELECT symbol FROM token_prices WHERE block_date = DATE '2026-02-15'",
+                "tables": ["token_prices"],
+                "keywords": ["latest", date(2026, 2, 15)],
+                "notes": "Dates in example metadata should be serialized safely.",
+            }
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.setenv("TOOL_MODE", "daemon")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    server = _create_server()
+    async with Client(server) as client:
+        prepared = (
+            await client.call_tool(
+                "prepare_task",
+                {"question": "What is the latest SOL price?", "connection": connection_name},
+            )
+        ).data
+        prepared_payload = _tool_payload(prepared)
+
+    assert prepared_payload["status"] == "context_ready"
+    assert prepared_payload["context"]["examples"][0]["keywords"] == ["latest", "2026-02-15"]
 
 
 @pytest.mark.asyncio

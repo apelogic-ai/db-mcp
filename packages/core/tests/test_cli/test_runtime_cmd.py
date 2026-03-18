@@ -395,3 +395,64 @@ def test_runtime_serve_invokes_runtime_server(monkeypatch):
 
     assert result.exit_code == 0
     assert captured == {"host": "127.0.0.1", "port": 8099}
+
+
+def test_runtime_without_subcommand_starts_mcp_runtime_mode(tmp_path, monkeypatch):
+    connection_name = _prepare_connection(tmp_path, monkeypatch)
+    monkeypatch.setenv("TOOL_MODE", "shell")
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    monkeypatch.setattr(
+        "db_mcp.cli.commands.core.load_config",
+        lambda: {"active_connection": connection_name, "tool_mode": "shell"},
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_server_main() -> None:
+        import os
+
+        captured["connection_name"] = os.environ.get("CONNECTION_NAME")
+        captured["tool_mode"] = os.environ.get("TOOL_MODE")
+        captured["runtime_interface"] = os.environ.get("RUNTIME_INTERFACE")
+
+    monkeypatch.setattr("db_mcp.server.main", fake_server_main)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["runtime"])
+
+    assert result.exit_code == 0
+    assert captured["connection_name"] == connection_name
+    assert captured["tool_mode"] == "code"
+    assert captured["runtime_interface"] == "native"
+
+
+def test_runtime_without_subcommand_proxies_to_local_service(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "db_mcp.cli.commands.runtime_cmd.load_local_service_state",
+        lambda: {"mcp_url": "http://127.0.0.1:8000/mcp"},
+    )
+    monkeypatch.setattr(
+        "db_mcp.cli.commands.runtime_cmd.local_service_is_healthy",
+        lambda state: True,
+    )
+
+    def fake_proxy(url: str) -> None:
+        captured["url"] = url
+
+    monkeypatch.setattr(
+        "db_mcp.cli.commands.runtime_cmd._proxy_runtime_to_local_service",
+        fake_proxy,
+    )
+    monkeypatch.setattr(
+        "db_mcp.cli.commands.runtime_cmd.start_cmd.callback",
+        lambda connection, mode: (_ for _ in ()).throw(AssertionError("fallback should not run")),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["runtime"])
+
+    assert result.exit_code == 0
+    assert captured == {"url": "http://127.0.0.1:8000/mcp"}

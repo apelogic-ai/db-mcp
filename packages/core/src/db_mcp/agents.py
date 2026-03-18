@@ -14,6 +14,8 @@ from rich.console import Console
 
 console = Console()
 
+DEFAULT_RUNTIME_MCP_URL = "http://127.0.0.1:8788/mcp"
+
 
 @dataclass
 class MCPAgent:
@@ -312,6 +314,10 @@ def configure_agent_for_dbmcp(agent_id: str, binary_path: str) -> bool:
     try:
         # Load existing config
         config = load_agent_config(agent)
+        runtime_config = {
+            "type": "http",
+            "url": DEFAULT_RUNTIME_MCP_URL,
+        }
 
         # Add/update db-mcp entry
         if agent.config_format == "json":
@@ -319,10 +325,7 @@ def configure_agent_for_dbmcp(agent_id: str, binary_path: str) -> bool:
             if agent.config_key not in config:
                 config[agent.config_key] = {}
 
-            config[agent.config_key]["db-mcp"] = {
-                "command": binary_path,
-                "args": ["start"],
-            }
+            config[agent.config_key]["db-mcp"] = runtime_config
 
             # Remove legacy dbmeta entry if exists
             if "dbmeta" in config[agent.config_key]:
@@ -333,10 +336,7 @@ def configure_agent_for_dbmcp(agent_id: str, binary_path: str) -> bool:
             if agent.config_key not in config:
                 config[agent.config_key] = {}
 
-            config[agent.config_key]["db-mcp"] = {
-                "command": binary_path,
-                "args": ["start"],
-            }
+            config[agent.config_key]["db-mcp"] = runtime_config
 
             # Remove legacy dbmeta entry if exists
             if "dbmeta" in config[agent.config_key]:

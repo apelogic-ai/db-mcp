@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from db_mcp.agents import (
     AGENTS,
+    DEFAULT_RUNTIME_MCP_URL,
     _dict_to_toml,
     _format_toml_value,
     configure_agent_for_dbmcp,
@@ -254,7 +255,7 @@ class TestTomlWriter:
 
     def test_dict_to_toml_no_spurious_header(self):
         """Test that intermediate-only tables don't emit empty headers."""
-        config = {"mcp_servers": {"db-mcp": {"command": "/bin/db-mcp", "args": ["start"]}}}
+        config = {"mcp_servers": {"db-mcp": {"command": "/bin/db-mcp", "args": ["runtime"]}}}
         output = _dict_to_toml(config)
         assert "[mcp_servers]" not in output
         assert "[mcp_servers.db-mcp]" in output
@@ -282,7 +283,7 @@ class TestTomlWriter:
             "approval_mode": "unless-allow-listed",
             "mcp_servers": {
                 "context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp"]},
-                "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                "db-mcp": {"command": "/bin/db-mcp", "args": ["runtime"]},
                 "with-env": {
                     "command": "cmd",
                     "args": ["a"],
@@ -316,8 +317,8 @@ class TestAgentConfiguration:
 
             assert "mcpServers" in config
             assert "db-mcp" in config["mcpServers"]
-            assert config["mcpServers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
-            assert config["mcpServers"]["db-mcp"]["args"] == ["start"]
+            assert config["mcpServers"]["db-mcp"]["type"] == "http"
+            assert config["mcpServers"]["db-mcp"]["url"] == DEFAULT_RUNTIME_MCP_URL
 
     def test_configure_codex(self):
         """Test configuring Codex."""
@@ -337,8 +338,8 @@ class TestAgentConfiguration:
 
             assert "mcp_servers" in config
             assert "db-mcp" in config["mcp_servers"]
-            assert config["mcp_servers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
-            assert config["mcp_servers"]["db-mcp"]["args"] == ["start"]
+            assert config["mcp_servers"]["db-mcp"]["type"] == "http"
+            assert config["mcp_servers"]["db-mcp"]["url"] == DEFAULT_RUNTIME_MCP_URL
 
     def test_configure_preserves_existing_servers(self):
         """Test that configuring db-mcp preserves other MCP servers."""
@@ -416,7 +417,7 @@ class TestAgentConfiguration:
 
             # db-mcp was added
             assert "db-mcp" in config["mcp_servers"]
-            assert config["mcp_servers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
+            assert config["mcp_servers"]["db-mcp"]["url"] == DEFAULT_RUNTIME_MCP_URL
             # other server's env map survived
             assert config["mcp_servers"]["other"]["env"]["API_KEY"] == "secret"
 
@@ -444,8 +445,8 @@ class TestAgentConfiguration:
 
             assert "mcpServers" in config
             assert "db-mcp" in config["mcpServers"]
-            assert config["mcpServers"]["db-mcp"]["command"] == "/usr/local/bin/db-mcp"
-            assert config["mcpServers"]["db-mcp"]["args"] == ["start"]
+            assert config["mcpServers"]["db-mcp"]["type"] == "http"
+            assert config["mcpServers"]["db-mcp"]["url"] == DEFAULT_RUNTIME_MCP_URL
 
     def test_configure_openclaw_preserves_imports(self):
         """Test that configuring OpenClaw preserves imports key."""
@@ -526,7 +527,7 @@ class TestRemoveAgent:
             config_path = Path(tmpdir) / "config.json"
             existing = {
                 "mcpServers": {
-                    "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                    "db-mcp": {"command": "/bin/db-mcp", "args": ["runtime"]},
                     "github": {"command": "npx", "args": ["@github/mcp"]},
                 }
             }
@@ -549,7 +550,7 @@ class TestRemoveAgent:
             existing = {
                 "model": "o3",
                 "mcp_servers": {
-                    "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                    "db-mcp": {"command": "/bin/db-mcp", "args": ["runtime"]},
                     "other": {"command": "npx", "args": ["-y", "other"]},
                 },
             }
@@ -598,7 +599,7 @@ class TestRemoveAgent:
             existing = {
                 "imports": ["./other-config.json"],
                 "mcpServers": {
-                    "db-mcp": {"command": "/bin/db-mcp", "args": ["start"]},
+                    "db-mcp": {"command": "/bin/db-mcp", "args": ["runtime"]},
                     "github": {"command": "npx", "args": ["@github/mcp"]},
                 },
             }

@@ -25,6 +25,10 @@ from db_mcp.tools.api import (
     _api_query,
 )
 from db_mcp.tools.code import _code
+from db_mcp.tools.daemon_tasks import (
+    _execute_task,
+    _prepare_task,
+)
 from db_mcp.tools.database import (
     _describe_table,
     _detect_dialect,
@@ -261,6 +265,27 @@ schema columns. If you resolve any during your work, use `query_add_rule` to add
 the mapping — the gap will auto-resolve.
 """
 
+INSTRUCTIONS_DAEMON = """
+Executor-like db-mcp daemon runtime.
+
+Use this two-step workflow:
+
+1. Call `prepare_task(question=..., connection=...)`
+   This returns compact structured context:
+   - relevant tables and columns
+   - candidate joins
+   - relevant examples
+   - relevant rules
+   - focused domain context
+
+2. Write the SQL yourself and call:
+   `execute_task(task_id=..., sql=..., confirmed=false)`
+
+Use the `execution` payload returned by `execute_task(...)` directly.
+
+Do not look for shell, exec, or code tools in this mode.
+"""
+
 INSTRUCTIONS_SHELL_MODE = """
 Database query server - SHELL-FIRST MODE
 
@@ -459,6 +484,7 @@ def _create_server() -> FastMCP:
     is_shell_mode = settings.tool_mode == "shell"
     is_exec_mode = settings.tool_mode == "exec-only"
     is_code_mode = settings.tool_mode == "code"
+    is_daemon_mode = settings.tool_mode == "daemon"
     tool_profile = _resolve_tool_profile(settings, is_shell_mode)
     is_full_profile = tool_profile == "full"
 
@@ -540,6 +566,8 @@ def _create_server() -> FastMCP:
         instructions = INSTRUCTIONS_EXEC_ONLY
     elif is_code_mode:
         instructions = INSTRUCTIONS_CODE
+    elif is_daemon_mode:
+        instructions = INSTRUCTIONS_DAEMON
     else:
         instructions = INSTRUCTIONS_SHELL_MODE if is_shell_mode else INSTRUCTIONS_DETAILED
 
@@ -762,6 +790,10 @@ def _create_server() -> FastMCP:
         return server
     if is_code_mode:
         server.tool(name="code")(_code)
+        return server
+    if is_daemon_mode:
+        server.tool(name="prepare_task")(_prepare_task)
+        server.tool(name="execute_task")(_execute_task)
         return server
 
     # =========================================================================

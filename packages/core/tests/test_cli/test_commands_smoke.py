@@ -44,7 +44,7 @@ class TestMainGroup:
         """Verify the main group has every expected top-level name."""
         expected = {
             "init", "start", "status", "list", "use", "doctor", "sync", "pull",
-            "discover", "agents", "console", "ui", "serve", "runtime",
+            "discover", "agents", "console", "ui", "up", "serve", "runtime",
             "collab", "traces", "playground", "connector",
         }
         registered = set(main.commands.keys())
@@ -116,7 +116,7 @@ class TestAgentsCommandHelp:
 # ---------------------------------------------------------------------------
 
 class TestServiceCommandsHelp:
-    @pytest.mark.parametrize("cmd", ["console", "ui", "serve"])
+    @pytest.mark.parametrize("cmd", ["console", "ui", "up", "serve"])
     def test_service_command_help(self, runner, cmd):
         result = invoke_help(runner, cmd)
         assert result.exit_code == 0, f"'{cmd} --help' failed: {result.output}"
@@ -233,6 +233,7 @@ class TestRegisterCommands:
         register_commands(g)
         assert "console" in g.commands
         assert "ui" in g.commands
+        assert "up" in g.commands
         assert "serve" in g.commands
         assert "playground" in g.commands
 

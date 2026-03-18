@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from db_mcp.agents import AGENTS, _dict_to_toml
+from db_mcp.agents import AGENTS, DEFAULT_RUNTIME_MCP_URL, _dict_to_toml
 
 
 def _make_json_config(tmpdir, agent_id, servers=None):
@@ -113,6 +113,8 @@ class TestHandleAgentsConfigure:
             with open(AGENTS["claude-desktop"].config_path) as f:
                 config = json.load(f)
             assert "db-mcp" in config["mcpServers"]
+            assert config["mcpServers"]["db-mcp"]["type"] == "http"
+            assert config["mcpServers"]["db-mcp"]["url"] == DEFAULT_RUNTIME_MCP_URL
 
     @pytest.mark.asyncio
     async def test_configure_invalid_agent(self):

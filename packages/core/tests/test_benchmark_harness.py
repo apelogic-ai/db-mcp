@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -23,9 +24,12 @@ from db_mcp.benchmark.runner import (
     CODE_MODE_SCENARIO,
     EXEC_ONLY_SCENARIO,
     RUNTIME_CODE_SCENARIO,
+    RUNTIME_DAEMON_SCENARIO,
     RUNTIME_NATIVE_SCENARIO,
+    _build_prompt,
     _extract_answer_payload,
     _extract_answer_payload_with_recovery,
+    _parse_raw_debug_metrics,
     _resolve_benchmark_db_mcp_binary,
     _runtime_server_context,
     _validate_runtime_attempt,
@@ -59,6 +63,8 @@ class FakeDriver:
         config_text = mcp_config_path.read_text()
         if '"exec-only"' in config_text:
             scenario = EXEC_ONLY_SCENARIO
+        elif '"type": "http"' in config_text:
+            scenario = RUNTIME_DAEMON_SCENARIO
         elif '"code"' in config_text:
             scenario = CODE_MODE_SCENARIO
         elif "dbmcp is already available as a global" in prompt:
@@ -135,8 +141,14 @@ class FakeDriver:
             debug_log_path.write_text(
                 '{"tool_name":"Bash"}\n{"tool_name":"Bash","status":"error"}\n'
             )
+        payload = self.outputs.get(scenario)
+        if payload is None and scenario == RUNTIME_DAEMON_SCENARIO:
+            payload = self.outputs[CODE_MODE_SCENARIO]
+        if payload is None:
+            raise KeyError(scenario)
+
         return DriverResult(
-            stdout=json.dumps(self.outputs[scenario]),
+            stdout=json.dumps(payload),
             stderr="",
             exit_code=0,
             duration_ms=123.0,
@@ -680,6 +692,42 @@ def test_build_claude_command_includes_strict_mcp_and_schema(tmp_path):
     assert cmd[-1] == "answer"
 
 
+def test_runtime_daemon_prompt_is_strict_two_tool_flow():
+    prompt = _build_prompt(
+        case=SimpleNamespace(
+            id="sol_symbol_lookup",
+            prompt="Which symbol corresponds to the SOL mint address?",
+        ),
+        scenario=RUNTIME_DAEMON_SCENARIO,
+        connection_name="demo",
+        database_url="sqlite:///tmp/test.db",
+        connect_args=None,
+    )
+
+    assert '`prepare_task(question="...", connection="...")`' in prompt
+    assert '`execute_task(task_id="...", sql="...", confirmed=False)`' in prompt
+    assert "Use the `execution` payload returned by `execute_task(...)` directly" in prompt
+    assert "get_task" not in prompt
+    assert "cancel_task" not in prompt
+
+
+def test_parse_raw_debug_metrics_treats_daemon_execute_as_db_work(tmp_path):
+    debug_log = tmp_path / "debug.log"
+    debug_log.write_text(
+        "\n".join(
+            [
+                "executePreToolHooks called for tool: mcp__db-mcp__prepare_task",
+                "executePreToolHooks called for tool: mcp__db-mcp__execute_task",
+            ]
+        )
+    )
+
+    metrics = _parse_raw_debug_metrics(debug_log)
+
+    assert metrics["exploratory_steps"] == 2
+    assert metrics["db_executions"] == 1
+
+
 def test_extract_answer_payload_uses_structured_output_wrapper():
     payload = _extract_answer_payload(
         json.dumps(
@@ -838,6 +886,26 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
                 "failure_reason": None,
             },
         },
+        RUNTIME_DAEMON_SCENARIO: {
+            "type": "result",
+            "subtype": "success",
+            "total_cost_usd": 0.101,
+            "usage": {
+                "input_tokens": 94,
+                "output_tokens": 23,
+                "cache_read_input_tokens": 6,
+                "cache_creation_input_tokens": 1,
+            },
+            "structured_output": {
+                "task_id": "count_items",
+                "status": "answered",
+                "answer_value": 3,
+                "answer_text": "3",
+                "evidence_sql": "SELECT COUNT(*) FROM items",
+                "confidence": 0.78,
+                "failure_reason": None,
+            },
+        },
         RUNTIME_CODE_SCENARIO: {
             "type": "result",
             "subtype": "success",
@@ -901,6 +969,7 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     }
     driver = FakeDriver(outputs)
     runtime_server_calls: list[tuple[str, Path]] = []
+    daemon_calls: list[tuple[str, Path]] = []
 
     class FakeRuntimeServer:
         def __enter__(self):
@@ -909,6 +978,15 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
 
         def __exit__(self, exc_type, exc, tb):
             runtime_server_calls.append(("exit", Path("/tmp/fake")))
+            return False
+
+    class FakeDaemonService:
+        def __enter__(self):
+            daemon_calls.append(("enter", Path("/tmp/fake-daemon")))
+            return "http://127.0.0.1:8788/mcp"
+
+        def __exit__(self, exc_type, exc, tb):
+            daemon_calls.append(("exit", Path("/tmp/fake-daemon")))
             return False
 
     run_dir = run_benchmark_suite(
@@ -921,18 +999,20 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
         driver=driver,
         shuffle_seed=7,
         runtime_server_factory=lambda **_: FakeRuntimeServer(),
+        daemon_service_factory=lambda **_: FakeDaemonService(),
     )
 
     assert (run_dir / "summary.json").exists()
     assert (run_dir / "summary.csv").exists()
     attempts = list((run_dir / "attempts").iterdir())
-    assert len(attempts) == 6
+    assert len(attempts) == 7
 
     summary = summarize_run_directory(run_dir)
-    assert summary["totals"]["attempts"] == 6
+    assert summary["totals"]["attempts"] == 7
     assert summary["scenario_summary"]["db_mcp"]["correct"] == 1
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"][CODE_MODE_SCENARIO]["correct"] == 1
+    assert summary["scenario_summary"][RUNTIME_DAEMON_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"][RUNTIME_NATIVE_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"]["raw_dsn"]["correct"] == 0
@@ -951,6 +1031,11 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert summary["scenario_summary"][CODE_MODE_SCENARIO]["total_cost_usd"] == 0.1
     assert summary["scenario_summary"][CODE_MODE_SCENARIO]["exploratory_steps"] == 1
     assert summary["scenario_summary"][CODE_MODE_SCENARIO]["failed_executions"] == 1
+    assert summary["scenario_summary"][RUNTIME_DAEMON_SCENARIO]["input_tokens"] == 94
+    assert summary["scenario_summary"][RUNTIME_DAEMON_SCENARIO]["output_tokens"] == 23
+    assert summary["scenario_summary"][RUNTIME_DAEMON_SCENARIO]["total_cost_usd"] == 0.101
+    assert summary["scenario_summary"][RUNTIME_DAEMON_SCENARIO]["exploratory_steps"] == 2
+    assert summary["scenario_summary"][RUNTIME_DAEMON_SCENARIO]["failed_executions"] == 1
     assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["input_tokens"] == 88
     assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["output_tokens"] == 24
     assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["total_cost_usd"] == 0.11
@@ -964,7 +1049,7 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert summary["scenario_summary"]["raw_dsn"]["input_tokens"] == 80
     assert summary["scenario_summary"]["raw_dsn"]["output_tokens"] == 18
     assert summary["scenario_summary"]["raw_dsn"]["total_cost_usd"] == 0.08
-    assert len(driver.calls) == 6
+    assert len(driver.calls) == 7
     by_scenario = {call["scenario"]: call for call in driver.calls}
     assert by_scenario[EXEC_ONLY_SCENARIO]["tools"] == [""]
     assert "cat PROTOCOL.md" in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
@@ -982,6 +1067,17 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert "write the SQL yourself" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
     assert "Print the final JSON object yourself" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
     assert "Do not guess table or column names" in str(by_scenario[CODE_MODE_SCENARIO]["prompt"])
+    assert by_scenario[RUNTIME_DAEMON_SCENARIO]["tools"] == [""]
+    assert "daemonized HTTP MCP runtime entrypoint" in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert 'prepare_task(question="...", connection="...")' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert 'execute_task(task_id="...", sql="...", confirmed=False)' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert "write the SQL yourself" in str(by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"])
     assert by_scenario[RUNTIME_CODE_SCENARIO]["tools"] == ["Bash"]
     assert "/db-mcp-runtime-benchmark" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
     assert "from dbmcp_host import dbmcp" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
@@ -1034,6 +1130,15 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
         by_scenario[RUNTIME_NATIVE_SCENARIO]["prompt"]
     )
     assert "_ = dbmcp.read_protocol()" in str(by_scenario[RUNTIME_NATIVE_SCENARIO]["prompt"])
+    assert 'prepare_task(question="...", connection="...")' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert 'execute_task(task_id="...", sql="...", confirmed=False)' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert '`code(connection="...", code="...")`' not in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
     assert "You do not have db-mcp." in str(by_scenario["raw_dsn"]["prompt"])
     exec_attempt = next(path for path in attempts if EXEC_ONLY_SCENARIO in path.name)
     exec_mcp_config = (exec_attempt / "mcp-config.json").read_text()
@@ -1043,6 +1148,12 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     code_mcp_config = (code_attempt / "mcp-config.json").read_text()
     assert '"--mode"' in code_mcp_config
     assert '"code"' in code_mcp_config
+    runtime_daemon_attempt = next(
+        path for path in attempts if RUNTIME_DAEMON_SCENARIO in path.name
+    )
+    runtime_daemon_config = json.loads((runtime_daemon_attempt / "mcp-config.json").read_text())
+    assert runtime_daemon_config["mcpServers"]["db-mcp"]["type"] == "http"
+    assert runtime_daemon_config["mcpServers"]["db-mcp"]["url"] == "http://127.0.0.1:8788/mcp"
     runtime_attempt = next(path for path in attempts if RUNTIME_CODE_SCENARIO in path.name)
     runtime_native_attempt = next(
         path for path in attempts if RUNTIME_NATIVE_SCENARIO in path.name
@@ -1055,7 +1166,14 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
         ("enter", Path("/tmp/fake")),
         ("exit", Path("/tmp/fake")),
     ]
+    assert daemon_calls == [
+        ("enter", Path("/tmp/fake-daemon")),
+        ("exit", Path("/tmp/fake-daemon")),
+    ]
     assert (code_attempt / ".claude" / "skills" / "db-mcp-code-benchmark" / "SKILL.md").exists()
+    assert not (
+        runtime_daemon_attempt / ".claude" / "skills" / "db-mcp-code-benchmark" / "SKILL.md"
+    ).exists()
     assert (
         runtime_attempt / ".claude" / "skills" / "db-mcp-runtime-benchmark" / "SKILL.md"
     ).exists()
@@ -1100,6 +1218,15 @@ def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_
             "confidence": 0.75,
             "failure_reason": None,
         },
+        RUNTIME_DAEMON_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) FROM items",
+            "confidence": 0.77,
+            "failure_reason": None,
+        },
         RUNTIME_CODE_SCENARIO: {
             "task_id": "count_items",
             "status": "answered",
@@ -1142,15 +1269,17 @@ def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_
         shuffle_seed=7,
         progress_callback=progress_updates.append,
         runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+        daemon_service_factory=lambda **_: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
     )
 
-    assert len(progress_updates) == 6
-    assert [update["completed_attempts"] for update in progress_updates] == [1, 2, 3, 4, 5, 6]
-    assert all(update["total_attempts"] == 6 for update in progress_updates)
+    assert len(progress_updates) == 7
+    assert [update["completed_attempts"] for update in progress_updates] == [1, 2, 3, 4, 5, 6, 7]
+    assert all(update["total_attempts"] == 7 for update in progress_updates)
     assert {update["scenario"] for update in progress_updates} == {
         "db_mcp",
         EXEC_ONLY_SCENARIO,
         CODE_MODE_SCENARIO,
+        RUNTIME_DAEMON_SCENARIO,
         RUNTIME_CODE_SCENARIO,
         RUNTIME_NATIVE_SCENARIO,
         "raw_dsn",
@@ -1399,6 +1528,7 @@ def test_runtime_code_attempt_persists_prompt_and_invocation_log(benchmark_conne
         driver=driver,
         shuffle_seed=7,
         runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+        daemon_service_factory=lambda **_: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
     )
 
     runtime_attempt = next(
@@ -1539,6 +1669,7 @@ def test_runtime_code_attempt_fails_without_runtime_invocation(benchmark_connect
         driver=driver,
         shuffle_seed=7,
         runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+        daemon_service_factory=lambda **_: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
     )
 
     runtime_attempt = next(
@@ -1654,6 +1785,7 @@ def test_runtime_code_attempt_allows_import_preamble_before_protocol_ack(
         driver=driver,
         shuffle_seed=7,
         runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+        daemon_service_factory=lambda **_: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
     )
 
     runtime_attempt = next(
@@ -1738,6 +1870,7 @@ def test_runtime_native_attempt_uses_injected_global_without_import(
         driver=driver,
         shuffle_seed=7,
         runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+        daemon_service_factory=lambda **_: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
     )
 
     runtime_attempt = next(
@@ -1829,6 +1962,7 @@ def test_run_benchmark_suite_recovers_runtime_answer_after_structured_output_fai
         driver=driver,
         shuffle_seed=7,
         runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+        daemon_service_factory=lambda **_: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
     )
 
     runtime_attempt = next(
