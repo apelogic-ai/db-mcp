@@ -47,6 +47,7 @@ htmlcov/
 # Local config
 .env
 .env.local
+demo.db
 
 
 node_modules/

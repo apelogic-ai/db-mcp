@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.7.1] - 2026-03-18
+
+## Highlights
+- Added an executor-style daemon MCP mode built around a strict two-step task surface: `prepare_task` followed by `execute_task`.
+- Added `db-mcp up` as the daemon-first local control plane entrypoint, with the daemon MCP path benchmarked directly over HTTP.
+- Made daemon execution synchronous for read queries by resolving async execution handles inline through the shared execution lifecycle.
+
+## Breaking changes
+- None
+
+## Features
+- PR #59: added daemon task tools so the daemon MCP surface exposes only `prepare_task(question, connection?, context?)` and `execute_task(task_id, sql, confirmed=False)`.
+- PR #59: added `db-mcp up` local-service wiring so UI/runtime HTTP and the daemon MCP endpoint share one local control plane.
+- PR #59: added daemon benchmark coverage for the executor-style HTTP MCP path and compact structured task context assembly.
+
+## Fixes
+- Fixed daemon task context assembly to serialize YAML-derived `date` and `datetime` values safely in structured prepare payloads.
+- Fixed daemon benchmark/tool flow so the executor-style path no longer exposes shell/code polling artifacts such as `get_task`.
+- Fixed daemon `execute_task(...)` to resolve async read executions inline via the shared `_get_result(...)` lifecycle instead of leaking submitted handles back to the client.
+- Removed an accidental tracked `demo.db` artifact from the repository and ignored local root-level demo databases.
+
+## Security
+- None
+
+## Upgrade notes
+- Claude/Desktop-style daemon users should prefer `db-mcp up` plus the daemon MCP endpoint for the new executor-style path.
+- Legacy `start` modes and benchmark scenarios remain available for compatibility and comparison.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `tests/test_database.py::test_connection`.
+
 ## [0.7.0] - 2026-03-18
 
 ## Highlights
