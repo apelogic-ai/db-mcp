@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import sqlite3
 import threading
 import uuid
@@ -24,7 +25,10 @@ from db_mcp.benchmark.runner import (
     RUNTIME_CODE_SCENARIO,
     RUNTIME_NATIVE_SCENARIO,
     _extract_answer_payload,
+    _extract_answer_payload_with_recovery,
     _resolve_benchmark_db_mcp_binary,
+    _runtime_server_context,
+    _validate_runtime_attempt,
     run_benchmark_suite,
     summarize_run_directory,
 )
@@ -221,6 +225,75 @@ class RuntimeNativeGlobalDriver(FakeDriver):
                 + "\n"
             )
         return result
+
+
+class RuntimeStructuredFailureDriver(FakeDriver):
+    def run(self, **kwargs) -> DriverResult:
+        super().run(**kwargs)
+        env = kwargs.get("env") or {}
+        if env.get("DB_MCP_BENCH_RUNTIME_LOG"):
+            capture_dir = Path(env["DB_MCP_BENCH_RUNTIME_CAPTURE_DIR"])
+            capture_dir.mkdir(parents=True, exist_ok=True)
+            captured_file = capture_dir / "001-runtime.py"
+            captured_file.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "from dbmcp_host import dbmcp",
+                        "_ = dbmcp.read_protocol()",
+                        "sql = \"SELECT COUNT(*) AS answer FROM items\"",
+                        "answer = dbmcp.scalar(sql)",
+                        "print(json.dumps({",
+                        "    \"task_id\": \"count_items\",",
+                        "    \"status\": \"answered\",",
+                        "    \"answer_value\": answer,",
+                        "    \"answer_text\": str(answer),",
+                        "    \"evidence_sql\": sql,",
+                        "    \"confidence\": 1.0,",
+                        "    \"failure_reason\": None,",
+                        "}))",
+                    ]
+                )
+            )
+            Path(env["DB_MCP_BENCH_RUNTIME_LOG"]).write_text(
+                json.dumps(
+                    {
+                        "argv": ["python3", "/tmp/runtime.py"],
+                        "captured_file": str(captured_file),
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "kind": "host_client_call",
+                        "method": "read_protocol",
+                        "session_id": "runtime-session",
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "kind": "host_client_call",
+                        "method": "scalar",
+                        "session_id": "runtime-session",
+                    }
+                )
+                + "\n"
+            )
+        return DriverResult(
+            stdout=json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "error_max_structured_output_retries",
+                    "is_error": True,
+                    "errors": ["Failed to provide valid structured output after 5 attempts"],
+                }
+            ),
+            stderr="",
+            exit_code=0,
+            duration_ms=123.0,
+            debug_log_path=kwargs["debug_log_path"],
+        )
 
 
 @pytest.fixture()
@@ -629,6 +702,78 @@ def test_extract_answer_payload_uses_structured_output_wrapper():
     assert payload["task_id"] == "count_items"
     assert payload["status"] == "answered"
     assert payload["answer_value"] == 3
+
+
+def test_extract_answer_payload_with_recovery_uses_runtime_capture_when_structured_output_fails(
+    benchmark_connection,
+    tmp_path,
+):
+    raw_stdout = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_max_structured_output_retries",
+            "is_error": True,
+            "errors": ["Failed to provide valid structured output after 5 attempts"],
+        }
+    )
+    attempt_dir = tmp_path / "attempt"
+    capture_dir = attempt_dir / "runtime-captures"
+    capture_dir.mkdir(parents=True)
+    captured_file = capture_dir / "001-runtime.py"
+    captured_file.write_text(
+        "\n".join(
+            [
+                "import json",
+                "from dbmcp_host import dbmcp",
+                "_ = dbmcp.read_protocol()",
+                "sql = \"SELECT COUNT(*) AS answer FROM items\"",
+                "answer = dbmcp.scalar(sql)",
+                "print(json.dumps({",
+                "    \"task_id\": \"count_items\",",
+                "    \"status\": \"answered\",",
+                "    \"answer_value\": answer,",
+                "    \"answer_text\": str(answer),",
+                "    \"evidence_sql\": sql,",
+                "    \"confidence\": 1.0,",
+                "    \"failure_reason\": None,",
+                "}))",
+            ]
+        )
+    )
+    (attempt_dir / "runtime-invocations.jsonl").write_text(
+        json.dumps({"argv": ["python3", "/tmp/runtime.py"], "captured_file": str(captured_file)})
+        + "\n"
+        + json.dumps(
+            {
+                "kind": "host_client_call",
+                "method": "read_protocol",
+                "session_id": "runtime-session",
+                "connection": "bench",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "kind": "host_client_call",
+                "method": "scalar",
+                "session_id": "runtime-session",
+                "connection": "bench",
+            }
+        )
+        + "\n"
+    )
+
+    access = resolve_sql_connection_access("bench")
+    payload = _extract_answer_payload_with_recovery(
+        raw_stdout,
+        attempt_dir=attempt_dir,
+        connector=access.connector,
+    )
+
+    assert payload["task_id"] == "count_items"
+    assert payload["status"] == "answered"
+    assert payload["answer_value"] == 3
+    assert payload["evidence_sql"] == "SELECT COUNT(*) AS answer FROM items"
 
 
 def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp_path):
@@ -1133,6 +1278,54 @@ def test_resolve_benchmark_db_mcp_binary_prefers_repo_dist(monkeypatch):
     assert resolved == expected
 
 
+def test_runtime_server_context_waits_for_process_and_terminates_process_group(
+    monkeypatch, tmp_path
+):
+    events: list[tuple[str, object]] = []
+
+    class FakeProcess:
+        pid = 43210
+
+        def wait(self, timeout=None):
+            events.append(("wait", timeout))
+            return 0
+
+        def poll(self):
+            return None
+
+    def fake_popen(*args, **kwargs):
+        events.append(("popen", args[0]))
+        return FakeProcess()
+
+    def fake_wait(server_url, *, process=None, timeout_seconds=0.0, log_path=None):
+        events.append(("wait_for_server", server_url))
+        events.append(("wait_process", process.pid if process else None))
+        events.append(("wait_timeout", timeout_seconds))
+        events.append(("wait_log_path", log_path.name if log_path else None))
+
+    def fake_killpg(pid, sig):
+        events.append(("killpg", (pid, sig)))
+
+    monkeypatch.setattr("db_mcp.benchmark.runner.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("db_mcp.benchmark.runner._reserve_runtime_port", lambda: 8099)
+    monkeypatch.setattr("db_mcp.benchmark.runner._wait_for_runtime_server", fake_wait)
+    monkeypatch.setattr("db_mcp.benchmark.runner.os.killpg", fake_killpg)
+    (tmp_path / "attempt").mkdir()
+
+    with _runtime_server_context(
+        connection_name="playground",
+        connections_dir=tmp_path / "connections",
+        attempt_dir=tmp_path / "attempt",
+    ) as server_url:
+        assert server_url == "http://127.0.0.1:8099"
+
+    assert ("wait_process", 43210) in events
+    assert ("wait_timeout", 30.0) in events
+    assert ("wait_log_path", "runtime-server.log") in events
+    assert ("killpg", (43210, signal.SIGTERM)) in events
+    assert ("wait", 5) in events
+
+
 def test_runtime_code_attempt_persists_prompt_and_invocation_log(benchmark_connection, tmp_path):
     outputs = {
         "db_mcp": {
@@ -1357,6 +1550,35 @@ def test_runtime_code_attempt_fails_without_runtime_invocation(benchmark_connect
     assert summary["scenario_summary"][RUNTIME_CODE_SCENARIO]["correct"] == 0
 
 
+def test_runtime_native_attempt_allows_inline_host_execution_without_captured_file(tmp_path):
+    attempt_dir = tmp_path / "attempt"
+    attempt_dir.mkdir()
+    (attempt_dir / "runtime-invocations.jsonl").write_text(
+        json.dumps({"argv": [], "cwd": str(attempt_dir)})
+        + "\n"
+        + json.dumps(
+            {
+                "kind": "host_client_call",
+                "method": "read_protocol",
+                "session_id": "runtime-session",
+                "connection": "bench",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "kind": "host_client_call",
+                "method": "scalar",
+                "session_id": "runtime-session",
+                "connection": "bench",
+            }
+        )
+        + "\n"
+    )
+
+    assert _validate_runtime_attempt(attempt_dir, scenario=RUNTIME_NATIVE_SCENARIO) is None
+
+
 def test_runtime_code_attempt_allows_import_preamble_before_protocol_ack(
     benchmark_connection, tmp_path
 ):
@@ -1530,3 +1752,87 @@ def test_runtime_native_attempt_uses_injected_global_without_import(
     assert "dbmcp_host" not in script_text
     assert script_text.startswith("_ = dbmcp.read_protocol()")
     assert answer["status"] == "answered"
+
+
+def test_run_benchmark_suite_recovers_runtime_answer_after_structured_output_failure(
+    benchmark_connection, tmp_path
+):
+    outputs = {
+        "db_mcp": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) AS answer FROM items",
+            "confidence": 0.9,
+            "failure_reason": None,
+        },
+        EXEC_ONLY_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) AS answer FROM items",
+            "confidence": 0.7,
+            "failure_reason": None,
+        },
+        CODE_MODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) AS answer FROM items",
+            "confidence": 0.75,
+            "failure_reason": None,
+        },
+        RUNTIME_CODE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "failed",
+            "answer_value": None,
+            "answer_text": "",
+            "evidence_sql": None,
+            "confidence": None,
+            "failure_reason": "placeholder",
+        },
+        RUNTIME_NATIVE_SCENARIO: {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "3",
+            "evidence_sql": "SELECT COUNT(*) AS answer FROM items",
+            "confidence": 0.74,
+            "failure_reason": None,
+        },
+        "raw_dsn": {
+            "task_id": "count_items",
+            "status": "answered",
+            "answer_value": 2,
+            "answer_text": "2",
+            "evidence_sql": "SELECT COUNT(*) AS answer FROM items",
+            "confidence": 0.3,
+            "failure_reason": None,
+        },
+    }
+    driver = RuntimeStructuredFailureDriver(outputs)
+
+    run_dir = run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["count_items"],
+        output_root=tmp_path,
+        driver=driver,
+        shuffle_seed=7,
+        runtime_server_factory=lambda **_: FakeRuntimeServerContext(),
+    )
+
+    runtime_attempt = next(
+        path for path in (run_dir / "attempts").iterdir() if RUNTIME_CODE_SCENARIO in path.name
+    )
+    answer = json.loads((runtime_attempt / "answer.json").read_text())
+    score = json.loads((runtime_attempt / "score.json").read_text())
+
+    assert answer["status"] == "answered"
+    assert answer["answer_value"] == 3
+    assert score["correct"] is True

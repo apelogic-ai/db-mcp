@@ -8,6 +8,7 @@ import json
 import os
 import random
 import re
+import signal
 import socket
 import subprocess
 import time
@@ -51,6 +52,7 @@ RUNTIME_NATIVE_TOOLS = ["Bash"]
 CODE_MODE_SKILL_NAME = "db-mcp-code-benchmark"
 RUNTIME_CODE_SKILL_NAME = "db-mcp-runtime-benchmark"
 RUNTIME_NATIVE_SKILL_NAME = "db-mcp-runtime-native-benchmark"
+RUNTIME_SERVER_READY_TIMEOUT_SECONDS = 30.0
 
 
 def _mask_database_url(database_url: str) -> str:
@@ -542,10 +544,30 @@ def _reserve_runtime_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_runtime_server(server_url: str, *, timeout_seconds: float = 10.0) -> None:
+def _wait_for_runtime_server(
+    server_url: str,
+    *,
+    process: subprocess.Popen[str] | None = None,
+    timeout_seconds: float = RUNTIME_SERVER_READY_TIMEOUT_SECONDS,
+    log_path: Path | None = None,
+) -> None:
     deadline = time.time() + timeout_seconds
     last_error: Exception | None = None
     while time.time() < deadline:
+        if process is not None:
+            return_code = process.poll()
+            if return_code is not None:
+                detail = ""
+                if log_path is not None and log_path.exists():
+                    try:
+                        log_text = log_path.read_text(encoding="utf-8").strip()
+                    except OSError:
+                        log_text = ""
+                    if log_text:
+                        detail = f" Log output: {log_text[-500:]}"
+                raise RuntimeError(
+                    f"Runtime server exited before becoming ready (exit {return_code}).{detail}"
+                )
         try:
             with urlopen(f"{server_url}/health", timeout=0.5) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -590,18 +612,29 @@ def _runtime_server_context(
             start_new_session=True,
         )
         try:
-            _wait_for_runtime_server(server_url)
+            _wait_for_runtime_server(
+                server_url,
+                process=process,
+                timeout_seconds=RUNTIME_SERVER_READY_TIMEOUT_SECONDS,
+                log_path=log_path,
+            )
             _json_dump(
                 attempt_dir / "runtime-server.json",
                 {"server_url": server_url, "port": port, "pid": process.pid},
             )
             yield server_url
         finally:
-            process.terminate()
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                process.kill()
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 process.wait(timeout=5)
 
 
@@ -736,6 +769,149 @@ def _extract_answer_payload(raw_stdout: str) -> dict[str, Any]:
     return payload
 
 
+def _resolve_script_string(expr: ast.AST, symbols: dict[str, str]) -> str | None:
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return expr.value
+    if isinstance(expr, ast.Name):
+        return symbols.get(expr.id)
+    if (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Attribute)
+        and expr.func.attr == "strip"
+        and not expr.args
+        and not expr.keywords
+    ):
+        return _resolve_script_string(expr.func.value, symbols)
+    return None
+
+
+def _extract_runtime_answer_template(script: str) -> dict[str, Any] | None:
+    try:
+        module = ast.parse(script)
+    except SyntaxError:
+        return None
+
+    symbols: dict[str, str] = {}
+    for node in module.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            resolved = _resolve_script_string(node.value, symbols)
+            if resolved is not None:
+                symbols[node.targets[0].id] = resolved
+
+    for node in module.body:
+        if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+            continue
+        print_call = node.value
+        if not isinstance(print_call.func, ast.Name) or print_call.func.id != "print":
+            continue
+        if not print_call.args:
+            continue
+        dumps_call = print_call.args[0]
+        if (
+            not isinstance(dumps_call, ast.Call)
+            or not isinstance(dumps_call.func, ast.Attribute)
+            or dumps_call.func.attr != "dumps"
+            or not isinstance(dumps_call.func.value, ast.Name)
+            or dumps_call.func.value.id != "json"
+            or not dumps_call.args
+            or not isinstance(dumps_call.args[0], ast.Dict)
+        ):
+            continue
+
+        payload: dict[str, Any] = {}
+        mapping = dumps_call.args[0]
+        for key_node, value_node in zip(mapping.keys, mapping.values, strict=False):
+            if not isinstance(key_node, ast.Constant) or not isinstance(key_node.value, str):
+                continue
+            key = key_node.value
+            if key in {"task_id", "status", "answer_text", "evidence_sql", "failure_reason"}:
+                payload[key] = _resolve_script_string(value_node, symbols)
+            elif key == "confidence" and isinstance(value_node, ast.Constant):
+                payload[key] = value_node.value
+        if payload:
+            return payload
+    return None
+
+
+def _recover_runtime_answer_payload(
+    *,
+    attempt_dir: Path,
+    connector: Any,
+) -> dict[str, Any] | None:
+    invocations = _read_runtime_invocations(attempt_dir)
+    for invocation in reversed(invocations):
+        script = _load_runtime_script_text(invocation)
+        if not script:
+            continue
+        template = _extract_runtime_answer_template(script)
+        if not template:
+            continue
+        evidence_sql = template.get("evidence_sql")
+        if not isinstance(evidence_sql, str) or not evidence_sql.strip():
+            continue
+        rows = connector.execute_sql(evidence_sql)
+        answer_value: Any
+        if not rows:
+            answer_value = None
+        elif len(rows) == 1 and len(rows[0]) == 1:
+            answer_value = next(iter(rows[0].values()))
+        else:
+            answer_value = rows
+        answer_text = template.get("answer_text")
+        if not isinstance(answer_text, str) or not answer_text:
+            answer_text = "" if answer_value is None else str(answer_value)
+        return {
+            "task_id": template.get("task_id") or attempt_dir.name.split("__", 1)[0],
+            "status": template.get("status") or "answered",
+            "answer_value": answer_value,
+            "answer_text": answer_text,
+            "evidence_sql": evidence_sql,
+            "confidence": template.get("confidence"),
+            "failure_reason": template.get("failure_reason"),
+        }
+    return None
+
+
+def _extract_answer_payload_with_recovery(
+    raw_stdout: str,
+    *,
+    attempt_dir: Path | None = None,
+    connector: Any | None = None,
+) -> dict[str, Any]:
+    try:
+        payload = _extract_answer_payload(raw_stdout)
+    except Exception:
+        if attempt_dir is not None and connector is not None:
+            recovered = _recover_runtime_answer_payload(
+                attempt_dir=attempt_dir,
+                connector=connector,
+            )
+            if recovered is not None:
+                return recovered
+        raise
+
+    if isinstance(payload, dict) and {
+        "task_id",
+        "status",
+        "answer_text",
+    }.issubset(payload):
+        return payload
+
+    if attempt_dir is not None and connector is not None:
+        recovered = _recover_runtime_answer_payload(
+            attempt_dir=attempt_dir,
+            connector=connector,
+        )
+        if recovered is not None:
+            return recovered
+
+    return payload
+
+
 def _materialize_output_root(output_root: Path, connection_name: str) -> Path:
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = output_root / f"{connection_name}-{timestamp}"
@@ -841,6 +1017,16 @@ def _validate_runtime_attempt(attempt_dir: Path, *, scenario: str) -> str | None
 
     script_invocations = [record for record in invocations if record.get("captured_file")]
     if not script_invocations:
+        if scenario == RUNTIME_NATIVE_SCENARIO:
+            python_invocations = [record for record in invocations if "argv" in record]
+            if not python_invocations:
+                return f"{scenario} attempt never executed a Python host script."
+            if host_calls[0].get("method") != "read_protocol":
+                return (
+                    f"{scenario} attempt did not acknowledge the protocol before using the "
+                    "native dbmcp object."
+                )
+            return None
         return f"{scenario} attempt never executed a Python host script."
 
     first_script = _load_runtime_script_text(script_invocations[0])
@@ -1115,7 +1301,11 @@ def run_benchmark_suite(
 
                 structured_failure = False
                 try:
-                    answer_payload = _extract_answer_payload(result.stdout)
+                    answer_payload = _extract_answer_payload_with_recovery(
+                        result.stdout,
+                        attempt_dir=attempt_dir,
+                        connector=access.connector,
+                    )
                     answer = BenchmarkAnswer.model_validate(answer_payload)
                     answer_payload = answer.model_dump()
                 except Exception as exc:

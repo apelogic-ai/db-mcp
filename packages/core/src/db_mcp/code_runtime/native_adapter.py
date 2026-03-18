@@ -89,6 +89,19 @@ _PYTHON_WRAPPER_TEMPLATE = """\
 #!/bin/sh
 set -eu
 
+native_temp_file=""
+
+if [ "$#" -eq 0 ]; then
+  native_temp_file="${TMPDIR:-/tmp}/dbmcp-runtime-native-$$.py"
+  cat > "$native_temp_file"
+  set -- "$native_temp_file"
+elif [ "$1" = "-" ]; then
+  native_temp_file="${TMPDIR:-/tmp}/dbmcp-runtime-native-$$.py"
+  cat > "$native_temp_file"
+  shift
+  set -- "$native_temp_file" "$@"
+fi
+
 "$DB_MCP_REAL_PYTHON" - "$@" <<'PY'
 import json
 import os

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -108,7 +109,7 @@ async def runtime_session_invoke(
         kwargs=request.kwargs,
         confirmed=request.confirmed,
     )
-    return JSONResponse(content={"result": result})
+    return JSONResponse(content=jsonable_encoder({"result": result}))
 
 
 @runtime_router.delete("/api/runtime/sessions/{session_id}")
@@ -156,10 +157,9 @@ def start_runtime_server(host: str = "127.0.0.1", port: int = 8091) -> None:
     import uvicorn
 
     uvicorn.run(
-        "db_mcp.code_runtime.http:create_runtime_app",
+        create_runtime_app(),
         host=host,
         port=port,
-        factory=True,
         reload=False,
         workers=1,
         log_level="warning",

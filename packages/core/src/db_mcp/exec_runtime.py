@@ -413,8 +413,23 @@ class ProcessExecSandboxBackend:
         return f"process:{spec.session_id}:{spec.connection}"
 
     def _rewrite_python_command(self, command: str) -> str:
-        current_python = shlex.quote(sys.executable)
+        current_python = shlex.quote(self._preferred_python_executable())
         return _LEADING_PYTHON3_RE.sub(rf"\1{current_python}", command, count=1)
+
+    def _preferred_python_executable(self) -> str:
+        configured = os.environ.get("DB_MCP_REAL_PYTHON")
+        if configured:
+            return configured
+
+        executable_name = Path(sys.executable).name.lower()
+        if executable_name.startswith("python"):
+            return sys.executable
+
+        resolved = which("python3")
+        if resolved:
+            return resolved
+
+        return sys.executable
 
     def _terminate_process_group(self, pid: int) -> None:
         try:

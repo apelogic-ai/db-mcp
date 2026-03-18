@@ -397,3 +397,60 @@ def test_runtime_session_sdk_invoke_endpoint_uses_shared_service(tmp_path, monke
 
     assert response.status_code == 200
     assert response.json()["result"] == 1
+
+
+def test_runtime_session_sdk_invoke_endpoint_serializes_date_results(tmp_path, monkeypatch):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<html><body>root</body></html>")
+
+    class FakeRuntimeService:
+        def invoke_session_method(
+            self,
+            session_id: str,
+            method: str,
+            *,
+            args=None,
+            kwargs=None,
+            confirmed: bool = False,
+        ):
+            assert session_id == "session-1"
+            assert method == "query"
+            return [{"block_date": date(2026, 3, 9)}]
+
+    monkeypatch.setattr(ui_server, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(ui_server, "validate_static_bundle_provenance", lambda: None)
+    monkeypatch.setattr(
+        "db_mcp.code_runtime.http.get_code_runtime_service",
+        lambda: FakeRuntimeService(),
+    )
+
+    with patch("db_mcp.ui_server.DBMCPAgent"):
+        client = TestClient(ui_server.create_app())
+        response = client.post(
+            "/api/runtime/sessions/session-1/sdk/query",
+            json={"args": ["SELECT block_date FROM demo", None], "kwargs": {}, "confirmed": False},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"][0]["block_date"] == "2026-03-09"
+
+
+def test_start_runtime_server_passes_app_instance_to_uvicorn(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_run(app, **kwargs):
+        captured["app"] = app
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    from db_mcp.code_runtime.http import start_runtime_server
+
+    start_runtime_server(host="127.0.0.1", port=8099)
+
+    assert hasattr(captured["app"], "routes")
+    assert captured["kwargs"]["host"] == "127.0.0.1"
+    assert captured["kwargs"]["port"] == 8099
+    assert captured["kwargs"]["reload"] is False
+    assert captured["kwargs"]["workers"] == 1
