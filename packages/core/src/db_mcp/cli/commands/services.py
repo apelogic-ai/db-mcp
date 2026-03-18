@@ -250,7 +250,7 @@ def up_cmd(
     """Start the local db-mcp control plane for Claude/Desktop and the web UI."""
     conn_name = _configure_service_environment(
         connection,
-        tool_mode_override="code",
+        tool_mode_override="daemon",
         runtime_interface_override="native",
     )
     state = build_local_service_state(

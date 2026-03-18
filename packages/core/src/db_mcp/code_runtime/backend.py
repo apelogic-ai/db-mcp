@@ -736,8 +736,8 @@ class HostDbMcpRuntime:
                 example.get("id"),
                 example.get("intent"),
                 example.get("notes"),
-                " ".join(example.get("tables", []) or []),
-                " ".join(example.get("keywords", []) or []),
+                " ".join(str(value) for value in (example.get("tables", []) or [])),
+                " ".join(str(value) for value in (example.get("keywords", []) or [])),
                 example.get("sql"),
             )
             if score <= 0:

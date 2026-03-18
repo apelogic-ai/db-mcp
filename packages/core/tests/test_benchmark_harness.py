@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -25,8 +26,10 @@ from db_mcp.benchmark.runner import (
     RUNTIME_CODE_SCENARIO,
     RUNTIME_DAEMON_SCENARIO,
     RUNTIME_NATIVE_SCENARIO,
+    _build_prompt,
     _extract_answer_payload,
     _extract_answer_payload_with_recovery,
+    _parse_raw_debug_metrics,
     _resolve_benchmark_db_mcp_binary,
     _runtime_server_context,
     _validate_runtime_attempt,
@@ -689,6 +692,42 @@ def test_build_claude_command_includes_strict_mcp_and_schema(tmp_path):
     assert cmd[-1] == "answer"
 
 
+def test_runtime_daemon_prompt_is_strict_two_tool_flow():
+    prompt = _build_prompt(
+        case=SimpleNamespace(
+            id="sol_symbol_lookup",
+            prompt="Which symbol corresponds to the SOL mint address?",
+        ),
+        scenario=RUNTIME_DAEMON_SCENARIO,
+        connection_name="demo",
+        database_url="sqlite:///tmp/test.db",
+        connect_args=None,
+    )
+
+    assert '`prepare_task(question="...", connection="...")`' in prompt
+    assert '`execute_task(task_id="...", sql="...", confirmed=False)`' in prompt
+    assert "Use the `execution` payload returned by `execute_task(...)` directly" in prompt
+    assert "get_task" not in prompt
+    assert "cancel_task" not in prompt
+
+
+def test_parse_raw_debug_metrics_treats_daemon_execute_as_db_work(tmp_path):
+    debug_log = tmp_path / "debug.log"
+    debug_log.write_text(
+        "\n".join(
+            [
+                "executePreToolHooks called for tool: mcp__db-mcp__prepare_task",
+                "executePreToolHooks called for tool: mcp__db-mcp__execute_task",
+            ]
+        )
+    )
+
+    metrics = _parse_raw_debug_metrics(debug_log)
+
+    assert metrics["exploratory_steps"] == 2
+    assert metrics["db_executions"] == 1
+
+
 def test_extract_answer_payload_uses_structured_output_wrapper():
     payload = _extract_answer_payload(
         json.dumps(
@@ -1032,7 +1071,12 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert "daemonized HTTP MCP runtime entrypoint" in str(
         by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
     )
-    assert "dbmcp.find_table(...)" in str(by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"])
+    assert 'prepare_task(question="...", connection="...")' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert 'execute_task(task_id="...", sql="...", confirmed=False)' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
     assert "write the SQL yourself" in str(by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"])
     assert by_scenario[RUNTIME_CODE_SCENARIO]["tools"] == ["Bash"]
     assert "/db-mcp-runtime-benchmark" in str(by_scenario[RUNTIME_CODE_SCENARIO]["prompt"])
@@ -1086,6 +1130,15 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
         by_scenario[RUNTIME_NATIVE_SCENARIO]["prompt"]
     )
     assert "_ = dbmcp.read_protocol()" in str(by_scenario[RUNTIME_NATIVE_SCENARIO]["prompt"])
+    assert 'prepare_task(question="...", connection="...")' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert 'execute_task(task_id="...", sql="...", confirmed=False)' in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
+    assert '`code(connection="...", code="...")`' not in str(
+        by_scenario[RUNTIME_DAEMON_SCENARIO]["prompt"]
+    )
     assert "You do not have db-mcp." in str(by_scenario["raw_dsn"]["prompt"])
     exec_attempt = next(path for path in attempts if EXEC_ONLY_SCENARIO in path.name)
     exec_mcp_config = (exec_attempt / "mcp-config.json").read_text()
@@ -1118,6 +1171,9 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
         ("exit", Path("/tmp/fake-daemon")),
     ]
     assert (code_attempt / ".claude" / "skills" / "db-mcp-code-benchmark" / "SKILL.md").exists()
+    assert not (
+        runtime_daemon_attempt / ".claude" / "skills" / "db-mcp-code-benchmark" / "SKILL.md"
+    ).exists()
     assert (
         runtime_attempt / ".claude" / "skills" / "db-mcp-runtime-benchmark" / "SKILL.md"
     ).exists()

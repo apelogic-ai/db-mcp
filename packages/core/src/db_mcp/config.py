@@ -185,14 +185,15 @@ class Settings(BaseSettings):
     )
 
     # MCP server configuration
-    tool_mode: Literal["detailed", "shell", "exec-only", "code"] = Field(
+    tool_mode: Literal["detailed", "shell", "exec-only", "code", "daemon"] = Field(
         default="detailed",
         description=(
             "Tool exposure mode: "
             "'detailed' exposes all tools (schema discovery, query helpers, etc.), "
             "'shell' exposes only the shell tool for query work (agent uses vault filesystem), "
             "'exec-only' exposes a single container-backed exec tool, "
-            "'code' exposes a single Python-native code tool"
+            "'code' exposes a single Python-native code tool, "
+            "'daemon' exposes the executor-like task surface for the local control plane"
         ),
     )
     runtime_interface: Literal["native", "mcp", "cli"] = Field(

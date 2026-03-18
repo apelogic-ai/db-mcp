@@ -215,24 +215,18 @@ def _build_prompt(
         )
     if scenario == RUNTIME_DAEMON_SCENARIO:
         return base + (
-            f"\nFirst, load the project skill `/{CODE_MODE_SKILL_NAME}` and follow it.\n"
             "\nThis benchmark uses the daemonized HTTP MCP runtime entrypoint.\n"
-            "You still have db-mcp available only through one MCP tool: "
-            '`code(connection="...", code="...")`.\n'
-            "Start by reading PROTOCOL.md with:\n"
-            '`code(connection="...", code="print(dbmcp.read_protocol())")`\n'
-            "Inside code mode, a Python helper object `dbmcp` is already available.\n"
-            "`dbmcp.read_protocol()` returns markdown text, not a structured schema object.\n"
-            "Use schema helpers like dbmcp.find_table(...), dbmcp.describe_table(...), "
-            "dbmcp.find_columns(...), dbmcp.schema_descriptions(), and dbmcp.table_names() "
-            "to inspect the schema, then write the SQL yourself.\n"
-            "Use dbmcp.connector(), dbmcp.query(sql), dbmcp.scalar(sql), and "
-            "dbmcp.execute(sql) as needed.\n"
-            "Do not guess table or column names if the helper methods can resolve them.\n"
-            "Do not use dbmcp.plan(...) to generate SQL for you.\n"
-            "Do not use dbmcp.finalize_answer(...). Print the final JSON object yourself.\n"
-            "Use code for all further inspection and querying. "
+            "You have db-mcp available only through the task tools:\n"
+            '- `prepare_task(question=\"...\", connection=\"...\")`\n'
+            '- `execute_task(task_id=\"...\", sql=\"...\", confirmed=False)`\n'
+            "Start by calling `prepare_task(...)` with the benchmark question.\n"
+            "Use the returned compact context packet to write the SQL yourself.\n"
+            "Then call `execute_task(...)` with your final SQL.\n"
+            "Use the `execution` payload returned by `execute_task(...)` directly.\n"
+            "Do not guess table or column names if the prepared context can resolve them.\n"
+            "Do not ask db-mcp to generate SQL for you.\n"
             "Do not rely on any built-in tools.\n"
+            "Prefer one `prepare_task(...)` call and one `execute_task(...)` call per question.\n"
             "Do not ask for clarification; produce your best answer."
         )
     if scenario == RUNTIME_CODE_SCENARIO:
@@ -371,15 +365,24 @@ def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
     )
     exec_calls = len(
         re.findall(
-            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?exec"?|'
-            r"executePreToolHooks called for tool: mcp__db-mcp__exec)",
+            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?exec(?:\"|\b)|'
+            r"executePreToolHooks called for tool: mcp__db-mcp__exec(?:\b|$))",
             text,
         )
     )
     code_calls = len(
         re.findall(
-            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?code"?|'
-            r"executePreToolHooks called for tool: mcp__db-mcp__code)",
+            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?code(?:\"|\b)|'
+            r"executePreToolHooks called for tool: mcp__db-mcp__code(?:\b|$))",
+            text,
+        )
+    )
+    daemon_task_calls = len(
+        re.findall(
+            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?'
+            r"(?:prepare_task|execute_task)\"?|"
+            r"executePreToolHooks called for tool: mcp__db-mcp__"
+            r"(?:prepare_task|execute_task))",
             text,
         )
     )
@@ -391,8 +394,21 @@ def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
         )
     )
     db_exec = len(re.findall(r"(sqlite3|psql|mysql|sqlalchemy|duckdb|trino)", text, re.IGNORECASE))
+    db_exec += len(
+        re.findall(
+            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?execute_task\"?|'
+            r"executePreToolHooks called for tool: mcp__db-mcp__execute_task)",
+            text,
+        )
+    )
     return {
-        "exploratory_steps": bash_calls + read_calls + exec_calls + code_calls,
+        "exploratory_steps": (
+            bash_calls
+            + read_calls
+            + exec_calls
+            + code_calls
+            + daemon_task_calls
+        ),
         "failed_executions": failures,
         "db_executions": db_exec,
     }
@@ -401,7 +417,6 @@ def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
 def _materialize_benchmark_skill(attempt_dir: Path, scenario: str, connection_name: str) -> None:
     if scenario not in {
         CODE_MODE_SCENARIO,
-        RUNTIME_DAEMON_SCENARIO,
         RUNTIME_CODE_SCENARIO,
         RUNTIME_NATIVE_SCENARIO,
     }:
@@ -409,7 +424,7 @@ def _materialize_benchmark_skill(attempt_dir: Path, scenario: str, connection_na
 
     skill_name = (
         CODE_MODE_SKILL_NAME
-        if scenario in {CODE_MODE_SCENARIO, RUNTIME_DAEMON_SCENARIO}
+        if scenario == CODE_MODE_SCENARIO
         else (
             RUNTIME_CODE_SKILL_NAME
             if scenario == RUNTIME_CODE_SCENARIO
