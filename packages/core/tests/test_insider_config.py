@@ -13,8 +13,9 @@ def test_load_insider_config_merges_global_and_connection_override(tmp_path, mon
             {
                 "insider": {
                     "enabled": True,
-                    "provider": "anthropic",
+                    "provider": "openai-compatible",
                     "model": "global-model",
+                    "api_key_env": "GLOBAL_OPENAI_KEY",
                     "debounce_seconds": 10,
                     "budgets": {"max_runs_per_hour": 3},
                 }
@@ -28,6 +29,7 @@ def test_load_insider_config_merges_global_and_connection_override(tmp_path, mon
             {
                 "insider": {
                     "model": "connection-model",
+                    "base_url": "http://localhost:11434/v1",
                     "budgets": {"max_tokens_per_run": 999},
                 }
             }
@@ -38,7 +40,10 @@ def test_load_insider_config_merges_global_and_connection_override(tmp_path, mon
     cfg = load_insider_config(connection_path)
 
     assert cfg.enabled is True
+    assert cfg.provider == "openai-compatible"
     assert cfg.model == "connection-model"
+    assert cfg.api_key_env == "GLOBAL_OPENAI_KEY"
+    assert cfg.base_url == "http://localhost:11434/v1"
     assert cfg.debounce_seconds == 10
     assert cfg.budgets.max_runs_per_hour == 3
     assert cfg.budgets.max_tokens_per_run == 999

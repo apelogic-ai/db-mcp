@@ -9,6 +9,10 @@ from db_mcp.insider.store import InsiderStore
 from db_mcp.onboarding.schema_store import create_initial_schema, save_schema_descriptions
 
 
+def _enabled_config() -> InsiderConfig:
+    return InsiderConfig(enabled=True, provider="openai-compatible", model="gpt-4o-mini")
+
+
 def _seed_schema(connection_path: Path) -> None:
     schema = create_initial_schema(
         provider_id=connection_path.name,
@@ -33,7 +37,7 @@ def test_service_queue_new_connection_dedupes_by_schema_digest(tmp_path):
     store = InsiderStore(tmp_path / "insider.db")
     service = InsiderService(
         store=store,
-        config=InsiderConfig(enabled=True),
+        config=_enabled_config(),
         connection_resolver=lambda connection: connection_path,
     )
 
@@ -60,7 +64,7 @@ def test_service_approve_review_updates_store_and_applies_file(tmp_path):
     store = InsiderStore(tmp_path / "insider.db")
     service = InsiderService(
         store=store,
-        config=InsiderConfig(enabled=True),
+        config=_enabled_config(),
         connection_resolver=lambda connection: connection_path,
     )
     applier = ReviewApplier(connection_path)

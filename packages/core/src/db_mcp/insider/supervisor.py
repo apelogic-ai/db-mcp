@@ -122,6 +122,7 @@ class InsiderSupervisor:
                 provider=self.config.provider,
                 model=self.config.model,
                 api_key_env=self.config.api_key_env,
+                base_url=self.config.base_url,
             )
             run_id = self.store.create_run(
                 batch_id=batch_id,

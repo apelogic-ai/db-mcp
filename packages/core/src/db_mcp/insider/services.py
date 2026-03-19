@@ -65,6 +65,7 @@ class InsiderService:
             "enabled": config.enabled,
             "provider": config.provider,
             "model": config.model,
+            "base_url": config.base_url,
             "db_path": str(get_insider_db_path()),
             "pending_events": len(pending_events),
             "pending_reviews": len(pending_reviews),

@@ -61,9 +61,10 @@ class InsiderGovernance(BaseModel):
 
 class InsiderConfig(BaseModel):
     enabled: bool = False
-    provider: str = "anthropic"
-    model: str = "claude-haiku-4-5"
-    api_key_env: str = "ANTHROPIC_API_KEY"
+    provider: str = "openai-compatible"
+    model: str = ""
+    api_key_env: str = "OPENAI_API_KEY"
+    base_url: str | None = None
     max_concurrent_runs: int = 2
     debounce_seconds: int = 30
     budgets: InsiderBudgets = Field(default_factory=InsiderBudgets)

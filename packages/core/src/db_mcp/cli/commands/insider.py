@@ -35,6 +35,8 @@ def insider_status(connection: str | None) -> None:
     console.print(f"  Enabled:    {enabled_text}")
     console.print(f"  Provider:   {status['provider']}")
     console.print(f"  Model:      {status['model']}")
+    if status.get("base_url"):
+        console.print(f"  Base URL:   {status['base_url']}")
     console.print(f"  DB:         {status['db_path']}")
     console.print(f"  Events:     {status['pending_events']} pending")
     console.print(f"  Reviews:    {status['pending_reviews']} pending")

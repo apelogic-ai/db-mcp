@@ -15,6 +15,10 @@ from db_mcp.insider.supervisor import InsiderSupervisor
 from db_mcp.onboarding.schema_store import create_initial_schema, save_schema_descriptions
 
 
+def _enabled_config() -> InsiderConfig:
+    return InsiderConfig(enabled=True, provider="openai-compatible", model="gpt-4o-mini")
+
+
 def _seed_schema(connection_path: Path) -> None:
     schema = create_initial_schema(
         provider_id=connection_path.name,
@@ -37,7 +41,7 @@ def test_supervisor_apply_bundle_writes_drafts_and_stages_review(tmp_path):
     connection_path.mkdir()
     _seed_schema(connection_path)
     store = InsiderStore(tmp_path / "insider.db")
-    supervisor = InsiderSupervisor(config=InsiderConfig(enabled=True), store=store)
+    supervisor = InsiderSupervisor(config=_enabled_config(), store=store)
 
     bundle = InsiderProposalBundle(
         draft_domain_model_markdown="# Draft model\n",

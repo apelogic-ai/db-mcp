@@ -6,8 +6,10 @@ import json
 import os
 import subprocess
 from abc import ABC, abstractmethod
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from db_mcp.insider.models import (
     InsiderProposalBundle,
@@ -78,69 +80,57 @@ def _parse_bundle_text(raw_text: str) -> InsiderProposalBundle:
     return InsiderProposalBundle.model_validate(data)
 
 
-class AnthropicInsiderProvider(InsiderProvider):
-    """Minimal Anthropic-backed provider implementation using HTTP."""
+class OpenAICompatibleInsiderProvider(InsiderProvider):
+    """Direct LLM backend using pydantic-ai over an OpenAI-compatible chat API."""
 
-    def __init__(self, *, model: str, api_key_env: str):
+    def __init__(self, *, model: str, api_key_env: str, base_url: str | None = None):
         self.model = model
         self.api_key_env = api_key_env
+        self.base_url = base_url
 
     def prepare(self, request: InsiderRunRequest) -> ProviderRequest:
         return ProviderRequest(
             system_prompt="You produce structured bootstrap proposals for db-mcp.",
             user_prompt=_build_user_prompt(request),
-            metadata={"model": self.model},
+            metadata={"model": self.model, "base_url": self.base_url},
         )
 
     def run(self, request: ProviderRequest) -> ProviderResponse:
-        api_key = os.environ.get(self.api_key_env, "").strip()
-        if not api_key:
-            raise RuntimeError(f"Missing provider API key in env var {self.api_key_env!r}")
-        body = {
-            "model": self.model,
-            "max_tokens": 4000,
-            "system": request.system_prompt,
-            "messages": [{"role": "user", "content": request.user_prompt}],
-        }
-        raw = json.dumps(body).encode("utf-8")
-        http_request = Request(
-            url="https://api.anthropic.com/v1/messages",
-            data=raw,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-            method="POST",
+        api_key = os.environ.get(self.api_key_env, "").strip() or None
+        if api_key is None and not self.base_url:
+            raise RuntimeError(
+                f"Missing provider API key in env var {self.api_key_env!r}"
+            )
+        provider = OpenAIProvider(base_url=self.base_url, api_key=api_key)
+        model = OpenAIModel(self.model, provider=provider)
+        agent = Agent(
+            model=model,
+            system_prompt=request.system_prompt,
+            output_type=InsiderProposalBundle,
         )
         try:
-            with urlopen(http_request, timeout=60) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Anthropic request failed: {exc.code} {detail}") from exc
-        except URLError as exc:
-            raise RuntimeError(f"Anthropic request failed: {exc}") from exc
+            result = agent.run_sync(request.user_prompt)
+        except Exception as exc:
+            raise RuntimeError(f"OpenAI-compatible insider run failed: {exc}") from exc
 
-        text_parts = []
-        for item in payload.get("content", []):
-            if isinstance(item, dict) and item.get("type") == "text":
-                text_parts.append(item.get("text", ""))
-        usage = payload.get("usage", {}) or {}
-        input_tokens = usage.get("input_tokens")
-        output_tokens = usage.get("output_tokens")
-        estimated_cost = None
-        if input_tokens is not None or output_tokens is not None:
-            estimated_cost = 0.0
+        bundle = result.output
+        usage = result.usage()
         return ProviderResponse(
-            raw_text="\n".join(text_parts).strip(),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            estimated_cost_usd=estimated_cost,
-            metadata=payload,
+            raw_text=bundle.model_dump_json(indent=2),
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            estimated_cost_usd=None,
+            metadata={
+                "bundle": bundle.model_dump(mode="json"),
+                "base_url": self.base_url,
+                "provider": "openai-compatible",
+            },
         )
 
     def parse(self, response: ProviderResponse) -> InsiderProposalBundle:
+        bundle = response.metadata.get("bundle")
+        if isinstance(bundle, dict):
+            return InsiderProposalBundle.model_validate(bundle)
         return _parse_bundle_text(response.raw_text)
 
 
@@ -209,10 +199,20 @@ class ClaudeCodeInsiderProvider(InsiderProvider):
         return _parse_bundle_text(response.raw_text)
 
 
-def build_provider(*, provider: str, model: str, api_key_env: str) -> InsiderProvider:
+def build_provider(
+    *,
+    provider: str,
+    model: str,
+    api_key_env: str,
+    base_url: str | None = None,
+) -> InsiderProvider:
     """Return the configured insider provider."""
-    if provider == "anthropic":
-        return AnthropicInsiderProvider(model=model, api_key_env=api_key_env)
+    if provider == "openai-compatible":
+        return OpenAICompatibleInsiderProvider(
+            model=model,
+            api_key_env=api_key_env,
+            base_url=base_url,
+        )
     if provider == "claude-code":
         return ClaudeCodeInsiderProvider(model=model)
     raise ValueError(f"Unsupported insider provider: {provider}")
