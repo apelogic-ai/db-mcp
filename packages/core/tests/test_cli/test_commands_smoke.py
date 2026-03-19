@@ -44,7 +44,7 @@ class TestMainGroup:
         """Verify the main group has every expected top-level name."""
         expected = {
             "init", "start", "status", "list", "use", "doctor", "sync", "pull",
-            "discover", "agents", "console", "ui", "up", "serve", "runtime",
+            "discover", "agents", "console", "ui", "up", "serve", "runtime", "insider",
             "collab", "traces", "playground", "connector",
         }
         registered = set(main.commands.keys())
@@ -152,6 +152,10 @@ class TestSubgroupsHelp:
         result = invoke_help(runner, "runtime")
         assert result.exit_code == 0
 
+    def test_insider_help(self, runner):
+        result = invoke_help(runner, "insider")
+        assert result.exit_code == 0
+
     def test_collab_is_group(self, runner):
         cmd = main.commands["collab"]
         assert isinstance(cmd, click.Group)
@@ -170,6 +174,10 @@ class TestSubgroupsHelp:
 
     def test_runtime_is_group(self, runner):
         cmd = main.commands["runtime"]
+        assert isinstance(cmd, click.Group)
+
+    def test_insider_is_group(self, runner):
+        cmd = main.commands["insider"]
         assert isinstance(cmd, click.Group)
 
 
@@ -219,6 +227,12 @@ class TestRegisterCommands:
         register_commands(g)
         assert "sync" in g.commands
         assert "pull" in g.commands
+
+    def test_register_insider(self):
+        from db_mcp.cli.commands.insider import register_commands
+        g = self._fresh_group()
+        register_commands(g)
+        assert "insider" in g.commands
 
     def test_register_discover(self):
         from db_mcp.cli.commands.discover_cmd import register_commands

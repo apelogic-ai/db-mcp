@@ -10,6 +10,7 @@ from db_mcp_models import OnboardingPhase, TableDescriptionStatus
 from mcp.server.fastmcp import Context
 
 from db_mcp.connectors import get_connector
+from db_mcp.insider import get_insider_supervisor
 from db_mcp.onboarding.ignore import (
     add_ignore_pattern,
     import_ignore_patterns,
@@ -212,6 +213,17 @@ async def _discover_tables_background(
             task["status"] = "error"
             task["error"] = f"Failed to save state: {save_result['error']}"
             return
+
+        supervisor = get_insider_supervisor()
+        if supervisor is not None:
+            await supervisor.emit_new_connection(
+                provider_id,
+                payload={
+                    "source": "onboarding_discover",
+                    "discovery_id": discovery_id,
+                    "tables_found": state.tables_total,
+                },
+            )
 
         # Store completed result
         task["status"] = "complete"

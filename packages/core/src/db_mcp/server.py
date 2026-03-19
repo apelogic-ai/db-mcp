@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 
 from db_mcp.config import get_settings
 from db_mcp.exec_runtime import shutdown_exec_session_manager
+from db_mcp.insider import start_insider_supervisor, stop_insider_supervisor
 from db_mcp.onboarding.state import get_connection_path
 from db_mcp.tasks.store import get_task_store
 from db_mcp.tool_catalog import build_tool_catalog, render_python_sdk, search_tool_catalog
@@ -159,6 +160,16 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
     await task_store.start_cleanup_loop(interval_seconds=300)  # Every 5 minutes
     logger.info("Task store cleanup loop started")
 
+    settings = get_settings()
+    insider_supervisor = None
+    if settings.tool_mode == "daemon":
+        try:
+            insider_supervisor = await start_insider_supervisor(
+                settings.get_effective_connection_path()
+            )
+        except Exception as exc:
+            logger.warning("Insider supervisor startup skipped: %s", exc)
+
     # Startup: Pull latest collab changes (session mode — pull-on-start)
     collab_user_name = None
     collab_connection_path = None
@@ -184,6 +195,8 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if insider_supervisor is not None:
+            await stop_insider_supervisor()
         shutdown_exec_session_manager()
         # Shutdown: Push collab changes (session mode — push-on-stop)
         if collab_user_name and collab_connection_path:
