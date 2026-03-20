@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.7.4] - 2026-03-20
+
+## Highlights
+- Reworked daemon `prepare_task(...)` to stay lean on the first pass, emphasize decision guidance over raw schema dumps, and reserve expanded context for follow-up refinement calls.
+- Added richer daemon decision hints and focused schema blocks so executor-style clients get tighter table, metric, and anti-pattern guidance without widening the MCP surface.
+- Aligned daemon prompts and tests with the intended progressive `prepare_task(...)` plus one-shot `execute_task(...)` product contract.
+
+## Breaking changes
+- None
+
+## Features
+- PR #63: reshaped daemon context assembly around compact first-pass retrieval, focused schema, and stronger decision hints for table and metric disambiguation.
+- PR #63: kept expanded raw context and full schema available only for refinement-style `prepare_task(..., context=...)` calls.
+- PR #63: updated daemon benchmark/runtime guidance and regression coverage to match the lean-first, refine-later execution model.
+
+## Fixes
+- Fixed daemon over-context behavior that was causing frontier models to thrash on simple questions after receiving full schema and raw semantic payloads up front.
+- Reduced the risk of early anchoring on irrelevant schema details by keeping the first prepared context packet focused on high-signal semantic guidance.
+
+## Security
+- None
+
+## Upgrade notes
+- Daemon clients should treat `prepare_task(...)` as a progressive surface: the first call is intentionally compact, and follow-up calls with `context=...` unlock broader refinement context when needed.
+- `execute_task(...)` remains the one-shot execution surface and continues to hide async read lifecycles behind a synchronous result contract where possible.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `tests/test_database.py::test_connection`.
+
 ## [0.7.3] - 2026-03-19
 
 ## Highlights
