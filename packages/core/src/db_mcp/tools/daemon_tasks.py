@@ -469,6 +469,7 @@ def _build_prepare_context(
             "sql_rules_context": sql_rules_context or None,
             "examples": examples[:example_limit],
             "rules": rules[:rule_limit],
+            "full_schema": schema if isinstance(schema, dict) else None,
             "candidate_tables": candidate_tables,
             "candidate_columns": candidate_columns,
             "candidate_joins": _infer_join_paths(candidate_tables),

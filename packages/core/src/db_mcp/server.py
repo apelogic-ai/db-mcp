@@ -285,6 +285,7 @@ Use this two-step workflow:
 
 1. Call `prepare_task(question=..., connection=...)`
    This returns structured context:
+   - full schema descriptions
    - relevant tables and columns
    - candidate joins
    - relevant examples

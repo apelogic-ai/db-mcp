@@ -221,7 +221,8 @@ def _build_prompt(
             '- `execute_task(task_id=\"...\", sql=\"...\", confirmed=False)`\n'
             "Start by calling `prepare_task(...)` with the benchmark question.\n"
             "Use the returned context packet, especially the full domain model, full business "
-            "rules, disambiguation hints, examples, and rules, to write the SQL yourself.\n"
+            "rules, full schema, disambiguation hints, examples, and rules, to write the SQL "
+            "yourself.\n"
             "Then call `execute_task(...)` with your final SQL.\n"
             "Use the `execution` payload returned by `execute_task(...)` directly.\n"
             "Do not guess table or column names if the prepared context can resolve them.\n"

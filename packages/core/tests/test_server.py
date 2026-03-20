@@ -1025,7 +1025,7 @@ async def test_daemon_prepare_task_expands_ambiguous_context_and_supports_refine
 async def test_daemon_prepare_task_keeps_full_domain_model_and_business_rules_in_compact_mode(
     tmp_path, monkeypatch
 ):
-    """Compact daemon context should still include the full domain model and business rules."""
+    """Compact daemon context should still include full domain, business rules, and schema."""
     connection_name = "demo"
     connection_path = tmp_path / connection_name
     _write_sql_connector(connection_path)
@@ -1078,6 +1078,16 @@ async def test_daemon_prepare_task_keeps_full_domain_model_and_business_rules_in
                             {"name": "snapshot_date", "type": "DATE"},
                             {"name": "revenue_amount", "type": "DOUBLE"},
                         ],
+                    },
+                    {
+                        "name": "activity_rollups",
+                        "schema": "main",
+                        "full_name": "main.activity_rollups",
+                        "description": "Secondary activity rollup table",
+                        "columns": [
+                            {"name": "activity_date", "type": "DATE"},
+                            {"name": "activity_total", "type": "DOUBLE"},
+                        ],
                     }
                 ],
             }
@@ -1120,6 +1130,11 @@ async def test_daemon_prepare_task_keeps_full_domain_model_and_business_rules_in
     assert "Final business rule that must remain visible in compact mode." in (
         prepared_payload["context"]["business_rules_context"]
     )
+    schema_tables = prepared_payload["context"]["full_schema"]["tables"]
+    assert {table["full_name"] for table in schema_tables} == {
+        "main.revenue_facts",
+        "main.activity_rollups",
+    }
 
 
 @pytest.mark.asyncio
@@ -1196,6 +1211,7 @@ async def test_daemon_prepare_task_orders_semantic_guidance_before_schema_contex
     assert context_keys.index("domain_context") < context_keys.index("candidate_tables")
     assert context_keys.index("sql_rules_context") < context_keys.index("candidate_tables")
     assert context_keys.index("examples") < context_keys.index("candidate_tables")
+    assert context_keys.index("full_schema") < context_keys.index("candidate_tables")
 
 
 @pytest.mark.asyncio
