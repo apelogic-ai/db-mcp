@@ -11,6 +11,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from db_mcp.code_runtime.backend import HostDbMcpRuntime, _normalize_text, _score_text_match
 from db_mcp.registry import ConnectionRegistry
 from db_mcp.tools.generation import _get_result, _run_sql, _validate_sql
@@ -95,6 +97,163 @@ def _select_relevant_blocks(
         selected.append(block)
         total += len(block) + 2
     return "\n\n".join(selected)
+
+
+def _flatten_text_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if isinstance(value, dict):
+        values: list[str] = []
+        for nested_key, nested_value in value.items():
+            if nested_key in {"rules", "items", "entries"} and isinstance(nested_value, list):
+                values.extend(_flatten_text_values(nested_value))
+                continue
+            if nested_key in {"text", "rule", "description", "summary", "note"}:
+                values.extend(_flatten_text_values(nested_value))
+                continue
+            values.extend(_flatten_text_values(nested_value))
+        return values
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value:
+            values.extend(_flatten_text_values(item))
+        return values
+    return [str(value)]
+
+
+def _parse_business_rules(text: str) -> list[str]:
+    if not text.strip():
+        return []
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError:
+        return [line.strip("- ").strip() for line in text.splitlines() if line.strip()]
+
+    values: list[str] = []
+    for doc in docs:
+        values.extend(_flatten_text_values(doc))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _normalize_text(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(value)
+    return deduped
+
+
+def _select_relevant_items(
+    items: list[str],
+    query: str,
+    *,
+    limit: int,
+) -> list[str]:
+    if not items:
+        return []
+
+    scored: list[tuple[int, str]] = []
+    for item in items:
+        score = _score_text_match(query, item)
+        if score <= 0:
+            continue
+        scored.append((score, item))
+    if not scored:
+        scored = [(1, items[0])]
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected: list[str] = []
+    seen: set[str] = set()
+    for _, item in scored:
+        normalized = _normalize_text(item)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _classify_hint_bucket(text: str) -> str:
+    lowered = _normalize_text(f" {text} ")
+    if any(
+        token in lowered
+        for token in {" do not ", " never ", " avoid ", " wrong ", " exclude "}
+    ):
+        return "anti_patterns"
+    if any(
+        token in lowered
+        for token in {" tb ", " gb ", " unit", " binary", " decimal", "gib", "tib"}
+    ):
+        return "unit_rules"
+    if any(
+        token in lowered
+        for token in {
+            "period ending",
+            "inclusive",
+            "snapshot_date",
+            "date window",
+            " between ",
+            " date ",
+        }
+    ):
+        return "date_window_rules"
+    return "must_follow_rules"
+
+
+def _build_decision_hints(
+    *,
+    question: str,
+    candidate_tables: list[dict[str, Any]],
+    examples: list[dict[str, Any]],
+    relevant_business_rules: list[str],
+    relevant_domain_blocks: list[str],
+    relevant_sql_blocks: list[str],
+    extra_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    must_follow_rules: list[str] = []
+    anti_patterns: list[str] = []
+    unit_rules: list[str] = []
+    date_window_rules: list[str] = []
+
+    for text in [*relevant_business_rules, *relevant_domain_blocks, *relevant_sql_blocks]:
+        bucket = _classify_hint_bucket(text)
+        if bucket == "anti_patterns" and text not in anti_patterns:
+            anti_patterns.append(text)
+        elif bucket == "unit_rules" and text not in unit_rules:
+            unit_rules.append(text)
+        elif bucket == "date_window_rules" and text not in date_window_rules:
+            date_window_rules.append(text)
+        elif text not in must_follow_rules:
+            must_follow_rules.append(text)
+
+    return _json_safe(
+        {
+            "question_focus": question,
+            "preferred_tables": [
+                table["identifier"] for table in candidate_tables[:1] if table.get("identifier")
+            ],
+            "forbidden_tables": _context_list(extra_context, "avoid_tables"),
+            "required_filters": _context_list(extra_context, "must_apply_filters"),
+            "must_follow_rules": must_follow_rules[:6],
+            "anti_patterns": anti_patterns[:6],
+            "unit_rules": unit_rules[:4],
+            "date_window_rules": date_window_rules[:4],
+            "example_patterns": [
+                {
+                    "intent": example.get("intent"),
+                    "tables": example.get("tables") or [],
+                    "sql": example.get("sql"),
+                }
+                for example in examples[:3]
+            ],
+        }
+    )
 
 
 def _table_identifier(table: dict[str, Any]) -> str:
@@ -373,13 +532,13 @@ def _infer_join_paths(tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _example_payload(example: dict[str, Any]) -> dict[str, Any]:
     return _json_safe(
         {
-        "id": example.get("id"),
-        "intent": example.get("intent"),
-        "sql": example.get("sql"),
-        "tables": example.get("tables"),
-        "keywords": example.get("keywords"),
-        "notes": example.get("notes"),
-        "score": example.get("score"),
+            "id": example.get("id"),
+            "intent": example.get("intent"),
+            "sql": example.get("sql"),
+            "tables": example.get("tables"),
+            "keywords": example.get("keywords"),
+            "notes": example.get("notes"),
+            "score": example.get("score"),
         }
     )
 
@@ -387,9 +546,9 @@ def _example_payload(example: dict[str, Any]) -> dict[str, Any]:
 def _rule_payload(rule: dict[str, Any]) -> dict[str, Any]:
     return _json_safe(
         {
-        "source": rule.get("source"),
-        "text": rule.get("text"),
-        "score": rule.get("score"),
+            "source": rule.get("source"),
+            "text": rule.get("text"),
+            "score": rule.get("score"),
         }
     )
 
@@ -404,6 +563,7 @@ def _build_prepare_context(
     business_rules_text = _safe_read_text(
         runtime.connection_path / "instructions" / "business_rules.yaml"
     )
+    business_rule_items = _parse_business_rules(business_rules_text)
     sql_rules_text = _safe_read_text(runtime.connection_path / "instructions" / "sql_rules.md")
     examples = [_example_payload(item) for item in runtime.relevant_examples(question, limit=8)]
     rules = [_rule_payload(item) for item in runtime.relevant_rules(question, limit=8)]
@@ -427,16 +587,37 @@ def _build_prepare_context(
     example_limit = 5 if context_profile == "expanded" else 3
     rule_limit = 8 if context_profile == "expanded" else 5
     block_limit = 5 if context_profile == "expanded" else 3
-    max_chars = 3000 if context_profile == "expanded" else 1500
     candidate_tables = initial_candidate_tables[:table_limit]
     candidate_columns = runtime.find_columns(question, limit=column_limit)
-    domain_context = domain_text.strip()
-    business_rules_context = business_rules_text.strip()
-    sql_rules_context = _select_relevant_blocks(
-        sql_rules_text,
+    relevant_domain_blocks = _select_relevant_items(
+        _split_text_blocks(domain_text),
         question,
         limit=block_limit,
-        max_chars=max_chars,
+    )
+    relevant_business_rules = _select_relevant_items(
+        business_rule_items,
+        question,
+        limit=rule_limit,
+    )
+    relevant_sql_blocks = _select_relevant_items(
+        _split_text_blocks(sql_rules_text),
+        question,
+        limit=block_limit,
+    )
+    domain_context = (
+        domain_text.strip()
+        if context_profile == "expanded"
+        else "\n\n".join(relevant_domain_blocks).strip()
+    )
+    business_rules_context = (
+        business_rules_text.strip()
+        if context_profile == "expanded"
+        else "\n".join(relevant_business_rules).strip()
+    )
+    sql_rules_context = (
+        sql_rules_text.strip()
+        if context_profile == "expanded"
+        else "\n\n".join(relevant_sql_blocks).strip()
     )
     avoid_tables = _context_list(extra_context, "avoid_tables")
     must_apply_filters = _context_list(extra_context, "must_apply_filters")
@@ -464,12 +645,25 @@ def _build_prepare_context(
                 "avoid_tables": avoid_tables,
                 "must_apply_filters": must_apply_filters,
             },
+            "decision_hints": _build_decision_hints(
+                question=question,
+                candidate_tables=candidate_tables,
+                examples=examples[:example_limit],
+                relevant_business_rules=relevant_business_rules,
+                relevant_domain_blocks=relevant_domain_blocks,
+                relevant_sql_blocks=relevant_sql_blocks,
+                extra_context=extra_context,
+            ),
             "business_rules_context": business_rules_context or None,
             "domain_context": domain_context or None,
             "sql_rules_context": sql_rules_context or None,
             "examples": examples[:example_limit],
             "rules": rules[:rule_limit],
-            "full_schema": schema if isinstance(schema, dict) else None,
+            **(
+                {"full_schema": schema}
+                if context_profile == "expanded" and isinstance(schema, dict)
+                else {}
+            ),
             "candidate_tables": candidate_tables,
             "candidate_columns": candidate_columns,
             "candidate_joins": _infer_join_paths(candidate_tables),

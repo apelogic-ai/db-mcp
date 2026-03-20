@@ -1022,10 +1022,10 @@ async def test_daemon_prepare_task_expands_ambiguous_context_and_supports_refine
 
 
 @pytest.mark.asyncio
-async def test_daemon_prepare_task_keeps_full_domain_model_and_business_rules_in_compact_mode(
+async def test_daemon_prepare_task_uses_decision_hints_and_lean_context_in_compact_mode(
     tmp_path, monkeypatch
 ):
-    """Compact daemon context should still include full domain, business rules, and schema."""
+    """Compact daemon context should prioritize decision hints over raw full-context dumps."""
     connection_name = "demo"
     connection_path = tmp_path / connection_name
     _write_sql_connector(connection_path)
@@ -1124,17 +1124,25 @@ async def test_daemon_prepare_task_keeps_full_domain_model_and_business_rules_in
 
     assert prepared_payload["status"] == "context_ready"
     assert prepared_payload["observability"]["context_profile"] == "compact"
-    assert "Final domain note that would be cropped by excerpt-based selection." in (
-        prepared_payload["context"]["domain_context"]
+    assert "full_schema" not in prepared_payload["context"]
+    assert "decision_hints" in prepared_payload["context"]
+    assert "must_follow_rules" in prepared_payload["context"]["decision_hints"]
+    assert "Use revenue_facts for revenue totals." in (
+        prepared_payload["context"]["decision_hints"]["must_follow_rules"]
     )
-    assert "Final business rule that must remain visible in compact mode." in (
-        prepared_payload["context"]["business_rules_context"]
+    assert any(
+        "activity_rollups" in rule
+        for rule in prepared_payload["context"]["decision_hints"]["anti_patterns"]
     )
-    schema_tables = prepared_payload["context"]["full_schema"]["tables"]
-    assert {table["full_name"] for table in schema_tables} == {
-        "main.revenue_facts",
-        "main.activity_rollups",
-    }
+    assert prepared_payload["context"]["decision_hints"]["preferred_tables"] == [
+        "main.revenue_facts"
+    ]
+    assert "Final domain note that would be cropped by excerpt-based selection." not in str(
+        prepared_payload["context"].get("domain_context")
+    )
+    assert "Final business rule that must remain visible in compact mode." not in str(
+        prepared_payload["context"].get("business_rules_context")
+    )
 
 
 @pytest.mark.asyncio
@@ -1207,11 +1215,123 @@ async def test_daemon_prepare_task_orders_semantic_guidance_before_schema_contex
 
     context_keys = list(prepared_payload["context"].keys())
     assert context_keys.index("disambiguation") < context_keys.index("candidate_tables")
+    assert context_keys.index("decision_hints") < context_keys.index("candidate_tables")
     assert context_keys.index("business_rules_context") < context_keys.index("candidate_tables")
     assert context_keys.index("domain_context") < context_keys.index("candidate_tables")
     assert context_keys.index("sql_rules_context") < context_keys.index("candidate_tables")
     assert context_keys.index("examples") < context_keys.index("candidate_tables")
-    assert context_keys.index("full_schema") < context_keys.index("candidate_tables")
+    assert "full_schema" not in context_keys
+
+
+@pytest.mark.asyncio
+async def test_daemon_prepare_task_includes_full_context_only_for_expanded_refinement(
+    tmp_path, monkeypatch
+):
+    """Expanded refinement context should unlock fuller raw guidance and schema detail."""
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("Read protocol first.\n")
+    (connection_path / "domain").mkdir(parents=True, exist_ok=True)
+    (connection_path / "domain" / "model.md").write_text(
+        "\n\n".join(
+            [
+                "Revenue metrics live in revenue_facts.",
+                "Use snapshot_date for period-end revenue.",
+                "Do not use activity_rollups for revenue totals.",
+                "Long tail context that should only appear in expanded refinement mode.",
+            ]
+        )
+    )
+    (connection_path / "instructions").mkdir(parents=True, exist_ok=True)
+    (connection_path / "instructions" / "business_rules.yaml").write_text(
+        "\n".join(
+            [
+                "rules:",
+                '  - "Use revenue_facts for revenue totals."',
+                '  - "Do not use activity_rollups for revenue totals."',
+                '  - "Use snapshot_date for period-end questions."',
+                '  - "Long tail rule that should only appear in expanded refinement mode."',
+            ]
+        )
+        + "\n"
+    )
+    (connection_path / "instructions" / "sql_rules.md").write_text(
+        "\n\n".join(
+            [
+                "Use binary units when business rules require them.",
+                "Period ending on a date is inclusive.",
+            ]
+        )
+    )
+    (connection_path / "schema").mkdir(parents=True, exist_ok=True)
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.dump(
+            {
+                "dialect": "sqlite",
+                "tables": [
+                    {
+                        "name": "revenue_facts",
+                        "schema": "main",
+                        "full_name": "main.revenue_facts",
+                        "description": "Revenue fact table",
+                        "columns": [
+                            {"name": "snapshot_date", "type": "DATE"},
+                            {"name": "revenue_amount", "type": "DOUBLE"},
+                        ],
+                    },
+                    {
+                        "name": "activity_rollups",
+                        "schema": "main",
+                        "full_name": "main.activity_rollups",
+                        "description": "Secondary activity rollup table",
+                        "columns": [
+                            {"name": "activity_date", "type": "DATE"},
+                            {"name": "activity_total", "type": "DOUBLE"},
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.setenv("TOOL_MODE", "daemon")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    server = _create_server()
+    async with Client(server) as client:
+        prepared = (
+            await client.call_tool(
+                "prepare_task",
+                {
+                    "question": "What was total revenue at period end?",
+                    "connection": connection_name,
+                    "context": {
+                        "previous_sql": "SELECT SUM(activity_total) FROM activity_rollups",
+                        "error": "Wrong table for revenue totals.",
+                        "avoid_tables": ["main.activity_rollups"],
+                    },
+                },
+            )
+        ).data
+        prepared_payload = _tool_payload(prepared)
+
+    assert prepared_payload["status"] == "context_ready"
+    assert prepared_payload["observability"]["context_profile"] == "expanded"
+    assert "Long tail context that should only appear in expanded refinement mode." in (
+        prepared_payload["context"]["domain_context"]
+    )
+    assert "Long tail rule that should only appear in expanded refinement mode." in (
+        prepared_payload["context"]["business_rules_context"]
+    )
+    schema_table_names = {
+        table["full_name"] for table in prepared_payload["context"]["full_schema"]["tables"]
+    }
+    assert schema_table_names == {"main.revenue_facts", "main.activity_rollups"}
 
 
 @pytest.mark.asyncio
