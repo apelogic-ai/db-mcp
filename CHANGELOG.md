@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.7.3] - 2026-03-19
+
+## Highlights
+- Improved daemon `prepare_task` so semantic guidance is denser and more actionable: full domain model, full business rules, full schema, explicit disambiguation, and refinement support all flow through one structured context packet.
+- Added benchmark scenario filtering via `db-mcp-benchmark run --scenario ...` so daemon-mode comparisons can be run in isolation.
+- Removed connection-specific naming from repo code, comments, tests, docs, branch naming, and the active PR path for this work.
+
+## Breaking changes
+- None
+
+## Features
+- PR #62: expanded daemon context assembly with adaptive retrieval, stronger table ranking, timeout observability, full schema inclusion, and rule-first context ordering.
+- PR #62: added daemon refinement guidance so follow-up `prepare_task(..., context=...)` calls can carry previous SQL, validation failures, avoided tables, and required filters.
+- PR #62: added benchmark CLI scenario selection via repeated `--scenario` flags.
+- PR #62: added a daemon knowledge-loop design note documenting backend-owned learning capture without expanding the daemon MCP surface.
+
+## Fixes
+- Fixed daemon context shaping so critical semantic guidance appears before schema-heavy fields, reducing early anchoring on the wrong tables or columns.
+- Fixed stale runtime CLI test coverage to match the current `runtime` fallback path through `start_cmd.callback`.
+- Removed connection-specific example naming from repo docs, tests, comments, and migration docstrings.
+
+## Security
+- None
+
+## Upgrade notes
+- Daemon users now receive the full schema alongside full domain and business-rule context in `prepare_task(...)`.
+- Benchmark users can restrict runs to specific scenarios, for example `--scenario runtime_daemon --scenario db_mcp`.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `tests/test_database.py::test_connection`.
+
 ## [0.7.2] - 2026-03-18
 
 Release date: 2026-03-18

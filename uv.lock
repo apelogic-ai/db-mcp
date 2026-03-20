@@ -620,7 +620,7 @@ wheels = [
 
 [[package]]
 name = "db-mcp"
-version = "0.7.2"
+version = "0.7.3"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "bicp-agent" },
