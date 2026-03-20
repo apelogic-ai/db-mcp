@@ -152,8 +152,8 @@ export default function ContextPage() {
       };
 
       usageResults.forEach(({ connection, usage: connUsage }) => {
-        // Prefix keys with connection name so schema/foo from "nova"
-        // doesn't bleed into "boost-softball"'s schema/foo
+        // Prefix keys with connection name so schema/foo from one connection
+        // doesn't bleed into another connection's schema/foo
         for (const [key, value] of Object.entries(connUsage.files)) {
           mergedUsage.files[`${connection}/${key}`] = value;
         }
