@@ -220,11 +220,16 @@ def _build_prompt(
             '- `prepare_task(question=\"...\", connection=\"...\")`\n'
             '- `execute_task(task_id=\"...\", sql=\"...\", confirmed=False)`\n'
             "Start by calling `prepare_task(...)` with the benchmark question.\n"
-            "Use the returned compact context packet to write the SQL yourself.\n"
+            "Use the returned context packet, especially the full domain model, full business "
+            "rules, full schema, disambiguation hints, examples, and rules, to write the SQL "
+            "yourself.\n"
             "Then call `execute_task(...)` with your final SQL.\n"
             "Use the `execution` payload returned by `execute_task(...)` directly.\n"
             "Do not guess table or column names if the prepared context can resolve them.\n"
             "Do not ask db-mcp to generate SQL for you.\n"
+            "If the first SQL attempt fails or uses the wrong table/filter, call "
+            "`prepare_task(..., context=...)` again with your previous SQL, validation "
+            "error, tables to avoid, or filters that must be applied.\n"
             "Do not rely on any built-in tools.\n"
             "Prefer one `prepare_task(...)` call and one `execute_task(...)` call per question.\n"
             "Do not ask for clarification; produce your best answer."
@@ -1368,6 +1373,7 @@ def run_benchmark_suite(
     model: str,
     repeats: int,
     selected_case_ids: list[str] | None,
+    selected_scenarios: list[str] | None = None,
     output_root: Path,
     case_pack: str = "cases.yaml",
     driver=None,
@@ -1379,19 +1385,27 @@ def run_benchmark_suite(
     """Run the benchmark suite for one connection."""
     access = resolve_sql_connection_access(connection_name)
     cases = load_case_pack(connection_path, selected_case_ids, case_pack=case_pack)
+    scenario_pool = list(selected_scenarios or SCENARIOS)
+    unknown_scenarios = sorted(set(scenario_pool) - set(SCENARIOS))
+    if unknown_scenarios:
+        raise ValueError(
+            "Unknown benchmark scenario(s): "
+            + ", ".join(unknown_scenarios)
+            + f". Available scenarios: {', '.join(SCENARIOS)}"
+        )
     run_dir = _materialize_output_root(output_root, connection_name)
     rng = random.Random(shuffle_seed)
     driver = driver or ClaudeCliDriver()
     schema = BenchmarkAnswer.model_json_schema()
     connections_dir = connection_path.parent
-    total_attempts = repeats * len(cases) * len(SCENARIOS)
+    total_attempts = repeats * len(cases) * len(scenario_pool)
     completed_attempts = 0
     runtime_server_factory = runtime_server_factory or _runtime_server_context
     daemon_service_factory = daemon_service_factory or _daemon_service_context
 
     for repeat in range(1, repeats + 1):
         for case in cases:
-            scenario_order = list(SCENARIOS)
+            scenario_order = list(scenario_pool)
             rng.shuffle(scenario_order)
             for scenario in scenario_order:
                 session_id = str(uuid.uuid4())
@@ -1742,6 +1756,7 @@ def run_benchmark_suite_from_cli(
     connection: str,
     model: str,
     cases: tuple[str, ...],
+    scenarios: tuple[str, ...] = (),
     repeats: int,
     output_root: Path,
     case_pack: str = "cases.yaml",
@@ -1755,6 +1770,7 @@ def run_benchmark_suite_from_cli(
         model=model,
         repeats=repeats,
         selected_case_ids=list(cases) or None,
+        selected_scenarios=list(scenarios) or None,
         output_root=output_root,
         case_pack=case_pack,
         shuffle_seed=seed,

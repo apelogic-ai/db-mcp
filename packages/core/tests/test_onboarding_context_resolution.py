@@ -69,8 +69,10 @@ class TestResolveOnboardingContext:
         # instead of silently falling back to the legacy path
 
         with patch("db_mcp.tools.utils.resolve_connection") as mock_resolve:
-            mock_resolve.side_effect = ValueError("Connection 'nova' not found")
+            mock_resolve.side_effect = ValueError("Connection 'missing_connection' not found")
 
             # This should raise ValueError, not fall back to legacy path
-            with pytest.raises(ValueError, match="Connection 'nova' not found"):
-                _resolve_onboarding_context(connection="nova")
+            with pytest.raises(
+                ValueError, match="Connection 'missing_connection' not found"
+            ):
+                _resolve_onboarding_context(connection="missing_connection")

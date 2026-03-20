@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -16,6 +17,8 @@ from db_mcp.tools.generation import _get_result, _run_sql, _validate_sql
 
 _INLINE_RESULT_TIMEOUT_SECONDS = 30.0
 _INLINE_RESULT_POLL_SECONDS = 1.0
+_PREPARE_TASK_TIMEOUT_SECONDS = 15.0
+_EXECUTE_TASK_TIMEOUT_SECONDS = 45.0
 
 
 def _utc_now() -> str:
@@ -102,24 +105,173 @@ def _table_display_name(table: dict[str, Any]) -> str:
     return str(table.get("name") or table.get("table_name") or table.get("full_name") or "")
 
 
+def _table_aliases(table: dict[str, Any]) -> set[str]:
+    aliases = {
+        _normalize_text(_table_identifier(table)),
+        _normalize_text(_table_display_name(table)),
+    }
+    aliases.update(
+        {
+            _normalize_text(str(table.get("full_name") or "")),
+            _normalize_text(str(table.get("name") or "")),
+            _normalize_text(str(table.get("table_name") or "")),
+        }
+    )
+    aliases.discard("")
+    return aliases
+
+
+def _matches_table_name(raw_value: Any, aliases: set[str]) -> bool:
+    value = _normalize_text(str(raw_value))
+    return bool(value) and any(
+        value == alias or value.endswith(alias) or alias.endswith(value) for alias in aliases
+    )
+
+
+def _context_list(extra_context: dict[str, Any] | None, key: str) -> list[str]:
+    if not isinstance(extra_context, dict):
+        return []
+    value = extra_context.get(key)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _context_text(extra_context: dict[str, Any] | None) -> str:
+    if not isinstance(extra_context, dict):
+        return ""
+    return " ".join(str(value) for value in extra_context.values() if value is not None)
+
+
+def _is_expanded_profile(
+    *,
+    extra_context: dict[str, Any] | None,
+    candidate_scores: list[float],
+) -> bool:
+    if extra_context:
+        return True
+    if len(candidate_scores) < 2:
+        return False
+    return abs(candidate_scores[0] - candidate_scores[1]) <= 20
+
+
+def _build_table_signals(
+    table: dict[str, Any],
+    *,
+    examples: list[dict[str, Any]],
+    rules: list[dict[str, Any]],
+    domain_text: str,
+    business_rules_text: str,
+    sql_rules_text: str,
+    extra_context: dict[str, Any] | None,
+) -> tuple[int, list[str]]:
+    aliases = _table_aliases(table)
+    reasons: list[str] = []
+    score = 0
+
+    example_hits = 0
+    for example in examples:
+        for table_name in example.get("tables", []) or []:
+            if _matches_table_name(table_name, aliases):
+                example_hits += int(example.get("score") or 1)
+                break
+    if example_hits:
+        score += example_hits * 4
+        reasons.append(f"matched examples (+{example_hits * 4})")
+
+    rule_hits = 0
+    for rule in rules:
+        text = str(rule.get("text") or "")
+        if any(alias and alias in _normalize_text(text) for alias in aliases):
+            rule_hits += int(rule.get("score") or 1)
+    if rule_hits:
+        score += rule_hits * 3
+        reasons.append(f"matched rules (+{rule_hits * 3})")
+
+    domain_hits = _score_text_match(domain_text, *aliases) if domain_text else 0
+    if domain_hits:
+        score += domain_hits * 2
+        reasons.append(f"matched domain model (+{domain_hits * 2})")
+
+    business_rule_hits = (
+        _score_text_match(business_rules_text, *aliases) if business_rules_text else 0
+    )
+    if business_rule_hits:
+        score += business_rule_hits * 3
+        reasons.append(f"matched business rules (+{business_rule_hits * 3})")
+
+    sql_rule_hits = _score_text_match(sql_rules_text, *aliases) if sql_rules_text else 0
+    if sql_rule_hits:
+        score += sql_rule_hits * 2
+        reasons.append(f"matched SQL rules (+{sql_rule_hits * 2})")
+
+    avoid_tables = {_normalize_text(item) for item in _context_list(extra_context, "avoid_tables")}
+    if any(
+        alias in avoid_tables or any(avoid.endswith(alias) for avoid in avoid_tables)
+        for alias in aliases
+    ):
+        score -= 1000
+        reasons.append("explicitly avoided in refinement context (-1000)")
+
+    must_include_tables = {
+        _normalize_text(item) for item in _context_list(extra_context, "must_include_tables")
+    }
+    if must_include_tables and any(
+        alias in must_include_tables
+        or any(include.endswith(alias) for include in must_include_tables)
+        for alias in aliases
+    ):
+        score += 200
+        reasons.append("explicitly preferred in refinement context (+200)")
+
+    context_hits = _score_text_match(_context_text(extra_context), *aliases)
+    if context_hits:
+        score += context_hits
+        reasons.append(f"matched refinement context (+{context_hits})")
+
+    return score, reasons
+
+
 def _candidate_tables(
     runtime: HostDbMcpRuntime,
     question: str,
     *,
+    extra_context: dict[str, Any] | None = None,
     limit: int = 5,
+    examples: list[dict[str, Any]] | None = None,
+    rules: list[dict[str, Any]] | None = None,
+    domain_text: str = "",
+    business_rules_text: str = "",
+    sql_rules_text: str = "",
 ) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
+    examples = examples or []
+    rules = rules or []
     for table in runtime._schema_tables():  # internal cached schema helper
         identifier = _table_identifier(table)
         columns = [column for column in table.get("columns", []) if isinstance(column, dict)]
-        score = _score_text_match(
+        lexical_score = _score_text_match(
             question,
             identifier,
             table.get("description"),
             " ".join(str(column.get("name", "")) for column in columns),
             " ".join(str(column.get("description", "")) for column in columns),
         )
-        if score <= 0:
+        signal_score, reasons = _build_table_signals(
+            table,
+            examples=examples,
+            rules=rules,
+            domain_text=domain_text,
+            business_rules_text=business_rules_text,
+            sql_rules_text=sql_rules_text,
+            extra_context=extra_context,
+        )
+        score = lexical_score + signal_score
+        if score <= 0 and lexical_score <= 0 and signal_score <= 0:
             continue
         matches.append(
             {
@@ -134,7 +286,10 @@ def _candidate_tables(
                     }
                     for column in columns
                 ],
+                "lexical_score": lexical_score,
+                "signal_score": signal_score,
                 "score": score,
+                "reasons": reasons,
             }
         )
     matches.sort(key=lambda item: (-int(item["score"]), str(item["identifier"])))
@@ -245,35 +400,81 @@ def _build_prepare_context(
     extra_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     schema = runtime.schema_descriptions()
-    candidate_tables = _candidate_tables(runtime, question)
-    candidate_columns = runtime.find_columns(question, limit=10)
-    examples = [_example_payload(item) for item in runtime.relevant_examples(question, limit=3)]
-    rules = [_rule_payload(item) for item in runtime.relevant_rules(question, limit=5)]
-    domain_context = _select_relevant_blocks(
-        _safe_read_text(runtime.connection_path / "domain" / "model.md"),
-        question,
+    domain_text = _safe_read_text(runtime.connection_path / "domain" / "model.md")
+    business_rules_text = _safe_read_text(
+        runtime.connection_path / "instructions" / "business_rules.yaml"
     )
+    sql_rules_text = _safe_read_text(runtime.connection_path / "instructions" / "sql_rules.md")
+    examples = [_example_payload(item) for item in runtime.relevant_examples(question, limit=8)]
+    rules = [_rule_payload(item) for item in runtime.relevant_rules(question, limit=8)]
+    initial_candidate_tables = _candidate_tables(
+        runtime,
+        question,
+        extra_context=extra_context,
+        limit=8,
+        examples=examples,
+        rules=rules,
+        domain_text=domain_text,
+        business_rules_text=business_rules_text,
+        sql_rules_text=sql_rules_text,
+    )
+    context_profile = "expanded" if _is_expanded_profile(
+        extra_context=extra_context,
+        candidate_scores=[float(item.get("score") or 0) for item in initial_candidate_tables[:2]],
+    ) else "compact"
+    table_limit = 8 if context_profile == "expanded" else 5
+    column_limit = 15 if context_profile == "expanded" else 10
+    example_limit = 5 if context_profile == "expanded" else 3
+    rule_limit = 8 if context_profile == "expanded" else 5
+    block_limit = 5 if context_profile == "expanded" else 3
+    max_chars = 3000 if context_profile == "expanded" else 1500
+    candidate_tables = initial_candidate_tables[:table_limit]
+    candidate_columns = runtime.find_columns(question, limit=column_limit)
+    domain_context = domain_text.strip()
+    business_rules_context = business_rules_text.strip()
     sql_rules_context = _select_relevant_blocks(
-        _safe_read_text(runtime.connection_path / "instructions" / "sql_rules.md"),
+        sql_rules_text,
         question,
+        limit=block_limit,
+        max_chars=max_chars,
     )
-    suggested_sql = runtime.plan(question).get("suggested_sql")
+    avoid_tables = _context_list(extra_context, "avoid_tables")
+    must_apply_filters = _context_list(extra_context, "must_apply_filters")
+    recommended_tables = candidate_tables[:2]
+    competing_tables = candidate_tables[1:4]
+    ambiguous = bool(competing_tables) and (
+        context_profile == "expanded"
+        or abs(
+            float(candidate_tables[0].get("score") or 0)
+            - float(candidate_tables[1].get("score") or 0)
+        )
+        <= 20
+    )
 
     return _json_safe(
         {
-        "question": question,
-        "connection": runtime.connection,
-        "dialect": schema.get("dialect") if isinstance(schema, dict) else None,
-        "connector": runtime.connector(),
-        "candidate_tables": candidate_tables,
-        "candidate_columns": candidate_columns,
-        "candidate_joins": _infer_join_paths(candidate_tables),
-        "examples": examples,
-        "rules": rules,
-        "domain_context": domain_context or None,
-        "sql_rules_context": sql_rules_context or None,
-        "suggested_sql": suggested_sql,
-        "client_context": extra_context or {},
+            "question": question,
+            "connection": runtime.connection,
+            "dialect": schema.get("dialect") if isinstance(schema, dict) else None,
+            "connector": runtime.connector(),
+            "disambiguation": {
+                "ambiguous": ambiguous,
+                "recommended_tables": recommended_tables,
+                "competing_tables": competing_tables,
+                "avoid_tables": avoid_tables,
+                "must_apply_filters": must_apply_filters,
+            },
+            "business_rules_context": business_rules_context or None,
+            "domain_context": domain_context or None,
+            "sql_rules_context": sql_rules_context or None,
+            "examples": examples[:example_limit],
+            "rules": rules[:rule_limit],
+            "full_schema": schema if isinstance(schema, dict) else None,
+            "candidate_tables": candidate_tables,
+            "candidate_columns": candidate_columns,
+            "candidate_joins": _infer_join_paths(candidate_tables),
+            "client_context": extra_context or {},
+            "context_profile": context_profile,
         }
     )
 
@@ -359,29 +560,47 @@ async def _resolve_inline_execution(
     connection: str,
     validation: dict[str, Any] | None,
     execution: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     if not _is_async_read_execution(validation=validation, execution=execution):
-        return execution
+        return execution, 0
 
     execution_id = str(execution.get("execution_id") or execution.get("query_id"))
     attempts = max(1, int(_INLINE_RESULT_TIMEOUT_SECONDS / _INLINE_RESULT_POLL_SECONDS))
     latest = execution
+    poll_attempts = 0
 
     for _ in range(attempts):
+        poll_attempts += 1
         polled = _unwrap_tool_payload(
             await _get_result(query_id=execution_id, connection=connection)
         )
         status = str(polled.get("status") or "").lower()
         if status == "complete":
-            return _normalize_async_completion(polled)
+            return _normalize_async_completion(polled), poll_attempts
         if status == "error":
-            return polled
+            return polled, poll_attempts
         latest = polled
         if status not in {"running", "pending", "submitted"}:
-            return polled
+            return polled, poll_attempts
         await asyncio.sleep(_INLINE_RESULT_POLL_SECONDS)
 
-    return latest
+    return latest, poll_attempts
+
+
+def _observability(
+    *,
+    stage: str,
+    started_at: float,
+    timed_out: bool,
+    **extra: Any,
+) -> dict[str, Any]:
+    payload = {
+        "stage": stage,
+        "elapsed_ms": round((time.monotonic() - started_at) * 1000, 1),
+        "timed_out": timed_out,
+    }
+    payload.update(extra)
+    return _json_safe(payload)
 
 
 async def _prepare_task(
@@ -390,9 +609,27 @@ async def _prepare_task(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble compact structured query context for the external agent."""
+    started_at = time.monotonic()
     resolved_connection = _resolve_connection_name(connection)
     runtime = HostDbMcpRuntime(resolved_connection)
-    prepared_context = _build_prepare_context(runtime, question, context)
+    try:
+        prepared_context = await asyncio.wait_for(
+            asyncio.to_thread(_build_prepare_context, runtime, question, context),
+            timeout=_PREPARE_TASK_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "status": "timeout",
+            "connection": resolved_connection,
+            "question": question,
+            "error": "prepare_task exceeded its deadline while assembling context.",
+            "observability": _observability(
+                stage="prepare_task",
+                started_at=started_at,
+                timed_out=True,
+                deadline_seconds=_PREPARE_TASK_TIMEOUT_SECONDS,
+            ),
+        }
     task = _register_task(
         PreparedTask(
             task_id=uuid.uuid4().hex[:12],
@@ -407,11 +644,69 @@ async def _prepare_task(
         "connection": task.connection,
         "question": task.question,
         "context": task.context,
+        "observability": _observability(
+            stage="prepare_task",
+            started_at=started_at,
+            timed_out=False,
+            deadline_seconds=_PREPARE_TASK_TIMEOUT_SECONDS,
+            context_profile=task.context.get("context_profile", "compact"),
+            candidate_table_count=len(task.context.get("candidate_tables", [])),
+            ambiguous=bool(task.context.get("disambiguation", {}).get("ambiguous")),
+        ),
         "next_step": (
             "Write SQL using the prepared context, then call "
             "execute_task(task_id=..., sql=..., confirmed=False)."
         ),
     }
+
+
+async def _execute_task_inner(
+    task: PreparedTask,
+    sql: str,
+    confirmed: bool,
+) -> tuple[str, dict[str, Any] | None, dict[str, Any], int]:
+    validation = _unwrap_tool_payload(await _validate_sql(sql=sql, connection=task.connection))
+
+    if not validation.get("valid", False):
+        if "Validation is not supported" in str(validation.get("error", "")):
+            execution = _unwrap_tool_payload(
+                await _run_sql(
+                    connection=task.connection,
+                    sql=sql,
+                    confirmed=confirmed,
+                )
+            )
+            execution, poll_attempts = await _resolve_inline_execution(
+                connection=task.connection,
+                validation=validation,
+                execution=execution,
+            )
+            status = "completed" if execution.get("status") == "success" else str(
+                execution.get("status") or "failed"
+            )
+            return status, validation, execution, poll_attempts
+
+        return "validation_error", validation, {}, 0
+
+    if validation.get("write_confirmation_required") and not confirmed:
+        return "confirmation_required", validation, {}, 0
+
+    execution = _unwrap_tool_payload(
+        await _run_sql(
+            connection=task.connection,
+            query_id=str(validation.get("query_id")),
+            confirmed=confirmed,
+        )
+    )
+    execution, poll_attempts = await _resolve_inline_execution(
+        connection=task.connection,
+        validation=validation,
+        execution=execution,
+    )
+    status = "completed" if execution.get("status") == "success" else str(
+        execution.get("status") or "failed"
+    )
+    return status, validation, execution, poll_attempts
 
 
 async def _execute_task(
@@ -420,6 +715,7 @@ async def _execute_task(
     confirmed: bool = False,
 ) -> dict[str, Any]:
     """Validate and execute SQL for a prepared task."""
+    started_at = time.monotonic()
     task = _get_task_state(task_id)
     if task is None:
         return {"status": "error", "error": f"Task {task_id!r} was not found.", "task_id": task_id}
@@ -431,85 +727,54 @@ async def _execute_task(
         }
 
     task.sql = sql
-    validation = _unwrap_tool_payload(await _validate_sql(sql=sql, connection=task.connection))
-    task.validation = validation
-
-    if not validation.get("valid", False):
-        if "Validation is not supported" in str(validation.get("error", "")):
-            execution = _unwrap_tool_payload(
-                await _run_sql(
-                    connection=task.connection,
-                    sql=sql,
-                    confirmed=confirmed,
-                )
-            )
-            execution = await _resolve_inline_execution(
-                connection=task.connection,
-                validation=validation,
-                execution=execution,
-            )
-            task.execution = execution
-            task.status = "completed" if execution.get("status") == "success" else str(
-                execution.get("status") or "failed"
-            )
-            _update_task(task)
-            return {
-                "status": task.status,
-                "task_id": task.task_id,
-                "connection": task.connection,
-                "sql": sql,
-                "validation": validation,
-                "execution": execution,
-            }
-
-        task.status = "validation_error"
-        _update_task(task)
-        return {
-            "status": "validation_error",
-            "task_id": task.task_id,
-            "connection": task.connection,
-            "sql": sql,
-            "validation": validation,
-        }
-
-    if validation.get("write_confirmation_required") and not confirmed:
-        task.status = "confirmation_required"
-        _update_task(task)
-        return {
-            "status": "confirmation_required",
-            "task_id": task.task_id,
-            "connection": task.connection,
-            "sql": sql,
-            "validation": validation,
-            "message": validation.get("tier_reason")
-            or "This statement requires explicit confirmation.",
-        }
-
-    execution = _unwrap_tool_payload(
-        await _run_sql(
-            connection=task.connection,
-            query_id=str(validation.get("query_id")),
-            confirmed=confirmed,
+    try:
+        status, validation, execution, poll_attempts = await asyncio.wait_for(
+            _execute_task_inner(task, sql, confirmed),
+            timeout=_EXECUTE_TASK_TIMEOUT_SECONDS,
         )
-    )
-    execution = await _resolve_inline_execution(
-        connection=task.connection,
-        validation=validation,
-        execution=execution,
-    )
-    task.execution = execution
-    task.status = "completed" if execution.get("status") == "success" else str(
-        execution.get("status") or "failed"
-    )
+    except asyncio.TimeoutError:
+        task.status = "timeout"
+        _update_task(task)
+        return {
+            "status": "timeout",
+            "task_id": task.task_id,
+            "connection": task.connection,
+            "sql": sql,
+            "error": "execute_task exceeded its deadline while validating or executing SQL.",
+            "observability": _observability(
+                stage="execute_task",
+                started_at=started_at,
+                timed_out=True,
+                deadline_seconds=_EXECUTE_TASK_TIMEOUT_SECONDS,
+                inline_resolution_attempts=0,
+            ),
+        }
+
+    task.validation = validation
+    task.execution = execution or None
+    task.status = status
     _update_task(task)
-    return {
+    payload = {
         "status": task.status,
         "task_id": task.task_id,
         "connection": task.connection,
         "sql": sql,
         "validation": validation,
-        "execution": execution,
+        "observability": _observability(
+            stage="execute_task",
+            started_at=started_at,
+            timed_out=False,
+            deadline_seconds=_EXECUTE_TASK_TIMEOUT_SECONDS,
+            inline_resolution_attempts=poll_attempts,
+        ),
     }
+    if execution:
+        payload["execution"] = execution
+    if status == "confirmation_required":
+        payload["message"] = (
+            validation.get("tier_reason") or "This statement requires explicit confirmation."
+        )
+    return payload
 
 
 async def _get_task(task_id: str) -> dict[str, Any]:

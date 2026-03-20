@@ -6,8 +6,8 @@ Extends the existing metrics layer (`metrics-layer.md`) with dimension modeling,
 
 The knowledge vault contains rich material for business metrics and dimensions:
 
-- **Training examples** (31 in nova) — real SQL with `SUM(wifi_sub_count) AS dau`, `GROUP BY date, carrier`
-- **Business rules** (100+ in nova) — "DAU stands for daily active users", "Price for 1 GB = 0.5 USD"
+- **Training examples** (31 in a sample connection) — real SQL with `SUM(wifi_sub_count) AS dau`, `GROUP BY date, carrier`
+- **Business rules** (100+ in a sample connection) — "DAU stands for daily active users", "Price for 1 GB = 0.5 USD"
 - **Schema descriptions** — typed columns across 50 tables (numeric = measures, varchar = dimensions, timestamp = temporal)
 
 None of this is captured as structured metric/dimension definitions. The `Metric` model exists but has no dimension concept, `metrics/catalog.yaml` is empty, no MCP tools are registered, and there's no UI.
@@ -218,7 +218,7 @@ async def mine_metrics_and_dimensions(connection_path: Path, ctx=None) -> dict:
 
 ```yaml
 version: "1.0.0"
-provider_id: nova
+provider_id: sample_connection
 metrics:
   - name: dau
     display_name: Daily Active Users
@@ -257,7 +257,7 @@ metrics:
 
 ```yaml
 version: "1.0.0"
-provider_id: nova
+provider_id: sample_connection
 dimensions:
   - name: date
     display_name: Date

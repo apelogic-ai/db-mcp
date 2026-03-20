@@ -27,7 +27,7 @@ Trace analysis (insights) ──┘     (in connection vault)   ├──▶  MC
 
 ```yaml
 version: "1.0.0"
-provider_id: nova
+provider_id: sample_connection
 gaps:
   - id: "a1b2c3d4"
     term: "CUI"
@@ -170,7 +170,7 @@ Returns:
 ```python
 {
     "status": "success",
-    "provider_id": "nova",
+    "provider_id": "sample_connection",
     "gaps": [...],  # list of open gaps
     "stats": {
         "total": 10,

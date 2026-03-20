@@ -4,10 +4,10 @@ Migrations run exactly once per connection. Applied migrations are tracked in
 ~/.db-mcp/migrations.yaml with the format:
 
     applied:
-      nova:
+      connection_a:
         - id: "20260126_001_examples_to_folder"
           applied_at: "2026-01-26T10:30:00Z"
-      boost:
+      connection_b:
         - id: "20260126_001_examples_to_folder"
           applied_at: "2026-01-26T10:31:00Z"
 
@@ -15,7 +15,7 @@ Usage:
     from db_mcp.migrations import run_migrations
 
     # Run all pending migrations for a connection
-    run_migrations("nova")
+    run_migrations("connection_a")
 
     # Run all pending migrations for all connections
     run_migrations_all()

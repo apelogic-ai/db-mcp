@@ -284,17 +284,26 @@ Executor-like db-mcp daemon runtime.
 Use this two-step workflow:
 
 1. Call `prepare_task(question=..., connection=...)`
-   This returns compact structured context:
+   This returns structured context:
+   - full schema descriptions
    - relevant tables and columns
    - candidate joins
    - relevant examples
    - relevant rules
-   - focused domain context
+   - full domain model
+   - full business rules
+   - focused SQL rules context
+   - an explicit disambiguation section when multiple tables compete
 
 2. Write the SQL yourself and call:
    `execute_task(task_id=..., sql=..., confirmed=false)`
 
 Use the `execution` payload returned by `execute_task(...)` directly.
+
+If the first SQL attempt fails or uses the wrong table/filter, call
+`prepare_task(question=..., connection=..., context=...)` again with refinement
+context such as previous SQL, validation errors, tables to avoid, or filters
+that must be applied.
 
 Do not look for shell, exec, or code tools in this mode.
 """
