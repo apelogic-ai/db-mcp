@@ -409,21 +409,25 @@ def test_runtime_without_subcommand_starts_mcp_runtime_mode(tmp_path, monkeypatc
 
     captured: dict[str, object] = {}
 
-    def fake_server_main() -> None:
+    def fake_start_callback(connection: str | None, mode: str) -> None:
         import os
 
+        captured["callback_connection"] = connection
+        captured["callback_mode"] = mode
         captured["connection_name"] = os.environ.get("CONNECTION_NAME")
         captured["tool_mode"] = os.environ.get("TOOL_MODE")
         captured["runtime_interface"] = os.environ.get("RUNTIME_INTERFACE")
 
-    monkeypatch.setattr("db_mcp.server.main", fake_server_main)
+    monkeypatch.setattr("db_mcp.cli.commands.runtime_cmd.start_cmd.callback", fake_start_callback)
 
     runner = CliRunner()
     result = runner.invoke(main, ["runtime"])
 
     assert result.exit_code == 0
+    assert captured["callback_connection"] is None
+    assert captured["callback_mode"] == "code"
     assert captured["connection_name"] == connection_name
-    assert captured["tool_mode"] == "code"
+    assert captured["tool_mode"] == "shell"
     assert captured["runtime_interface"] == "native"
 
 

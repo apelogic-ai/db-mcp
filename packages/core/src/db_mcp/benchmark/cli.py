@@ -69,6 +69,12 @@ def preflight(connection: str, case_pack: str, as_json: bool):
     help="Benchmark case-pack file under the connection benchmark directory.",
 )
 @click.option("--cases", multiple=True, help="Optional case ids to run.")
+@click.option(
+    "--scenario",
+    "scenarios",
+    multiple=True,
+    help="Optional benchmark scenario(s) to run, e.g. runtime_daemon.",
+)
 @click.option("--repeats", default=1, show_default=True, type=int, help="Repeat count per case.")
 @click.option(
     "--output-root",
@@ -83,6 +89,7 @@ def run(
     model: str,
     case_pack: str,
     cases: tuple[str, ...],
+    scenarios: tuple[str, ...],
     repeats: int,
     output_root: Path,
     seed: int | None,
@@ -96,6 +103,7 @@ def run(
             model=model,
             case_pack=case_pack,
             cases=cases,
+            scenarios=scenarios,
             repeats=repeats,
             output_root=output_root,
             seed=seed,

@@ -1,5 +1,6 @@
 """Tests for the MCP server."""
 
+import asyncio
 import importlib
 import pkgutil
 from datetime import date
@@ -796,10 +797,14 @@ async def test_daemon_mode_prepare_and_execute_task(tmp_path, monkeypatch):
         prepared_payload = _tool_payload(prepared)
         assert prepared_payload["status"] == "context_ready"
         assert prepared_payload["connection"] == connection_name
+        assert "suggested_sql" not in prepared_payload["context"]
         assert prepared_payload["context"]["candidate_tables"][0]["identifier"] == "main.Customer"
         assert prepared_payload["context"]["examples"][0]["sql"] == (
             "SELECT COUNT(*) AS answer FROM Customer"
         )
+        assert prepared_payload["context"]["disambiguation"]["ambiguous"] is False
+        assert prepared_payload["observability"]["timed_out"] is False
+        assert prepared_payload["observability"]["context_profile"] == "compact"
         task_id = prepared_payload["task_id"]
 
         executed = (
@@ -812,6 +817,8 @@ async def test_daemon_mode_prepare_and_execute_task(tmp_path, monkeypatch):
         assert executed_payload["status"] == "completed"
         assert executed_payload["execution"]["status"] == "success"
         assert executed_payload["execution"]["data"] == [{"answer": 1}]
+        assert executed_payload["observability"]["timed_out"] is False
+        assert executed_payload["observability"]["inline_resolution_attempts"] == 0
 
 
 @pytest.mark.asyncio
@@ -873,6 +880,375 @@ async def test_daemon_execute_task_resolves_async_read_inline(monkeypatch):
     assert payload["execution"]["status"] == "success"
     assert payload["execution"]["data"] == [{"symbol": "SOL"}]
     assert poll_calls["count"] == 2
+    assert payload["observability"]["inline_resolution_attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_daemon_prepare_task_expands_ambiguous_context_and_supports_refinement(
+    tmp_path, monkeypatch
+):
+    """prepare_task should expand context and expose disambiguation for ambiguous queries."""
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("Read protocol first.\n")
+    (connection_path / "domain").mkdir(parents=True, exist_ok=True)
+    (connection_path / "domain" / "model.md").write_text(
+        "\n\n".join(
+            [
+                "Helium Mobile traffic metrics must come from helium_mobile_traffic.",
+                "Brownfield traffic uses operator_type = 'brownfield'.",
+                "Do not answer Helium Mobile traffic questions from total network traffic tables.",
+                "Rewarded traffic must exclude non_rewarded_bytes.",
+            ]
+        )
+    )
+    (connection_path / "instructions").mkdir(parents=True, exist_ok=True)
+    (connection_path / "instructions" / "business_rules.yaml").write_text(
+        yaml.dump(
+            {
+                "rules": [
+                    "Helium Mobile traffic questions should use helium_mobile_traffic.",
+                    "Brownfield traffic requires filtering operator_type = brownfield.",
+                    "Do not use network_traffic for Helium Mobile subscriber traffic.",
+                ]
+            }
+        )
+    )
+    (connection_path / "instructions" / "sql_rules.md").write_text(
+        "\n\n".join(
+            [
+                "When multiple traffic tables exist, prefer the most specific product table.",
+                "Apply rewarded_bytes filters before aggregation.",
+                "Brownfield queries must filter operator_type = 'brownfield'.",
+            ]
+        )
+    )
+    (connection_path / "schema").mkdir(parents=True, exist_ok=True)
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.dump(
+            {
+                "dialect": "sqlite",
+                "tables": [
+                    {
+                        "name": "helium_mobile_traffic",
+                        "schema": "main",
+                        "full_name": "main.helium_mobile_traffic",
+                        "description": "Helium Mobile rewarded subscriber traffic by operator",
+                        "columns": [
+                            {"name": "operator_type", "type": "TEXT"},
+                            {"name": "rewarded_bytes", "type": "BIGINT"},
+                            {"name": "traffic_date", "type": "DATE"},
+                        ],
+                    },
+                    {
+                        "name": "network_traffic",
+                        "schema": "main",
+                        "full_name": "main.network_traffic",
+                        "description": "Total network traffic including non-rewarded traffic",
+                        "columns": [
+                            {"name": "operator_type", "type": "TEXT"},
+                            {"name": "total_bytes", "type": "BIGINT"},
+                            {"name": "non_rewarded_bytes", "type": "BIGINT"},
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+    (connection_path / "examples").mkdir(parents=True, exist_ok=True)
+    (connection_path / "examples" / "helium_mobile_brownfield.yaml").write_text(
+        yaml.dump(
+            {
+                "intent": "How much Helium Mobile brownfield traffic was there?",
+                "sql": (
+                    "SELECT SUM(rewarded_bytes) FROM helium_mobile_traffic "
+                    "WHERE operator_type = 'brownfield'"
+                ),
+                "tables": ["helium_mobile_traffic"],
+                "keywords": ["helium mobile", "brownfield", "rewarded traffic"],
+                "notes": "Use the Helium Mobile-specific traffic table.",
+            }
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.setenv("TOOL_MODE", "daemon")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    server = _create_server()
+    async with Client(server) as client:
+        prepared = (
+            await client.call_tool(
+                "prepare_task",
+                {
+                    "question": "How much Helium Mobile brownfield traffic was there?",
+                    "connection": connection_name,
+                    "context": {
+                        "previous_sql": "SELECT SUM(total_bytes) FROM network_traffic",
+                        "error": "Used the wrong traffic source and forgot the brownfield filter.",
+                        "avoid_tables": ["main.network_traffic"],
+                        "must_apply_filters": ["operator_type = 'brownfield'"],
+                    },
+                },
+            )
+        ).data
+        prepared_payload = _tool_payload(prepared)
+
+    assert prepared_payload["status"] == "context_ready"
+    assert prepared_payload["observability"]["context_profile"] == "expanded"
+    assert "suggested_sql" not in prepared_payload["context"]
+    disambiguation = prepared_payload["context"]["disambiguation"]
+    assert disambiguation["ambiguous"] is True
+    assert disambiguation["recommended_tables"][0]["identifier"] == "main.helium_mobile_traffic"
+    assert any(
+        table["identifier"] == "main.network_traffic"
+        for table in disambiguation["competing_tables"]
+    )
+    assert disambiguation["avoid_tables"] == ["main.network_traffic"]
+    assert "operator_type = 'brownfield'" in disambiguation["must_apply_filters"]
+    assert prepared_payload["context"]["examples"][0]["tables"] == ["helium_mobile_traffic"]
+    assert len(prepared_payload["context"]["candidate_tables"]) == 2
+    assert len(prepared_payload["context"]["rules"]) >= 3
+    assert "Rewarded traffic must exclude non_rewarded_bytes." in (
+        prepared_payload["context"]["domain_context"]
+    )
+    assert "Do not use network_traffic for Helium Mobile subscriber traffic." in (
+        prepared_payload["context"]["business_rules_context"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_daemon_prepare_task_keeps_full_domain_model_and_business_rules_in_compact_mode(
+    tmp_path, monkeypatch
+):
+    """Compact daemon context should still include the full domain model and business rules."""
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("Read protocol first.\n")
+    (connection_path / "domain").mkdir(parents=True, exist_ok=True)
+    (connection_path / "domain" / "model.md").write_text(
+        "\n\n".join(
+            [
+                "Customer revenue lives in revenue_facts.",
+                "Revenue should never come from activity_rollups.",
+                "Use daily snapshots for revenue period questions.",
+                "Final domain note that would be cropped by excerpt-based selection.",
+            ]
+        )
+    )
+    (connection_path / "instructions").mkdir(parents=True, exist_ok=True)
+    (connection_path / "instructions" / "business_rules.yaml").write_text(
+        "\n".join(
+            [
+                "rules:",
+                '  - "Use revenue_facts for revenue totals."',
+                '  - "Do not use activity_rollups for revenue totals."',
+                '  - "Apply snapshot_date for period-end questions."',
+                '  - "Final business rule that must remain visible in compact mode."',
+            ]
+        )
+        + "\n"
+    )
+    (connection_path / "instructions" / "sql_rules.md").write_text(
+        "\n\n".join(
+            [
+                "Use binary units when the business rules say so.",
+                "Date windows are inclusive unless otherwise specified.",
+                "Prefer the most specific fact table available.",
+            ]
+        )
+    )
+    (connection_path / "schema").mkdir(parents=True, exist_ok=True)
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.dump(
+            {
+                "dialect": "sqlite",
+                "tables": [
+                    {
+                        "name": "revenue_facts",
+                        "schema": "main",
+                        "full_name": "main.revenue_facts",
+                        "description": "Revenue fact table",
+                        "columns": [
+                            {"name": "snapshot_date", "type": "DATE"},
+                            {"name": "revenue_amount", "type": "DOUBLE"},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    (connection_path / "examples").mkdir(parents=True, exist_ok=True)
+    (connection_path / "examples" / "revenue_total.yaml").write_text(
+        yaml.dump(
+            {
+                "intent": "What was revenue yesterday?",
+                "sql": "SELECT SUM(revenue_amount) FROM revenue_facts",
+                "tables": ["revenue_facts"],
+                "keywords": ["revenue", "total"],
+            }
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.setenv("TOOL_MODE", "daemon")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    server = _create_server()
+    async with Client(server) as client:
+        prepared = (
+            await client.call_tool(
+                "prepare_task",
+                {"question": "What was total revenue?", "connection": connection_name},
+            )
+        ).data
+        prepared_payload = _tool_payload(prepared)
+
+    assert prepared_payload["status"] == "context_ready"
+    assert prepared_payload["observability"]["context_profile"] == "compact"
+    assert "Final domain note that would be cropped by excerpt-based selection." in (
+        prepared_payload["context"]["domain_context"]
+    )
+    assert "Final business rule that must remain visible in compact mode." in (
+        prepared_payload["context"]["business_rules_context"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_daemon_prepare_task_orders_semantic_guidance_before_schema_context(
+    tmp_path, monkeypatch
+):
+    """Daemon context should emit rules and disambiguation before schema-heavy fields."""
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("Read protocol first.\n")
+    (connection_path / "domain").mkdir(parents=True, exist_ok=True)
+    (connection_path / "domain" / "model.md").write_text(
+        "Use helium facts for helium questions.\nDo not use generic traffic totals.\n"
+    )
+    (connection_path / "instructions").mkdir(parents=True, exist_ok=True)
+    (connection_path / "instructions" / "business_rules.yaml").write_text(
+        "\n".join(
+            [
+                "rules:",
+                '  - "Use wifi_total_bytes for Helium network traffic totals."',
+                '  - "Do not use wifi_traffic_total for Helium network traffic totals."',
+            ]
+        )
+        + "\n"
+    )
+    (connection_path / "instructions" / "sql_rules.md").write_text(
+        "Use binary units for Tb/Gb reporting.\n"
+    )
+    (connection_path / "schema").mkdir(parents=True, exist_ok=True)
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.dump(
+            {
+                "dialect": "sqlite",
+                "tables": [
+                    {
+                        "name": "daily_stats_cdrs",
+                        "schema": "main",
+                        "full_name": "main.daily_stats_cdrs",
+                        "description": "Daily network stats",
+                        "columns": [
+                            {"name": "wifi_total_bytes", "type": "BIGINT"},
+                            {"name": "wifi_traffic_total", "type": "BIGINT"},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.setenv("TOOL_MODE", "daemon")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    server = _create_server()
+    async with Client(server) as client:
+        prepared = (
+            await client.call_tool(
+                "prepare_task",
+                {
+                    "question": "What was total Helium network traffic on 2026-03-01?",
+                    "connection": connection_name,
+                },
+            )
+        ).data
+        prepared_payload = _tool_payload(prepared)
+
+    context_keys = list(prepared_payload["context"].keys())
+    assert context_keys.index("disambiguation") < context_keys.index("candidate_tables")
+    assert context_keys.index("business_rules_context") < context_keys.index("candidate_tables")
+    assert context_keys.index("domain_context") < context_keys.index("candidate_tables")
+    assert context_keys.index("sql_rules_context") < context_keys.index("candidate_tables")
+    assert context_keys.index("examples") < context_keys.index("candidate_tables")
+
+
+@pytest.mark.asyncio
+async def test_daemon_prepare_task_returns_timeout_observability(monkeypatch):
+    """prepare_task should fail cleanly when context assembly exceeds its deadline."""
+
+    def fake_build_prepare_context(*args, **kwargs):
+        import time
+
+        time.sleep(0.05)
+        return {}
+
+    monkeypatch.setattr(daemon_tasks, "_build_prepare_context", fake_build_prepare_context)
+    monkeypatch.setattr(daemon_tasks, "HostDbMcpRuntime", lambda connection: object())
+    monkeypatch.setattr(daemon_tasks, "_resolve_connection_name", lambda connection: "demo")
+    monkeypatch.setattr(daemon_tasks, "_PREPARE_TASK_TIMEOUT_SECONDS", 0.01)
+
+    payload = await daemon_tasks._prepare_task(question="slow question", connection="demo")
+
+    assert payload["status"] == "timeout"
+    assert payload["observability"]["timed_out"] is True
+    assert payload["observability"]["stage"] == "prepare_task"
+
+
+@pytest.mark.asyncio
+async def test_daemon_execute_task_returns_timeout_observability(monkeypatch):
+    """execute_task should fail cleanly when execution exceeds its deadline."""
+    daemon_tasks._TASKS.clear()
+    daemon_tasks._register_task(
+        daemon_tasks.PreparedTask(
+            task_id="task-timeout",
+            connection="demo",
+            question="slow query",
+            context={},
+        )
+    )
+
+    async def fake_validate_sql(*args, **kwargs):
+        return {"valid": True, "query_id": "query-123", "write_confirmation_required": False}
+
+    async def fake_run_sql(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return {"status": "success", "data": [{"answer": 1}]}
+
+    monkeypatch.setattr(daemon_tasks, "_validate_sql", fake_validate_sql)
+    monkeypatch.setattr(daemon_tasks, "_run_sql", fake_run_sql)
+    monkeypatch.setattr(daemon_tasks, "_EXECUTE_TASK_TIMEOUT_SECONDS", 0.01)
+
+    payload = await daemon_tasks._execute_task(task_id="task-timeout", sql="SELECT 1")
+
+    assert payload["status"] == "timeout"
+    assert payload["observability"]["timed_out"] is True
+    assert payload["observability"]["stage"] == "execute_task"
 
 
 @pytest.mark.asyncio

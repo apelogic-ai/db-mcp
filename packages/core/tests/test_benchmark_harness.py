@@ -707,8 +707,39 @@ def test_runtime_daemon_prompt_is_strict_two_tool_flow():
     assert '`prepare_task(question="...", connection="...")`' in prompt
     assert '`execute_task(task_id="...", sql="...", confirmed=False)`' in prompt
     assert "Use the `execution` payload returned by `execute_task(...)` directly" in prompt
+    assert "If the first SQL attempt fails or uses the wrong table/filter" in prompt
+    assert "`prepare_task(..., context=...)`" in prompt
     assert "get_task" not in prompt
     assert "cancel_task" not in prompt
+
+
+def test_run_benchmark_suite_can_filter_to_selected_scenarios(tmp_path, benchmark_connection):
+    outputs = {
+        RUNTIME_DAEMON_SCENARIO: {
+            "task_id": "demo",
+            "status": "answered",
+            "answer_value": 1,
+            "answer_text": "1",
+            "evidence_sql": "SELECT 1 AS answer",
+        }
+    }
+    driver = FakeDriver(outputs)
+    run_dir = run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["count_items"],
+        selected_scenarios=[RUNTIME_DAEMON_SCENARIO],
+        output_root=tmp_path,
+        driver=driver,
+        daemon_service_factory=lambda **kwargs: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
+    )
+
+    attempts = sorted((run_dir / "attempts").iterdir())
+    assert len(attempts) == 1
+    assert attempts[0].name.endswith(f"__{RUNTIME_DAEMON_SCENARIO}__r1")
+    assert [call["scenario"] for call in driver.calls] == [RUNTIME_DAEMON_SCENARIO]
 
 
 def test_parse_raw_debug_metrics_treats_daemon_execute_as_db_work(tmp_path):

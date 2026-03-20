@@ -58,6 +58,41 @@ def test_benchmark_run_prints_run_directory(monkeypatch, tmp_path):
     assert str(run_dir) in result.output
 
 
+def test_benchmark_run_passes_selected_scenarios(monkeypatch, tmp_path):
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_run_benchmark_suite_from_cli(**kwargs):
+        captured.update(kwargs)
+        return run_dir
+
+    monkeypatch.setattr(
+        "db_mcp.benchmark.cli.run_benchmark_suite_from_cli",
+        fake_run_benchmark_suite_from_cli,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "run",
+            "--connection",
+            "bench",
+            "--model",
+            "claude-sonnet-4-5-20250929",
+            "--scenario",
+            "runtime_daemon",
+            "--scenario",
+            "db_mcp",
+            "--output-root",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["scenarios"] == ("runtime_daemon", "db_mcp")
+
+
 def test_benchmark_run_prints_progress(monkeypatch, tmp_path):
     run_dir = tmp_path / "run-1"
     run_dir.mkdir()
