@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.0] - 2026-03-25
+
+## Highlights
+- Added the first metric-first semantic runtime centered on `answer_intent(...)`, with typed semantic planning, deterministic metric resolution, connection-bound execution plans, and machine-readable provenance/confidence output.
+- Added approved metric bindings, explicit semantic filters/time context, and executable policy support for rule families like inclusive date windows and safe date literal coercion.
+- Extended the shared semantic engine across shell, code-runtime, CLI, and daemon-facing surfaces while keeping one target connection per request and reusing the existing policy-checked execution path underneath.
+
+## Breaking changes
+- None
+
+## Features
+- Added shared semantic models, planner, resolver, orchestration engine, and the `answer_intent(intent, connection, options?)` northbound tool.
+- Added metric bindings and binding-management tools so logical metrics can execute through reviewed connection-local physical definitions instead of prompt-only SQL generation.
+- Added semantic benchmark support and a benchmark-first semantic importer that can synthesize candidate metrics, bindings, dimensions, and semantic case packs from existing benchmark artifacts and connection knowledge.
+- Added executable semantic policy models and business-rule compilation for supported rule families, including inclusive “period ending on X” windows and binary GB/TB conversion policy.
+- Added semantic runtime exposure to code/runtime surfaces, including daemon prepare-task previews and CLI intent execution.
+
+## Fixes
+- Fixed business-rule parsing so top-level-list `business_rules.yaml` files are recognized consistently across loaders, insights, code runtime, and gap resolution.
+- Fixed semantic usage telemetry so `answer_intent` records `knowledge.files_used` and shows up in context-usage analytics.
+- Fixed context analytics and traces views to read beyond the newest 50 traces, making historical knowledge usage and non-protocol traces visible again.
+- Fixed context tree handling so nested trace directories are no longer mislabeled as empty.
+- Fixed date-window execution in the semantic path for approved metric bindings that rely on inclusive “period ending on X” semantics.
+
+## Security
+- None
+
+## Upgrade notes
+- `answer_intent(...)` is the primary supported semantic-serving path in this release. Legacy prompt-driven `db_mcp` and daemon SQL-writing flows remain available for compatibility and comparison, but they are not semantically equivalent to the new metric runtime.
+- The metric runtime remains one target connection per request. This release does not introduce cross-connection routing or multi-source aggregation.
+- Imported semantics should still be treated as governed artifacts. Candidate generation and bootstrap workflows do not imply automatic promotion into approved serving definitions.
+
+## Known issues
+- The legacy `db_mcp` and `runtime_daemon` prompt-driven paths can still diverge from approved metric definitions on some hard benchmark cases, even when `answer_intent` resolves them correctly.
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `tests/test_database.py::test_connection`.
+- In some local macOS sandboxed environments, Playwright Chromium launch can fail before UI tests execute even after the mocked UI harness is stabilized.
+
 ## [0.7.4] - 2026-03-20
 
 ## Highlights

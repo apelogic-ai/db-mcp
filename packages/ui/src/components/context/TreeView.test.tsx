@@ -68,4 +68,41 @@ describe("TreeView", () => {
     expect(screen.queryByText("2.0KB")).not.toBeInTheDocument();
     expect(screen.queryByText("512B")).not.toBeInTheDocument();
   });
+
+  it("does not label nested trace folders as empty", () => {
+    const connections: ConnectionNode[] = [
+      {
+        name: "analytics",
+        isActive: true,
+        gitEnabled: false,
+        folders: [
+          {
+            name: "traces",
+            path: "traces",
+            isEmpty: false,
+            files: [],
+          },
+        ],
+        rootFiles: [],
+      },
+    ];
+
+    render(
+      <TreeView
+        connections={connections}
+        selectedFile={null}
+        selectedTreeNode={null}
+        expandedConnections={new Set(["analytics"])}
+        expandedFolders={new Set()}
+        onSelectFile={noop}
+        onSelectFolder={noop}
+        onToggleConnection={noop}
+        onToggleFolder={noop}
+        usage={null}
+      />,
+    );
+
+    expect(screen.getByText("traces")).toBeInTheDocument();
+    expect(screen.queryByText("traces (empty)")).not.toBeInTheDocument();
+  });
 });

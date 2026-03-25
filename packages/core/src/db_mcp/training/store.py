@@ -18,6 +18,7 @@ from db_mcp_models import (
     QueryFeedback,
 )
 
+from db_mcp.business_rules import prompt_instructions_from_payload
 from db_mcp.onboarding.state import get_provider_dir
 
 
@@ -377,7 +378,7 @@ def load_instructions(provider_id: str) -> PromptInstructions:
     try:
         with open(instructions_file) as f:
             data = yaml.safe_load(f)
-        return PromptInstructions.model_validate(data)
+        return prompt_instructions_from_payload(provider_id, data)
     except Exception:
         return PromptInstructions(provider_id=provider_id)
 

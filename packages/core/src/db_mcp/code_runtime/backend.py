@@ -11,12 +11,14 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from db_mcp.business_rules import extract_business_rule_texts
 from db_mcp.exec_runtime import ExecRuntimeError, ExecSandboxSpec, ExecSessionManager
 from db_mcp.tools.utils import require_connection, resolve_connection
 
 _CODE_RUNTIME_MODULE = """\
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -32,6 +34,26 @@ def _read_yaml(path: Path):
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text()) or {}
+
+
+def _extract_rule_texts(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if isinstance(value, list):
+        rules = []
+        for item in value:
+            rules.extend(_extract_rule_texts(item))
+        return rules
+    if isinstance(value, dict):
+        if "rules" in value:
+            return _extract_rule_texts(value.get("rules"))
+        for key in ("rule", "rule_text", "text", "description", "summary", "note"):
+            if key in value:
+                return _extract_rule_texts(value.get(key))
+    return []
 
 
 def _camel_case_words(value: str) -> str:
@@ -288,21 +310,12 @@ class DbMcpRuntime:
 
         rules_path = self.workspace / "instructions" / "business_rules.yaml"
         rules_payload = _read_yaml(rules_path)
+        source = str(rules_path.relative_to(self.workspace))
+        for text_value in _extract_rule_texts(rules_payload):
+            entries.append({"source": source, "text": text_value})
         if isinstance(rules_payload, dict):
-            for text_value in rules_payload.get("rules", []) or []:
-                entries.append(
-                    {
-                        "source": str(rules_path.relative_to(self.workspace)),
-                        "text": text_value,
-                    }
-                )
-            for text_value in rules_payload.get("candidate_rules", []) or []:
-                entries.append(
-                    {
-                        "source": str(rules_path.relative_to(self.workspace)),
-                        "text": text_value,
-                    }
-                )
+            for text_value in _extract_rule_texts(rules_payload.get("candidate_rules", [])):
+                entries.append({"source": source, "text": text_value})
 
         learnings_dir = self.workspace / "learnings"
         if learnings_dir.exists():
@@ -348,6 +361,31 @@ class DbMcpRuntime:
             "rules": rules,
             "suggested_sql": suggested_sql,
         }
+
+    def answer_intent(self, intent: str, options: dict | None = None):
+        from db_mcp.orchestrator.engine import preview_answer_intent as _preview_answer_intent
+
+        connection_name = os.environ.get("CONNECTION_NAME") or self.workspace.name
+        payload = _preview_answer_intent(
+            intent=intent,
+            connection=connection_name,
+            provider_id=connection_name,
+            connection_path=self.workspace,
+            options=options,
+        ).model_dump(mode="json")
+        if payload.get("status") != "ready":
+            return payload
+
+        resolved_plan = payload.get("resolved_plan") or {}
+        rows = self.query(str(resolved_plan.get("sql") or ""))
+        payload["status"] = "success"
+        payload["records"] = rows
+        payload["answer"] = (
+            f"Executed metric '{resolved_plan.get('metric_name')}' on connection "
+            f"'{connection_name}' and returned {len(rows)} "
+            f"{'row' if len(rows) == 1 else 'rows'}."
+        )
+        return payload
 
     def domain_model(self) -> str:
         return self.read_text("domain/model.md")
@@ -450,7 +488,8 @@ _DISCOVERY_CALL_RE = re.compile(
     r"find_columns|relevant_examples|relevant_rules|plan|domain_model|sql_rules"
     r")\s*\("
 )
-_QUERY_CALL_RE = re.compile(r"dbmcp\.(?:query|scalar|execute)\s*\(")
+_SEMANTIC_QUERY_CALL_RE = re.compile(r"dbmcp\.answer_intent\s*\(")
+_QUERY_CALL_RE = re.compile(r"dbmcp\.(?:query|scalar|execute|answer_intent)\s*\(")
 _FINALIZE_CALL_RE = re.compile(r"dbmcp\.finalize_answer\s*\(")
 _PHASE_PROTOCOL_UNREAD = "protocol_unread"
 _PHASE_SCHEMA_RESOLUTION = "schema_resolution"
@@ -752,22 +791,15 @@ class HostDbMcpRuntime:
         entries: list[dict[str, str]] = []
         rules_path = self.connection_path / "instructions" / "business_rules.yaml"
         rules_payload = _read_yaml_file(rules_path)
+        source = str(rules_path.relative_to(self.connection_path))
+        for text_value in extract_business_rule_texts(rules_payload):
+            entries.append({"source": source, "text": str(text_value)})
         if isinstance(rules_payload, dict):
-            source = str(rules_path.relative_to(self.connection_path))
-            for text_value in rules_payload.get("rules", []) or []:
-                entries.append(
-                    {
-                        "source": source,
-                        "text": str(text_value),
-                    }
-                )
-            for text_value in rules_payload.get("candidate_rules", []) or []:
-                entries.append(
-                    {
-                        "source": source,
-                        "text": str(text_value),
-                    }
-                )
+            candidate_texts = extract_business_rule_texts(
+                rules_payload.get("candidate_rules", [])
+            )
+            for text_value in candidate_texts:
+                entries.append({"source": source, "text": str(text_value)})
         learnings_dir = self.connection_path / "learnings"
         if learnings_dir.exists():
             for path in sorted(learnings_dir.glob("*.md")):
@@ -818,6 +850,34 @@ class HostDbMcpRuntime:
             "rules": rules,
             "suggested_sql": suggested_sql,
         }
+
+    def answer_intent(
+        self,
+        intent: str,
+        options: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        from db_mcp.orchestrator.engine import preview_answer_intent as _preview_answer_intent
+
+        payload = _preview_answer_intent(
+            intent=intent,
+            connection=self.connection,
+            provider_id=self.connection,
+            connection_path=self.connection_path,
+            options=options,
+        ).model_dump(mode="json")
+        if payload.get("status") != "ready":
+            return payload
+
+        resolved_plan = payload.get("resolved_plan") or {}
+        rows = self.query(str(resolved_plan.get("sql") or ""))
+        payload["status"] = "success"
+        payload["records"] = rows
+        payload["answer"] = (
+            f"Executed metric '{resolved_plan.get('metric_name')}' on connection "
+            f"'{self.connection}' and returned {len(rows)} "
+            f"{'row' if len(rows) == 1 else 'rows'}."
+        )
+        return payload
 
     def domain_model(self) -> str:
         return self.read_text("domain/model.md")
@@ -962,6 +1022,10 @@ def _has_discovery_calls(code: str) -> bool:
 
 def _has_query_calls(code: str) -> bool:
     return bool(_QUERY_CALL_RE.search(code))
+
+
+def _has_semantic_query_calls(code: str) -> bool:
+    return bool(_SEMANTIC_QUERY_CALL_RE.search(code))
 
 
 def _has_finalize_calls(code: str) -> bool:
@@ -1111,11 +1175,17 @@ def _gate_runtime_flow(session: CodeSession, code: str) -> CodeResult | None:
     phase = _current_phase(session, code)
     has_discovery = _has_discovery_calls(code)
     has_query = _has_query_calls(code)
+    has_semantic_query = _has_semantic_query_calls(code)
     has_finalize = _has_finalize_calls(code)
 
     if phase == _PHASE_PROTOCOL_UNREAD and not _is_protocol_read_code(code):
         return _protocol_gate_result()
-    if phase == _PHASE_SCHEMA_RESOLUTION and has_query and not has_discovery:
+    if (
+        phase == _PHASE_SCHEMA_RESOLUTION
+        and has_query
+        and not has_discovery
+        and not has_semantic_query
+    ):
         return _schema_gate_result()
     if phase in {_PHASE_SCHEMA_RESOLUTION, _PHASE_QUERY_READY} and has_finalize and not has_query:
         return _finalize_gate_result()

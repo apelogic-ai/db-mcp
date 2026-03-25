@@ -45,7 +45,10 @@ class Metric(BaseModel):
     name: str = Field(..., description="Metric identifier (e.g., 'daily_active_users')")
     display_name: str | None = Field(default=None, description="Human-readable name")
     description: str = Field(..., description="What this metric measures")
-    sql: str = Field(..., description="SQL template with {parameter} placeholders")
+    sql: str = Field(
+        default="",
+        description="Legacy SQL template with {parameter} placeholders",
+    )
     tables: list[str] = Field(default_factory=list, description="Tables used by this metric")
     parameters: list[MetricParameter] = Field(
         default_factory=list, description="SQL template parameters"
@@ -123,6 +126,55 @@ class MetricsCatalog(BaseModel):
             ):
                 results.append(m)
         return results
+
+
+class MetricDimensionBinding(BaseModel):
+    """Physical projection rules for one metric/dimension pairing."""
+
+    dimension_name: str = Field(..., description="Logical dimension identifier")
+    projection_sql: str = Field(..., description="SQL expression projected into the result set")
+    filter_sql: str | None = Field(
+        default=None,
+        description="SQL expression used for WHERE filters. Defaults to projection_sql.",
+    )
+    group_by_sql: str | None = Field(
+        default=None,
+        description="SQL expression used in GROUP BY. Defaults to projection_sql when omitted.",
+    )
+    tables: list[str] = Field(
+        default_factory=list,
+        description="Physical tables touched by this bound dimension projection",
+    )
+
+
+class MetricBinding(BaseModel):
+    """Connection-specific physical execution binding for one logical metric."""
+
+    metric_name: str = Field(..., description="Logical metric identifier")
+    sql: str = Field(..., description="Connection-bound SQL template for this metric")
+    tables: list[str] = Field(
+        default_factory=list,
+        description="Physical tables touched by this bound metric execution",
+    )
+    dimensions: dict[str, MetricDimensionBinding] = Field(
+        default_factory=dict,
+        description="Allowed bound dimension projections for this metric",
+    )
+
+
+class MetricBindingsCatalog(BaseModel):
+    """Collection of connection-specific metric bindings (metrics/bindings.yaml)."""
+
+    version: str = Field(default="1.0.0", description="Catalog version")
+    provider_id: str = Field(..., description="Connection/provider identifier")
+    bindings: dict[str, MetricBinding] = Field(
+        default_factory=dict,
+        description="Metric name -> physical binding",
+    )
+
+    def get_binding(self, metric_name: str) -> MetricBinding | None:
+        """Get a metric binding by metric name."""
+        return self.bindings.get(metric_name)
 
 
 # =============================================================================

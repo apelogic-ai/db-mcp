@@ -340,9 +340,10 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
             client,
             "metrics_add",
             {
-                "type": "dimension",
-                "name": "x",
-                "description": "Test dimension",
+                "type": "metric",
+                "name": "revenue",
+                "description": "Test revenue metric",
+                "sql": "SELECT COUNT(*) AS revenue FROM t",
                 "connection": connection,
             },
         )
@@ -352,9 +353,34 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         calls["metrics_remove"] = await _call(
             client, "metrics_remove", {"type": "dimension", "name": "x", "connection": connection}
         )
+        calls["metrics_bindings_list"] = await _call(
+            client, "metrics_bindings_list", {"connection": connection}
+        )
+        calls["metrics_bindings_validate"] = await _call(
+            client,
+            "metrics_bindings_validate",
+            {
+                "connection": connection,
+                "metric_name": "revenue",
+                "sql": "SELECT COUNT(*) AS revenue FROM t",
+            },
+        )
+        calls["metrics_bindings_set"] = await _call(
+            client,
+            "metrics_bindings_set",
+            {
+                "connection": connection,
+                "metric_name": "revenue",
+                "sql": "SELECT COUNT(*) AS revenue FROM t",
+                "tables": ["t"],
+            },
+        )
 
         calls["get_data"] = await _call(
             client, "get_data", {"intent": "show all rows from table t", "connection": connection}
+        )
+        calls["answer_intent"] = await _call(
+            client, "answer_intent", {"intent": "show revenue", "connection": connection}
         )
         calls["test_elicitation"] = await _call(client, "test_elicitation", {})
         calls["test_sampling"] = await _call(client, "test_sampling", {})

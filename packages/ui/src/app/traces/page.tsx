@@ -81,7 +81,7 @@ export default function TracesPage() {
 
   const fetchHistorical = useCallback(async (date: string) => {
     try {
-      const result = await listTraces("historical", date);
+      const result = await listTraces("historical", date, 500);
       if (result.success) {
         setHistoricalByDate((prev) => ({
           ...prev,

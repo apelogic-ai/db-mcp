@@ -15,3 +15,13 @@ Run against the playground connection with:
 db-mcp-benchmark preflight --connection playground
 db-mcp-benchmark run --connection playground --model <exact-claude-model-id>
 ```
+
+For the semantic metric-first slice, run the dedicated pack and scenario:
+
+```bash
+db-mcp-benchmark run \
+  --connection playground \
+  --case-pack cases_semantic.yaml \
+  --scenario answer_intent \
+  --model <exact-claude-model-id>
+```

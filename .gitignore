@@ -53,3 +53,7 @@ demo.db
 node_modules/
 
 .claude/
+
+# Local benchmark artifacts
+packages/core/benchmark_runs/
+packages/core/benchmark_runs_current/

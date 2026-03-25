@@ -148,7 +148,15 @@ def score_case(
 
     if case.comparison == "rowset_unordered":
         expected = _rows_as_canonical_set(expected_rows, ops)
-        actual_rows = answer_value if isinstance(answer_value, list) else []
+        answer_rows = answer_payload.get("answer_rows")
+        if isinstance(answer_rows, list):
+            actual_rows = answer_rows
+        elif isinstance(answer_value, list):
+            actual_rows = answer_value
+        elif isinstance(answer_value, dict):
+            actual_rows = [answer_value]
+        else:
+            actual_rows = []
         actual = _rows_as_canonical_set(actual_rows, ops)
         return ScoreResult(
             case_id=case.id,

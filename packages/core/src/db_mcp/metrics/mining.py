@@ -19,6 +19,8 @@ from db_mcp_models.metrics import (
     MetricCandidate,
 )
 
+from db_mcp.business_rules import extract_business_rule_texts
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,9 +57,7 @@ def _load_rules(connection_path: Path) -> list[str]:
     try:
         with open(rules_file) as f:
             data = yaml.safe_load(f)
-        if data and isinstance(data, dict):
-            rules = data.get("rules", [])
-            return [r for r in rules if isinstance(r, str)]
+        return extract_business_rule_texts(data)
     except Exception:
         return []
     return []

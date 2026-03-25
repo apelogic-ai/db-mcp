@@ -41,7 +41,14 @@ def _infer_category(name: str) -> str:
         return "code"
     if name in {"dismiss_insight", "mark_insights_processed"} or name.startswith("mcp_"):
         return "insights"
-    if name in {"run_sql", "validate_sql", "get_result", "get_data", "export_results"}:
+    if name in {
+        "answer_intent",
+        "run_sql",
+        "validate_sql",
+        "get_result",
+        "get_data",
+        "export_results",
+    }:
         return "query"
     if name.startswith("list_") or name in {
         "describe_table",

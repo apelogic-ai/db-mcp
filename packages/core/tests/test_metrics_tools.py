@@ -3,10 +3,14 @@
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from db_mcp.tools.metrics import (
     _metrics_add,
     _metrics_approve,
+    _metrics_bindings_list,
+    _metrics_bindings_set,
+    _metrics_bindings_validate,
     _metrics_discover,
     _metrics_list,
     _metrics_remove,
@@ -79,6 +83,127 @@ class TestMetricsList:
         assert result["dimensions"][0]["name"] == "carrier"
         assert result["dimensions"][0]["type"] == "categorical"
 
+    @pytest.mark.asyncio
+    async def test_metrics_list_surfaces_binding_coverage(self, conn_path):
+        await _metrics_add(
+            type="metric",
+            name="dau",
+            description="Daily active users",
+            sql="SELECT COUNT(DISTINCT user_id) FROM sessions",
+            connection=CONNECTION,
+        )
+        bindings_path = conn_path / "metrics" / "bindings.yaml"
+        bindings_path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": "1.0.0",
+                    "provider_id": CONNECTION,
+                    "bindings": {
+                        "dau": {
+                            "sql": (
+                                "SELECT COUNT(DISTINCT session_user_id) "
+                                "AS dau FROM session_facts"
+                            ),
+                            "tables": ["session_facts"],
+                        }
+                    },
+                },
+                sort_keys=False,
+            )
+        )
+
+        result = await _metrics_list(connection=CONNECTION)
+
+        assert result["metrics"][0]["name"] == "dau"
+        assert result["metrics"][0]["has_binding"] is True
+        assert result["metrics"][0]["binding_dimensions"] == []
+
+
+class TestMetricBindings:
+    @pytest.mark.asyncio
+    async def test_bindings_list_empty(self, conn_path):
+        result = await _metrics_bindings_list(connection=CONNECTION)
+        assert result["bindings"] == []
+        assert "0 binding(s)" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_bindings_set_and_list(self, conn_path):
+        await _metrics_add(
+            type="metric",
+            name="revenue",
+            description="Total revenue",
+            sql="",
+            dimensions=["region"],
+            connection=CONNECTION,
+        )
+        await _metrics_add(
+            type="dimension",
+            name="region",
+            column="orders.region",
+            connection=CONNECTION,
+        )
+
+        result = await _metrics_bindings_set(
+            connection=CONNECTION,
+            metric_name="revenue",
+            sql="SELECT SUM(amount) AS revenue FROM orders",
+            tables=["orders"],
+            dimensions=[
+                {
+                    "dimension_name": "region",
+                    "projection_sql": "orders.region",
+                    "group_by_sql": "orders.region",
+                    "tables": ["orders"],
+                }
+            ],
+        )
+
+        assert result["saved"] is True
+        assert result["binding"]["metric_name"] == "revenue"
+        assert result["validation"]["valid"] is True
+
+        listed = await _metrics_bindings_list(connection=CONNECTION)
+        assert listed["bindings"][0]["metric_name"] == "revenue"
+        assert listed["bindings"][0]["dimensions"][0]["dimension_name"] == "region"
+
+    @pytest.mark.asyncio
+    async def test_bindings_validate_reports_unknown_metric(self, conn_path):
+        result = await _metrics_bindings_validate(
+            connection=CONNECTION,
+            metric_name="missing_metric",
+            sql="SELECT 1",
+        )
+
+        assert result["valid"] is False
+        assert "not found" in result["errors"][0]
+
+    @pytest.mark.asyncio
+    async def test_bindings_set_rejects_unknown_dimension(self, conn_path):
+        await _metrics_add(
+            type="metric",
+            name="revenue",
+            description="Total revenue",
+            sql="",
+            dimensions=["region"],
+            connection=CONNECTION,
+        )
+
+        result = await _metrics_bindings_set(
+            connection=CONNECTION,
+            metric_name="revenue",
+            sql="SELECT SUM(amount) AS revenue FROM orders",
+            tables=["orders"],
+            dimensions=[
+                {
+                    "dimension_name": "missing_dimension",
+                    "projection_sql": "orders.region",
+                }
+            ],
+        )
+
+        assert result["saved"] is False
+        assert result["validation"]["valid"] is False
+
 
 class TestMetricsAdd:
     @pytest.mark.asyncio
@@ -105,6 +230,17 @@ class TestMetricsAdd:
         )
         assert result.get("added") is False
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_add_metric_allows_logical_definition_without_sql(self, conn_path):
+        result = await _metrics_add(
+            type="metric",
+            name="logical_revenue",
+            description="Total revenue",
+            sql="",
+            connection=CONNECTION,
+        )
+        assert result["added"] is True
 
     @pytest.mark.asyncio
     async def test_add_dimension(self, conn_path):

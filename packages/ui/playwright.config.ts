@@ -33,7 +33,11 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: `DISABLE_BICP_PROXY=1 bun run dev --port ${port}`,
+    // Keep mocked UI E2E on Next, but force polling so large worktrees do not
+    // exhaust Watchpack file handles and cause transient 404s during tests.
+    command:
+      `WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=1 DISABLE_BICP_PROXY=1 ` +
+      `bun run dev --port ${port}`,
     url: `http://localhost:${port}`,
     reuseExistingServer: false,
   },

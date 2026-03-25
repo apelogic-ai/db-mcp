@@ -31,6 +31,7 @@ from db_mcp.code_runtime.native_adapter import CodeRuntimeNativeAdapter
 from db_mcp.traces import get_user_id_from_config
 
 DB_MCP_SCENARIO = "db_mcp"
+ANSWER_INTENT_SCENARIO = "answer_intent"
 EXEC_ONLY_SCENARIO = "exec_only"
 CODE_MODE_SCENARIO = "code_mode"
 RUNTIME_DAEMON_SCENARIO = "runtime_daemon"
@@ -39,6 +40,7 @@ RUNTIME_NATIVE_SCENARIO = "runtime_native"
 RAW_DSN_SCENARIO = "raw_dsn"
 SCENARIOS = [
     DB_MCP_SCENARIO,
+    ANSWER_INTENT_SCENARIO,
     EXEC_ONLY_SCENARIO,
     CODE_MODE_SCENARIO,
     RUNTIME_DAEMON_SCENARIO,
@@ -47,6 +49,7 @@ SCENARIOS = [
     RAW_DSN_SCENARIO,
 ]
 DEFAULT_TOOLS = ["Read", "Bash"]
+ANSWER_INTENT_TOOLS = [""]
 EXEC_ONLY_TOOLS = [""]
 CODE_MODE_TOOLS = [""]
 RUNTIME_DAEMON_TOOLS = [""]
@@ -173,13 +176,34 @@ def _build_prompt(
     base = (
         "You are running a benchmark case. "
         "You may take as many tool or shell actions as needed before returning a final answer. "
-        "Return only JSON matching the provided schema.\n\n"
+        "Return only JSON matching the provided schema. "
+        'For grouped or tabular answers, populate `"answer_rows"` with the exact list of row '
+        "objects instead of collapsing everything into a scalar.\n\n"
         f"Task ID: {case.id}\n"
         f"Question: {case.prompt}\n"
     )
     if scenario == DB_MCP_SCENARIO:
         return base + (
             "\nUse the available db-mcp tools and any built-in tools if helpful. "
+            "Do not ask for clarification; produce your best answer."
+        )
+    if scenario == ANSWER_INTENT_SCENARIO:
+        options_block = ""
+        if getattr(case, "answer_intent_options", None):
+            options_block = (
+                "\nUse these exact options for the tool call:\n"
+                f"{json.dumps(case.answer_intent_options, indent=2)}\n"
+            )
+        return base + (
+            "\nCall `answer_intent(` exactly once as your primary execution path.\n"
+            f'Use `answer_intent(intent="{case.prompt}", connection="{connection_name}"'
+            + (", options=<the JSON block below>)`." if options_block else ")`.")
+            + options_block
+            + "Use the returned records, provenance, confidence, and resolved plan directly.\n"
+            'If the tool returns multiple records, copy them into `"answer_rows"` in your '
+            "final JSON.\n"
+            "Do not write SQL yourself.\n"
+            "Do not rely on any built-in tools.\n"
             "Do not ask for clarification; produce your best answer."
         )
     if scenario == EXEC_ONLY_SCENARIO:
@@ -406,6 +430,13 @@ def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
             text,
         )
     )
+    answer_intent_calls = len(
+        re.findall(
+            r'(?:tool_name"?\s*[:=]\s*"?(?:mcp__[^"\n]*__)?answer_intent\"?|'
+            r"executePreToolHooks called for tool: mcp__db-mcp__answer_intent)",
+            text,
+        )
+    )
     return {
         "exploratory_steps": (
             bash_calls
@@ -413,9 +444,10 @@ def _parse_raw_debug_metrics(debug_log_path: Path) -> dict[str, int]:
             + exec_calls
             + code_calls
             + daemon_task_calls
+            + answer_intent_calls
         ),
         "failed_executions": failures,
-        "db_executions": db_exec,
+        "db_executions": db_exec + answer_intent_calls,
     }
 
 
@@ -852,6 +884,8 @@ def _daemon_service_context(
 
 
 def _tools_for_scenario(scenario: str) -> list[str]:
+    if scenario == ANSWER_INTENT_SCENARIO:
+        return ANSWER_INTENT_TOOLS
     if scenario == EXEC_ONLY_SCENARIO:
         return EXEC_ONLY_TOOLS
     if scenario == CODE_MODE_SCENARIO:
@@ -884,7 +918,14 @@ def _collect_db_mcp_metrics(
     exploratory = 0
     failures = 0
     db_exec = 0
-    sql_tools = {"run_sql", "get_result", "validate_sql", "get_data", "export_results"}
+    sql_tools = {
+        "run_sql",
+        "get_result",
+        "validate_sql",
+        "get_data",
+        "export_results",
+        "answer_intent",
+    }
     for path in candidate_files:
         for line in path.read_text().splitlines():
             if not line.strip():
@@ -982,6 +1023,19 @@ def _extract_answer_payload(raw_stdout: str) -> dict[str, Any]:
     if isinstance(payload, dict) and isinstance(payload.get("structured_output"), dict):
         return payload["structured_output"]
     return payload
+
+
+def _coerce_answer_rows(answer_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    answer_rows = answer_payload.get("answer_rows")
+    if isinstance(answer_rows, list) and all(isinstance(row, dict) for row in answer_rows):
+        return answer_rows
+
+    answer_value = answer_payload.get("answer_value")
+    if isinstance(answer_value, list) and all(isinstance(row, dict) for row in answer_value):
+        return answer_value
+    if isinstance(answer_value, dict):
+        return [answer_value]
+    return []
 
 
 def _resolve_script_string(expr: ast.AST, symbols: dict[str, str]) -> str | None:
@@ -1083,6 +1137,7 @@ def _recover_runtime_answer_payload(
             "task_id": template.get("task_id") or attempt_dir.name.split("__", 1)[0],
             "status": template.get("status") or "answered",
             "answer_value": answer_value,
+            "answer_rows": rows if isinstance(rows, list) else [],
             "answer_text": answer_text,
             "evidence_sql": evidence_sql,
             "confidence": template.get("confidence"),
@@ -1127,6 +1182,31 @@ def _extract_answer_payload_with_recovery(
     return payload
 
 
+def _enrich_answer_payload(
+    case: Any,
+    answer_payload: dict[str, Any],
+    *,
+    connector: Any,
+) -> dict[str, Any]:
+    enriched = dict(answer_payload)
+    answer_rows = _coerce_answer_rows(enriched)
+    if answer_rows:
+        enriched["answer_rows"] = answer_rows
+        return enriched
+
+    if getattr(case, "comparison", None) != "rowset_unordered":
+        return enriched
+
+    evidence_sql = enriched.get("evidence_sql")
+    if not isinstance(evidence_sql, str) or not evidence_sql.strip():
+        return enriched
+
+    rows = connector.execute_sql(evidence_sql)
+    if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+        enriched["answer_rows"] = rows
+    return enriched
+
+
 def _materialize_output_root(output_root: Path, connection_name: str) -> Path:
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = output_root / f"{connection_name}-{timestamp}"
@@ -1144,6 +1224,7 @@ def _runtime_failure_answer(case_id: str, reason: str) -> dict[str, Any]:
         "task_id": case_id,
         "status": "failed",
         "answer_value": None,
+        "answer_rows": [],
         "answer_text": "",
         "evidence_sql": None,
         "confidence": None,
@@ -1414,7 +1495,7 @@ def run_benchmark_suite(
                 attempt_dir.mkdir(parents=True, exist_ok=True)
 
                 mcp_config_path = attempt_dir / "mcp-config.json"
-                if scenario == DB_MCP_SCENARIO:
+                if scenario in {DB_MCP_SCENARIO, ANSWER_INTENT_SCENARIO}:
                     _build_db_mcp_config(
                         mcp_config_path,
                         connection_name=connection_name,
@@ -1571,6 +1652,11 @@ def run_benchmark_suite(
                         attempt_dir=attempt_dir,
                         connector=access.connector,
                     )
+                    answer_payload = _enrich_answer_payload(
+                        case,
+                        answer_payload,
+                        connector=access.connector,
+                    )
                     answer = BenchmarkAnswer.model_validate(answer_payload)
                     answer_payload = answer.model_dump()
                 except Exception as exc:
@@ -1593,7 +1679,7 @@ def run_benchmark_suite(
 
                 expected_rows = execute_gold_sql(access.connector, case)
                 score = score_case(case, expected_rows, answer_payload)
-                if scenario == DB_MCP_SCENARIO:
+                if scenario in {DB_MCP_SCENARIO, ANSWER_INTENT_SCENARIO}:
                     metrics = _collect_db_mcp_metrics(
                         connection_path,
                         session_id=session_id,

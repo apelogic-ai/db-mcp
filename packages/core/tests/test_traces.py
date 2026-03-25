@@ -211,6 +211,16 @@ class TestReadTracesFromJsonl:
         traces = read_traces_from_jsonl(f, limit=3)
         assert len(traces) == 3
 
+    def test_returns_all_traces_when_limit_is_none(self, tmp_path):
+        f = tmp_path / "test.jsonl"
+        lines = []
+        for i in range(10):
+            lines.append(_make_span(trace_id=f"t{i}", span_id=f"s{i}"))
+        f.write_text("\n".join(lines) + "\n")
+
+        traces = read_traces_from_jsonl(f, limit=None)
+        assert len(traces) == 10
+
     def test_returns_empty_for_nonexistent_file(self, tmp_path):
         f = tmp_path / "nonexistent.jsonl"
         assert read_traces_from_jsonl(f) == []

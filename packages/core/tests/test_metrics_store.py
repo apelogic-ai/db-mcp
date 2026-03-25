@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from db_mcp.config import reset_settings
+
 
 @pytest.fixture
 def temp_provider(monkeypatch):
@@ -21,6 +23,22 @@ def temp_provider(monkeypatch):
         )
 
         yield "test-conn", conn_path
+
+
+@pytest.fixture
+def env_provider(tmp_path, monkeypatch):
+    """Create a temporary connection directory using CONNECTIONS_DIR resolution."""
+    connections_dir = tmp_path / "connections"
+    conn_path = connections_dir / "env-conn"
+    conn_path.mkdir(parents=True)
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
+    monkeypatch.setenv("CONNECTION_NAME", "env-conn")
+    reset_settings()
+
+    yield "env-conn", conn_path
+
+    reset_settings()
 
 
 class TestMetricsCRUD:
@@ -139,6 +157,50 @@ class TestMetricsCRUD:
             data = yaml.safe_load(f)
 
         assert data["metrics"][0]["dimensions"] == ["time", "region"]
+
+    def test_metric_without_sql_round_trips_without_sql_key(self, temp_provider):
+        """Logical metrics may omit embedded SQL when bindings own execution."""
+        from db_mcp.metrics.store import add_metric, get_catalog_file_path, load_metrics
+
+        provider_id, _ = temp_provider
+
+        result = add_metric(
+            provider_id=provider_id,
+            name="bookings",
+            description="Total bookings",
+            sql="",
+            dimensions=["region"],
+        )
+
+        assert result["added"] is True
+
+        catalog = load_metrics(provider_id)
+        metric = catalog.get_metric("bookings")
+        assert metric is not None
+        assert metric.sql == ""
+
+        catalog_file = get_catalog_file_path(provider_id)
+        with open(catalog_file) as f:
+            data = yaml.safe_load(f)
+
+        assert "sql" not in data["metrics"][0]
+
+    def test_metrics_store_uses_connections_dir_environment(self, env_provider):
+        """Metrics persistence should follow active CONNECTIONS_DIR, not only ~/.db-mcp."""
+        from db_mcp.metrics.store import add_metric, get_catalog_file_path, load_metrics
+
+        provider_id, conn_path = env_provider
+
+        result = add_metric(
+            provider_id=provider_id,
+            name="invoice_revenue",
+            description="Invoice revenue",
+            sql="",
+        )
+
+        assert result["added"] is True
+        assert get_catalog_file_path(provider_id) == conn_path / "metrics" / "catalog.yaml"
+        assert load_metrics(provider_id).get_metric("invoice_revenue") is not None
 
 
 class TestDimensionsCRUD:

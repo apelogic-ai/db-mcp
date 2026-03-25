@@ -12,6 +12,8 @@ from pathlib import Path
 import yaml
 from db_mcp_models import GapSource, GapStatus, KnowledgeGap, KnowledgeGaps
 
+from db_mcp.business_rules import extract_business_rule_texts
+
 logger = logging.getLogger(__name__)
 
 
@@ -269,8 +271,8 @@ def auto_resolve_gaps(provider_id: str) -> int:
     try:
         with open(rules_file) as f:
             data = yaml.safe_load(f) or {}
-        rules = data.get("rules", [])
-        if not rules or not isinstance(rules, list):
+        rules = extract_business_rule_texts(data)
+        if not rules:
             return 0
     except Exception:
         return 0

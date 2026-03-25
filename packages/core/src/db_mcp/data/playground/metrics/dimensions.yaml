@@ -1,0 +1,10 @@
+version: 1.0.0
+provider_id: playground
+dimensions:
+  - name: billing_country
+    display_name: Billing Country
+    description: Billing country recorded on invoices.
+    type: geographic
+    column: Invoice.BillingCountry
+    tables:
+      - Invoice

@@ -30,7 +30,6 @@ from db_mcp.cli.git_ops import (
 from db_mcp.cli.init_flow import _init_brownfield, _init_greenfield
 from db_mcp.cli.utils import (
     CONFIG_FILE,
-    CONNECTIONS_DIR,
     console,
     load_claude_desktop_config,
     load_config,
@@ -43,6 +42,41 @@ from db_mcp.connectors import (
 )
 from db_mcp.execution import ExecutionRequest, ExecutionState
 from db_mcp.execution.engine import get_execution_engine
+
+
+def _resolve_preconfigured_connection_path(
+    connection_name: str,
+) -> tuple[Path, Path]:
+    """Prefer benchmark/injected connection env over CLI-global home paths."""
+    configured_path = os.environ.get("CONNECTION_PATH", "").strip()
+    if configured_path:
+        path = Path(configured_path).expanduser()
+        if path.name == connection_name:
+            return path, path.parent
+
+    configured_dir = os.environ.get("CONNECTIONS_DIR", "").strip()
+    if configured_dir:
+        directory = Path(configured_dir).expanduser()
+        return directory / connection_name, directory
+
+    path = get_connection_path(connection_name)
+    return path, path.parent
+
+
+def _load_connection_env_from_path(connection_path: Path) -> dict[str, str]:
+    """Load environment variables from a concrete connection directory."""
+    env_file = connection_path / ".env"
+    if not env_file.exists():
+        return {}
+
+    env_vars: dict[str, str] = {}
+    with open(env_file) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                env_vars[key] = value.strip().strip("\"'")
+    return env_vars
 
 
 def _get_git_remote_url(path: Path) -> str | None:
@@ -179,10 +213,12 @@ def start(connection: str | None, mode: str | None):
 
     # Determine connection name
     conn_name = connection or config.get("active_connection", "default")
-    connection_path = get_connection_path(conn_name)
+    connection_path, connections_dir = _resolve_preconfigured_connection_path(conn_name)
 
     # Load DATABASE_URL from connection's .env file
-    conn_env = _load_connection_env(conn_name)
+    conn_env = _load_connection_env_from_path(connection_path)
+    if not conn_env and connection_path == get_connection_path(conn_name):
+        conn_env = _load_connection_env(conn_name)
     database_url = conn_env.get("DATABASE_URL", "")
 
     # Fallback to global config for backward compatibility
@@ -199,7 +235,7 @@ def start(connection: str | None, mode: str | None):
 
     # Legacy env vars for backward compatibility
     os.environ["PROVIDER_ID"] = conn_name
-    os.environ["CONNECTIONS_DIR"] = str(CONNECTIONS_DIR)
+    os.environ["CONNECTIONS_DIR"] = str(connections_dir)
 
     # Ensure connection directory exists
     connection_path.mkdir(parents=True, exist_ok=True)
