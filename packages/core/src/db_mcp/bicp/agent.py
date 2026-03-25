@@ -734,13 +734,14 @@ class DBMCPAgent(BICPAgent):
                     if api_title:
                         dialect = api_title
                     elif base_url:
-                        # Extract domain name as display name (e.g., "api.dune.com" -> "Dune API")
+                        # Extract domain name as display name
+                        # (e.g., "api.vendor.com" -> "Vendor API")
                         try:
                             from urllib.parse import urlparse
 
                             parsed = urlparse(base_url)
                             domain = parsed.netloc or parsed.path
-                            # Extract main domain part (e.g., "dune" from "api.dune.com")
+                            # Extract the main domain part (e.g., "vendor" from "api.vendor.com")
                             parts = domain.replace("www.", "").split(".")
                             if len(parts) >= 2:
                                 main_part = (

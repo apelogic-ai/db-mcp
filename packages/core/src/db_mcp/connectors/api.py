@@ -77,6 +77,7 @@ class APIEndpointConfig:
     method: str = "GET"
     query_params: list[APIQueryParamConfig] = field(default_factory=list)
     body_mode: str = "query"  # query | json
+    body_template: dict[str, Any] | None = None
     response_mode: str = "data"  # data | raw
     sql_field: str = "sql"  # Field name for SQL in execute_sql endpoints
 
@@ -98,9 +99,10 @@ class APIPaginationConfig:
 class APIAuthConfig:
     """Authentication configuration."""
 
-    type: str = "bearer"  # none | bearer | header | query_param | basic | jwt_login
+    type: str = "bearer"  # none | bearer | header | query_param | basic | login | jwt_login
     token_env: str = ""  # env var name for the token (always resolved as env var name)
     header_name: str = "Authorization"
+    token_prefix: str = "Bearer "
     param_name: str = "api_key"
     # jwt_login fields (canonical names)
     login_endpoint: str = ""
@@ -191,6 +193,8 @@ class APIConnector(FileConnector):
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._env_path = env_path
         self._jwt_token: str | None = None
+        self._jwt_expires: float = 0.0
+        self._schema_cache: list[dict[str, Any]] | None = None
 
         # Build FileConnectorConfig pointing to the data directory
         file_config = FileConnectorConfig(directory=str(self._data_dir))
@@ -247,10 +251,12 @@ class APIConnector(FileConnector):
         if auth_type == "none":
             return {}
 
-        if auth_type == "jwt_login":
+        if auth_type in {"jwt_login", "login"}:
             if self._jwt_token is None:
                 self._jwt_login()
-            return {"Authorization": f"Bearer {self._jwt_token}"}
+            token_prefix = self.api_config.auth.token_prefix
+            token = f"{token_prefix}{self._jwt_token}" if token_prefix else self._jwt_token
+            return {self.api_config.auth.header_name: token}
 
         if auth_type == "basic":
             username, password = self._resolve_basic_credentials()
@@ -664,6 +670,61 @@ class APIConnector(FileConnector):
             for row in rows:
                 f.write(json.dumps(row, default=str) + "\n")
 
+    @staticmethod
+    def _get_nested_value(payload: Any, path: str) -> Any:
+        """Resolve a dotted field path from a nested JSON-like payload."""
+        if not path:
+            return None
+
+        value = payload
+        for part in path.split("."):
+            if not isinstance(value, dict):
+                return None
+            value = value.get(part)
+        return value
+
+    @staticmethod
+    def _normalize_column_names(columns: list[Any]) -> list[str]:
+        """Normalize column descriptors into a list of output field names."""
+        names: list[str] = []
+        for column in columns:
+            if isinstance(column, dict):
+                names.append(str(column.get("name") or column.get("field") or ""))
+            else:
+                names.append(str(column))
+        return names
+
+    @classmethod
+    def _rows_from_columnar_payload(
+        cls,
+        columns: Any,
+        rows_data: Any,
+    ) -> list[dict[str, Any]]:
+        """Convert column names plus row arrays into row dicts."""
+        if not isinstance(columns, list) or not isinstance(rows_data, list):
+            return []
+        if not rows_data or not isinstance(rows_data[0], list):
+            return []
+
+        names = cls._normalize_column_names(columns)
+        return [dict(zip(names, row)) for row in rows_data]
+
+    @classmethod
+    def _render_template_value(cls, value: Any, context: dict[str, Any]) -> Any:
+        """Recursively render ``{{key}}`` placeholders inside a JSON-compatible value."""
+        if isinstance(value, str):
+            rendered = value
+            for key, replacement in context.items():
+                rendered = rendered.replace(f"{{{{{key}}}}}", str(replacement))
+            return rendered
+        if isinstance(value, list):
+            return [cls._render_template_value(item, context) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: cls._render_template_value(item, context) for key, item in value.items()
+            }
+        return value
+
     def _extract_response_rows(
         self,
         response: Any,
@@ -677,7 +738,7 @@ class APIConnector(FileConnector):
 
         data_field = pagination.data_field if pagination else ""
         if data_field:
-            value = response.get(data_field)
+            value = self._get_nested_value(response, data_field)
             if isinstance(value, list):
                 return value
 
@@ -865,20 +926,15 @@ class APIConnector(FileConnector):
         query_params: dict[str, str] | None = None,
         body: dict[str, Any] | None = None,
     ) -> Any:
-        """Send request with automatic JWT 401 retry.
-
-        If the request fails with 401 and auth type is jwt_login,
-        refreshes the token and retries once.
-        """
+        """Send request with automatic login-token 401 retry."""
         try:
             return self._send_request(method, url, headers, query_params, body)
         except requests.exceptions.HTTPError as exc:
             if (
                 exc.response is not None
                 and exc.response.status_code == 401
-                and self.api_config.auth.type == "jwt_login"
+                and self.api_config.auth.type in {"jwt_login", "login"}
             ):
-                # Refresh JWT and retry once
                 self._jwt_token = None
                 self._jwt_login()
                 headers = self._resolve_auth_headers()
@@ -892,6 +948,19 @@ class APIConnector(FileConnector):
             if endpoint.name == name:
                 return endpoint
         return None
+
+    def _build_execute_sql_request(
+        self, endpoint: APIEndpointConfig, sql: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build query params and JSON body for a configured SQL execution endpoint."""
+        if endpoint.body_template is not None:
+            body = self._render_template_value(endpoint.body_template, {"sql": sql})
+            return {}, body
+
+        sql_field = endpoint.sql_field or "sql"
+        if endpoint.body_mode == "json":
+            return {}, {sql_field: sql}
+        return {sql_field: sql}, {}
 
     def submit_sql(self, sql: str) -> dict[str, Any]:
         """Submit SQL to an API execute endpoint.
@@ -917,26 +986,30 @@ class APIConnector(FileConnector):
 
         headers = self._resolve_auth_headers()
         url = self.api_config.base_url.rstrip("/") + execute_endpoint.path
-        sql_field = execute_endpoint.sql_field or "sql"
+        query_params, body = self._build_execute_sql_request(execute_endpoint, sql)
         try:
-            if execute_endpoint.body_mode == "json":
-                resp = requests.post(url, headers=headers, json={sql_field: sql}, timeout=60)
-            else:
-                resp = requests.post(url, headers=headers, params={sql_field: sql}, timeout=60)
+            request_kwargs: dict[str, Any] = {"headers": headers, "timeout": 60}
+            if query_params:
+                request_kwargs["params"] = query_params
+            if body:
+                request_kwargs["json"] = body
+            resp = requests.post(url, **request_kwargs)
             resp.raise_for_status()
             response = resp.json()
         except requests.exceptions.HTTPError as exc:
             if (
                 exc.response is not None
                 and exc.response.status_code == 401
-                and self.api_config.auth.type == "jwt_login"
+                and self.api_config.auth.type in {"jwt_login", "login"}
             ):
                 self._jwt_refresh()
                 headers = self._resolve_auth_headers()
-                if execute_endpoint.body_mode == "json":
-                    resp = requests.post(url, headers=headers, json={sql_field: sql}, timeout=60)
-                else:
-                    resp = requests.post(url, headers=headers, params={sql_field: sql}, timeout=60)
+                request_kwargs = {"headers": headers, "timeout": 60}
+                if query_params:
+                    request_kwargs["params"] = query_params
+                if body:
+                    request_kwargs["json"] = body
+                resp = requests.post(url, **request_kwargs)
                 resp.raise_for_status()
                 response = resp.json()
             else:
@@ -980,7 +1053,7 @@ class APIConnector(FileConnector):
             if (
                 exc.response is not None
                 and exc.response.status_code == 401
-                and self.api_config.auth.type == "jwt_login"
+                and self.api_config.auth.type in {"jwt_login", "login"}
             ):
                 self._jwt_refresh()
                 headers = self._resolve_auth_headers()
@@ -1018,7 +1091,7 @@ class APIConnector(FileConnector):
             if (
                 exc.response is not None
                 and exc.response.status_code == 401
-                and self.api_config.auth.type == "jwt_login"
+                and self.api_config.auth.type in {"jwt_login", "login"}
             ):
                 self._jwt_refresh()
                 headers = self._resolve_auth_headers()
@@ -1129,6 +1202,123 @@ class APIConnector(FileConnector):
 
         raise TimeoutError(f"SQL execution did not complete within {max_wait_seconds} seconds")
 
+    def _get_schema_rows(self) -> list[dict[str, Any]] | None:
+        """Return schema metadata rows when a connector declares a ``schema`` endpoint."""
+        if self._schema_cache is not None:
+            return self._schema_cache
+
+        schema_endpoint = self._get_endpoint("schema")
+        if schema_endpoint is None:
+            return None
+
+        result = self.query_endpoint("schema")
+        if "error" in result:
+            raise ValueError(result["error"])
+
+        payload = result.get("data", [])
+        if isinstance(payload, list):
+            rows = [row for row in payload if isinstance(row, dict)]
+        elif isinstance(payload, dict):
+            rows = self._extract_rows_from_response(payload)
+        else:
+            rows = []
+
+        self._schema_cache = rows
+        return self._schema_cache
+
+    @staticmethod
+    def _map_schema_type(base_type: str | None) -> str:
+        """Best-effort type mapping for API schema metadata."""
+        if not base_type:
+            return "VARCHAR"
+        lowered = base_type.lower()
+        if "integer" in lowered:
+            return "INTEGER"
+        if "float" in lowered or "number" in lowered or "decimal" in lowered:
+            return "DOUBLE"
+        if "boolean" in lowered:
+            return "BOOLEAN"
+        if "datetime" in lowered or "date" in lowered:
+            return "TIMESTAMP"
+        return "VARCHAR"
+
+    def get_schemas(self, catalog: str | None = None) -> list[str | None]:
+        schema_rows = self._get_schema_rows()
+        if schema_rows is None:
+            return super().get_schemas(catalog)
+
+        schemas = {row.get("schema") for row in schema_rows if row.get("schema")}
+        return sorted(schemas) if schemas else [None]
+
+    def get_tables(
+        self, schema: str | None = None, catalog: str | None = None
+    ) -> list[dict[str, Any]]:
+        schema_rows = self._get_schema_rows()
+        if schema_rows is None:
+            return super().get_tables(schema, catalog)
+
+        tables: list[dict[str, Any]] = []
+        catalog_name = self.get_catalogs()[0]
+        for row in schema_rows:
+            row_schema = row.get("schema")
+            if schema and row_schema != schema:
+                continue
+            name = row.get("name")
+            if not name:
+                continue
+            full_name = f"{row_schema}.{name}" if row_schema else str(name)
+            tables.append(
+                {
+                    "name": name,
+                    "schema": row_schema,
+                    "catalog": catalog_name,
+                    "type": "table",
+                    "full_name": full_name,
+                }
+            )
+        return tables
+
+    def get_columns(
+        self, table_name: str, schema: str | None = None, catalog: str | None = None
+    ) -> list[dict[str, Any]]:
+        schema_rows = self._get_schema_rows()
+        if schema_rows is None:
+            return super().get_columns(table_name, schema, catalog)
+
+        for row in schema_rows:
+            if row.get("name") != table_name:
+                continue
+            if schema and row.get("schema") != schema:
+                continue
+            fields = row.get("fields", []) or []
+            return [
+                {
+                    "name": field.get("name"),
+                    "type": self._map_schema_type(field.get("base_type")),
+                    "nullable": True,
+                    "default": None,
+                    "primary_key": False,
+                    "comment": None,
+                }
+                for field in fields
+                if isinstance(field, dict) and field.get("name")
+            ]
+
+        return super().get_columns(table_name, schema, catalog)
+
+    def get_table_sample(
+        self,
+        table_name: str,
+        schema: str | None = None,
+        catalog: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        if self._get_schema_rows() is None or self._get_endpoint("execute_sql") is None:
+            return super().get_table_sample(table_name, schema, catalog, limit)
+
+        source = f"{schema}.{table_name}" if schema else table_name
+        return self.execute_sql(f"SELECT * FROM {source} LIMIT {limit}")
+
     def _extract_rows_from_response(self, response: Any) -> list[dict[str, Any]]:
         """Extract rows from an API response.
 
@@ -1161,15 +1351,23 @@ class APIConnector(FileConnector):
         # This handles APIs that return {columns: [...], rows: [[...], [...]]}
         columns = response.get("columns") or response.get("column_names")
         rows_data = response.get("rows") or response.get("data")
-        if (
-            columns
-            and rows_data
-            and isinstance(rows_data, list)
-            and rows_data
-            and isinstance(rows_data[0], list)
-        ):
-            # Rows are arrays, need to zip with column names
-            return [dict(zip(columns, row)) for row in rows_data]
+        columnar_rows = self._rows_from_columnar_payload(columns, rows_data)
+        if columnar_rows:
+            return columnar_rows
+
+        nested_data = response.get("data")
+        if isinstance(nested_data, dict):
+            nested_columns = (
+                nested_data.get("cols")
+                or nested_data.get("columns")
+                or nested_data.get("column_names")
+            )
+            nested_rows = nested_data.get("rows")
+            columnar_rows = self._rows_from_columnar_payload(nested_columns, nested_rows)
+            if columnar_rows:
+                return columnar_rows
+            if isinstance(nested_rows, list) and nested_rows and isinstance(nested_rows[0], dict):
+                return nested_rows
 
         # Try common top-level fields (rows are already dicts)
         for field_name in (
@@ -1189,7 +1387,7 @@ class APIConnector(FileConnector):
 
         # Honor configured data_field for non-SQL API endpoints.
         data_field = self.api_config.pagination.data_field
-        value = response.get(data_field)
+        value = self._get_nested_value(response, data_field)
         if isinstance(value, list):
             return value
 
@@ -1481,13 +1679,15 @@ class APIConnector(FileConnector):
                     **({"password": password} if password else {}),
                 }
             )
-        if self.api_config.auth.type == "jwt_login":
+        if self.api_config.auth.type in {"jwt_login", "login"}:
             auth_data.update(
                 {
                     "login_endpoint": self.api_config.auth.login_endpoint,
                     "username_env": self.api_config.auth.username_env,
                     "password_env": self.api_config.auth.password_env,
                     "token_field": self.api_config.auth.token_field,
+                    "header_name": self.api_config.auth.header_name,
+                    "token_prefix": self.api_config.auth.token_prefix,
                 }
             )
 
@@ -1501,6 +1701,7 @@ class APIConnector(FileConnector):
                         "method": ep.method,
                         "body_mode": ep.body_mode,
                         "response_mode": ep.response_mode,
+                        **({"body_template": ep.body_template} if ep.body_template else {}),
                         **({"sql_field": ep.sql_field} if ep.sql_field != "sql" else {}),
                         **(
                             {

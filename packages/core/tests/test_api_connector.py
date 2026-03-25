@@ -1983,6 +1983,41 @@ class TestJWTLoginAuth:
         assert call_kw.kwargs["json"]["username"] == "admin"
         assert call_kw.kwargs["json"]["password"] == "secret123"
 
+    def test_login_auth_custom_header_no_prefix(self, data_dir, env_file):
+        """Generic login auth can emit non-Bearer headers such as session tokens."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("MB_USERNAME=admin@example.com\nMB_PASSWORD=secret123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            auth=APIAuthConfig(
+                type="login",
+                login_endpoint="/api/session",
+                username_env="MB_USERNAME",
+                password_env="MB_PASSWORD",
+                token_field="id",
+                header_name="X-Metabase-Session",
+                token_prefix="",
+            ),
+            endpoints=[APIEndpointConfig(name="items", path="/items")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"id": "sess_123"}
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp):
+            headers = conn._resolve_auth_headers()
+
+        assert headers == {"X-Metabase-Session": "sess_123"}
+
     def test_jwt_login_caches_token(self, data_dir, env_file):
         """Second call reuses cached token without login."""
         conn = self._make_jwt_connector(data_dir, env_file)
@@ -2773,3 +2808,127 @@ class TestJWTLoginBody:
             "provider": "db",
             "refresh": True,
         }
+
+
+class TestGenericSQLAPIConfig:
+    def test_execute_sql_body_template_supports_nested_payloads(self, data_dir, env_file):
+        """execute_sql can render a structured JSON body from connector config."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        env_file.write_text("MB_API_KEY=mb-api-key-123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://metabase.example.com",
+            auth=APIAuthConfig(
+                type="header",
+                token_env="MB_API_KEY",
+                header_name="x-api-key",
+            ),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/api/dataset",
+                    method="POST",
+                    body_mode="json",
+                    body_template={
+                        "database": 12,
+                        "type": "native",
+                        "native": {"query": "{{sql}}"},
+                    },
+                )
+            ],
+            capabilities={"supports_sql": True},
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        dataset_resp = MagicMock()
+        dataset_resp.status_code = 200
+        dataset_resp.json.return_value = {
+            "data": {"cols": [{"name": "id"}, {"name": "name"}], "rows": [[1, "A"]]}
+        }
+
+        with patch("db_mcp.connectors.api.requests.post", return_value=dataset_resp) as mock_post:
+            rows = conn.execute_sql("SELECT 1")
+
+        assert rows == [{"id": 1, "name": "A"}]
+        assert mock_post.call_args.kwargs["headers"]["x-api-key"] == "mb-api-key-123"
+        assert mock_post.call_args.kwargs["json"] == {
+            "database": 12,
+            "type": "native",
+            "native": {"query": "SELECT 1"},
+        }
+
+    def test_schema_endpoint_drives_generic_metadata_methods(self, data_dir):
+        """API connector can expose schemas/tables/columns from a raw schema endpoint."""
+        from db_mcp.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
+
+        config = APIConnectorConfig(
+            base_url="https://metabase.example.com",
+            endpoints=[
+                APIEndpointConfig(
+                    name="schema",
+                    path="/api/database/12/schema",
+                    response_mode="raw",
+                )
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir))
+
+        schema_resp = MagicMock()
+        schema_resp.status_code = 200
+        schema_resp.json.return_value = [
+            {
+                "schema": "public",
+                "name": "users",
+                "fields": [
+                    {"name": "id", "base_type": "type/Integer"},
+                    {"name": "email", "base_type": "type/Text"},
+                ],
+            },
+            {
+                "schema": "analytics",
+                "name": "events",
+                "fields": [
+                    {"name": "id", "base_type": "type/Integer"},
+                    {"name": "event_name", "base_type": "type/Text"},
+                ],
+            },
+        ]
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=schema_resp):
+            assert conn.get_schemas() == ["analytics", "public"]
+            tables = conn.get_tables(schema="public")
+            columns = conn.get_columns("users", schema="public")
+
+        assert tables == [
+            {
+                "name": "users",
+                "schema": "public",
+                "catalog": None,
+                "type": "table",
+                "full_name": "public.users",
+            }
+        ]
+        assert columns == [
+            {
+                "name": "id",
+                "type": "INTEGER",
+                "nullable": True,
+                "default": None,
+                "primary_key": False,
+                "comment": None,
+            },
+            {
+                "name": "email",
+                "type": "VARCHAR",
+                "nullable": True,
+                "default": None,
+                "primary_key": False,
+                "comment": None,
+            },
+        ]
