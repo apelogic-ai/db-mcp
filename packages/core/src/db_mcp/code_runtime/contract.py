@@ -16,6 +16,7 @@ HELPER_METHODS = [
     "relevant_examples",
     "relevant_rules",
     "plan",
+    "answer_intent",
     "domain_model",
     "sql_rules",
     "query",

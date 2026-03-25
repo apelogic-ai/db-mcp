@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from db_mcp.code_runtime import CodeModeHost, build_runtime_contract, build_runt
 from db_mcp.code_runtime.http import start_runtime_server
 from db_mcp.config import get_settings
 from db_mcp.local_service import load_local_service_state, local_service_is_healthy
+from db_mcp.orchestrator.engine import answer_intent
 
 
 def _proxy_runtime_to_local_service(mcp_url: str) -> None:
@@ -166,6 +168,20 @@ def _emit_runtime_result(result: dict[str, object], *, as_json: bool) -> None:
     raise click.exceptions.Exit(exit_code)
 
 
+def _parse_options_json(raw: str | None) -> dict[str, object] | None:
+    if raw is None:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise click.UsageError(f"Invalid JSON for --options-json: {exc}") from exc
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise click.UsageError("--options-json must decode to a JSON object.")
+    return payload
+
+
 def _parse_http_error(exc: HTTPError) -> str:
     body = exc.read().decode("utf-8", errors="replace")
     if not body:
@@ -225,6 +241,41 @@ def runtime_exec(
         raise click.ClickException(f"Unable to reach runtime server: {exc.reason}") from exc
 
     _emit_runtime_result(result, as_json=as_json)
+
+
+@runtime_group.command("intent")
+@click.option("-c", "--connection", required=True, help="Connection name")
+@click.option("--intent", "intent_text", required=True, help="Natural-language intent to resolve")
+@click.option(
+    "--options-json",
+    default=None,
+    help="Optional JSON object passed as answer_intent options",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit full structured result JSON")
+def runtime_intent(
+    connection: str,
+    intent_text: str,
+    options_json: str | None,
+    as_json: bool,
+) -> None:
+    """Execute the shared semantic intent path from the CLI."""
+    payload = asyncio.run(
+        answer_intent(
+            intent=intent_text,
+            connection=connection,
+            options=_parse_options_json(options_json),
+        )
+    )
+    exit_code = 0 if payload.get("status") == "success" else 1
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2) + "\n", nl=False)
+        raise click.exceptions.Exit(exit_code)
+
+    text = str(payload.get("answer") or payload.get("error") or "")
+    if text:
+        click.echo(text)
+    raise click.exceptions.Exit(exit_code)
 
 
 @runtime_group.command("serve")

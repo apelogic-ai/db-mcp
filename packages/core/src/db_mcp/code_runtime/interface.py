@@ -26,6 +26,7 @@ def _native_instructions(connection: str) -> str:
             "- `dbmcp.relevant_examples(query)`",
             "- `dbmcp.relevant_rules(query)`",
             "- `dbmcp.plan(question)`",
+            "- `dbmcp.answer_intent(intent, options=None)`",
             "- `dbmcp.query(sql)`",
             "- `dbmcp.scalar(sql)`",
             "- `dbmcp.execute(sql)`",
@@ -44,7 +45,8 @@ def _native_instructions(connection: str) -> str:
         "`dbmcp.read_protocol()` returns markdown text, not a structured schema object.\n"
         "For schema discovery, prefer `dbmcp.find_table(...)`, `dbmcp.find_tables(...)`, "
         "`dbmcp.describe_table(...)`, `dbmcp.find_columns(...)`, `dbmcp.relevant_examples(...)`, "
-        "and `dbmcp.plan(...)` before writing SQL.\n"
+        "and `dbmcp.plan(...)` before writing SQL. If the connection has approved metrics, "
+        "you can call `dbmcp.answer_intent(...)` to execute the shared semantic path directly.\n"
         "After querying, prefer `dbmcp.finalize_answer(...)` to construct the final answer "
         "payload consistently.\n\n"
         "Available helpers:\n"
@@ -79,6 +81,7 @@ def _cli_instructions(connection: str) -> str:
         "Useful commands:\n"
         "```bash\n"
         f"db-mcp runtime prompt --connection {connection}\n"
+        f"db-mcp runtime intent --connection {connection} --intent 'show revenue'\n"
         f"db-mcp runtime run --connection {connection} --code 'print(dbmcp.read_protocol())'\n"
         "db-mcp runtime serve --host 127.0.0.1 --port 8091\n"
         "db-mcp runtime exec --server-url http://127.0.0.1:8091 --connection "
@@ -150,6 +153,10 @@ def build_runtime_contract(
                 "boundary": "cli",
                 "commands": {
                     "prompt": f"db-mcp runtime prompt --connection {connection}",
+                    "intent": (
+                        f"db-mcp runtime intent --connection {connection} "
+                        "--intent '<natural language>'"
+                    ),
                     "run": f"db-mcp runtime run --connection {connection} --code '<python>'",
                     "serve": "db-mcp runtime serve --host 127.0.0.1 --port 8091",
                     "exec": (

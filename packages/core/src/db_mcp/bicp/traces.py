@@ -11,6 +11,8 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from db_mcp.business_rules import extract_business_rule_texts
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +39,7 @@ def list_trace_dates(connection_path: Path, user_id: str) -> list[str]:
     return dates
 
 
-def read_traces_from_jsonl(file_path: Path, limit: int = 50) -> list[dict]:
+def read_traces_from_jsonl(file_path: Path, limit: int | None = 50) -> list[dict]:
     """Read and parse a JSONL trace file, grouping spans into traces.
 
     Normalizes the JSONL format to match SpanCollector.get_traces() output:
@@ -48,7 +50,7 @@ def read_traces_from_jsonl(file_path: Path, limit: int = 50) -> list[dict]:
 
     Args:
         file_path: Path to the JSONL file
-        limit: Maximum number of traces to return
+        limit: Maximum number of traces to return. `None` returns all traces.
 
     Returns:
         List of trace dicts matching SpanCollector.get_traces() format
@@ -124,6 +126,8 @@ def read_traces_from_jsonl(file_path: Path, limit: int = 50) -> list[dict]:
     # Sort by start_time descending (most recent first)
     traces.sort(key=lambda t: t["start_time"], reverse=True)
 
+    if limit is None:
+        return traces
     return traces[:limit]
 
 
@@ -1202,8 +1206,7 @@ def _check_knowledge_status(connection_path: Path) -> dict:
 
             with open(rules_file) as f:
                 data = yaml.safe_load(f) or {}
-            rules = data.get("rules", [])
-            status["ruleCount"] = len(rules) if isinstance(rules, list) else 0
+            status["ruleCount"] = len(extract_business_rule_texts(data))
         except Exception:
             pass
 

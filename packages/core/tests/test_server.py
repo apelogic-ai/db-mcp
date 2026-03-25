@@ -55,8 +55,10 @@ async def test_server_tools_registered():
     assert server is not None
 
 
-def test_server_exposes_improvement_tools():
+def test_server_exposes_improvement_tools(monkeypatch):
     """Backward-compat improvement tools should be exposed."""
+    monkeypatch.setenv("TOOL_MODE", "detailed")
+    reset_settings()
     server = _create_server()
     tools = _get_tool_names(server)
     assert "mcp_suggest_improvement" in tools
@@ -1221,6 +1223,103 @@ async def test_daemon_prepare_task_orders_semantic_guidance_before_schema_contex
     assert context_keys.index("sql_rules_context") < context_keys.index("candidate_tables")
     assert context_keys.index("examples") < context_keys.index("candidate_tables")
     assert "full_schema" not in context_keys
+
+
+@pytest.mark.asyncio
+async def test_daemon_prepare_task_includes_semantic_intent_preview_when_metric_matches(
+    tmp_path, monkeypatch
+):
+    connection_name = "demo"
+    connection_path = tmp_path / connection_name
+    _write_sql_connector(connection_path)
+    (connection_path / "PROTOCOL.md").write_text("Read protocol first.\n")
+    (connection_path / "domain").mkdir(parents=True, exist_ok=True)
+    (connection_path / "domain" / "model.md").write_text(
+        "Revenue questions map to revenue facts.\n"
+    )
+    (connection_path / "instructions").mkdir(parents=True, exist_ok=True)
+    (connection_path / "instructions" / "business_rules.yaml").write_text("rules: []\n")
+    (connection_path / "instructions" / "sql_rules.md").write_text(
+        "Use approved metrics when available.\n"
+    )
+    (connection_path / "schema").mkdir(parents=True, exist_ok=True)
+    (connection_path / "schema" / "descriptions.yaml").write_text(
+        yaml.dump(
+            {
+                "dialect": "sqlite",
+                "tables": [
+                    {
+                        "name": "revenue_facts",
+                        "schema": "main",
+                        "full_name": "main.revenue_facts",
+                        "description": "Revenue fact table",
+                        "columns": [
+                            {"name": "revenue_amount", "type": "DOUBLE"},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    (connection_path / "metrics").mkdir(parents=True, exist_ok=True)
+    (connection_path / "metrics" / "catalog.yaml").write_text(
+        yaml.dump(
+            {
+                "version": "1.0.0",
+                "provider_id": connection_name,
+                "metrics": [
+                    {
+                        "name": "revenue",
+                        "display_name": "revenue",
+                        "description": "Total revenue",
+                        "dimensions": [],
+                        "status": "approved",
+                    }
+                ],
+            }
+        )
+    )
+    (connection_path / "metrics" / "bindings.yaml").write_text(
+        yaml.dump(
+            {
+                "version": "1.0.0",
+                "provider_id": connection_name,
+                "bindings": {
+                    "revenue": {
+                        "metric_name": "revenue",
+                        "sql": "SELECT SUM(revenue_amount) AS answer FROM revenue_facts",
+                        "tables": ["revenue_facts"],
+                        "dimensions": {},
+                    }
+                },
+            }
+        )
+    )
+
+    monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
+    monkeypatch.setenv("CONNECTION_NAME", connection_name)
+    monkeypatch.setenv("TOOL_MODE", "daemon")
+    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    reset_settings()
+    ConnectionRegistry.reset()
+
+    server = _create_server()
+    async with Client(server) as client:
+        prepared = (
+            await client.call_tool(
+                "prepare_task",
+                {"question": "Show revenue", "connection": connection_name},
+            )
+        ).data
+        prepared_payload = _tool_payload(prepared)
+
+    semantic_intent = prepared_payload["context"]["semantic_intent"]
+    assert semantic_intent["status"] == "ready"
+    assert semantic_intent["meta_query"]["measures"][0]["metric_name"] == "revenue"
+    assert semantic_intent["resolved_plan"]["sql"] == (
+        "SELECT SUM(revenue_amount) AS answer FROM revenue_facts"
+    )
+    assert semantic_intent["confidence"]["semantic"] > 0.0
 
 
 @pytest.mark.asyncio

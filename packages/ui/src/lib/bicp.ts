@@ -400,7 +400,7 @@ export interface TracesDatesResult {
 export async function listTraces(
   source: "live" | "historical" = "live",
   date?: string,
-  limit: number = 50,
+  limit?: number,
 ): Promise<TracesListResult> {
   return bicpCall<TracesListResult>("traces/list", { source, date, limit });
 }

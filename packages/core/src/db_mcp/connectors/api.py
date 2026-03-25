@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
@@ -87,6 +88,7 @@ class APIPaginationConfig:
     type: str = "none"  # cursor | offset | link_header | none
     cursor_param: str = "starting_after"
     cursor_field: str = "data[-1].id"
+    offset_param: str = "offset"
     page_size_param: str = "limit"
     page_size: int = 100
     data_field: str = "data"  # JSON path to array of results
@@ -96,7 +98,7 @@ class APIPaginationConfig:
 class APIAuthConfig:
     """Authentication configuration."""
 
-    type: str = "bearer"  # none | bearer | header | query_param | jwt_login
+    type: str = "bearer"  # none | bearer | header | query_param | basic | jwt_login
     token_env: str = ""  # env var name for the token (always resolved as env var name)
     header_name: str = "Authorization"
     param_name: str = "api_key"
@@ -250,6 +252,11 @@ class APIConnector(FileConnector):
                 self._jwt_login()
             return {"Authorization": f"Bearer {self._jwt_token}"}
 
+        if auth_type == "basic":
+            username, password = self._resolve_basic_credentials()
+            token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+            return {"Authorization": f"Basic {token}"}
+
         env = self._load_env()
         auth = self.api_config.auth
         token_env = auth.token_env
@@ -275,6 +282,38 @@ class APIConnector(FileConnector):
             return {}
         else:
             return {}
+
+    def _resolve_basic_credentials(self) -> tuple[str, str]:
+        """Resolve username/password for basic auth from env or literal aliases."""
+        auth = self.api_config.auth
+        env = self._load_env()
+
+        if auth.username_env:
+            if auth.username_env not in env:
+                raise ValueError(
+                    f"Basic auth username env var '{auth.username_env}' not found in .env file. "
+                    f"Add {auth.username_env}=<username> to your .env file."
+                )
+            username = env[auth.username_env]
+        else:
+            username = auth.username or ""
+
+        if auth.password_env:
+            if auth.password_env not in env:
+                raise ValueError(
+                    f"Basic auth password env var '{auth.password_env}' not found in .env file. "
+                    f"Add {auth.password_env}=<password> to your .env file."
+                )
+            password = env[auth.password_env]
+        else:
+            password = auth.password or ""
+
+        if not username:
+            raise ValueError("Basic auth requires a username or username_env")
+        if not password:
+            raise ValueError("Basic auth requires a password or password_env")
+
+        return username, password
 
     def _jwt_login(self) -> None:
         """Perform JWT login: POST creds to login endpoint, cache token.
@@ -507,7 +546,6 @@ class APIConnector(FileConnector):
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         resp.raise_for_status()
         body = resp.json()
-        data_field = self.api_config.pagination.data_field
         if isinstance(body, list):
             return body
         if not isinstance(body, dict):
@@ -517,13 +555,7 @@ class APIConnector(FileConnector):
         if error_msg:
             raise ValueError(error_msg)
 
-        extracted = body.get(data_field)
-        if extracted is None:
-            extracted = body.get("results")
-        if isinstance(extracted, list):
-            return extracted
-
-        extracted_rows = self._extract_rows_from_response(body)
+        extracted_rows = self._extract_response_rows(body, self.api_config.pagination)
         if extracted_rows:
             return extracted_rows
 
@@ -545,20 +577,19 @@ class APIConnector(FileConnector):
 
         while True:
             self._rate_limit()
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            resp = requests.get(url, headers=headers, params=dict(params), timeout=30)
             resp.raise_for_status()
             body = resp.json()
 
-            data = body.get(pg.data_field, [])
+            data = self._extract_response_rows(body, pg)
             all_rows.extend(data)
 
             # Check if there are more pages
-            has_more = body.get("has_more", False)
+            has_more = self._response_has_more(body, data, pg)
             if not has_more or not data:
                 break
 
-            # Extract cursor value from last item
-            cursor_value = self._extract_cursor(data, pg.cursor_field)
+            cursor_value = self._extract_cursor_value(body, data, pg)
             if cursor_value is None:
                 break
             params[pg.cursor_param] = cursor_value
@@ -581,12 +612,12 @@ class APIConnector(FileConnector):
 
         while True:
             self._rate_limit()
-            params["offset"] = str(offset)
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            params[pg.offset_param] = str(offset)
+            resp = requests.get(url, headers=headers, params=dict(params), timeout=30)
             resp.raise_for_status()
             body = resp.json()
 
-            data = body.get(pg.data_field, [])
+            data = self._extract_response_rows(body, pg)
             if not data:
                 break
 
@@ -632,6 +663,75 @@ class APIConnector(FileConnector):
         with open(path, "w") as f:
             for row in rows:
                 f.write(json.dumps(row, default=str) + "\n")
+
+    def _extract_response_rows(
+        self,
+        response: Any,
+        pagination: APIPaginationConfig | None = None,
+    ) -> list[dict[str, Any]]:
+        """Extract rows using connector pagination hints plus common API wrappers."""
+        if isinstance(response, list):
+            return response
+        if not isinstance(response, dict):
+            return []
+
+        data_field = pagination.data_field if pagination else ""
+        if data_field:
+            value = response.get(data_field)
+            if isinstance(value, list):
+                return value
+
+        return self._extract_rows_from_response(response)
+
+    def _response_has_more(
+        self,
+        response: Any,
+        rows: list[dict[str, Any]],
+        pagination: APIPaginationConfig,
+    ) -> bool:
+        """Detect whether a paginated response has more data."""
+        if not isinstance(response, dict):
+            return False
+
+        if "has_more" in response:
+            return bool(response.get("has_more"))
+        if "hasMore" in response:
+            return bool(response.get("hasMore"))
+        if "isLast" in response:
+            return not bool(response.get("isLast"))
+
+        cursor_value = self._extract_cursor_value(response, rows, pagination)
+        return cursor_value is not None
+
+    def _extract_cursor_value(
+        self,
+        response: Any,
+        rows: list[dict[str, Any]],
+        pagination: APIPaginationConfig,
+    ) -> str | None:
+        """Extract the next cursor token from a response or the last row."""
+        if isinstance(response, dict):
+            direct_candidates = [
+                pagination.cursor_field,
+                pagination.cursor_param,
+                "nextPageToken",
+                "next_cursor",
+                "next",
+                "starting_after",
+                "cursor",
+                "next_token",
+                "after",
+            ]
+            for candidate in direct_candidates:
+                if not candidate:
+                    continue
+                if "." in candidate or "[" in candidate:
+                    continue
+                value = response.get(candidate)
+                if value is not None and value != "":
+                    return str(value)
+
+        return self._extract_cursor(rows, pagination.cursor_field)
 
     # -- Ad-hoc querying ----------------------------------------------------
 
@@ -1072,7 +1172,16 @@ class APIConnector(FileConnector):
             return [dict(zip(columns, row)) for row in rows_data]
 
         # Try common top-level fields (rows are already dicts)
-        for field_name in ("rows", "data", "results", "records"):
+        for field_name in (
+            "rows",
+            "data",
+            "results",
+            "records",
+            "items",
+            "entries",
+            "issues",
+            "values",
+        ):
             if field_name in response:
                 value = response[field_name]
                 if isinstance(value, list):
@@ -1193,22 +1302,19 @@ class APIConnector(FileConnector):
 
         for _ in range(max_pages):
             self._rate_limit()
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            resp = requests.get(url, headers=headers, params=dict(params), timeout=30)
             resp.raise_for_status()
             body = resp.json()
 
-            if isinstance(body, list):
-                data = body
-            else:
-                data = body.get(pg.data_field, [])
+            data = self._extract_response_rows(body, pg)
             all_rows.extend(data)
 
             # Check if there are more pages
-            has_more = body.get("has_more", False) if isinstance(body, dict) else False
+            has_more = self._response_has_more(body, data, pg)
             if not has_more or not data:
                 break
 
-            cursor_value = self._extract_cursor(data, pg.cursor_field)
+            cursor_value = self._extract_cursor_value(body, data, pg)
             if cursor_value is None:
                 break
             params[pg.cursor_param] = cursor_value
@@ -1232,12 +1338,12 @@ class APIConnector(FileConnector):
 
         for _ in range(max_pages):
             self._rate_limit()
-            params["offset"] = str(offset)
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            params[pg.offset_param] = str(offset)
+            resp = requests.get(url, headers=headers, params=dict(params), timeout=30)
             resp.raise_for_status()
             body = resp.json()
 
-            data = body.get(pg.data_field, []) if isinstance(body, dict) else body
+            data = self._extract_response_rows(body, pg)
             if not data:
                 break
 
@@ -1303,6 +1409,7 @@ class APIConnector(FileConnector):
                 type=result.pagination.type,
                 cursor_param=result.pagination.cursor_param or "starting_after",
                 cursor_field=result.pagination.cursor_field or "data[-1].id",
+                offset_param=result.pagination.offset_param or "offset",
                 page_size_param=result.pagination.page_size_param or "limit",
                 page_size=result.pagination.page_size,
                 data_field=result.pagination.data_field or "data",
@@ -1352,24 +1459,41 @@ class APIConnector(FileConnector):
         if self.api_config.api_description:
             data["api_description"] = self.api_config.api_description
 
-        data.update(
-            {
-                "auth": {
-                    "type": self.api_config.auth.type,
+        auth_data: dict[str, Any] = {
+            "type": self.api_config.auth.type,
+        }
+        if self.api_config.auth.type in {"bearer", "header", "query_param"}:
+            auth_data.update(
+                {
                     "token_env": self.api_config.auth.token_env,
                     "header_name": self.api_config.auth.header_name,
                     "param_name": self.api_config.auth.param_name,
-                    **(
-                        {
-                            "login_endpoint": self.api_config.auth.login_endpoint,
-                            "username_env": self.api_config.auth.username_env,
-                            "password_env": self.api_config.auth.password_env,
-                            "token_field": self.api_config.auth.token_field,
-                        }
-                        if self.api_config.auth.type == "jwt_login"
-                        else {}
-                    ),
-                },
+                }
+            )
+        if self.api_config.auth.type == "basic":
+            username = self.api_config.auth.username
+            password = self.api_config.auth.password
+            auth_data.update(
+                {
+                    "username_env": self.api_config.auth.username_env,
+                    "password_env": self.api_config.auth.password_env,
+                    **({"username": username} if username else {}),
+                    **({"password": password} if password else {}),
+                }
+            )
+        if self.api_config.auth.type == "jwt_login":
+            auth_data.update(
+                {
+                    "login_endpoint": self.api_config.auth.login_endpoint,
+                    "username_env": self.api_config.auth.username_env,
+                    "password_env": self.api_config.auth.password_env,
+                    "token_field": self.api_config.auth.token_field,
+                }
+            )
+
+        data.update(
+            {
+                "auth": auth_data,
                 "endpoints": [
                     {
                         "name": ep.name,
@@ -1406,6 +1530,7 @@ class APIConnector(FileConnector):
                     "type": self.api_config.pagination.type,
                     "cursor_param": self.api_config.pagination.cursor_param,
                     "cursor_field": self.api_config.pagination.cursor_field,
+                    "offset_param": self.api_config.pagination.offset_param,
                     "page_size_param": self.api_config.pagination.page_size_param,
                     "page_size": self.api_config.pagination.page_size,
                     "data_field": self.api_config.pagination.data_field,

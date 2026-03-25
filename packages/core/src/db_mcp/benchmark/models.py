@@ -25,6 +25,7 @@ class BenchmarkCase(BaseModel):
     comparison: ComparisonType
     tolerance: float | None = None
     normalization: list[str] = Field(default_factory=list)
+    answer_intent_options: dict[str, Any] | None = None
 
 
 class BenchmarkAnswer(BaseModel):
@@ -33,6 +34,7 @@ class BenchmarkAnswer(BaseModel):
     task_id: str
     status: Literal["answered", "failed", "needs_clarification"]
     answer_value: Any = None
+    answer_rows: list[dict[str, Any]] = Field(default_factory=list)
     answer_text: str
     evidence_sql: str | None = None
     confidence: float | None = None

@@ -49,6 +49,42 @@ def _prepare_connection(tmp_path: Path, monkeypatch) -> str:
     (connection_path / "domain" / "model.md").write_text("# domain\n")
     (connection_path / "instructions").mkdir()
     (connection_path / "instructions" / "sql_rules.md").write_text("# rules\n")
+    (connection_path / "metrics").mkdir()
+    (connection_path / "metrics" / "catalog.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0.0",
+                "provider_id": connection_name,
+                "metrics": [
+                    {
+                        "name": "item_count",
+                        "display_name": "item count",
+                        "description": "Count of catalog items.",
+                        "dimensions": [],
+                        "status": "approved",
+                    }
+                ],
+            },
+            sort_keys=False,
+        )
+    )
+    (connection_path / "metrics" / "bindings.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0.0",
+                "provider_id": connection_name,
+                "bindings": {
+                    "item_count": {
+                        "metric_name": "item_count",
+                        "sql": "SELECT COUNT(*) AS answer FROM items",
+                        "tables": ["items"],
+                        "dimensions": {},
+                    }
+                },
+            },
+            sort_keys=False,
+        )
+    )
 
     monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
     monkeypatch.setenv("CONNECTION_NAME", connection_name)
@@ -162,6 +198,31 @@ def test_runtime_run_executes_inline_code(tmp_path, monkeypatch):
     assert "items" in discovery.output
     assert result.exit_code == 0
     assert result.output.strip() == "3"
+
+
+def test_runtime_intent_executes_shared_semantic_engine(tmp_path, monkeypatch):
+    connection_name = _prepare_connection(tmp_path, monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "runtime",
+            "intent",
+            "--connection",
+            connection_name,
+            "--intent",
+            "show item count",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["meta_query"]["measures"][0]["metric_name"] == "item_count"
+    assert payload["resolved_plan"]["sql"] == "SELECT COUNT(*) AS answer FROM items"
+    assert payload["records"] == [{"answer": 3}]
 
 
 def test_runtime_run_executes_file_input(tmp_path, monkeypatch):
@@ -402,6 +463,14 @@ def test_runtime_without_subcommand_starts_mcp_runtime_mode(tmp_path, monkeypatc
     monkeypatch.setenv("TOOL_MODE", "shell")
     monkeypatch.setenv("CONNECTION_NAME", connection_name)
     monkeypatch.delenv("CONNECTION_PATH", raising=False)
+    monkeypatch.setattr(
+        "db_mcp.cli.commands.runtime_cmd.load_local_service_state",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "db_mcp.cli.commands.runtime_cmd.local_service_is_healthy",
+        lambda state: False,
+    )
     monkeypatch.setattr(
         "db_mcp.cli.commands.core.load_config",
         lambda: {"active_connection": connection_name, "tool_mode": "shell"},

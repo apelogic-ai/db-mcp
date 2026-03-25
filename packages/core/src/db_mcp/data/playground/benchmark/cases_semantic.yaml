@@ -1,0 +1,65 @@
+cases:
+  - id: total_customers_metric
+    category: metric
+    prompt: Show total customers.
+    gold_sql: |
+      SELECT COUNT(*) AS answer
+      FROM Customer
+    comparison: scalar_exact
+
+  - id: invoice_revenue_metric
+    category: metric
+    prompt: Show invoice revenue.
+    gold_sql: |
+      SELECT ROUND(SUM(Total), 2) AS answer
+      FROM Invoice
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.01
+
+  - id: invoice_revenue_by_billing_country_metric
+    category: metric
+    prompt: Show invoice revenue by billing country.
+    gold_sql: |
+      SELECT
+        BillingCountry AS billing_country,
+        ROUND(SUM(Total), 2) AS answer
+      FROM Invoice
+      GROUP BY BillingCountry
+    comparison: rowset_unordered
+
+  - id: invoice_revenue_filter_metric
+    category: metric
+    prompt: Show invoice revenue.
+    gold_sql: |
+      SELECT ROUND(SUM(Total), 2) AS answer
+      FROM Invoice
+      WHERE BillingCountry = 'USA'
+    comparison: scalar_numeric_tolerance
+    tolerance: 0.01
+    answer_intent_options:
+      filters:
+        - field: billing_country
+          operator: "="
+          value: "'USA'"
+
+  - id: invoice_revenue_window_filter_dimension_metric
+    category: metric
+    prompt: Show invoice revenue in window by billing country.
+    gold_sql: |
+      SELECT
+        BillingCountry AS billing_country,
+        ROUND(SUM(Total), 2) AS answer
+      FROM Invoice
+      WHERE InvoiceDate >= '2010-01-01'
+        AND InvoiceDate < '2011-01-01'
+        AND BillingCountry = 'USA'
+      GROUP BY BillingCountry
+    comparison: rowset_unordered
+    answer_intent_options:
+      time_context:
+        start: "2010-01-01"
+        end: "2011-01-01"
+      filters:
+        - field: billing_country
+          operator: "="
+          value: "'USA'"

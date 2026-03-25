@@ -1,0 +1,40 @@
+version: 1.0.0
+provider_id: playground
+metrics:
+  - name: total_customers
+    display_name: Total Customers
+    description: Total number of customers in the Chinook catalog.
+    tables:
+      - Customer
+    tags:
+      - benchmark
+      - demo
+
+  - name: invoice_revenue
+    display_name: Invoice Revenue
+    description: Total invoice revenue across all invoices.
+    tables:
+      - Invoice
+    tags:
+      - benchmark
+      - demo
+    dimensions:
+      - billing_country
+
+  - name: invoice_revenue_in_window
+    display_name: Invoice Revenue In Window
+    description: Total invoice revenue for a bounded invoice date window.
+    tables:
+      - Invoice
+    parameters:
+      - name: start_date
+        type: date
+        required: true
+      - name: end_date
+        type: date
+        required: true
+    tags:
+      - benchmark
+      - demo
+    dimensions:
+      - billing_country

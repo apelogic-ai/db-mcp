@@ -58,9 +58,13 @@ from db_mcp.tools.generation import (
     _test_sampling,
     _validate_sql,
 )
+from db_mcp.tools.intent import _answer_intent
 from db_mcp.tools.metrics import (
     _metrics_add,
     _metrics_approve,
+    _metrics_bindings_list,
+    _metrics_bindings_set,
+    _metrics_bindings_validate,
     _metrics_discover,
     _metrics_list,
     _metrics_remove,
@@ -268,6 +272,7 @@ Save examples and tell the user what you saved. See PROTOCOL.md for details.
 - Business rules: query_add_rule, query_list_rules
 - Knowledge gaps: get_knowledge_gaps, dismiss_knowledge_gap
 - Metrics: metrics_list, metrics_discover, metrics_approve, metrics_add, metrics_remove
+- Metric bindings: metrics_bindings_list, metrics_bindings_validate, metrics_bindings_set
 - Training: query_approve, query_feedback, query_list_examples
 - Setup: mcp_setup_*, mcp_domain_*
 
@@ -343,6 +348,7 @@ This tells you exactly how to:
 - dismiss_knowledge_gap - Dismiss a gap as false positive
 - query_add_rule / query_list_rules - Manage business rules (synonyms, filters)
 - metrics_list / metrics_discover / metrics_approve / metrics_add / metrics_remove
+- metrics_bindings_list / metrics_bindings_validate / metrics_bindings_set
 - query_approve / query_feedback - Save examples and feedback
 - mcp_setup_* / mcp_domain_* - Admin setup (not for regular queries)
 
@@ -392,6 +398,8 @@ The mounted workspace contains the same structure as normal db-mcp connections:
 
 Python and SQLAlchemy are installed in the container. Use local files, Python,
 and shell commands to inspect the vault and query the selected data source.
+For semantic metric queries, you can also run:
+`db-mcp runtime intent --connection <name> --intent "show revenue" --json`
 """
 
 INSTRUCTIONS_CODE = """
@@ -418,6 +426,7 @@ Use these helpers first:
 - `dbmcp.schema_descriptions()`
 - `dbmcp.domain_model()`
 - `dbmcp.sql_rules()`
+- `dbmcp.answer_intent(intent, options=None)`
 - `dbmcp.query(sql)`
 - `dbmcp.scalar(sql)`
 - `dbmcp.execute(sql)`
@@ -1100,6 +1109,7 @@ def _create_server() -> FastMCP:
     # =========================================================================
 
     if supports_sql:
+        server.tool(name="answer_intent")(_answer_intent)
         if supports_validate:
             server.tool(name="validate_sql")(_validate_sql)
         server.tool(name="run_sql")(_run_sql)
@@ -1187,6 +1197,9 @@ def _create_server() -> FastMCP:
         server.tool(name="metrics_approve")(_metrics_approve)
         server.tool(name="metrics_add")(_metrics_add)
         server.tool(name="metrics_remove")(_metrics_remove)
+        server.tool(name="metrics_bindings_list")(_metrics_bindings_list)
+        server.tool(name="metrics_bindings_validate")(_metrics_bindings_validate)
+        server.tool(name="metrics_bindings_set")(_metrics_bindings_set)
 
         # Advanced generation tools
         server.tool(name="get_data")(_get_data)

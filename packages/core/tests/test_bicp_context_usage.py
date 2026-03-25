@@ -70,3 +70,43 @@ async def test_context_usage_tracks_root_and_relative_vault_files(tmp_path: Path
     assert result["folders"]["metrics"]["count"] == 1
     assert result["folders"]["domain"]["count"] == 1
     assert result["folders"]["examples"]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_context_usage_reads_beyond_latest_fifty_traces(tmp_path: Path) -> None:
+    connections_dir = tmp_path / "connections"
+    conn_path = connections_dir / "demo"
+    trace_file = conn_path / "traces" / "default" / "2026-03-11.jsonl"
+
+    spans = [{"name": "initialize"} for _ in range(60)]
+    spans[0] = {
+        "tool.name": "shell",
+        "command": "cat instructions/business_rules.yaml",
+    }
+    _write_trace_file(trace_file, spans)
+
+    agent = _make_agent(connections_dir)
+
+    result = await agent._handle_context_usage({"connection": "demo", "days": 30})
+
+    assert result["files"]["instructions/business_rules.yaml"]["count"] == 1
+    assert result["folders"]["instructions"]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_context_tree_marks_nested_trace_directories_as_non_empty(tmp_path: Path) -> None:
+    connections_dir = tmp_path / "connections"
+    conn_path = connections_dir / "demo"
+    (conn_path / "traces" / "user-1").mkdir(parents=True)
+    (conn_path / "traces" / "user-1" / "2026-03-11.jsonl").write_text("{}\n")
+
+    agent = _make_agent(connections_dir)
+
+    result = await agent._handle_context_tree({})
+    folder = next(
+        folder
+        for folder in result["connections"][0]["folders"]
+        if folder["name"] == "traces"
+    )
+
+    assert folder["isEmpty"] is False

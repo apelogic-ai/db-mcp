@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from db_mcp.code_runtime.backend import HostDbMcpRuntime, _normalize_text, _score_text_match
+from db_mcp.orchestrator.engine import preview_answer_intent
 from db_mcp.registry import ConnectionRegistry
 from db_mcp.tools.generation import _get_result, _run_sql, _validate_sql
 
@@ -631,6 +632,17 @@ def _build_prepare_context(
         )
         <= 20
     )
+    semantic_preview = preview_answer_intent(
+        intent=question,
+        connection=runtime.connection,
+        connection_path=runtime.connection_path,
+    )
+    semantic_payload = semantic_preview.model_dump(mode="json")
+    no_semantic_metrics_error = "No approved metrics are available for this connection."
+    include_semantic_intent = not (
+        semantic_payload.get("status") == "error"
+        and semantic_payload.get("error") == no_semantic_metrics_error
+    )
 
     return _json_safe(
         {
@@ -638,6 +650,7 @@ def _build_prepare_context(
             "connection": runtime.connection,
             "dialect": schema.get("dialect") if isinstance(schema, dict) else None,
             "connector": runtime.connector(),
+            **({"semantic_intent": semantic_payload} if include_semantic_intent else {}),
             "disambiguation": {
                 "ambiguous": ambiguous,
                 "recommended_tables": recommended_tables,

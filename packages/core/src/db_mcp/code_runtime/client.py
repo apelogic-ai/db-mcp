@@ -122,6 +122,13 @@ class RemoteDbMcpSdk:
     def plan(self, question: str) -> dict[str, object]:
         return dict(self._invoke("plan", question) or {})
 
+    def answer_intent(
+        self,
+        intent: str,
+        options: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        return dict(self._invoke("answer_intent", intent, options) or {})
+
     def query(self, sql: str, params: dict[str, object] | None = None) -> list[dict[str, object]]:
         return list(self._invoke("query", sql, params) or [])
 

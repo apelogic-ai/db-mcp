@@ -13,24 +13,48 @@ from db_mcp_models import (
     DimensionsCatalog,
     DimensionType,
     Metric,
+    MetricBinding,
+    MetricBindingsCatalog,
+    MetricDimensionBinding,
     MetricParameter,
     MetricsCatalog,
 )
 
+from db_mcp.config import get_settings
 
-def _get_connection_dir(provider_id: str) -> Path:
+
+def _get_connection_dir(provider_id: str, *, connection_path: Path | str | None = None) -> Path:
     """Resolve connection directory from connection name."""
+    if connection_path is not None:
+        return Path(connection_path)
+
+    settings = get_settings()
+    if settings.connections_dir:
+        return Path(settings.connections_dir) / provider_id
+    if settings.connection_path:
+        connection_path = Path(settings.connection_path)
+        if connection_path.name == provider_id or settings.connection_name == provider_id:
+            return connection_path
     return Path.home() / ".db-mcp" / "connections" / provider_id
 
 
-def get_metrics_dir(provider_id: str) -> Path:
+def get_metrics_dir(provider_id: str, *, connection_path: Path | str | None = None) -> Path:
     """Get path to metrics directory."""
-    return _get_connection_dir(provider_id) / "metrics"
+    if connection_path is None:
+        return _get_connection_dir(provider_id) / "metrics"
+    return _get_connection_dir(provider_id, connection_path=connection_path) / "metrics"
 
 
-def get_catalog_file_path(provider_id: str) -> Path:
+def get_catalog_file_path(provider_id: str, *, connection_path: Path | str | None = None) -> Path:
     """Get path to metrics catalog file."""
-    return get_metrics_dir(provider_id) / "catalog.yaml"
+    return get_metrics_dir(provider_id, connection_path=connection_path) / "catalog.yaml"
+
+
+def get_bindings_file_path(
+    provider_id: str, *, connection_path: Path | str | None = None
+) -> Path:
+    """Get path to metrics bindings file."""
+    return get_metrics_dir(provider_id, connection_path=connection_path) / "bindings.yaml"
 
 
 # =============================================================================
@@ -80,8 +104,10 @@ def _metric_to_dict(metric: Metric) -> dict:
     result = {
         "name": metric.name,
         "description": metric.description,
-        "sql": metric.sql,
     }
+
+    if metric.sql:
+        result["sql"] = metric.sql
 
     if metric.display_name:
         result["display_name"] = metric.display_name
@@ -122,7 +148,11 @@ def _metric_to_dict(metric: Metric) -> dict:
     return result
 
 
-def load_metrics(provider_id: str) -> MetricsCatalog:
+def load_metrics(
+    provider_id: str,
+    *,
+    connection_path: Path | str | None = None,
+) -> MetricsCatalog:
     """Load metrics catalog from YAML file.
 
     Args:
@@ -131,7 +161,7 @@ def load_metrics(provider_id: str) -> MetricsCatalog:
     Returns:
         MetricsCatalog (empty if file doesn't exist)
     """
-    catalog_file = get_catalog_file_path(provider_id)
+    catalog_file = get_catalog_file_path(provider_id, connection_path=connection_path)
 
     if not catalog_file.exists():
         return MetricsCatalog(provider_id=provider_id)
@@ -152,6 +182,146 @@ def load_metrics(provider_id: str) -> MetricsCatalog:
         )
     except Exception:
         return MetricsCatalog(provider_id=provider_id)
+
+
+def _metric_dimension_binding_from_dict(name: str, data: dict) -> MetricDimensionBinding:
+    """Convert dict to MetricDimensionBinding model."""
+    return MetricDimensionBinding(
+        dimension_name=data.get("dimension_name", name),
+        projection_sql=data.get("projection_sql", data.get("column", "")),
+        filter_sql=data.get("filter_sql"),
+        group_by_sql=data.get("group_by_sql"),
+        tables=data.get("tables", []),
+    )
+
+
+def _metric_binding_from_dict(metric_name: str, data: dict) -> MetricBinding:
+    """Convert dict to MetricBinding model."""
+    dimensions = {
+        name: _metric_dimension_binding_from_dict(name, binding_data)
+        for name, binding_data in data.get("dimensions", {}).items()
+        if isinstance(binding_data, dict)
+    }
+
+    tables = data.get("tables")
+    if tables is None:
+        single_table = data.get("table")
+        tables = [single_table] if single_table else []
+
+    return MetricBinding(
+        metric_name=data.get("metric_name", metric_name),
+        sql=data.get("sql", data.get("dialect_sql", "")),
+        tables=tables,
+        dimensions=dimensions,
+    )
+
+
+def load_metric_bindings(
+    provider_id: str,
+    *,
+    connection_path: Path | str | None = None,
+) -> MetricBindingsCatalog:
+    """Load connection-specific metric bindings from YAML file."""
+    bindings_file = get_bindings_file_path(provider_id, connection_path=connection_path)
+
+    if not bindings_file.exists():
+        return MetricBindingsCatalog(provider_id=provider_id)
+
+    try:
+        with open(bindings_file) as f:
+            data = yaml.safe_load(f)
+
+        if not data:
+            return MetricBindingsCatalog(provider_id=provider_id)
+
+        bindings = {
+            metric_name: _metric_binding_from_dict(metric_name, binding_data)
+            for metric_name, binding_data in data.get("bindings", {}).items()
+            if isinstance(binding_data, dict)
+        }
+
+        return MetricBindingsCatalog(
+            version=data.get("version", "1.0.0"),
+            provider_id=provider_id,
+            bindings=bindings,
+        )
+    except Exception:
+        return MetricBindingsCatalog(provider_id=provider_id)
+
+
+def _metric_dimension_binding_to_dict(binding: MetricDimensionBinding) -> dict:
+    """Convert MetricDimensionBinding to dict for YAML storage."""
+    result = {
+        "dimension_name": binding.dimension_name,
+        "projection_sql": binding.projection_sql,
+    }
+    if binding.filter_sql:
+        result["filter_sql"] = binding.filter_sql
+    if binding.group_by_sql:
+        result["group_by_sql"] = binding.group_by_sql
+    if binding.tables:
+        result["tables"] = binding.tables
+    return result
+
+
+def _metric_binding_to_dict(binding: MetricBinding) -> dict:
+    """Convert MetricBinding to dict for YAML storage."""
+    result = {
+        "metric_name": binding.metric_name,
+        "sql": binding.sql,
+    }
+    if binding.tables:
+        result["tables"] = binding.tables
+    if binding.dimensions:
+        result["dimensions"] = {
+            name: _metric_dimension_binding_to_dict(dimension_binding)
+            for name, dimension_binding in binding.dimensions.items()
+        }
+    return result
+
+
+def save_metric_bindings(catalog: MetricBindingsCatalog) -> dict:
+    """Save connection-specific metric bindings to YAML file."""
+    try:
+        metrics_dir = get_metrics_dir(catalog.provider_id)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+
+        data = {
+            "version": catalog.version,
+            "provider_id": catalog.provider_id,
+            "bindings": {
+                metric_name: _metric_binding_to_dict(binding)
+                for metric_name, binding in catalog.bindings.items()
+            },
+        }
+
+        bindings_file = get_bindings_file_path(catalog.provider_id)
+        with open(bindings_file, "w") as f:
+            yaml.dump(
+                data,
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+
+        return {"saved": True, "file_path": str(bindings_file), "error": None}
+    except Exception as e:
+        return {"saved": False, "file_path": None, "error": str(e)}
+
+
+def upsert_metric_binding(provider_id: str, binding: MetricBinding) -> dict:
+    """Add or update a metric binding for a connection."""
+    catalog = load_metric_bindings(provider_id)
+    catalog.bindings[binding.metric_name] = binding
+    result = save_metric_bindings(catalog)
+    if result["saved"]:
+        return {
+            "saved": True,
+            "metric_name": binding.metric_name,
+            "file_path": result["file_path"],
+        }
+    return {"saved": False, "metric_name": binding.metric_name, "error": result["error"]}
 
 
 def save_metrics(catalog: MetricsCatalog) -> dict:
@@ -322,9 +492,11 @@ def search_metrics(provider_id: str, query: str) -> list[Metric]:
 # =============================================================================
 
 
-def get_dimensions_file_path(provider_id: str) -> Path:
+def get_dimensions_file_path(
+    provider_id: str, *, connection_path: Path | str | None = None
+) -> Path:
     """Get path to dimensions catalog file."""
-    return get_metrics_dir(provider_id) / "dimensions.yaml"
+    return get_metrics_dir(provider_id, connection_path=connection_path) / "dimensions.yaml"
 
 
 def _dimension_from_dict(data: dict) -> Dimension:
@@ -395,9 +567,13 @@ def _dimension_to_dict(dimension: Dimension) -> dict:
     return result
 
 
-def load_dimensions(provider_id: str) -> DimensionsCatalog:
+def load_dimensions(
+    provider_id: str,
+    *,
+    connection_path: Path | str | None = None,
+) -> DimensionsCatalog:
     """Load dimensions catalog from YAML file."""
-    dim_file = get_dimensions_file_path(provider_id)
+    dim_file = get_dimensions_file_path(provider_id, connection_path=connection_path)
 
     if not dim_file.exists():
         return DimensionsCatalog(provider_id=provider_id)

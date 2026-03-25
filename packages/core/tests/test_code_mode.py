@@ -107,6 +107,42 @@ def code_mode_connection(tmp_path, monkeypatch) -> tuple[str, Path]:
     (connection_path / "learnings" / "patterns.md").write_text(
         "# Patterns\n\n- Prefer the items table for catalog-level item counts.\n"
     )
+    (connection_path / "metrics").mkdir()
+    (connection_path / "metrics" / "catalog.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0.0",
+                "provider_id": connection_name,
+                "metrics": [
+                    {
+                        "name": "item_count",
+                        "display_name": "item count",
+                        "description": "Count of catalog items.",
+                        "dimensions": [],
+                        "status": "approved",
+                    }
+                ],
+            },
+            sort_keys=False,
+        )
+    )
+    (connection_path / "metrics" / "bindings.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0.0",
+                "provider_id": connection_name,
+                "bindings": {
+                    "item_count": {
+                        "metric_name": "item_count",
+                        "sql": "SELECT COUNT(*) AS answer FROM items",
+                        "tables": ["items"],
+                        "dimensions": {},
+                    }
+                },
+            },
+            sort_keys=False,
+        )
+    )
 
     monkeypatch.setenv("CONNECTIONS_DIR", str(tmp_path))
     monkeypatch.setenv("CONNECTION_NAME", connection_name)
@@ -354,6 +390,35 @@ def test_runtime_native_adapter_exposes_find_table_and_plan(code_mode_connection
     assert "COUNT(*)" in payload["plan"]["suggested_sql"]
 
 
+def test_runtime_native_adapter_exposes_answer_intent_helper_without_schema_step(
+    code_mode_connection,
+):
+    connection_name, _ = code_mode_connection
+    runtime = CodeModeRuntime(
+        connection=connection_name,
+        session_id="runtime-intent-1",
+        manager=ExecSessionManager(backend=ProcessExecSandboxBackend()),
+    )
+
+    runtime.run("print(dbmcp.read_protocol())", timeout_seconds=10)
+    result = runtime.run(
+        "\n".join(
+            [
+                "import json",
+                "print(json.dumps(dbmcp.answer_intent('show item count')))",
+            ]
+        ),
+        timeout_seconds=10,
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "success"
+    assert payload["records"] == [{"answer": 3}]
+    assert payload["meta_query"]["measures"][0]["metric_name"] == "item_count"
+    assert payload["resolved_plan"]["sql"] == "SELECT COUNT(*) AS answer FROM items"
+
+
 def test_runtime_native_adapter_requires_query_before_finalize(code_mode_connection):
     connection_name, _ = code_mode_connection
     runtime = CodeModeRuntime(
@@ -512,6 +577,7 @@ def test_code_runtime_service_shares_contract_and_execution_backend(code_mode_co
 
     assert contract["kind"] == "db-mcp-code-runtime"
     assert contract["connection"] == connection_name
+    assert "answer_intent" in contract["helper_methods"]
     assert "find_table" in contract["helper_methods"]
     assert "plan" in contract["helper_methods"]
     assert "finalize_answer" in contract["helper_methods"]
@@ -588,6 +654,42 @@ def test_code_runtime_service_invokes_sdk_methods_via_connector(monkeypatch, tmp
     (connection_path / "instructions").mkdir()
     (connection_path / "instructions" / "sql_rules.md").write_text("# rules\n")
     (connection_path / "instructions" / "business_rules.yaml").write_text("rules: []\n")
+    (connection_path / "metrics").mkdir()
+    (connection_path / "metrics" / "catalog.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0.0",
+                "provider_id": "dialect-demo",
+                "metrics": [
+                    {
+                        "name": "item_count",
+                        "display_name": "item count",
+                        "description": "Count of items.",
+                        "dimensions": [],
+                        "status": "approved",
+                    }
+                ],
+            },
+            sort_keys=False,
+        )
+    )
+    (connection_path / "metrics" / "bindings.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0.0",
+                "provider_id": "dialect-demo",
+                "bindings": {
+                    "item_count": {
+                        "metric_name": "item_count",
+                        "sql": "SELECT COUNT(*) AS answer FROM items",
+                        "tables": ["items"],
+                        "dimensions": {},
+                    }
+                },
+            },
+            sort_keys=False,
+        )
+    )
 
     class FakeConnector:
         def __init__(self) -> None:
@@ -620,11 +722,19 @@ def test_code_runtime_service_invokes_sdk_methods_via_connector(monkeypatch, tmp
         "query",
         args=["SELECT COUNT(*) AS answer FROM items"],
     )
+    semantic = service.invoke_session_method(
+        session.session_id,
+        "answer_intent",
+        args=["show item count"],
+    )
 
     assert protocol == "read me first\n"
     assert scalar == 3
     assert rows == [{"answer": 3}]
+    assert semantic["status"] == "success"
+    assert semantic["resolved_plan"]["metric_name"] == "item_count"
     assert fake_connector.queries == [
+        ("SELECT COUNT(*) AS answer FROM items", None),
         ("SELECT COUNT(*) AS answer FROM items", None),
         ("SELECT COUNT(*) AS answer FROM items", None),
     ]

@@ -1,5 +1,7 @@
 """Metrics and dimensions MCP tools — discover, manage, and catalog business metrics."""
 
+from db_mcp_models import MetricBinding, MetricDimensionBinding
+
 from db_mcp.metrics.mining import mine_metrics_and_dimensions
 from db_mcp.metrics.store import (
     add_dimension,
@@ -7,9 +9,100 @@ from db_mcp.metrics.store import (
     delete_dimension,
     delete_metric,
     load_dimensions,
+    load_metric_bindings,
     load_metrics,
+    upsert_metric_binding,
 )
 from db_mcp.tools.utils import resolve_connection
+
+
+def _serialize_metric_binding(binding: MetricBinding) -> dict:
+    """Convert a binding model to a JSON-safe payload."""
+    return {
+        "metric_name": binding.metric_name,
+        "sql": binding.sql,
+        "tables": binding.tables,
+        "dimensions": [
+            {
+                "dimension_name": dimension_binding.dimension_name,
+                "projection_sql": dimension_binding.projection_sql,
+                "filter_sql": dimension_binding.filter_sql,
+                "group_by_sql": dimension_binding.group_by_sql,
+                "tables": dimension_binding.tables,
+            }
+            for _, dimension_binding in sorted(binding.dimensions.items())
+        ],
+    }
+
+
+def _validate_metric_binding(
+    *,
+    provider_id: str,
+    metric_name: str,
+    sql: str,
+    tables: list[str] | None = None,
+    dimensions: list[dict] | None = None,
+) -> dict:
+    """Validate a metric binding against the approved logical catalogs."""
+    metrics_catalog = load_metrics(provider_id)
+    dimensions_catalog = load_dimensions(provider_id)
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    metric = metrics_catalog.get_metric(metric_name)
+    if metric is None:
+        errors.append(f"Metric '{metric_name}' not found in the approved catalog.")
+    if not sql.strip():
+        errors.append("Binding SQL is required.")
+
+    binding_tables = tables or []
+    binding_dimensions = dimensions or []
+    seen_dimensions: set[str] = set()
+
+    for raw_dimension in binding_dimensions:
+        dimension_name = raw_dimension.get("dimension_name")
+        if not isinstance(dimension_name, str) or not dimension_name:
+            errors.append("Each binding dimension must include a non-empty dimension_name.")
+            continue
+        if dimension_name in seen_dimensions:
+            errors.append(f"Duplicate binding dimension '{dimension_name}'.")
+            continue
+        seen_dimensions.add(dimension_name)
+
+        dimension = dimensions_catalog.get_dimension(dimension_name)
+        if dimension is None:
+            errors.append(f"Dimension '{dimension_name}' not found in the approved catalog.")
+            continue
+        if metric is not None and metric.dimensions and dimension_name not in metric.dimensions:
+            errors.append(
+                f"Metric '{metric_name}' is not approved for dimension '{dimension_name}'."
+            )
+
+        projection_sql = raw_dimension.get("projection_sql")
+        if not isinstance(projection_sql, str) or not projection_sql.strip():
+            errors.append(f"Binding dimension '{dimension_name}' requires projection_sql.")
+
+        dimension_tables = raw_dimension.get("tables") or []
+        if (
+            binding_tables
+            and dimension_tables
+            and not set(binding_tables).intersection(dimension_tables)
+        ):
+            errors.append(
+                f"Binding dimension '{dimension_name}' does not share a table with metric "
+                f"'{metric_name}'."
+            )
+
+    if metric is not None and metric.dimensions:
+        missing_dimensions = sorted(set(metric.dimensions) - seen_dimensions)
+        if missing_dimensions:
+            warnings.append(
+                "Metric binding does not define projections for approved dimensions: "
+                + ", ".join(missing_dimensions)
+            )
+
+    return {"valid": not errors, "errors": errors, "warnings": warnings}
 
 
 async def _metrics_discover(connection: str) -> dict:
@@ -86,6 +179,99 @@ async def _metrics_discover(connection: str) -> dict:
     }
 
 
+async def _metrics_bindings_list(connection: str) -> dict:
+    """List metric execution bindings configured for the connection."""
+    _, provider_id, _ = resolve_connection(connection)
+    bindings_catalog = load_metric_bindings(provider_id)
+
+    return {
+        "bindings": [
+            _serialize_metric_binding(binding)
+            for _, binding in sorted(bindings_catalog.bindings.items())
+        ],
+        "summary": f"{len(bindings_catalog.bindings)} binding(s) in catalog.",
+        "guidance": {
+            "next_steps": [
+                "Use metrics_bindings_validate before saving or editing a binding.",
+                "Use metrics_bindings_set to add or update a metric binding.",
+            ],
+        },
+    }
+
+
+async def _metrics_bindings_validate(
+    connection: str,
+    metric_name: str,
+    sql: str,
+    tables: list[str] | None = None,
+    dimensions: list[dict] | None = None,
+) -> dict:
+    """Validate a metric binding against approved metrics and dimensions."""
+    _, provider_id, _ = resolve_connection(connection)
+    validation = _validate_metric_binding(
+        provider_id=provider_id,
+        metric_name=metric_name,
+        sql=sql,
+        tables=tables,
+        dimensions=dimensions,
+    )
+    return {
+        "metric_name": metric_name,
+        **validation,
+    }
+
+
+async def _metrics_bindings_set(
+    connection: str,
+    metric_name: str,
+    sql: str,
+    tables: list[str] | None = None,
+    dimensions: list[dict] | None = None,
+) -> dict:
+    """Create or update a connection-bound metric binding."""
+    _, provider_id, _ = resolve_connection(connection)
+    validation = _validate_metric_binding(
+        provider_id=provider_id,
+        metric_name=metric_name,
+        sql=sql,
+        tables=tables,
+        dimensions=dimensions,
+    )
+    if not validation["valid"]:
+        return {
+            "saved": False,
+            "metric_name": metric_name,
+            "validation": validation,
+        }
+
+    dimension_bindings = {}
+    for raw_dimension in dimensions or []:
+        dimension_binding = MetricDimensionBinding(
+            dimension_name=raw_dimension["dimension_name"],
+            projection_sql=raw_dimension["projection_sql"],
+            filter_sql=raw_dimension.get("filter_sql"),
+            group_by_sql=raw_dimension.get("group_by_sql"),
+            tables=raw_dimension.get("tables", []),
+        )
+        dimension_bindings[dimension_binding.dimension_name] = dimension_binding
+
+    binding = MetricBinding(
+        metric_name=metric_name,
+        sql=sql,
+        tables=tables or [],
+        dimensions=dimension_bindings,
+    )
+    result = upsert_metric_binding(provider_id, binding)
+    return {
+        "saved": result.get("saved", False),
+        "metric_name": metric_name,
+        "binding": _serialize_metric_binding(binding),
+        "validation": validation,
+        "file_path": result.get("file_path"),
+        "error": result.get("error"),
+    }
+
+
 async def _metrics_list(connection: str) -> dict:
     """List all approved metrics and dimensions in the catalog.
 
@@ -103,6 +289,7 @@ async def _metrics_list(connection: str) -> dict:
 
     metrics_catalog = load_metrics(provider_id)
     dimensions_catalog = load_dimensions(provider_id)
+    bindings_catalog = load_metric_bindings(provider_id)
 
     return {
         "metrics": [
@@ -114,6 +301,12 @@ async def _metrics_list(connection: str) -> dict:
                 "tables": m.tables,
                 "tags": m.tags,
                 "dimensions": m.dimensions,
+                "has_binding": m.name in bindings_catalog.bindings,
+                "binding_dimensions": sorted(
+                    bindings_catalog.bindings[m.name].dimensions.keys()
+                )
+                if m.name in bindings_catalog.bindings
+                else [],
                 "notes": m.notes,
             }
             for m in metrics_catalog.metrics
@@ -167,7 +360,7 @@ async def _metrics_approve(
         name: Identifier for the metric/dimension
         connection: Connection name for multi-connection support.
         description: What it measures (required for metrics)
-        sql: SQL template (required for metrics)
+        sql: Optional legacy SQL template for direct execution
         column: Column reference like "table.column" (required for dimensions)
         display_name: Human-readable name
         tables: Tables involved
@@ -184,9 +377,9 @@ async def _metrics_approve(
     _, provider_id, _ = resolve_connection(connection)
 
     if type == "metric":
-        if not description or not sql:
+        if not description:
             return {
-                "error": "description and sql are required for metrics",
+                "error": "description is required for metrics",
                 "approved": False,
             }
         result = add_metric(
@@ -205,9 +398,15 @@ async def _metrics_approve(
             "approved": result.get("added", False),
             "type": "metric",
             "name": name,
+            "warnings": (
+                ["Metric was saved without embedded SQL; add a binding before execution."]
+                if not sql
+                else []
+            ),
             "guidance": {
                 "next_steps": [
                     f"Metric '{name}' approved. Use metrics_list to see the catalog.",
+                    "Use metrics_bindings_set to attach connection-specific execution SQL.",
                     "Continue approving more candidates with metrics_approve.",
                 ],
             },
@@ -269,7 +468,7 @@ async def _metrics_add(
         name: Identifier for the metric/dimension
         connection: Connection name for multi-connection support.
         description: What it measures (required for metrics)
-        sql: SQL template (required for metrics)
+        sql: Optional legacy SQL template for direct execution
         column: Column reference like "table.column" (required for dimensions)
         display_name: Human-readable name
         tables: Tables involved

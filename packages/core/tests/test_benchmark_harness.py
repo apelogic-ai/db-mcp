@@ -21,12 +21,15 @@ from db_mcp.benchmark.driver import (
 )
 from db_mcp.benchmark.loader import load_case_pack
 from db_mcp.benchmark.runner import (
+    ANSWER_INTENT_SCENARIO,
     CODE_MODE_SCENARIO,
     EXEC_ONLY_SCENARIO,
     RUNTIME_CODE_SCENARIO,
     RUNTIME_DAEMON_SCENARIO,
     RUNTIME_NATIVE_SCENARIO,
+    SCENARIOS,
     _build_prompt,
+    _enrich_answer_payload,
     _extract_answer_payload,
     _extract_answer_payload_with_recovery,
     _parse_raw_debug_metrics,
@@ -67,6 +70,8 @@ class FakeDriver:
             scenario = RUNTIME_DAEMON_SCENARIO
         elif '"code"' in config_text:
             scenario = CODE_MODE_SCENARIO
+        elif "Call `answer_intent(` exactly once" in prompt:
+            scenario = ANSWER_INTENT_SCENARIO
         elif "dbmcp is already available as a global" in prompt:
             scenario = RUNTIME_NATIVE_SCENARIO
         elif "from dbmcp_host import dbmcp" in prompt:
@@ -122,6 +127,10 @@ class FakeDriver:
                 "executePreToolHooks called for tool: mcp__db-mcp__exec\n"
                 "Tool call failed: exec returned non-zero exit code\n"
             )
+        elif scenario == ANSWER_INTENT_SCENARIO:
+            debug_log_path.write_text(
+                "executePreToolHooks called for tool: mcp__db-mcp__answer_intent\n"
+            )
         elif scenario == CODE_MODE_SCENARIO:
             debug_log_path.write_text(
                 "executePreToolHooks called for tool: mcp__db-mcp__code\n"
@@ -142,6 +151,8 @@ class FakeDriver:
                 '{"tool_name":"Bash"}\n{"tool_name":"Bash","status":"error"}\n'
             )
         payload = self.outputs.get(scenario)
+        if payload is None and scenario == ANSWER_INTENT_SCENARIO:
+            payload = self.outputs.get("db_mcp")
         if payload is None and scenario == RUNTIME_DAEMON_SCENARIO:
             payload = self.outputs[CODE_MODE_SCENARIO]
         if payload is None:
@@ -377,6 +388,42 @@ def benchmark_connection(tmp_path, monkeypatch):
             sort_keys=False,
         )
     )
+    (conn_path / "benchmark" / "cases_semantic.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "cases": [
+                    {
+                        "id": "invoice_revenue_total",
+                        "category": "metric",
+                        "prompt": "Show invoice revenue.",
+                        "gold_sql": "SELECT ROUND(SUM(amount), 2) AS answer FROM items",
+                        "comparison": "scalar_numeric_tolerance",
+                        "tolerance": 0.01,
+                    },
+                    {
+                        "id": "invoice_revenue_by_category_for_a",
+                        "category": "metric",
+                        "prompt": "Show invoice revenue by category.",
+                        "gold_sql": (
+                            "SELECT category, ROUND(SUM(amount), 2) AS answer "
+                            "FROM items WHERE category = 'a' GROUP BY category"
+                        ),
+                        "comparison": "rowset_unordered",
+                        "answer_intent_options": {
+                            "filters": [
+                                {
+                                    "field": "category",
+                                    "operator": "=",
+                                    "value": "a",
+                                }
+                            ]
+                        },
+                    },
+                ]
+            },
+            sort_keys=False,
+        )
+    )
 
     monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
     monkeypatch.setenv("CONNECTION_NAME", "bench")
@@ -395,6 +442,18 @@ def test_load_case_pack_reads_connection_benchmark_cases(benchmark_connection):
 def test_load_case_pack_reads_custom_case_pack(benchmark_connection):
     cases = load_case_pack(benchmark_connection, case_pack="cases_complex.yaml")
     assert [case.id for case in cases] == ["top_category"]
+
+
+def test_load_case_pack_reads_semantic_options(benchmark_connection):
+    cases = load_case_pack(benchmark_connection, case_pack="cases_semantic.yaml")
+
+    assert [case.id for case in cases] == [
+        "invoice_revenue_total",
+        "invoice_revenue_by_category_for_a",
+    ]
+    assert cases[1].answer_intent_options == {
+        "filters": [{"field": "category", "operator": "=", "value": "a"}]
+    }
 
 
 def test_repo_playground_case_pack_loads():
@@ -438,7 +497,26 @@ def test_repo_playground_full_case_pack_loads():
     assert len(cases) == 15
     assert len({case.id for case in cases}) == 15
     assert cases[0].id == "total_customers"
-    assert cases[-1].id == "top_video_customer"
+
+
+def test_repo_playground_semantic_case_pack_loads():
+    repo_root = Path(__file__).resolve().parents[1]
+    connection_path = repo_root / "src" / "db_mcp" / "data" / "playground"
+
+    cases = load_case_pack(connection_path, case_pack="cases_semantic.yaml")
+
+    assert len(cases) == 5
+    assert {case.id for case in cases} == {
+        "total_customers_metric",
+        "invoice_revenue_metric",
+        "invoice_revenue_by_billing_country_metric",
+        "invoice_revenue_filter_metric",
+        "invoice_revenue_window_filter_dimension_metric",
+    }
+    assert cases[-1].answer_intent_options == {
+        "time_context": {"start": "2010-01-01", "end": "2011-01-01"},
+        "filters": [{"field": "billing_country", "operator": "=", "value": "'USA'"}],
+    }
 
 
 def test_repo_top_ledger_case_pack_loads():
@@ -672,6 +750,75 @@ def test_score_case_contains_text_accepts_formatted_numeric_text():
     assert score.correct is True
 
 
+def test_score_case_rowset_unordered_prefers_answer_rows():
+    case = type(
+        "Case",
+        (),
+        {
+            "id": "invoice_revenue_by_country",
+            "comparison": "rowset_unordered",
+            "normalization": [],
+        },
+    )()
+    score = score_case(
+        case,
+        [
+            {"billing_country": "USA", "answer": 523.06},
+            {"billing_country": "Canada", "answer": 303.96},
+        ],
+        {
+            "task_id": "invoice_revenue_by_country",
+            "status": "answered",
+            "answer_value": 827.02,
+            "answer_rows": [
+                {"billing_country": "Canada", "answer": 303.96},
+                {"billing_country": "USA", "answer": 523.06},
+            ],
+            "answer_text": "USA and Canada revenue totals.",
+            "evidence_sql": None,
+            "confidence": None,
+            "failure_reason": None,
+        },
+    )
+
+    assert score.correct is True
+
+
+def test_enrich_answer_payload_uses_evidence_sql_for_rowset_case(benchmark_connection):
+    access = resolve_sql_connection_access("bench")
+    case = type(
+        "Case",
+        (),
+        {
+            "id": "grouped",
+            "comparison": "rowset_unordered",
+        },
+    )()
+
+    enriched = _enrich_answer_payload(
+        case,
+        {
+            "task_id": "grouped",
+            "status": "answered",
+            "answer_value": 3,
+            "answer_text": "Grouped answer.",
+            "evidence_sql": (
+                "SELECT category, COUNT(*) AS answer "
+                "FROM items GROUP BY category ORDER BY category"
+            ),
+            "confidence": 0.8,
+            "failure_reason": None,
+        },
+        connector=access.connector,
+    )
+
+    assert enriched["answer_value"] == 3
+    assert enriched["answer_rows"] == [
+        {"category": "a", "answer": 2},
+        {"category": "b", "answer": 1},
+    ]
+
+
 def test_build_claude_command_includes_strict_mcp_and_schema(tmp_path):
     cmd = build_claude_command(
         prompt="answer",
@@ -713,6 +860,26 @@ def test_runtime_daemon_prompt_is_strict_two_tool_flow():
     assert "cancel_task" not in prompt
 
 
+def test_answer_intent_prompt_is_strict_single_tool_flow():
+    prompt = _build_prompt(
+        case=SimpleNamespace(
+            id="invoice_revenue_total",
+            prompt="Show invoice revenue.",
+            answer_intent_options={"time_context": {"start": "2010-01-01", "end": "2011-01-01"}},
+        ),
+        scenario=ANSWER_INTENT_SCENARIO,
+        connection_name="demo",
+        database_url="sqlite:///tmp/test.db",
+        connect_args=None,
+    )
+
+    assert "Call `answer_intent(` exactly once" in prompt
+    assert '"time_context"' in prompt
+    assert '`"answer_rows"`' in prompt
+    assert "Do not write SQL yourself" in prompt
+    assert "Do not rely on any built-in tools" in prompt
+
+
 def test_run_benchmark_suite_can_filter_to_selected_scenarios(tmp_path, benchmark_connection):
     outputs = {
         RUNTIME_DAEMON_SCENARIO: {
@@ -742,6 +909,35 @@ def test_run_benchmark_suite_can_filter_to_selected_scenarios(tmp_path, benchmar
     assert [call["scenario"] for call in driver.calls] == [RUNTIME_DAEMON_SCENARIO]
 
 
+def test_run_benchmark_suite_can_filter_to_answer_intent_scenario(tmp_path, benchmark_connection):
+    outputs = {
+        ANSWER_INTENT_SCENARIO: {
+            "task_id": "invoice_revenue_total",
+            "status": "answered",
+            "answer_value": 60,
+            "answer_text": "60",
+            "evidence_sql": "SELECT SUM(amount) AS answer FROM items",
+        }
+    }
+    driver = FakeDriver(outputs)
+    run_dir = run_benchmark_suite(
+        connection_name="bench",
+        connection_path=benchmark_connection,
+        model="claude-sonnet-4-5-20250929",
+        repeats=1,
+        selected_case_ids=["invoice_revenue_total"],
+        selected_scenarios=[ANSWER_INTENT_SCENARIO],
+        output_root=tmp_path,
+        case_pack="cases_semantic.yaml",
+        driver=driver,
+    )
+
+    attempts = sorted((run_dir / "attempts").iterdir())
+    assert len(attempts) == 1
+    assert attempts[0].name.endswith(f"__{ANSWER_INTENT_SCENARIO}__r1")
+    assert [call["scenario"] for call in driver.calls] == [ANSWER_INTENT_SCENARIO]
+
+
 def test_parse_raw_debug_metrics_treats_daemon_execute_as_db_work(tmp_path):
     debug_log = tmp_path / "debug.log"
     debug_log.write_text(
@@ -756,6 +952,16 @@ def test_parse_raw_debug_metrics_treats_daemon_execute_as_db_work(tmp_path):
     metrics = _parse_raw_debug_metrics(debug_log)
 
     assert metrics["exploratory_steps"] == 2
+    assert metrics["db_executions"] == 1
+
+
+def test_parse_raw_debug_metrics_treats_answer_intent_as_db_work(tmp_path):
+    debug_log = tmp_path / "debug.log"
+    debug_log.write_text("executePreToolHooks called for tool: mcp__db-mcp__answer_intent")
+
+    metrics = _parse_raw_debug_metrics(debug_log)
+
+    assert metrics["exploratory_steps"] == 1
     assert metrics["db_executions"] == 1
 
 
@@ -1036,11 +1242,12 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert (run_dir / "summary.json").exists()
     assert (run_dir / "summary.csv").exists()
     attempts = list((run_dir / "attempts").iterdir())
-    assert len(attempts) == 7
+    assert len(attempts) == len(SCENARIOS)
 
     summary = summarize_run_directory(run_dir)
-    assert summary["totals"]["attempts"] == 7
+    assert summary["totals"]["attempts"] == len(SCENARIOS)
     assert summary["scenario_summary"]["db_mcp"]["correct"] == 1
+    assert summary["scenario_summary"][ANSWER_INTENT_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"][EXEC_ONLY_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"][CODE_MODE_SCENARIO]["correct"] == 1
     assert summary["scenario_summary"][RUNTIME_DAEMON_SCENARIO]["correct"] == 1
@@ -1080,8 +1287,12 @@ def test_summarize_run_directory_and_fake_driver_smoke(benchmark_connection, tmp
     assert summary["scenario_summary"]["raw_dsn"]["input_tokens"] == 80
     assert summary["scenario_summary"]["raw_dsn"]["output_tokens"] == 18
     assert summary["scenario_summary"]["raw_dsn"]["total_cost_usd"] == 0.08
-    assert len(driver.calls) == 7
+    assert len(driver.calls) == len(SCENARIOS)
     by_scenario = {call["scenario"]: call for call in driver.calls}
+    assert by_scenario[ANSWER_INTENT_SCENARIO]["tools"] == [""]
+    assert "Call `answer_intent(` exactly once" in str(
+        by_scenario[ANSWER_INTENT_SCENARIO]["prompt"]
+    )
     assert by_scenario[EXEC_ONLY_SCENARIO]["tools"] == [""]
     assert "cat PROTOCOL.md" in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
     assert "Do not rely on any built-in tools." in str(by_scenario[EXEC_ONLY_SCENARIO]["prompt"])
@@ -1303,11 +1514,14 @@ def test_run_benchmark_suite_reports_progress_updates(benchmark_connection, tmp_
         daemon_service_factory=lambda **_: FakeRuntimeServerContext("http://127.0.0.1:8788/mcp"),
     )
 
-    assert len(progress_updates) == 7
-    assert [update["completed_attempts"] for update in progress_updates] == [1, 2, 3, 4, 5, 6, 7]
-    assert all(update["total_attempts"] == 7 for update in progress_updates)
+    assert len(progress_updates) == len(SCENARIOS)
+    assert [update["completed_attempts"] for update in progress_updates] == list(
+        range(1, len(SCENARIOS) + 1)
+    )
+    assert all(update["total_attempts"] == len(SCENARIOS) for update in progress_updates)
     assert {update["scenario"] for update in progress_updates} == {
         "db_mcp",
+        ANSWER_INTENT_SCENARIO,
         EXEC_ONLY_SCENARIO,
         CODE_MODE_SCENARIO,
         RUNTIME_DAEMON_SCENARIO,

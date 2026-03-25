@@ -1,0 +1,39 @@
+version: 1.0.0
+provider_id: playground
+bindings:
+  total_customers:
+    metric_name: total_customers
+    sql: SELECT COUNT(*) AS answer FROM Customer
+    tables:
+      - Customer
+
+  invoice_revenue:
+    metric_name: invoice_revenue
+    sql: SELECT ROUND(SUM(Total), 2) AS answer FROM Invoice
+    tables:
+      - Invoice
+    dimensions:
+      billing_country:
+        dimension_name: billing_country
+        projection_sql: Invoice.BillingCountry
+        filter_sql: Invoice.BillingCountry
+        group_by_sql: Invoice.BillingCountry
+        tables:
+          - Invoice
+
+  invoice_revenue_in_window:
+    metric_name: invoice_revenue_in_window
+    sql: >-
+      SELECT ROUND(SUM(Total), 2) AS answer
+      FROM Invoice
+      WHERE InvoiceDate >= {start_date} AND InvoiceDate < {end_date}
+    tables:
+      - Invoice
+    dimensions:
+      billing_country:
+        dimension_name: billing_country
+        projection_sql: Invoice.BillingCountry
+        filter_sql: Invoice.BillingCountry
+        group_by_sql: Invoice.BillingCountry
+        tables:
+          - Invoice

@@ -137,6 +137,7 @@ def get_expected_tools_for_config(
 
     # SQL execution tools
     if supports_sql:
+        tools.add("answer_intent")
         if supports_validate:
             tools.add("validate_sql")
         tools.add("run_sql")
@@ -209,6 +210,9 @@ def get_expected_tools_for_config(
                 "metrics_approve",
                 "metrics_add",
                 "metrics_remove",
+                "metrics_bindings_list",
+                "metrics_bindings_validate",
+                "metrics_bindings_set",
                 "get_data",
                 "test_elicitation",
                 "test_sampling",

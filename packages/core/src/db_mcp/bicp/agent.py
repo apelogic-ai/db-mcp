@@ -2261,6 +2261,10 @@ This knowledge helps the AI generate better queries over time.
                                     "size": file_path.stat().st_size,
                                 }
                             )
+                        has_nested_files = any(
+                            nested.is_file() and not nested.name.startswith(hidden_prefixes)
+                            for nested in item_path.rglob("*")
+                        )
 
                         # Get importance level for this folder
                         importance = self._FOLDER_IMPORTANCE.get(item_name)
@@ -2271,7 +2275,7 @@ This knowledge helps the AI generate better queries over time.
                                 "name": item_name,
                                 "path": item_name,
                                 "files": files,
-                                "isEmpty": len(files) == 0,
+                                "isEmpty": len(files) == 0 and not has_nested_files,
                                 "importance": importance,
                                 "hasReadme": has_readme,
                             }
@@ -2762,7 +2766,7 @@ This knowledge helps the AI generate better queries over time.
                 if not trace_file.exists():
                     continue
 
-                traces = read_traces_from_jsonl(trace_file)
+                traces = read_traces_from_jsonl(trace_file, limit=None)
 
                 for trace in traces:
                     for span in trace.get("spans", []):
@@ -3170,14 +3174,16 @@ This knowledge helps the AI generate better queries over time.
             params: {
                 "source": "live" | "historical" - Where to read traces from
                 "date": str | None - YYYY-MM-DD date for historical (default: today)
-                "limit": int - Max traces to return (default: 50)
+                "limit": int - Max traces to return (default: 50 live / 500 historical)
             }
 
         Returns:
             {"success": bool, "traces": [...], "source": str}
         """
         source = params.get("source", "live")
-        limit = params.get("limit", 50)
+        limit = params.get("limit")
+        if limit is None:
+            limit = 50 if source == "live" else 500
 
         if source == "live":
             from db_mcp.console.collector import get_collector
