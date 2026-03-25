@@ -133,7 +133,7 @@ def _prompt_and_save_database_url(name: str, existing_url: str | None = None) ->
 def _prompt_and_save_api_connection(name: str) -> bool:
     """Prompt for API connector settings and persist connector.yaml + .env."""
     console.print("\n[bold]API Connection[/bold]")
-    console.print("[dim]Example base URL: https://api.dune.com/api/v1[/dim]\n")
+    console.print("[dim]Example base URL: https://api.example.com/v1[/dim]\n")
 
     base_url = Prompt.ask("API Base URL", default="")
     if not base_url:

@@ -1,16 +1,21 @@
 """TDD tests for MetabaseConnector — written before implementation."""
 
+import importlib.resources
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from db_mcp.connectors import Connector
+from db_mcp.connectors import Connector, ConnectorConfig
 
 
 @pytest.fixture
 def env_file(tmp_path):
     env = tmp_path / ".env"
-    env.write_text("MB_USERNAME=demo@example.com\nMB_PASSWORD=supersecret\n")
+    env.write_text(
+        "MB_USERNAME=demo@example.com\n"
+        "MB_PASSWORD=supersecret\n"
+        "MB_API_KEY=mb-api-key-123\n"
+    )
     return env
 
 
@@ -62,6 +67,23 @@ class TestMetabaseAuth:
         with pytest.raises(ValueError, match="not found"):
             conn._resolve_credentials()
 
+    def test_api_key_auth_headers(self, env_file, tmp_path):
+        from db_mcp.connectors.metabase import (
+            MetabaseAuthConfig,
+            MetabaseConnector,
+            MetabaseConnectorConfig,
+        )
+
+        config = MetabaseConnectorConfig(
+            base_url="https://metabase.example.com",
+            database_id=12,
+            auth=MetabaseAuthConfig(type="api_key", key_env="MB_API_KEY"),
+        )
+
+        conn = MetabaseConnector(config, env_path=str(env_file))
+
+        assert conn._auth_headers() == {"x-api-key": "mb-api-key-123"}
+
 
 class TestMetabaseConnection:
     def test_test_connection_success(self, metabase_connector):
@@ -92,6 +114,34 @@ class TestMetabaseConnection:
 
         assert result["connected"] is False
         assert result["error"] is not None
+
+    def test_test_connection_success_with_api_key(self, env_file, tmp_path):
+        from db_mcp.connectors.metabase import (
+            MetabaseAuthConfig,
+            MetabaseConnector,
+            MetabaseConnectorConfig,
+        )
+
+        config = MetabaseConnectorConfig(
+            base_url="https://metabase.example.com",
+            database_id=12,
+            auth=MetabaseAuthConfig(type="api_key", key_env="MB_API_KEY"),
+        )
+        conn = MetabaseConnector(config, env_path=str(env_file))
+
+        user_resp = MagicMock()
+        user_resp.status_code = 200
+        user_resp.json.return_value = {"id": 1, "email": "demo@example.com"}
+
+        with (
+            patch("db_mcp.connectors.metabase.requests.get", return_value=user_resp) as mock_get,
+            patch("db_mcp.connectors.metabase.requests.post") as mock_post,
+        ):
+            result = conn.test_connection()
+
+        assert result["connected"] is True
+        mock_post.assert_not_called()
+        assert mock_get.call_args.kwargs["headers"]["x-api-key"] == "mb-api-key-123"
 
 
 class TestMetabaseSchema:
@@ -191,3 +241,52 @@ class TestMetabaseQuery:
             rows = metabase_connector.execute_sql("SELECT 1")
 
         assert rows == [{"id": 1, "name": "A"}]
+
+    def test_execute_sql_with_api_key(self, env_file):
+        from db_mcp.connectors.metabase import (
+            MetabaseAuthConfig,
+            MetabaseConnector,
+            MetabaseConnectorConfig,
+        )
+
+        config = MetabaseConnectorConfig(
+            base_url="https://metabase.example.com",
+            database_id=12,
+            auth=MetabaseAuthConfig(type="api_key", key_env="MB_API_KEY"),
+        )
+        conn = MetabaseConnector(config, env_path=str(env_file))
+
+        dataset_resp = MagicMock()
+        dataset_resp.status_code = 200
+        dataset_resp.json.return_value = {
+            "data": {"cols": [{"name": "id"}, {"name": "name"}], "rows": [[1, "A"]]}
+        }
+
+        with patch(
+            "db_mcp.connectors.metabase.requests.post", return_value=dataset_resp
+        ) as mock_post:
+            rows = conn.execute_sql("SELECT 1")
+
+        assert rows == [{"id": 1, "name": "A"}]
+        assert mock_post.call_args.kwargs["headers"]["x-api-key"] == "mb-api-key-123"
+
+
+def test_bundled_metabase_api_key_template_loads():
+    from db_mcp.connectors.api import APIConnectorConfig
+
+    template_path = (
+        importlib.resources.files("db_mcp")
+        / "data"
+        / "templates"
+        / "metabase_api_key"
+        / "connector.yaml"
+    )
+
+    config = ConnectorConfig.from_yaml(template_path)
+
+    assert isinstance(config, APIConnectorConfig)
+    assert config.type == "api"
+    assert config.auth.type == "header"
+    assert config.auth.header_name == "x-api-key"
+    assert config.auth.token_env == "MB_API_KEY"
+    assert config.profile == "hybrid_bi"
