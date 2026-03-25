@@ -1,6 +1,8 @@
 
 # Built UI static files
-src/db_mcp/static/
+src/db_mcp/static/*
+!src/db_mcp/static/connector_templates/
+!src/db_mcp/static/connector_templates/*.yaml
 
 # Local benchmark output
 benchmark_runs/

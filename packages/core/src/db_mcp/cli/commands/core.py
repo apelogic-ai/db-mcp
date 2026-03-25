@@ -157,7 +157,13 @@ def _connection_connector_metadata(connection_path: Path) -> dict[str, object]:
 @click.command()
 @click.argument("name", default="default", required=False)
 @click.argument("source", default=None, required=False)
-def init(name: str, source: str | None):
+@click.option(
+    "--template",
+    "template_name",
+    default=None,
+    help="Built-in connector template id for greenfield API connections (for example: jira).",
+)
+def init(name: str, source: str | None, template_name: str | None):
     """Interactive setup wizard - configure database and Claude Desktop.
 
     NAME is the connection name (default: "default").
@@ -192,7 +198,7 @@ def init(name: str, source: str | None):
     if is_brownfield:
         _init_brownfield(name, source)
     else:
-        _init_greenfield(name)
+        _init_greenfield(name, template_name=template_name)
 
 
 @click.command()

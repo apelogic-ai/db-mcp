@@ -237,7 +237,7 @@ class APIConnector(FileConnector):
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, _, value = line.partition("=")
-                env[key.strip()] = value.strip()
+                env[key.strip()] = value.strip().strip("\"'")
         return env
 
     def _resolve_auth_headers(self) -> dict[str, str]:
