@@ -66,6 +66,7 @@ class DiscoveredPagination:
     type: str = "none"  # cursor | offset | link_header | none
     cursor_param: str = ""
     cursor_field: str = ""
+    offset_param: str = "offset"
     page_size_param: str = "limit"
     page_size: int = 100
     data_field: str = ""  # e.g., "data" if results wrapped
@@ -134,7 +135,15 @@ _PROBE_PATHS = [
 ]
 
 # Pagination-related cursor/next fields
-_CURSOR_FIELDS = {"next_cursor", "next", "starting_after", "cursor", "next_token", "after"}
+_CURSOR_FIELDS = {
+    "next_cursor",
+    "next",
+    "starting_after",
+    "cursor",
+    "next_token",
+    "after",
+    "nextPageToken",
+}
 _HAS_MORE_FIELDS = {"has_more", "hasMore", "has_next", "hasNext"}
 
 # Path param patterns (detail endpoints to skip)
@@ -391,20 +400,32 @@ def _detect_pagination_from_spec(params: list[str], spec: dict) -> DiscoveredPag
         cursor_param = next(iter(cursor_params))
         # Check if response wraps data (look at first GET endpoint)
         data_field = _detect_data_field_from_spec(spec)
+        page_size_param = (
+            "maxResults"
+            if "maxResults" in param_set
+            else "limit"
+            if "limit" in param_set
+            else ""
+        )
         return DiscoveredPagination(
             type="cursor",
             cursor_param=cursor_param,
-            cursor_field="data[-1].id",
-            page_size_param="limit" if "limit" in param_set else "",
+            cursor_field=cursor_param if cursor_param == "nextPageToken" else "data[-1].id",
+            page_size_param=page_size_param,
             data_field=data_field,
         )
 
     # Check for offset-style params
-    if "offset" in param_set:
+    if "offset" in param_set or "startAt" in param_set:
         data_field = _detect_data_field_from_spec(spec)
+        offset_param = "startAt" if "startAt" in param_set else "offset"
+        page_size_param = (
+            "maxResults" if "maxResults" in param_set else "limit" if "limit" in param_set else ""
+        )
         return DiscoveredPagination(
             type="offset",
-            page_size_param="limit" if "limit" in param_set else "",
+            offset_param=offset_param,
+            page_size_param=page_size_param,
             data_field=data_field,
         )
 
@@ -634,7 +655,7 @@ def detect_pagination(
 
     # Detect data wrapping field
     data_field = ""
-    for candidate in ("data", "results", "items", "records", "entries"):
+    for candidate in ("data", "results", "items", "records", "entries", "issues", "values"):
         if candidate in keys and isinstance(response_body.get(candidate), list):
             data_field = candidate
             break
@@ -643,20 +664,35 @@ def detect_pagination(
     if keys & _HAS_MORE_FIELDS:
         return DiscoveredPagination(type="cursor", data_field=data_field)
 
+    if "isLast" in keys:
+        cursor_param = "nextPageToken" if "nextPageToken" in keys else ""
+        return DiscoveredPagination(
+            type="cursor",
+            cursor_param=cursor_param,
+            cursor_field=cursor_param,
+            data_field=data_field,
+        )
+
     if keys & _CURSOR_FIELDS:
         cursor_key = next(iter(keys & _CURSOR_FIELDS))
         return DiscoveredPagination(
             type="cursor",
             cursor_param=cursor_key,
+            cursor_field=cursor_key,
             data_field=data_field,
         )
 
     # Check for offset pagination signals
-    if "total" in keys and ("offset" in keys or "limit" in keys):
+    if "total" in keys and ({"offset", "limit"} & keys or {"startAt", "maxResults"} & keys):
+        offset_param = "startAt" if "startAt" in keys else "offset"
+        page_size_param = (
+            "maxResults" if "maxResults" in keys else "limit" if "limit" in keys else ""
+        )
         return DiscoveredPagination(
             type="offset",
             data_field=data_field,
-            page_size_param="limit" if "limit" in keys else "",
+            offset_param=offset_param,
+            page_size_param=page_size_param,
         )
 
     # If we found a wrapping field but no pagination signals

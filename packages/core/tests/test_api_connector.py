@@ -1,6 +1,7 @@
 """TDD tests for APIConnector — written before implementation."""
 
 import asyncio
+import base64
 import json
 from unittest.mock import MagicMock, patch
 
@@ -175,6 +176,30 @@ class TestAPIConnectorAuth:
         headers = api_connector._resolve_auth_headers()
         assert headers["Authorization"] == "Bearer sk-test-12345"
 
+    def test_resolve_basic_auth(self, data_dir, env_file):
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+        )
+
+        env_file.write_text("JIRA_EMAIL=dev@example.com\nJIRA_TOKEN=tok-123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://example.atlassian.net",
+            auth=APIAuthConfig(
+                type="basic",
+                username_env="JIRA_EMAIL",
+                password_env="JIRA_TOKEN",
+            ),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        headers = conn._resolve_auth_headers()
+
+        expected = base64.b64encode(b"dev@example.com:tok-123").decode()
+        assert headers["Authorization"] == f"Basic {expected}"
+
     def test_resolve_header_auth(self, data_dir, env_file):
         from db_mcp.connectors.api import (
             APIAuthConfig,
@@ -203,6 +228,28 @@ class TestAPIConnectorAuth:
         )
         conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
         with pytest.raises(ValueError, match="not found"):
+            conn._resolve_auth_headers()
+
+    def test_basic_auth_missing_username_env_raises(self, data_dir, env_file):
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+        )
+
+        env_file.write_text("JIRA_TOKEN=tok-123\n")
+
+        config = APIConnectorConfig(
+            base_url="https://example.atlassian.net",
+            auth=APIAuthConfig(
+                type="basic",
+                username_env="JIRA_EMAIL",
+                password_env="JIRA_TOKEN",
+            ),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        with pytest.raises(ValueError, match="JIRA_EMAIL"):
             conn._resolve_auth_headers()
 
 
@@ -788,6 +835,167 @@ class TestAPIConnectorAdHocQuery:
 
         assert result["rows_returned"] == 2
         assert result["data"][0]["id"] == 1
+
+    def test_query_endpoint_extracts_jira_issues_wrapper(self, data_dir, env_file):
+        """Should extract rows from Jira's ``issues`` wrapper."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://example.atlassian.net",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="search_issues", path="/rest/api/3/search/jql")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "issues": [{"id": "10001", "key": "ENG-1"}, {"id": "10002", "key": "ENG-2"}],
+            "startAt": 0,
+            "maxResults": 50,
+            "total": 2,
+        }
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+            result = conn.query_endpoint("search_issues")
+
+        assert result["rows_returned"] == 2
+        assert result["data"][0]["key"] == "ENG-1"
+
+    def test_query_endpoint_extracts_jira_values_wrapper(self, data_dir, env_file):
+        """Should extract rows from Jira's ``values`` wrapper."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://example.atlassian.net",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="projects", path="/rest/api/3/project/search")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "values": [{"id": "10000", "key": "ENG"}, {"id": "10001", "key": "OPS"}],
+            "startAt": 0,
+            "maxResults": 50,
+            "total": 2,
+        }
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+            result = conn.query_endpoint("projects")
+
+        assert result["rows_returned"] == 2
+        assert result["data"][1]["key"] == "OPS"
+
+    def test_query_endpoint_offset_pagination_uses_configured_offset_param(
+        self, data_dir, env_file
+    ):
+        """Offset pagination should support Jira-style ``startAt`` params."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+            APIPaginationConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://example.atlassian.net",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="projects", path="/rest/api/3/project/search")],
+            pagination=APIPaginationConfig(
+                type="offset",
+                offset_param="startAt",
+                page_size_param="maxResults",
+                page_size=2,
+            ),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        page1 = MagicMock()
+        page1.status_code = 200
+        page1.json.return_value = {
+            "values": [{"id": "10000"}, {"id": "10001"}],
+            "startAt": 0,
+            "maxResults": 2,
+            "total": 3,
+        }
+        page2 = MagicMock()
+        page2.status_code = 200
+        page2.json.return_value = {
+            "values": [{"id": "10002"}],
+            "startAt": 2,
+            "maxResults": 2,
+            "total": 3,
+        }
+
+        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2]) as mock_get:
+            result = conn.query_endpoint("projects", max_pages=2)
+
+        first_call = mock_get.call_args_list[0]
+        second_call = mock_get.call_args_list[1]
+        assert first_call.kwargs["params"]["startAt"] == "0"
+        assert first_call.kwargs["params"]["maxResults"] == "2"
+        assert second_call.kwargs["params"]["startAt"] == "2"
+        assert result["rows_returned"] == 3
+
+    def test_query_endpoint_cursor_pagination_supports_next_page_token(self, data_dir, env_file):
+        """Cursor pagination should support Jira-style ``nextPageToken`` flows."""
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+            APIEndpointConfig,
+            APIPaginationConfig,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://example.atlassian.net",
+            auth=APIAuthConfig(type="bearer", token_env="TEST_API_KEY"),
+            endpoints=[APIEndpointConfig(name="search_issues", path="/rest/api/3/search/jql")],
+            pagination=APIPaginationConfig(
+                type="cursor",
+                cursor_param="nextPageToken",
+                cursor_field="nextPageToken",
+                page_size_param="maxResults",
+                page_size=2,
+            ),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        page1 = MagicMock()
+        page1.status_code = 200
+        page1.json.return_value = {
+            "issues": [{"id": "10001"}, {"id": "10002"}],
+            "isLast": False,
+            "nextPageToken": "token-2",
+        }
+        page2 = MagicMock()
+        page2.status_code = 200
+        page2.json.return_value = {
+            "issues": [{"id": "10003"}],
+            "isLast": True,
+        }
+
+        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2]) as mock_get:
+            result = conn.query_endpoint("search_issues", max_pages=2)
+
+        first_call = mock_get.call_args_list[0]
+        second_call = mock_get.call_args_list[1]
+        assert "nextPageToken" not in first_call.kwargs["params"]
+        assert second_call.kwargs["params"]["nextPageToken"] == "token-2"
+        assert result["rows_returned"] == 3
 
 
 class TestAPIConnectorPathParams:

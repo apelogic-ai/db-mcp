@@ -773,6 +773,30 @@ class TestDetectPagination:
         pg = detect_pagination(body, {})
         assert pg.data_field == "results"
 
+    def test_detects_jira_offset_pagination(self):
+        body = {
+            "issues": [{"id": "10001"}],
+            "startAt": 0,
+            "maxResults": 50,
+            "total": 120,
+        }
+        pg = detect_pagination(body, {})
+        assert pg.type == "offset"
+        assert pg.data_field == "issues"
+        assert pg.offset_param == "startAt"
+        assert pg.page_size_param == "maxResults"
+
+    def test_detects_jira_next_page_token_pagination(self):
+        body = {
+            "issues": [{"id": "10001"}],
+            "isLast": False,
+            "nextPageToken": "next-token",
+        }
+        pg = detect_pagination(body, {})
+        assert pg.type == "cursor"
+        assert pg.data_field == "issues"
+        assert pg.cursor_param == "nextPageToken"
+
 
 # ---------------------------------------------------------------------------
 # Full discovery orchestration

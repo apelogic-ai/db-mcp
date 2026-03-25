@@ -140,12 +140,48 @@ def _prompt_and_save_api_connection(name: str) -> bool:
         console.print("[red]API Base URL is required.[/red]")
         return False
 
-    auth_type = Prompt.ask("Auth type", choices=["header", "bearer"], default="header")
-    token_env = Prompt.ask("API key env var name", default="API_KEY")
-    token_value = Prompt.ask(f"Value for {token_env}", default="", password=True)
-    if not token_value:
-        console.print("[red]API key value is required.[/red]")
-        return False
+    auth_type = Prompt.ask("Auth type", choices=["header", "bearer", "basic"], default="header")
+
+    auth_config: dict[str, object] = {"type": auth_type}
+    env_vars: dict[str, str] = {}
+
+    if auth_type == "basic":
+        username_env = Prompt.ask("Username/email env var name", default="API_USERNAME")
+        username_value = Prompt.ask(f"Value for {username_env}", default="", password=False)
+        password_env = Prompt.ask("Password/token env var name", default="API_PASSWORD")
+        password_value = Prompt.ask(f"Value for {password_env}", default="", password=True)
+        if not username_value or not password_value:
+            console.print("[red]Both username/email and password/token values are required.[/red]")
+            return False
+
+        auth_config.update(
+            {
+                "username_env": username_env,
+                "password_env": password_env,
+            }
+        )
+        env_vars = {
+            username_env: username_value,
+            password_env: password_value,
+        }
+    else:
+        token_env = Prompt.ask("API key env var name", default="API_KEY")
+        token_value = Prompt.ask(f"Value for {token_env}", default="", password=True)
+        if not token_value:
+            console.print("[red]API key value is required.[/red]")
+            return False
+
+        auth_config.update(
+            {
+                "token_env": token_env,
+                **(
+                    {"header_name": Prompt.ask("Auth header name", default="X-API-KEY")}
+                    if auth_type == "header"
+                    else {}
+                ),
+            }
+        )
+        env_vars = {token_env: token_value}
 
     connector_path = get_connection_path(name)
     connector_path.mkdir(parents=True, exist_ok=True)
@@ -161,15 +197,7 @@ def _prompt_and_save_api_connection(name: str) -> bool:
         "type": "api",
         "profile": "api_openapi",
         "base_url": base_url,
-        "auth": {
-            "type": auth_type,
-            "token_env": token_env,
-            **(
-                {"header_name": Prompt.ask("Auth header name", default="X-API-KEY")}
-                if auth_type == "header"
-                else {}
-            ),
-        },
+        "auth": auth_config,
         "endpoints": [],
         "capabilities": {
             "sql": False,
@@ -207,7 +235,7 @@ def _prompt_and_save_api_connection(name: str) -> bool:
     with open(connector_yaml_path, "w") as f:
         yaml.dump(connector_yaml, f, default_flow_style=False, sort_keys=False)
 
-    _save_connection_env(name, {token_env: token_value})
+    _save_connection_env(name, env_vars)
     console.print(f"\n[green]✓ API connector saved to {connector_yaml_path}[/green]")
     console.print(f"[green]✓ Credentials saved to {_get_connection_env_path(name)}[/green]")
 

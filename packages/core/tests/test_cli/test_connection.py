@@ -10,6 +10,7 @@ from unittest.mock import patch
 from db_mcp.cli.connection import (
     _get_connection_env_path,
     _load_connection_env,
+    _prompt_and_save_api_connection,
     _save_connection_env,
     connection_exists,
     get_active_connection,
@@ -182,3 +183,49 @@ class TestSaveConnectionEnv:
         content = (tmp_path / "myconn" / ".env").read_text()
         assert "A=" in content
         assert "B=" in content
+
+
+class TestPromptAndSaveAPIConnection:
+    def test_saves_basic_auth_api_connection(self, tmp_path, monkeypatch):
+        answers = iter(
+            [
+                "https://example.atlassian.net",
+                "basic",
+                "JIRA_EMAIL",
+                "dev@example.com",
+                "JIRA_TOKEN",
+                "tok-123",
+                "no",
+            ]
+        )
+
+        monkeypatch.setattr(
+            "db_mcp.cli.connection.get_connection_path",
+            lambda _name: tmp_path / _name,
+        )
+        monkeypatch.setattr("db_mcp.cli.connection.load_config", lambda: {})
+
+        saved_config = {}
+
+        def _save_config(config):
+            saved_config.update(config)
+
+        monkeypatch.setattr("db_mcp.cli.connection.save_config", _save_config)
+        monkeypatch.setattr(
+            "db_mcp.cli.connection.Prompt.ask",
+            lambda *args, **kwargs: next(answers),
+        )
+
+        ok = _prompt_and_save_api_connection("jira")
+
+        assert ok is True
+        connector_yaml = (tmp_path / "jira" / "connector.yaml").read_text()
+        assert "type: api" in connector_yaml
+        assert "type: basic" in connector_yaml
+        assert "username_env: JIRA_EMAIL" in connector_yaml
+        assert "password_env: JIRA_TOKEN" in connector_yaml
+
+        env_file = (tmp_path / "jira" / ".env").read_text()
+        assert 'JIRA_EMAIL="dev@example.com"' in env_file
+        assert 'JIRA_TOKEN="tok-123"' in env_file
+        assert saved_config["active_connection"] == "jira"
