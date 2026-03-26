@@ -13,6 +13,7 @@ from typing import Any
 import requests
 import yaml
 
+from db_mcp.connectors.api_discovery import discover_api, discover_openapi_spec
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig
 from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 
@@ -161,6 +162,7 @@ class APIConnectorConfig:
     type: str = field(default="api", init=False)
     profile: str = ""
     base_url: str = ""
+    spec_url: str = ""
     auth: APIAuthConfig = field(default_factory=APIAuthConfig)
     endpoints: list[APIEndpointConfig] = field(default_factory=list)
     pagination: APIPaginationConfig = field(default_factory=APIPaginationConfig)
@@ -485,6 +487,24 @@ class APIConnector(FileConnector):
                 "error": str(exc),
             }
         except Exception as exc:
+            if not self.api_config.endpoints:
+                spec, discovered_spec_url = discover_openapi_spec(
+                    self.api_config.base_url,
+                    headers,
+                    self.api_config.rate_limit_rps,
+                    spec_url=self.api_config.spec_url or None,
+                )
+                if spec is not None and discovered_spec_url:
+                    return {
+                        "connected": True,
+                        "dialect": self.api_config.api_title or "duckdb",
+                        "endpoints": 0,
+                        "error": None,
+                        "hint": (
+                            "OpenAPI document reachable. Discovery will extract endpoints "
+                            "and resolve the API base URL."
+                        ),
+                    }
             return {
                 "connected": False,
                 "dialect": self.api_config.api_title or "duckdb",
@@ -1564,8 +1584,6 @@ class APIConnector(FileConnector):
         Returns:
             Dict with discovery results including endpoints found and strategy used.
         """
-        from db_mcp.connectors.api_discovery import discover_api
-
         try:
             auth_headers = self._resolve_auth_headers()
         except ValueError:
@@ -1577,6 +1595,7 @@ class APIConnector(FileConnector):
             auth_headers=auth_headers,
             auth_params=auth_params,
             rate_limit_rps=self.api_config.rate_limit_rps,
+            spec_url=self.api_config.spec_url or None,
         )
 
         # Update config with discovered endpoints
@@ -1618,10 +1637,15 @@ class APIConnector(FileConnector):
             self.api_config.api_title = result.api_title
         if result.api_description:
             self.api_config.api_description = result.api_description
+        if result.spec_url:
+            self.api_config.spec_url = result.spec_url
+        if result.base_url:
+            self.api_config.base_url = result.base_url
 
         return {
             "strategy": result.strategy,
             "spec_url": result.spec_url,
+            "base_url": result.base_url,
             "api_title": result.api_title,
             "api_description": result.api_description,
             "endpoints_found": len(result.endpoints),
@@ -1648,6 +1672,8 @@ class APIConnector(FileConnector):
             "profile": self.api_config.profile or "api_openapi",
             "base_url": self.api_config.base_url,
         }
+        if self.api_config.spec_url:
+            data["spec_url"] = self.api_config.spec_url
         if self.api_config.capabilities:
             data["capabilities"] = self.api_config.capabilities
 

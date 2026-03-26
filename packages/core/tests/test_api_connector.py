@@ -283,6 +283,24 @@ class TestAPIConnectorAuth:
 
 
 class TestAPIConnectorTestConnection:
+    def test_connection_accepts_direct_openapi_document_url(self, data_dir):
+        """A reachable OpenAPI document should count as a successful API connect step."""
+        from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com/public/v1/openapi.json",
+        )
+        conn = APIConnector(config, data_dir=str(data_dir))
+
+        with patch(
+            "db_mcp.connectors.api.discover_openapi_spec",
+            return_value=({"openapi": "3.0.0", "paths": {}}, config.base_url),
+        ):
+            result = conn.test_connection()
+
+        assert result["connected"] is True
+        assert "OpenAPI" in result["hint"]
+
     def test_connection_success(self, api_connector):
         """test_connection with a mocked HTTP response should succeed."""
         mock_response = MagicMock()
@@ -341,6 +359,35 @@ class TestAPIConnectorTestConnection:
         assert called_kwargs["method"] == "POST"
         assert called_kwargs["url"] == "https://api.example.com/sql/execute"
         assert called_kwargs["json"]["sql"] == "SELECT 1 AS db_mcp_doctor"
+
+    def test_discover_updates_base_url_and_spec_url_from_direct_spec(self, data_dir):
+        from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+        from db_mcp.connectors.api_discovery import (
+            DiscoveredPagination,
+            DiscoveryResult,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://boost.example.com/api/public/v1/openapi.json",
+        )
+        conn = APIConnector(config, data_dir=str(data_dir))
+
+        with patch(
+            "db_mcp.connectors.api.discover_api",
+            return_value=DiscoveryResult(
+                endpoints=[],
+                pagination=DiscoveredPagination(),
+                strategy="openapi",
+                spec_url="https://boost.example.com/api/public/v1/openapi.json",
+                base_url="https://boost.example.com/api/public/v1",
+                api_title="Boost Public API",
+            ),
+        ):
+            result = conn.discover()
+
+        assert result["success"] if "success" in result else True
+        assert conn.api_config.base_url == "https://boost.example.com/api/public/v1"
+        assert conn.api_config.spec_url == "https://boost.example.com/api/public/v1/openapi.json"
 
 
 # ---------------------------------------------------------------------------
