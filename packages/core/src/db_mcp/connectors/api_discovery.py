@@ -16,6 +16,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import requests
 import yaml
@@ -79,6 +80,7 @@ class DiscoveryResult:
     endpoints: list[DiscoveredEndpoint]
     pagination: DiscoveredPagination
     spec_url: str | None = None
+    base_url: str | None = None
     strategy: str = "none"  # "openapi" | "probe" | "none"
     api_title: str = ""
     api_description: str = ""
@@ -148,6 +150,7 @@ _HAS_MORE_FIELDS = {"has_more", "hasMore", "has_next", "hasNext"}
 
 # Path param patterns (detail endpoints to skip)
 _PATH_PARAM_RE = re.compile(r"\{[^}]+\}")
+_SPEC_URL_RE = re.compile(r"(?:^|/)(?:openapi|swagger|api-docs|spec)(?:\.(?:json|ya?ml))?$")
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +162,7 @@ def discover_openapi_spec(
     base_url: str,
     auth_headers: dict[str, str],
     rate_limit_rps: float,
+    spec_url: str | None = None,
 ) -> tuple[dict | None, str | None]:
     """Try well-known paths to find an OpenAPI/Swagger spec.
 
@@ -167,40 +171,65 @@ def discover_openapi_spec(
     """
     base = base_url.rstrip("/")
     delay = 1.0 / rate_limit_rps if rate_limit_rps > 0 else 0
+    candidates: list[str] = []
 
-    for path in SPEC_PATHS:
-        url = base + path
-        try:
-            if delay > 0:
-                time.sleep(delay)
+    if spec_url:
+        candidates.append(spec_url)
+    elif is_probable_openapi_spec_url(base_url):
+        candidates.append(base_url)
 
-            resp = requests.get(url, headers=auth_headers, timeout=10)
-            if resp.status_code != 200:
-                continue
+    candidates.extend(base + path for path in SPEC_PATHS)
 
-            # Try JSON first
-            spec = None
-            try:
-                spec = resp.json()
-            except (ValueError, TypeError):
-                # Try YAML
-                try:
-                    spec = yaml.safe_load(resp.text)
-                except Exception:
-                    continue
-
-            if not isinstance(spec, dict):
-                continue
-
-            # Validate: must have "openapi" or "swagger" key
-            if "openapi" in spec or "swagger" in spec:
-                logger.info(f"Found OpenAPI spec at {url}")
-                return spec, url
-
-        except Exception:
+    seen: set[str] = set()
+    for url in candidates:
+        if not url or url in seen:
             continue
+        seen.add(url)
+        spec = _fetch_spec_candidate(url, auth_headers, delay)
+        if spec is not None:
+            return spec, url
 
     return None, None
+
+
+def is_probable_openapi_spec_url(url: str) -> bool:
+    """Return True when a URL looks like a direct OpenAPI/Swagger document."""
+    path = urlparse(url).path.rstrip("/").lower()
+    return bool(_SPEC_URL_RE.search(path))
+
+
+def _fetch_spec_candidate(
+    url: str,
+    auth_headers: dict[str, str],
+    delay: float,
+) -> dict[str, Any] | None:
+    """Fetch and parse a candidate OpenAPI/Swagger document URL."""
+    try:
+        if delay > 0:
+            time.sleep(delay)
+
+        resp = requests.get(url, headers=auth_headers, timeout=10)
+        if resp.status_code != 200:
+            return None
+
+        try:
+            spec = resp.json()
+        except (ValueError, TypeError):
+            try:
+                spec = yaml.safe_load(resp.text)
+            except Exception:
+                return None
+
+        if not isinstance(spec, dict):
+            return None
+
+        if "openapi" in spec or "swagger" in spec:
+            logger.info(f"Found OpenAPI spec at {url}")
+            return spec
+    except Exception:
+        return None
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +505,58 @@ def _detect_data_field_from_spec(spec: dict) -> str:
     return ""
 
 
+def resolve_spec_base_url(spec: dict, spec_url: str | None, fallback_base_url: str) -> str:
+    """Resolve the usable API base URL from spec metadata."""
+    if "openapi" in spec:
+        servers = spec.get("servers", [])
+        if isinstance(servers, list):
+            for server in servers:
+                if not isinstance(server, dict):
+                    continue
+                server_url = str(server.get("url") or "").strip()
+                if server_url:
+                    return _resolve_server_url(server_url, spec_url, fallback_base_url)
+
+    if "swagger" in spec:
+        host = str(spec.get("host") or "").strip()
+        if host:
+            schemes = spec.get("schemes")
+            scheme = ""
+            if isinstance(schemes, list) and schemes:
+                scheme = str(schemes[0]).strip()
+            if not scheme:
+                reference = spec_url or fallback_base_url
+                scheme = urlparse(reference).scheme or "https"
+            base_path = str(spec.get("basePath") or "").strip()
+            return f"{scheme}://{host}{base_path}".rstrip("/")
+
+    if spec_url and is_probable_openapi_spec_url(spec_url):
+        return spec_url.rsplit("/", 1)[0]
+    if is_probable_openapi_spec_url(fallback_base_url):
+        return fallback_base_url.rsplit("/", 1)[0]
+    return fallback_base_url.rstrip("/")
+
+
+def _resolve_server_url(server_url: str, spec_url: str | None, fallback_base_url: str) -> str:
+    """Resolve an OpenAPI server URL against the spec location or fallback base URL."""
+    parsed = urlparse(server_url)
+    if parsed.scheme and parsed.netloc:
+        return server_url.rstrip("/")
+
+    reference = spec_url or fallback_base_url
+    if server_url.startswith("/"):
+        ref = urlparse(reference)
+        if ref.scheme and ref.netloc:
+            return f"{ref.scheme}://{ref.netloc}{server_url}".rstrip("/")
+
+    base_reference = reference
+    if is_probable_openapi_spec_url(reference):
+        base_reference = reference.rsplit("/", 1)[0] + "/"
+    else:
+        base_reference = reference.rstrip("/") + "/"
+    return urljoin(base_reference, server_url).rstrip("/")
+
+
 # ---------------------------------------------------------------------------
 # Stage 2b: Response probing (fallback)
 # ---------------------------------------------------------------------------
@@ -712,6 +793,7 @@ def discover_api(
     auth_headers: dict[str, str],
     auth_params: dict[str, str],
     rate_limit_rps: float,
+    spec_url: str | None = None,
 ) -> DiscoveryResult:
     """Discover API endpoints, pagination, and schema.
 
@@ -726,6 +808,7 @@ def discover_api(
         auth_headers: Authentication headers
         auth_params: Authentication query params
         rate_limit_rps: Rate limit (requests per second)
+        spec_url: Optional explicit OpenAPI document URL
 
     Returns:
         DiscoveryResult with discovered endpoints and config
@@ -734,9 +817,14 @@ def discover_api(
 
     # Stage 1: Try OpenAPI spec discovery
     try:
-        spec, spec_url = discover_openapi_spec(base_url, auth_headers, rate_limit_rps)
+        spec, discovered_spec_url = discover_openapi_spec(
+            base_url,
+            auth_headers,
+            rate_limit_rps,
+            spec_url=spec_url,
+        )
     except Exception as exc:
-        spec, spec_url = None, None
+        spec, discovered_spec_url = None, None
         errors.append(f"Spec discovery failed: {exc}")
 
     # Stage 2a: Parse spec if found
@@ -746,7 +834,8 @@ def discover_api(
             return DiscoveryResult(
                 endpoints=endpoints,
                 pagination=pagination,
-                spec_url=spec_url,
+                spec_url=discovered_spec_url,
+                base_url=resolve_spec_base_url(spec, discovered_spec_url, base_url),
                 strategy="openapi",
                 api_title=title,
                 api_description=description,

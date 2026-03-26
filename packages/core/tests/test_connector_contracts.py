@@ -45,6 +45,21 @@ def test_validate_connector_contract_accepts_extension_profile():
     assert parsed.profile == "x-my-custom-profile"
 
 
+def test_validate_connector_contract_accepts_api_spec_url():
+    parsed = validate_connector_contract(
+        {
+            "spec_version": "1.0.0",
+            "type": "api",
+            "profile": "api_openapi",
+            "base_url": "https://api.example.com/v1",
+            "spec_url": "https://cdn.example.com/openapi.json",
+        }
+    )
+
+    assert isinstance(parsed, ConnectorContractV1)
+    assert parsed.spec_url == "https://cdn.example.com/openapi.json"
+
+
 def test_validate_connector_contract_rejects_profile_type_mismatch():
     with pytest.raises(ValidationError, match="not compatible"):
         validate_connector_contract(
@@ -60,4 +75,3 @@ def test_validate_connector_contract_rejects_profile_type_mismatch():
 def test_validate_connector_contract_requires_file_source_or_directory():
     with pytest.raises(ValidationError, match="require either 'directory'"):
         validate_connector_contract({"spec_version": "1.0.0", "type": "file"})
-

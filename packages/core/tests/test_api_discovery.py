@@ -196,6 +196,24 @@ OPENAPI_WRAPPED_RESPONSE_SPEC = {
 class TestDiscoverOpenAPISpec:
     """Stage 1: finding an OpenAPI/Swagger spec at well-known paths."""
 
+    def test_uses_direct_openapi_document_url(self):
+        """Should treat a direct OpenAPI document URL as the spec location."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.json.return_value = OPENAPI_3_SPEC
+
+        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=mock_resp) as get:
+            spec, spec_url = discover_openapi_spec(
+                "https://api.example.com/catalog/openapi.json",
+                {},
+                10.0,
+            )
+
+        assert spec is not None
+        assert spec_url == "https://api.example.com/catalog/openapi.json"
+        get.assert_called_once()
+
     def test_finds_spec_at_openapi_json(self):
         """Should find spec at /openapi.json."""
         mock_resp = MagicMock()
@@ -805,6 +823,27 @@ class TestDetectPagination:
 
 class TestDiscoverAPI:
     """End-to-end discover_api orchestration."""
+
+    def test_uses_direct_spec_url_and_resolves_server_base_url(self):
+        """Should parse a direct spec URL and derive the usable API base URL."""
+        direct_spec = {
+            **OPENAPI_3_SPEC,
+            "servers": [{"url": "/api/public/v1"}],
+        }
+        spec_resp = MagicMock()
+        spec_resp.status_code = 200
+        spec_resp.headers = {"content-type": "application/json"}
+        spec_resp.json.return_value = direct_spec
+
+        direct_url = "https://boost.example.com/api/public/v1/openapi.json"
+
+        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=spec_resp):
+            result = discover_api(direct_url, {}, {}, 10.0)
+
+        assert result.strategy == "openapi"
+        assert result.spec_url == direct_url
+        assert result.base_url == "https://boost.example.com/api/public/v1"
+        assert len(result.endpoints) >= 2
 
     def test_uses_openapi_when_spec_found(self):
         """Should use OpenAPI strategy when spec is available."""

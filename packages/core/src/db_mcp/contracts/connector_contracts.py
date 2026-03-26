@@ -56,6 +56,7 @@ class ConnectorContractV1(_StrictModel):
 
     # API connector fields
     base_url: str = ""
+    spec_url: str = ""
     auth: dict[str, Any] = Field(default_factory=dict)
     endpoints: list[dict[str, Any]] = Field(default_factory=list)
     pagination: dict[str, Any] = Field(default_factory=dict)

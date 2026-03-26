@@ -197,6 +197,11 @@
       "title": "Sources",
       "type": "array"
     },
+    "spec_url": {
+      "default": "",
+      "title": "Spec Url",
+      "type": "string"
+    },
     "spec_version": {
       "default": "1.0.0",
       "title": "Spec Version",
