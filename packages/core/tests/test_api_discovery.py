@@ -188,6 +188,80 @@ OPENAPI_WRAPPED_RESPONSE_SPEC = {
 }
 
 
+OPENAPI_CONTEXTUAL_PATH_SPEC = {
+    "openapi": "3.0.0",
+    "info": {"title": "Context API", "version": "1.0"},
+    "paths": {
+        "/tenants/{tenant}/articles": {
+            "get": {
+                "summary": "List tenant articles",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "title": {"type": "string"},
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/tenants/{tenant}/schools/{schoolAlias}/teams": {
+            "get": {
+                "summary": "List teams for a school",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "name": {"type": "string"},
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/tenants/{tenant}/articles/{articleId}": {
+            "get": {
+                "summary": "Get article",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {"type": "string"},
+                                        "title": {"type": "string"},
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        },
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Spec discovery
 # ---------------------------------------------------------------------------
@@ -359,6 +433,42 @@ class TestParseOpenAPISpec:
         assert "volume" in field_names
         assert "active" in field_names
 
+    def test_handles_openapi_31_nullable_type_arrays(self):
+        """Should normalize OpenAPI 3.1 union types like ['string', 'null']."""  # noqa: D401
+        spec = {
+            "openapi": "3.1.0",
+            "info": {"title": "Nullable API"},
+            "paths": {
+                "/articles": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "title": {"type": ["string", "null"]},
+                                                    "rank": {"type": ["integer", "null"]},
+                                                },
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+        endpoints, _, _, _ = parse_openapi_spec(spec)
+        article = next(ep for ep in endpoints if ep.name == "articles")
+        field_types = {field.name: field.type for field in article.fields}
+        assert field_types["title"] == "VARCHAR"
+        assert field_types["rank"] == "INTEGER"
+
     def test_maps_openapi_types(self):
         """Should map OpenAPI types to SQL types."""
         endpoints, _, _, _ = parse_openapi_spec(OPENAPI_3_SPEC)
@@ -427,6 +537,19 @@ class TestParseOpenAPISpec:
         # /markets → markets, /events → events
         assert "markets" in names
         assert "events" in names
+
+    def test_includes_collection_endpoints_with_context_path_params(self):
+        """Should keep collection endpoints even when context path params are required."""
+        endpoints, _, _, _ = parse_openapi_spec(OPENAPI_CONTEXTUAL_PATH_SPEC)
+        paths = {ep.path for ep in endpoints}
+        assert "/tenants/{tenant}/articles" in paths
+        assert "/tenants/{tenant}/schools/{schoolAlias}/teams" in paths
+
+    def test_still_skips_detail_endpoints_when_path_ends_with_param(self):
+        """Should still treat terminal path params as detail endpoints."""
+        endpoints, _, _, _ = parse_openapi_spec(OPENAPI_CONTEXTUAL_PATH_SPEC)
+        paths = {ep.path for ep in endpoints}
+        assert "/tenants/{tenant}/articles/{articleId}" not in paths
 
     def test_empty_spec_returns_empty(self):
         """Should handle spec with no paths gracefully."""
