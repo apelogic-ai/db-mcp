@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.5] - 2026-03-26
+
+## Highlights
+- Fixed OpenAPI discovery for APIs whose collection endpoints include required context path
+  parameters such as `/tenants/{tenant}/articles`.
+- Fixed OpenAPI field extraction for OpenAPI 3.1 nullable union types such as
+  `["string", "null"]`.
+
+## Breaking changes
+- None
+
+## Features
+- Added focused discovery regressions for contextual collection paths and OpenAPI 3.1 nullable
+  union-type fields.
+
+## Fixes
+- Fixed API discovery so collection endpoints are no longer discarded just because they contain
+  path params used for request context.
+- Fixed field-type extraction so OpenAPI 3.1 specs using type arrays do not crash discovery.
+- Fixed real-world OpenAPI discovery for the Boost public API, which now resolves and extracts
+  endpoints from its published spec.
+
+## Security
+- None
+
+## Upgrade notes
+- API onboarding should now discover endpoints for APIs that scope collection paths under required
+  context segments.
+- The Boost public API example now resolves with OpenAPI-based discovery and returns discovered
+  endpoints instead of `0 endpoints`.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in
+  `tests/test_database.py::test_connection`.
+
 ## [0.8.4] - 2026-03-26
 
 ## Highlights
