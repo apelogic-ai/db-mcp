@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.4] - 2026-03-26
+
+## Highlights
+- Fixed the UI connection wizard so a successful API connect step can advance into Discover
+  without bouncing back to Connect.
+- Preserved the saved connection name during the connect-to-discover transition instead of
+  relying only on the URL query param timing.
+
+## Breaking changes
+- None
+
+## Features
+- Added a focused UI regression test covering wizard step locking for newly saved connections.
+
+## Fixes
+- Fixed the API onboarding wizard race where clicking `Next` after a successful connect test could
+  reset the page back to the connect step.
+- Fixed wizard step gating so Discover and Sample unlock as soon as the connection has a local
+  saved name, even before the query string catches up.
+
+## Security
+- None
+
+## Upgrade notes
+- API onboarding from a naked `base_url` should now proceed normally into the Discover step after
+  a successful test.
+- Discovery still begins when you click `Discover` on step 2; it does not auto-run on entry.
+
+## Known issues
+- `bunx next lint` and `bunx next build` still report the existing React hook dependency warnings
+  in `src/components/context/CodeEditor.tsx` and `src/components/context/SchemaExplorer.tsx`.
+
 ## [0.8.3] - 2026-03-26
 
 ## Highlights
