@@ -1,11 +1,10 @@
 """TDD tests for MetabaseConnector — written before implementation."""
-
-import importlib.resources
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from db_mcp.connectors import Connector, ConnectorConfig
+from db_mcp.connector_templates import get_connector_template
+from db_mcp.connectors import Connector
 
 
 @pytest.fixture
@@ -272,21 +271,11 @@ class TestMetabaseQuery:
 
 
 def test_bundled_metabase_api_key_template_loads():
-    from db_mcp.connectors.api import APIConnectorConfig
+    template = get_connector_template("metabase")
 
-    template_path = (
-        importlib.resources.files("db_mcp")
-        / "data"
-        / "templates"
-        / "metabase_api_key"
-        / "connector.yaml"
-    )
-
-    config = ConnectorConfig.from_yaml(template_path)
-
-    assert isinstance(config, APIConnectorConfig)
-    assert config.type == "api"
-    assert config.auth.type == "header"
-    assert config.auth.header_name == "x-api-key"
-    assert config.auth.token_env == "MB_API_KEY"
-    assert config.profile == "hybrid_bi"
+    assert template is not None
+    assert template.connector["type"] == "api"
+    assert template.connector["profile"] == "hybrid_bi"
+    assert template.connector["auth"]["type"] == "header"
+    assert template.connector["auth"]["header_name"] == "x-api-key"
+    assert template.connector["auth"]["token_env"] == "MB_API_KEY"

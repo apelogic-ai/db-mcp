@@ -23,6 +23,7 @@ def test_connector_templates_lists_builtins():
     assert "jira" in result.output
     assert "dune" in result.output
     assert "superset" in result.output
+    assert "metabase" in result.output
 
 
 def test_connector_validate_passes_with_valid_yaml(tmp_path):
