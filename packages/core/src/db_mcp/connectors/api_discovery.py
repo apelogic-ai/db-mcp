@@ -259,8 +259,10 @@ def parse_openapi_spec(
         if not isinstance(methods, dict):
             continue
 
-        # Skip detail endpoints with path params
-        if _PATH_PARAM_RE.search(path):
+        # Skip likely detail endpoints whose final segment is a path param.
+        # Keep collection endpoints that require contextual path params such as
+        # /tenants/{tenant}/articles or /schools/{schoolAlias}/teams.
+        if _is_likely_detail_endpoint(path):
             continue
 
         get_op = methods.get("get")
@@ -376,12 +378,24 @@ def _extract_object_fields(schema: dict, full_spec: dict) -> list[DiscoveredFiel
     fields: list[DiscoveredField] = []
     for name, prop in props.items():
         prop = _resolve_ref(prop, full_spec)
-        openapi_type = prop.get("type", "string")
+        openapi_type = _normalize_openapi_type(prop.get("type", "string"))
         sql_type = _OPENAPI_TYPE_MAP.get(openapi_type, "VARCHAR")
         description = prop.get("description", "")
         fields.append(DiscoveredField(name=name, type=sql_type, description=description))
 
     return fields
+
+
+def _normalize_openapi_type(openapi_type: Any) -> str:
+    """Normalize OpenAPI type values to a single scalar type name."""
+    if isinstance(openapi_type, list):
+        for candidate in openapi_type:
+            if isinstance(candidate, str) and candidate != "null":
+                return candidate
+        return "string"
+    if isinstance(openapi_type, str):
+        return openapi_type
+    return "string"
 
 
 def _resolve_ref(schema: dict, full_spec: dict) -> dict:
@@ -414,9 +428,25 @@ def _path_to_name(path: str) -> str:
     """
     # Strip leading version prefixes
     cleaned = re.sub(r"^/(?:api/)?(?:v\d+/)?", "/", path)
-    # Remove leading/trailing slashes, replace / with _
-    name = cleaned.strip("/").replace("/", "_").replace("-", "_")
+    segments = [segment for segment in cleaned.strip("/").split("/") if segment]
+
+    # Drop leading contextual prefixes that end with a path param:
+    # /tenants/{tenant}/articles -> articles
+    # /schools/{schoolAlias}/teams -> teams
+    while len(segments) >= 3 and _PATH_PARAM_RE.fullmatch(segments[1]):
+        segments = segments[2:]
+
+    # Remove any remaining path-param segments from the table name.
+    segments = [segment for segment in segments if not _PATH_PARAM_RE.fullmatch(segment)]
+
+    name = "_".join(segments).replace("-", "_")
     return name or "root"
+
+
+def _is_likely_detail_endpoint(path: str) -> bool:
+    """Return True when the endpoint looks like a single-resource detail path."""
+    segments = [segment for segment in path.strip("/").split("/") if segment]
+    return bool(segments) and bool(_PATH_PARAM_RE.fullmatch(segments[-1]))
 
 
 def _detect_pagination_from_spec(params: list[str], spec: dict) -> DiscoveredPagination:
