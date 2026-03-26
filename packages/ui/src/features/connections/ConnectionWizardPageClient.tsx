@@ -29,6 +29,7 @@ import {
   getConnectionOnboardingTone,
   getPersistedWizardStatuses,
   inferDialect,
+  isWizardStepLocked,
   maskDatabaseUrl,
   normalizeDbSegment,
   parseConnectArgsFromUrl,
@@ -337,9 +338,16 @@ export function ConnectionWizardPageClient() {
   useEffect(() => {
     const syncStep = () => {
       const nextStep = wizardStepFromHash(window.location.hash);
-      if (!existingName && nextStep !== "connect") {
+      if (isWizardStepLocked(nextStep, currentName)) {
         setStep("connect");
-        window.history.replaceState(null, "", buildWizardHref("connect", { type: connectorType }));
+        window.history.replaceState(
+          null,
+          "",
+          buildWizardHref("connect", {
+            name: currentName || undefined,
+            type: connectorType,
+          }),
+        );
         return;
       }
       setStep(nextStep);
@@ -348,7 +356,7 @@ export function ConnectionWizardPageClient() {
     syncStep();
     window.addEventListener("hashchange", syncStep);
     return () => window.removeEventListener("hashchange", syncStep);
-  }, [connectorType, existingName]);
+  }, [connectorType, currentName]);
 
   useEffect(() => {
     setConnectorType(initialType);
@@ -1293,7 +1301,7 @@ export function ConnectionWizardPageClient() {
           <nav className="flex flex-wrap items-center gap-3 text-lg font-medium">
             {WIZARD_STEPS.map((wizardStep, index) => {
               const isActive = step === wizardStep.id;
-              const isLocked = wizardStep.id !== "connect" && !existingName;
+              const isLocked = isWizardStepLocked(wizardStep.id, currentName);
               return (
                 <span key={wizardStep.id} className="flex items-center gap-3">
                   <button

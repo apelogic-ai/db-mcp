@@ -123,6 +123,10 @@ export function wizardStepFromHash(hash: string): WizardStep {
   return "connect";
 }
 
+export function isWizardStepLocked(step: WizardStep, connectionName?: string | null): boolean {
+  return step !== "connect" && !connectionName?.trim();
+}
+
 export function buildWizardHref(
   step: WizardStep,
   options: { name?: string; type?: ConnectorType } = {},
