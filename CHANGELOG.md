@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.3] - 2026-03-26
+
+## Highlights
+- Fixed API onboarding for OpenAPI-backed services whose naked base URL returns `404` but whose
+  spec is available at a well-known path such as `/openapi.json`.
+- Taught API discovery to treat direct OpenAPI document URLs as first-class inputs and to resolve
+  the usable API base URL from the spec before endpoint extraction.
+- Persisted explicit `spec_url` values in `connector.yaml` so connect and rediscovery use the same
+  source of truth.
+
+## Breaking changes
+- None
+
+## Features
+- Added `spec_url` to the API connector contract and loader path.
+- Added direct-spec detection to OpenAPI discovery so onboarding can start from a document URL as
+  well as a naked base URL.
+- Added spec-derived base URL resolution from OpenAPI `servers` metadata and Swagger host/basePath
+  metadata.
+
+## Fixes
+- Fixed the connect step so a reachable OpenAPI document now counts as a successful API connection
+  test even if the base URL itself returns `404`.
+- Fixed discovery fallback behavior so direct spec URLs no longer drop into blind probing and
+  surface junk endpoints such as `/servers` and `/tags`.
+- Fixed connector schema export drift for the new `spec_url` field.
+
+## Security
+- None
+
+## Upgrade notes
+- API onboarding now works for services that expose OpenAPI docs at a well-known path under the
+  configured base URL.
+- If a provider hosts its spec at a nonstandard location, you can still set `spec_url` explicitly
+  and db-mcp will persist and reuse it for discovery.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in
+  `tests/test_database.py::test_connection`.
+
 ## [0.8.2] - 2026-03-25
 
 ## Highlights
