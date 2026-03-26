@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.2] - 2026-03-25
+
+## Highlights
+- Added a shipped Metabase connector template to the built-in template catalog, so Metabase now
+  appears alongside Jira, Dune, and Superset in the CLI template flow.
+- Generalized the API connector to cover Metabase-style auth and payload patterns without requiring
+  new product-specific runtime code paths.
+- Kept the existing `type: metabase` connector working as a compatibility wrapper while the shipped
+  template uses the generic `type: api` path.
+
+## Breaking changes
+- None
+
+## Features
+- Added a built-in `metabase` connector template under
+  `packages/core/src/db_mcp/static/connector_templates/`.
+- Added generic login-token auth support with configurable header names and token prefixes in the
+  API connector.
+- Added structured JSON `body_template` support for SQL-over-HTTP endpoints in the API connector.
+- Added generic schema metadata support for API connectors through a declared `schema` endpoint.
+
+## Fixes
+- Fixed the shipped-template gap where Metabase support existed in runtime code but was not exposed
+  through the new built-in template library.
+- Fixed API response extraction for nested columnar payloads such as Metabase-style
+  `data.cols`/`data.rows` responses.
+- Removed incidental provider-specific example wording from generic API CLI/help text.
+
+## Security
+- None
+
+## Upgrade notes
+- Metabase is now available through `db-mcp connector templates` and `db-mcp init <name> --template metabase`.
+- The shipped Metabase template includes placeholder database id `1`; update the schema path and
+  SQL request body to your real Metabase database id after initialization.
+- Existing `type: metabase` connections remain supported for backward compatibility.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in
+  `tests/test_database.py::test_connection`.
+
 ## [0.8.1] - 2026-03-25
 
 ## Highlights
