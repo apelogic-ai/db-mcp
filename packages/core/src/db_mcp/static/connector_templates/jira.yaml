@@ -1,0 +1,105 @@
+id: jira
+title: Jira Cloud
+description: Jira Cloud REST API for issue search, issue detail, and issue creation.
+base_url_prompt: Jira base URL
+env:
+  - name: JIRA_EMAIL
+    prompt: Jira email
+    secret: false
+  - name: JIRA_TOKEN
+    prompt: Jira API token
+    secret: true
+connector:
+  spec_version: 1.0.0
+  type: api
+  profile: api_openapi
+  base_url: https://your-domain.atlassian.net
+  auth:
+    type: basic
+    username_env: JIRA_EMAIL
+    password_env: JIRA_TOKEN
+  pagination:
+    type: offset
+    offset_param: startAt
+    page_size_param: maxResults
+    page_size: 50
+  endpoints:
+    - name: myself
+      path: /rest/api/3/myself
+      method: GET
+      response_mode: raw
+    - name: projects
+      path: /rest/api/3/project/search
+      method: GET
+      query_params:
+        - name: query
+          type: string
+          description: Filter projects by text.
+        - name: expand
+          type: string
+          description: Comma-separated expansions.
+        - name: maxResults
+          type: integer
+          description: Page size.
+        - name: startAt
+          type: integer
+          description: Offset for paginated results.
+    - name: search_issues
+      path: /rest/api/3/search/jql
+      method: GET
+      query_params:
+        - name: jql
+          type: string
+          description: JQL expression to search issues.
+          required: true
+        - name: fields
+          type: string
+          description: Comma-separated fields to return.
+        - name: expand
+          type: string
+          description: Comma-separated expansions.
+        - name: maxResults
+          type: integer
+          description: Page size.
+        - name: startAt
+          type: integer
+          description: Offset for paginated results.
+    - name: issue
+      path: /rest/api/3/issue/{id}
+      method: GET
+      response_mode: raw
+      query_params:
+        - name: fields
+          type: string
+          description: Comma-separated fields to return.
+        - name: expand
+          type: string
+          description: Comma-separated expansions.
+    - name: issue_comments
+      path: /rest/api/3/issue/{id}/comment
+      method: GET
+      query_params:
+        - name: expand
+          type: string
+          description: Comma-separated expansions.
+        - name: maxResults
+          type: integer
+          description: Page size.
+        - name: startAt
+          type: integer
+          description: Offset for paginated results.
+    - name: project
+      path: /rest/api/3/project/{id}
+      method: GET
+      query_params:
+        - name: expand
+          type: string
+          description: Comma-separated expansions.
+    - name: create_issue
+      path: /rest/api/3/issue
+      method: POST
+      response_mode: raw
+  capabilities:
+    sql: false
+    supports_validate_sql: false
+    supports_async_jobs: false

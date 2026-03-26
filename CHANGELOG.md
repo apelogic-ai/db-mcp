@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.1] - 2026-03-25
+
+## Highlights
+- Added a shipped connector-template catalog for common API integrations, with built-in Jira, Dune, and Superset templates.
+- Made connector templates contribute-able as single YAML files under the package static template directory, without requiring Python changes for contract-compatible integrations.
+- Fixed API connector `.env` parsing so quoted secret values work correctly in template-backed auth flows.
+
+## Breaking changes
+- None
+
+## Features
+- Added `db-mcp connector templates` to list shipped connector templates.
+- Added `db-mcp init <name> --template <template-id>` support for greenfield API connections.
+- Extended `db-mcp connector validate <path>` so it accepts both plain `connector.yaml` files and full connector template files.
+- Added contributor documentation for shipped connector templates and the single-file PR workflow.
+
+## Fixes
+- Fixed API connector auth loading to strip surrounding quotes from `.env` values before building auth headers.
+- Updated package ignore rules so shipped connector template YAML files are tracked and included in release builds while the rest of `src/db_mcp/static` remains ignored.
+
+## Security
+- None
+
+## Upgrade notes
+- The built-in template catalog currently ships three API templates: Jira, Dune, and Superset.
+- The CLI and package support the new template catalog now; the UI connection wizard still uses the generic connector flow.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in `tests/test_database.py::test_connection`.
+
 ## [0.8.0] - 2026-03-25
 
 ## Highlights

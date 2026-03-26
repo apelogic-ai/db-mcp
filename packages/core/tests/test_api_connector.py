@@ -200,6 +200,30 @@ class TestAPIConnectorAuth:
         expected = base64.b64encode(b"dev@example.com:tok-123").decode()
         assert headers["Authorization"] == f"Basic {expected}"
 
+    def test_resolve_basic_auth_strips_surrounding_quotes_from_env(self, data_dir, env_file):
+        from db_mcp.connectors.api import (
+            APIAuthConfig,
+            APIConnector,
+            APIConnectorConfig,
+        )
+
+        env_file.write_text('JIRA_EMAIL="dev@example.com"\nJIRA_TOKEN=\'tok-123\'\n')
+
+        config = APIConnectorConfig(
+            base_url="https://example.atlassian.net",
+            auth=APIAuthConfig(
+                type="basic",
+                username_env="JIRA_EMAIL",
+                password_env="JIRA_TOKEN",
+            ),
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        headers = conn._resolve_auth_headers()
+
+        expected = base64.b64encode(b"dev@example.com:tok-123").decode()
+        assert headers["Authorization"] == f"Basic {expected}"
+
     def test_resolve_header_auth(self, data_dir, env_file):
         from db_mcp.connectors.api import (
             APIAuthConfig,

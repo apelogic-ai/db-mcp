@@ -16,6 +16,7 @@ from db_mcp.cli.utils import (
     load_config,
     save_config,
 )
+from db_mcp.connector_templates import get_connector_template
 from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 
 
@@ -130,8 +131,58 @@ def _prompt_and_save_database_url(name: str, existing_url: str | None = None) ->
     return database_url
 
 
-def _prompt_and_save_api_connection(name: str) -> bool:
+def _prompt_and_save_api_connection(name: str, template_name: str | None = None) -> bool:
     """Prompt for API connector settings and persist connector.yaml + .env."""
+    template = get_connector_template(template_name) if template_name else None
+    if template_name and template is None:
+        console.print(f"[red]Unknown connector template: {template_name}[/red]")
+        return False
+
+    if template is not None:
+        console.print("\n[bold]API Connection[/bold]")
+        console.print(f"[dim]Using built-in template: {template.title}[/dim]\n")
+
+        connector_yaml = yaml.safe_load(yaml.safe_dump(template.connector))
+        base_url = Prompt.ask(
+            template.base_url_prompt or "API Base URL",
+            default=str(connector_yaml.get("base_url", "")),
+        )
+        if not base_url:
+            console.print("[red]API Base URL is required.[/red]")
+            return False
+        connector_yaml["base_url"] = base_url
+
+        env_vars: dict[str, str] = {}
+        for env_var in template.env:
+            value = Prompt.ask(env_var.prompt, default="", password=env_var.secret)
+            if not value:
+                console.print(f"[red]{env_var.name} is required.[/red]")
+                return False
+            env_vars[env_var.name] = value
+
+        connector_path = get_connection_path(name)
+        connector_path.mkdir(parents=True, exist_ok=True)
+        connector_yaml_path = connector_path / "connector.yaml"
+        with open(connector_yaml_path, "w") as f:
+            yaml.dump(connector_yaml, f, default_flow_style=False, sort_keys=False)
+
+        _save_connection_env(name, env_vars)
+        console.print(f"\n[green]✓ API connector saved to {connector_yaml_path}[/green]")
+        console.print(f"[green]✓ Credentials saved to {_get_connection_env_path(name)}[/green]")
+
+        config = load_config()
+        config.update(
+            {
+                "active_connection": name,
+                "tool_mode": "shell",
+                "log_level": "INFO",
+            }
+        )
+        config.pop("database_url", None)
+        save_config(config)
+        console.print(f"[green]✓ Config saved to {CONFIG_FILE}[/green]")
+        return True
+
     console.print("\n[bold]API Connection[/bold]")
     console.print("[dim]Example base URL: https://api.example.com/v1[/dim]\n")
 

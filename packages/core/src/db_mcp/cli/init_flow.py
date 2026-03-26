@@ -276,7 +276,7 @@ def _init_brownfield(name: str, git_url: str):
         console.print("[dim]Please restart Claude Desktop manually.[/dim]")
 
 
-def _init_greenfield(name: str):
+def _init_greenfield(name: str, template_name: str | None = None):
     """Initialize a new connection from scratch (greenfield setup)."""
     from db_mcp.cli.agent_config import extract_database_url_from_claude_config
     from db_mcp.cli.utils import load_claude_desktop_config
@@ -334,7 +334,7 @@ def _init_greenfield(name: str):
 
     connector_type = Prompt.ask("Connection type", choices=["sql", "api"], default="sql")
     if connector_type == "api":
-        if not _prompt_and_save_api_connection(name):
+        if not _prompt_and_save_api_connection(name, template_name=template_name):
             return
     else:
         database_url = _prompt_and_save_database_url(name, existing_url)
