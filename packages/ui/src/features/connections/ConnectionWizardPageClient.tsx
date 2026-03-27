@@ -1701,34 +1701,33 @@ export function ConnectionWizardPageClient() {
         </div>
 
         <div className="space-y-8">
-        <div className="space-y-4">
-          <nav className="flex flex-wrap items-center gap-3 text-lg font-medium">
-            {WIZARD_STEPS.map((wizardStep, index) => {
-              const isActive = step === wizardStep.id;
-              const isLocked = isWizardStepLocked(wizardStep.id, currentName);
-              return (
-                <span key={wizardStep.id} className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isLocked) {
-                        navigateToStep(wizardStep.id);
-                      }
-                    }}
-                    disabled={isLocked}
-                    className={`${
-                      isActive ? "text-brand" : "text-gray-200"
-                    } ${isLocked ? "cursor-not-allowed text-gray-600" : "hover:text-brand"}`}
-                  >
-                    {index + 1}. {wizardStep.label}
-                  </button>
-                  {index < WIZARD_STEPS.length - 1 && <span className="text-gray-600">•</span>}
-                </span>
-              );
-            })}
-          </nav>
-        </div>
-        <div className="space-y-8">
+          <div className="space-y-4">
+            <nav className="flex flex-wrap items-center gap-3 text-lg font-medium">
+              {WIZARD_STEPS.map((wizardStep, index) => {
+                const isActive = step === wizardStep.id;
+                const isLocked = isWizardStepLocked(wizardStep.id, currentName);
+                return (
+                  <span key={wizardStep.id} className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isLocked) {
+                          navigateToStep(wizardStep.id);
+                        }
+                      }}
+                      disabled={isLocked}
+                      className={`${
+                        isActive ? "text-brand" : "text-gray-200"
+                      } ${isLocked ? "cursor-not-allowed text-gray-600" : "hover:text-brand"}`}
+                    >
+                      {index + 1}. {wizardStep.label}
+                    </button>
+                    {index < WIZARD_STEPS.length - 1 && <span className="text-gray-600">•</span>}
+                  </span>
+                );
+              })}
+            </nav>
+          </div>
           {step === "connect" && (
             <div
               className={`items-stretch gap-6 ${connectorConfigOpen ? "xl:grid xl:grid-cols-[minmax(0,1fr)_1px_420px]" : "max-w-4xl"}`}
@@ -2080,10 +2079,6 @@ export function ConnectionWizardPageClient() {
                   {testStatus?.hint && <p className="mt-2 text-amber-300">{testStatus.hint}</p>}
                 </div>
 
-                {(formError || connectorConfigError) && (
-                  <p className="text-sm text-red-300">{formError || connectorConfigError}</p>
-                )}
-
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 text-sm text-gray-300">
                     <span>Result:</span>
@@ -2344,7 +2339,13 @@ export function ConnectionWizardPageClient() {
               </div>
             </div>
           )}
-        </div>
+          <FloatingAlert
+            message={formError || connectorConfigError}
+            onClose={() => {
+              setFormError(null);
+              setConnectorConfigError(null);
+            }}
+          />
         </div>
       </div>
     </ConnectionWorkspaceShell>
