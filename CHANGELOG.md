@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.6] - 2026-03-27
+
+## Highlights
+- Added preset-guided API setup in the connection wizard so known providers like Jira and
+  Metabase can prefill auth behavior, required env vars, and generated `connector.yaml`.
+- Moved bundled connector presets into `packages/core/src/db_mcp/templates/connectors` so they are
+  no longer tied to the staged UI static bundle.
+- Added end-to-end Playwright coverage for API preset hydration, saved env rows, floating alerts,
+  and the workspace `+ New` navigation path.
+
+## Breaking changes
+- None
+
+## Features
+- Added first-class API preset descriptors and template-backed connector materialization in the UI
+  and BICP flows.
+- Added connection-local env var persistence from the wizard, including masked saved-state
+  handling and env deletion support.
+- Added Playwright coverage for the API wizard preset flow, existing Jira preset hydration, and
+  the workspace new-connection shortcut.
+
+## Fixes
+- Fixed the mismatch between the API wizard UI and the effective `connector.yaml` by using preset
+  metadata as the source of truth for auth defaults and generated connector config.
+- Fixed existing preset-backed API connections so they reopen with the correct preset and show
+  saved env rows even when older `connector.yaml` files have endpoint drift or no explicit
+  `template_id`.
+- Fixed the workspace `+ New` action so it always opens a fresh connection wizard route instead of
+  collapsing into an in-page hash link.
+- Fixed saved env rows so they no longer show an `Add` action once a secret is already persisted.
+
+## Security
+- None
+
+## Upgrade notes
+- Existing API connections using bundled Jira or Metabase-style shapes should now reopen in the
+  wizard with their preset selected and their saved env vars masked as already stored.
+- API presets now load from `packages/core/src/db_mcp/templates/connectors`; any tooling that read
+  the old `static/connector_templates` path should be updated.
+
+## Known issues
+- `bunx next lint` and `bunx next build` still report the existing React hook dependency warnings
+  in `src/components/context/CodeEditor.tsx` and `src/components/context/SchemaExplorer.tsx`.
+
 ## [0.8.5] - 2026-03-26
 
 ## Highlights
