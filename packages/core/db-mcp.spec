@@ -55,6 +55,11 @@ data_dir = src_dir / "db_mcp" / "data"
 if data_dir.exists():
     datas.append((str(data_dir), "db_mcp/data"))
 
+# Include bundled connector templates and related template directories
+templates_dir = src_dir / "db_mcp" / "templates"
+if templates_dir.exists():
+    datas.append((str(templates_dir), "db_mcp/templates"))
+
 # Include vault templates if they exist
 if resources_dir.exists():
     datas.append((str(resources_dir / "db_mcp_app"), "resources/db_mcp_app"))

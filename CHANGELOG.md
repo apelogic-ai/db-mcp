@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.7] - 2026-03-27
+
+## Highlights
+- Fixed the packaged `db-mcp` binary so bundled API presets are available at runtime again.
+- Restored Jira, Metabase, Dune, and Superset presets in the released app's API wizard.
+
+## Breaking changes
+- None
+
+## Features
+- Added a packaging regression test to prevent future PyInstaller releases from omitting bundled
+  connector templates.
+
+## Fixes
+- Fixed the PyInstaller bundle spec so `db_mcp/templates/connectors/*.yaml` is included in the
+  packaged binary alongside the staged UI assets.
+- Fixed released desktop/server builds where the API preset dropdown only showed `Custom` because
+  the bundled template YAML files were missing at runtime.
+
+## Security
+- None
+
+## Upgrade notes
+- If you are using the packaged app or released binary, upgrade to `v0.8.7` to restore built-in
+  API presets in the connection wizard.
+- Source checkouts running directly from the repo were not affected; the regression only impacted
+  packaged binaries.
+
+## Known issues
+- `uv run pytest tests/ -v` still reports the existing `PytestReturnNotNoneWarning` in
+  `tests/test_database.py::test_connection`.
+
 ## [0.8.6] - 2026-03-27
 
 ## Highlights
