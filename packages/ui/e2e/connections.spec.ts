@@ -1,5 +1,64 @@
 import { test, expect } from "./fixtures";
 
+const METABASE_TEMPLATE = {
+  id: "metabase",
+  title: "Metabase API",
+  description: "Metabase API-key connector for schema metadata and SQL execution via /api/dataset.",
+  baseUrlPrompt: "Base URL",
+  baseUrl: "https://metabase.example.com",
+  connectorType: "api",
+  auth: {
+    type: "header",
+    tokenEnv: "X_API_KEY",
+    headerName: "x-api-key",
+    paramName: "api_key",
+    usernameEnv: "",
+    passwordEnv: "",
+  },
+  env: [
+    {
+      slot: "X_API_KEY",
+      name: "X_API_KEY",
+      prompt: "Metabase API key",
+      secret: true,
+      hasSavedValue: false,
+    },
+  ],
+};
+
+const JIRA_TEMPLATE = {
+  id: "jira",
+  title: "Jira Cloud",
+  description: "Jira Cloud REST API for issue search, issue detail, and issue creation.",
+  baseUrlPrompt: "Base URL",
+  baseUrl: "https://your-domain.atlassian.net",
+  connectorType: "api",
+  auth: {
+    type: "basic",
+    tokenEnv: "",
+    headerName: "Authorization",
+    paramName: "api_key",
+    usernameEnv: "JIRA_EMAIL",
+    passwordEnv: "JIRA_TOKEN",
+  },
+  env: [
+    {
+      slot: "JIRA_EMAIL",
+      name: "JIRA_EMAIL",
+      prompt: "Jira email",
+      secret: false,
+      hasSavedValue: false,
+    },
+    {
+      slot: "JIRA_TOKEN",
+      name: "JIRA_TOKEN",
+      prompt: "Jira API token",
+      secret: true,
+      hasSavedValue: false,
+    },
+  ],
+};
+
 test.describe("Connections", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
@@ -24,6 +83,136 @@ test.describe("Connections", () => {
     await expect(page.getByText("1. Connect and Test")).toBeVisible();
     await expect(page.getByText("2. Discover")).toBeVisible();
     await expect(page.getByText("3. Sample Data")).toBeVisible();
+  });
+
+  test("API presets hydrate auth defaults and persist env vars", async ({
+    page,
+    bicpMock,
+  }) => {
+    bicpMock.on("connections/templates", () => ({
+      success: true,
+      templates: [METABASE_TEMPLATE],
+    }));
+    bicpMock.on("context/read", (params) => {
+      if (params.connection === "lens" && params.path === "connector.yaml") {
+        return { success: false, error: "not found" };
+      }
+      if (params.path === "schema/descriptions.yaml") {
+        return { success: false, error: "not found" };
+      }
+      return { success: true, content: "", isStockReadme: false };
+    });
+    bicpMock.on("connections/create", (params) => ({
+      success: true,
+      name: params.name,
+      dialect: "duckdb",
+    }));
+
+    await page.goto("/connection/new?type=api#connect");
+
+    await page.getByPlaceholder("my-connection").fill("lens");
+    await page.locator("select").nth(1).selectOption("metabase");
+
+    await expect(page.locator("select").nth(2)).toHaveValue("header");
+    await expect(page.locator('input[value="x-api-key"]').first()).toBeDisabled();
+
+    await page.getByPlaceholder("Metabase API key").fill("secret-token");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+
+    await expect
+      .poll(() => bicpMock.getLastCall("connections/create")?.params?.templateId)
+      .toBe("metabase");
+    await expect(bicpMock.getLastCall("connections/create")?.params?.envVars).toEqual([
+      expect.objectContaining({
+        slot: "X_API_KEY",
+        name: "X_API_KEY",
+        value: "secret-token",
+      }),
+    ]);
+    await expect(page.getByText("Saved X_API_KEY to .env")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add", exact: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Add environment variable" }).click();
+    await expect(page.getByText("Additional env var")).toBeVisible();
+  });
+
+  test("existing Jira API connections reopen with preset and saved env rows", async ({
+    page,
+    bicpMock,
+  }) => {
+    bicpMock.on("connections/templates", () => ({
+      success: true,
+      templates: [JIRA_TEMPLATE],
+    }));
+    bicpMock.on("connections/get", () => ({
+      success: true,
+      name: "jira",
+      connectorType: "api",
+      baseUrl: "https://apegpt.atlassian.net",
+      presetId: "jira",
+      auth: {
+        type: "basic",
+        tokenEnv: "",
+        headerName: "Authorization",
+        paramName: "api_key",
+        usernameEnv: "JIRA_EMAIL",
+        passwordEnv: "JIRA_TOKEN",
+      },
+      envVars: [
+        {
+          slot: "JIRA_EMAIL",
+          name: "JIRA_EMAIL",
+          prompt: "Jira email",
+          secret: false,
+          hasSavedValue: true,
+        },
+        {
+          slot: "JIRA_TOKEN",
+          name: "JIRA_TOKEN",
+          prompt: "Jira API token",
+          secret: true,
+          hasSavedValue: true,
+        },
+      ],
+      endpoints: [
+        { name: "projects", path: "/rest/api/3/project/search", method: "GET" },
+      ],
+      pagination: {
+        type: "offset",
+        cursorParam: "",
+        cursorField: "",
+        pageSizeParam: "maxResults",
+        pageSize: 50,
+        dataField: "",
+      },
+      rateLimitRps: 10,
+    }));
+
+    await page.goto("/connection/new?name=jira&type=api#connect");
+
+    await expect(page.locator("select").nth(1)).toHaveValue("jira");
+    await expect(page.locator('input[value="JIRA_EMAIL"]').first()).toBeVisible();
+    await expect(page.locator('input[value="JIRA_TOKEN"]').first()).toBeVisible();
+    await expect(page.locator('input[placeholder="*** saved ***"]')).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Add", exact: true })).toHaveCount(0);
+  });
+
+  test("troubleshooting errors render as dismissible floating alerts", async ({ page }) => {
+    await page.goto("/connection/new#connect");
+
+    await page.getByRole("button", { name: "Troubleshooting" }).click();
+    await expect(
+      page.getByText(
+        "Double-check credentials, network reachability, and connector-specific SSL options.",
+      ),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Dismiss alert" }).click();
+    await expect(
+      page.getByText(
+        "Double-check credentials, network reachability, and connector-specific SSL options.",
+      ),
+    ).toHaveCount(0);
   });
 
   test("connect step shows the shared summary card and opens connector config editor", async ({

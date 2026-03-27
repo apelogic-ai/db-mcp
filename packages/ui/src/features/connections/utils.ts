@@ -1,4 +1,10 @@
-import type { ConnectArgs, ConnectorType, WizardStep } from "./types";
+import type {
+  ApiEnvVarEntry,
+  ApiTemplateDescriptor,
+  ConnectArgs,
+  ConnectorType,
+  WizardStep,
+} from "./types";
 import type { ConnectionSummary } from "@/lib/connection-context";
 
 export const WIZARD_STEPS: Array<{ id: WizardStep; label: string }> = [
@@ -125,6 +131,247 @@ export function wizardStepFromHash(hash: string): WizardStep {
 
 export function isWizardStepLocked(step: WizardStep, connectionName?: string | null): boolean {
   return step !== "connect" && !connectionName?.trim();
+}
+
+export function normalizeApiEnvEntry(entry: ApiEnvVarEntry): ApiEnvVarEntry {
+  const value = entry.value || "";
+  const hasSavedValue = entry.hasSavedValue || false;
+  const removed = entry.removed || false;
+  const masked = removed ? false : entry.masked ?? hasSavedValue;
+
+  return {
+    ...entry,
+    value,
+    hasSavedValue,
+    masked,
+    removed,
+  };
+}
+
+export function applyApiEnvValueChange(entry: ApiEnvVarEntry, nextValue: string): ApiEnvVarEntry {
+  const normalized = normalizeApiEnvEntry(entry);
+  const trimmed = nextValue.trim();
+
+  if (!trimmed && normalized.hasSavedValue && !normalized.removed) {
+    return {
+      ...normalized,
+      value: "",
+      masked: true,
+    };
+  }
+
+  return {
+    ...normalized,
+    value: nextValue,
+    masked: false,
+    removed: false,
+  };
+}
+
+export function saveApiEnvEntry(entry: ApiEnvVarEntry): ApiEnvVarEntry {
+  const normalized = normalizeApiEnvEntry(entry);
+  if (!normalized.value?.trim()) {
+    return normalized;
+  }
+
+  return {
+    ...normalized,
+    hasSavedValue: true,
+    masked: true,
+    removed: false,
+  };
+}
+
+export function clearApiEnvEntry(entry: ApiEnvVarEntry): ApiEnvVarEntry {
+  const normalized = normalizeApiEnvEntry(entry);
+  return {
+    ...normalized,
+    value: "",
+    hasSavedValue: false,
+    masked: false,
+    removed: true,
+  };
+}
+
+export function getApiEnvRowState(entry: ApiEnvVarEntry): {
+  displayValue: string;
+  placeholder: string;
+  primaryActionLabel: "Add" | "Save" | null;
+  isSaved: boolean;
+  showTrash: boolean;
+} {
+  const normalized = normalizeApiEnvEntry(entry);
+  const trimmedValue = normalized.value?.trim() || "";
+  const isSaved = Boolean(normalized.hasSavedValue && normalized.masked && !trimmedValue);
+  const hasDraftValue = !normalized.masked && Boolean(trimmedValue);
+  const primaryActionLabel =
+    normalized.hasSavedValue && !hasDraftValue
+      ? null
+      : hasDraftValue
+        ? normalized.hasSavedValue
+          ? "Save"
+          : "Add"
+        : "Add";
+
+  return {
+    displayValue: normalized.masked ? "" : normalized.value || "",
+    placeholder: isSaved ? "*** saved ***" : normalized.prompt || "Value",
+    primaryActionLabel,
+    isSaved,
+    showTrash: normalized.hasSavedValue || Boolean(trimmedValue) || !normalized.slot,
+  };
+}
+
+export function buildApiEnvEntriesForAuth(
+  authType: string,
+  previousEntries: ApiEnvVarEntry[],
+  options: {
+    tokenEnv?: string;
+    usernameEnv?: string;
+    passwordEnv?: string;
+  } = {},
+): ApiEnvVarEntry[] {
+  const previousBySlot = new Map(
+    previousEntries.map((entry) => {
+      const normalized = normalizeApiEnvEntry(entry);
+      return [normalized.slot || normalized.name, normalized];
+    }),
+  );
+
+  if (authType === "none") {
+    return [];
+  }
+
+  if (authType === "basic") {
+    const usernameSlot = options.usernameEnv?.trim() || "API_USERNAME";
+    const passwordSlot = options.passwordEnv?.trim() || "API_PASSWORD";
+    const usernamePrevious = previousBySlot.get(usernameSlot);
+    const passwordPrevious = previousBySlot.get(passwordSlot);
+    return [
+      {
+        slot: usernameSlot,
+        name: usernamePrevious?.name || usernameSlot,
+        value: usernamePrevious?.value || "",
+        prompt: usernamePrevious?.prompt || "Username/email",
+        secret: false,
+        hasSavedValue: usernamePrevious?.hasSavedValue || false,
+        masked: usernamePrevious?.masked ?? (usernamePrevious?.hasSavedValue || false),
+        removed: usernamePrevious?.removed || false,
+      },
+      {
+        slot: passwordSlot,
+        name: passwordPrevious?.name || passwordSlot,
+        value: passwordPrevious?.value || "",
+        prompt: passwordPrevious?.prompt || "Password/token",
+        secret: true,
+        hasSavedValue: passwordPrevious?.hasSavedValue || false,
+        masked: passwordPrevious?.masked ?? (passwordPrevious?.hasSavedValue || false),
+        removed: passwordPrevious?.removed || false,
+      },
+    ];
+  }
+
+  const tokenSlot = options.tokenEnv?.trim() || "API_KEY";
+  const previous = previousBySlot.get(tokenSlot) || previousEntries[0];
+  return [
+    {
+      slot: tokenSlot,
+      name: previous?.name || tokenSlot,
+      value: previous?.value || "",
+      prompt: previous?.prompt || "API token",
+      secret: true,
+      hasSavedValue: previous?.hasSavedValue || false,
+      masked: previous?.masked ?? (previous?.hasSavedValue || false),
+      removed: previous?.removed || false,
+    },
+  ];
+}
+
+export function buildApiStateFromTemplate(template: ApiTemplateDescriptor): {
+  authType: string;
+  tokenEnv: string;
+  headerName: string;
+  paramName: string;
+  envVars: ApiEnvVarEntry[];
+} {
+  return {
+    authType: template.auth.type || "bearer",
+    tokenEnv: template.auth.tokenEnv || template.env[0]?.name || "",
+    headerName: template.auth.headerName || "",
+    paramName: template.auth.paramName || "",
+    envVars: template.env.map((entry) => ({
+      slot: entry.slot || entry.name,
+      name: entry.name,
+      value: "",
+      prompt: entry.prompt,
+      secret: entry.secret,
+      hasSavedValue: entry.hasSavedValue || false,
+      masked: entry.masked ?? (entry.hasSavedValue || false),
+      removed: entry.removed || false,
+    })),
+  };
+}
+
+export function buildApiTestParams(options: {
+  name?: string | null;
+  templateId?: string;
+  baseUrl: string;
+  authType: string;
+  tokenEnv: string;
+  apiKey: string;
+  headerName: string;
+  paramName: string;
+  envVars: ApiEnvVarEntry[];
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    connectorType: "api",
+    baseUrl: options.baseUrl,
+    authType: options.authType,
+  };
+
+  if (options.name?.trim()) {
+    params.name = options.name.trim();
+  }
+  if (options.templateId?.trim()) {
+    params.templateId = options.templateId.trim();
+  }
+  if (options.tokenEnv.trim()) {
+    params.tokenEnv = options.tokenEnv.trim();
+  }
+  if (options.apiKey.trim()) {
+    params.apiKey = options.apiKey.trim();
+  }
+  if (options.authType === "header" && options.headerName.trim()) {
+    params.headerName = options.headerName.trim();
+  }
+  if (options.authType === "query_param" && options.paramName.trim()) {
+    params.paramName = options.paramName.trim();
+  }
+  if (options.envVars.length > 0) {
+    params.envVars = options.envVars
+      .filter((entry) => entry.name.trim())
+      .map((entry) => {
+        const payload: Record<string, unknown> = {
+          name: entry.name.trim(),
+          secret: entry.secret,
+        };
+        if (entry.slot?.trim()) {
+          payload.slot = entry.slot.trim();
+        }
+        if (entry.value?.trim()) {
+          payload.value = entry.value.trim();
+        }
+        if (entry.removed) {
+          payload.removed = true;
+        }
+        if (entry.prompt?.trim()) {
+          payload.prompt = entry.prompt.trim();
+        }
+        return payload;
+      });
+  }
+
+  return params;
 }
 
 export function buildWizardHref(

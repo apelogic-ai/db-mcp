@@ -35,7 +35,7 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("heading", { name: "Advanced" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Metrics" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Traces" })).toBeVisible();
-    await expect(page.getByRole("link", { name: /^\+ New$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^\+ New$/ })).toBeVisible();
   });
 
   test("advanced drawer links navigate between utility pages", async ({ page }) => {
@@ -82,7 +82,7 @@ test.describe("Navigation", () => {
 
   test("new connection button opens the wizard", async ({ page }) => {
     await page.goto("/connection?name=production");
-    await page.getByRole("link", { name: /^\+ New$/ }).click();
+    await page.getByRole("button", { name: /^\+ New$/ }).click();
     await expect(page).toHaveURL(/\/connection\/new\/#connect$/);
   });
 });

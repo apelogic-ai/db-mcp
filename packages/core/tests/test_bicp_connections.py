@@ -490,6 +490,317 @@ async def test_connections_test_api_without_auth_does_not_require_token_env(monk
 
 
 @pytest.mark.asyncio
+async def test_connections_test_api_uses_saved_env_secret_when_name_exists(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "lens"
+        conn_path.mkdir(parents=True)
+        (conn_path / ".env").write_text("API_KEY=secret-token\n")
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        mock_connector = MagicMock()
+        mock_connector.test_connection.return_value = {
+            "connected": True,
+            "dialect": "duckdb",
+            "endpoints": 0,
+        }
+        captured_env: dict[str, str | None] = {"path": None, "content": None}
+
+        def build_connector(*args, **kwargs):
+            env_path = kwargs.get("env_path")
+            captured_env["path"] = env_path
+            if env_path:
+                captured_env["content"] = Path(env_path).read_text().strip()
+            return mock_connector
+
+        with patch("db_mcp.connectors.api.APIConnector", side_effect=build_connector) as api_cls:
+            result = await agent._handle_connections_test(
+                {
+                    "name": "lens",
+                    "connectorType": "api",
+                    "baseUrl": "https://metabase.k8slens.dev",
+                    "authType": "header",
+                    "tokenEnv": "API_KEY",
+                    "headerName": "x-api-key",
+                }
+            )
+
+        assert result["success"] is True
+        passed_config = api_cls.call_args.args[0]
+        assert passed_config.auth.token_env == "API_KEY"
+        assert captured_env["path"] is not None
+        assert captured_env["content"] == "API_KEY=secret-token"
+
+
+@pytest.mark.asyncio
+async def test_connections_templates_lists_api_presets():
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    agent = DBMCPAgent.__new__(DBMCPAgent)
+    agent._method_handlers = {}
+    agent._settings = None
+    agent._dialect = "duckdb"
+
+    result = await agent._handle_connections_templates({"connectorType": "api"})
+
+    assert result["success"] is True
+    ids = {template["id"] for template in result["templates"]}
+    assert {"jira", "metabase"}.issubset(ids)
+
+    metabase = next(template for template in result["templates"] if template["id"] == "metabase")
+    assert metabase["auth"]["type"] == "header"
+    assert metabase["auth"]["headerName"] == "x-api-key"
+    assert metabase["env"][0]["name"] == "X_API_KEY"
+
+
+@pytest.mark.asyncio
+async def test_connections_create_api_from_template_saves_exact_connector_and_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        result = await agent._handle_connections_create(
+            {
+                "name": "lens",
+                "connectorType": "api",
+                "templateId": "metabase",
+                "baseUrl": "https://metabase.k8slens.dev",
+                "envVars": [
+                    {
+                        "slot": "X_API_KEY",
+                        "name": "API_KEY",
+                        "value": "secret-token",
+                        "secret": True,
+                    }
+                ],
+            }
+        )
+
+        assert result["success"] is True
+
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "lens"
+        connector_yaml = (conn_path / "connector.yaml").read_text()
+        env_text = (conn_path / ".env").read_text()
+
+        assert "profile: hybrid_bi" in connector_yaml
+        assert "path: /api/dataset" in connector_yaml
+        assert "token_env: API_KEY" in connector_yaml
+        assert "header_name: x-api-key" in connector_yaml
+        assert "API_KEY=secret-token" in env_text
+
+
+@pytest.mark.asyncio
+async def test_connections_get_api_template_connection_returns_preset_and_env_rows(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+    from db_mcp.connector_templates import materialize_connector_template
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "jira"
+        conn_path.mkdir(parents=True)
+        (conn_path / ".env").write_text("JIRA_EMAIL=user@example.com\nJIRA_TOKEN=secret-token\n")
+        connector = materialize_connector_template(
+            "jira",
+            base_url="https://apegpt.atlassian.net",
+        )
+        assert connector is not None
+        connector.pop("template_id", None)
+        connector["endpoints"] = connector["endpoints"] + [
+            {
+                "name": "projects_raw",
+                "path": "/rest/api/3/project/search",
+                "method": "GET",
+                "response_mode": "raw",
+            }
+        ]
+        import yaml
+
+        (conn_path / "connector.yaml").write_text(
+            yaml.dump(connector, default_flow_style=False, sort_keys=False)
+        )
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        result = await agent._handle_connections_get({"name": "jira"})
+
+        assert result["success"] is True
+        assert result["presetId"] == "jira"
+        assert result["auth"]["type"] == "basic"
+        assert [entry["name"] for entry in result["envVars"]] == ["JIRA_EMAIL", "JIRA_TOKEN"]
+        assert all(entry["hasSavedValue"] for entry in result["envVars"])
+
+
+@pytest.mark.asyncio
+async def test_connections_update_api_template_rewrites_exact_connector_and_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "lens"
+        conn_path.mkdir(parents=True)
+        (conn_path / "connector.yaml").write_text(
+            "spec_version: 1.0.0\n"
+            "type: api\n"
+            "profile: api_openapi\n"
+            "base_url: https://api.example.com\n"
+            "auth:\n"
+            "  type: none\n"
+            "endpoints: []\n"
+            "pagination:\n"
+            "  type: none\n"
+        )
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        result = await agent._handle_connections_update(
+            {
+                "name": "lens",
+                "templateId": "metabase",
+                "baseUrl": "https://metabase.k8slens.dev",
+                "envVars": [
+                    {
+                        "slot": "X_API_KEY",
+                        "name": "API_KEY",
+                        "value": "secret-token",
+                        "secret": True,
+                    }
+                ],
+            }
+        )
+
+        assert result["success"] is True
+        connector_yaml = (conn_path / "connector.yaml").read_text()
+        env_text = (conn_path / ".env").read_text()
+
+        assert "template_id: metabase" in connector_yaml
+        assert "profile: hybrid_bi" in connector_yaml
+        assert "header_name: x-api-key" in connector_yaml
+        assert "path: /api/dataset" in connector_yaml
+        assert "API_KEY=secret-token" in env_text
+
+
+@pytest.mark.asyncio
+async def test_connections_update_api_env_rows_can_remove_saved_secret(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "lens"
+        conn_path.mkdir(parents=True)
+        (conn_path / ".env").write_text("API_KEY=secret-token\n")
+        (conn_path / "connector.yaml").write_text(
+            "spec_version: 1.0.0\n"
+            "type: api\n"
+            "profile: api_openapi\n"
+            "base_url: https://api.example.com\n"
+            "auth:\n"
+            "  type: header\n"
+            "  token_env: API_KEY\n"
+            "  header_name: x-api-key\n"
+            "endpoints: []\n"
+            "pagination:\n"
+            "  type: none\n"
+        )
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        result = await agent._handle_connections_update(
+            {
+                "name": "lens",
+                "baseUrl": "https://api.example.com",
+                "auth": {
+                    "type": "header",
+                    "tokenEnv": "API_KEY",
+                    "headerName": "x-api-key",
+                },
+                "envVars": [
+                    {
+                        "slot": "API_KEY",
+                        "name": "API_KEY",
+                        "value": "",
+                        "secret": True,
+                        "removed": True,
+                    }
+                ],
+            }
+        )
+
+        assert result["success"] is True
+        assert "API_KEY=" not in (conn_path / ".env").read_text()
+
+
+@pytest.mark.asyncio
+async def test_connections_test_api_template_uses_template_endpoints_and_inline_env(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        mock_connector = MagicMock()
+        mock_connector.test_connection.return_value = {
+            "connected": True,
+            "dialect": "duckdb",
+            "endpoints": 2,
+        }
+        captured_env: dict[str, str | None] = {"content": None}
+
+        def build_connector(*args, **kwargs):
+            env_path = kwargs.get("env_path")
+            if env_path:
+                captured_env["content"] = Path(env_path).read_text().strip()
+            return mock_connector
+
+        with patch("db_mcp.connectors.api.APIConnector", side_effect=build_connector) as api_cls:
+            result = await agent._handle_connections_test(
+                {
+                    "connectorType": "api",
+                    "templateId": "metabase",
+                    "baseUrl": "https://metabase.k8slens.dev",
+                    "envVars": [
+                        {
+                            "slot": "X_API_KEY",
+                            "name": "API_KEY",
+                            "value": "secret-token",
+                            "secret": True,
+                        }
+                    ],
+                }
+            )
+
+        assert result["success"] is True
+        passed_config = api_cls.call_args.args[0]
+        assert passed_config.auth.token_env == "API_KEY"
+        assert any(endpoint.name == "execute_sql" for endpoint in passed_config.endpoints)
+        assert captured_env["content"] == "API_KEY=secret-token"
+
+
+@pytest.mark.asyncio
 async def test_context_create_bootstraps_draft_connection_directory(monkeypatch):
     from db_mcp.bicp.agent import DBMCPAgent
 

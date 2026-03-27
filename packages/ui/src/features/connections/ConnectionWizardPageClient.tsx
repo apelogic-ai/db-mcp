@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -10,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { useBICP } from "@/lib/bicp-context";
 import { useConnections } from "@/lib/connection-context";
 import type {
+  ApiEnvVarEntry,
+  ApiTemplateDescriptor,
   ConnectionGetResult,
   ConnectionTestStatus,
   ConnectorType,
@@ -24,17 +27,25 @@ import { ConnectionStatusSteps } from "./ConnectionStatusSteps";
 import { ConnectionWorkspaceShell } from "./ConnectionWorkspaceShell";
 import {
   WIZARD_STEPS,
+  applyApiEnvValueChange,
+  buildApiEnvEntriesForAuth,
+  buildApiStateFromTemplate,
+  buildApiTestParams,
   buildWizardHref,
+  clearApiEnvEntry,
   formatTableTarget,
+  getApiEnvRowState,
   getConnectionOnboardingTone,
   getPersistedWizardStatuses,
   inferDialect,
   isWizardStepLocked,
   maskDatabaseUrl,
+  normalizeApiEnvEntry,
   normalizeDbSegment,
   parseConnectArgsFromUrl,
   parseDbLink,
   parseSqlConnectorOverrides,
+  saveApiEnvEntry,
   wizardStepFromHash,
 } from "./utils";
 
@@ -76,6 +87,44 @@ type ContextCreateResult = {
   success: boolean;
   error?: string;
 };
+
+type ApiTemplatesResult = {
+  success: boolean;
+  templates?: ApiTemplateDescriptor[];
+  error?: string;
+};
+
+type RenderTemplateResult = {
+  success: boolean;
+  content?: string;
+  error?: string;
+};
+
+function FloatingAlert({
+  message,
+  onClose,
+}: {
+  message: string | null;
+  onClose: () => void;
+}) {
+  if (!message) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex max-w-md items-start gap-3 rounded-md border border-red-500/40 bg-red-950/95 px-4 py-3 text-sm text-red-100 shadow-xl">
+      <div className="min-w-0 flex-1">{message}</div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onClose}
+        aria-label="Dismiss alert"
+        className="h-7 w-7 shrink-0 text-red-100 hover:bg-red-900/70 hover:text-white"
+      >
+        <X className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
 
 function parseYamlScalar(value: string): string | null {
   const trimmed = value.trim().replace(/^['"]|['"]$/g, "");
@@ -195,6 +244,8 @@ function buildConnectorConfigTemplate(options: {
   apiAuthType: string;
   apiTokenEnv: string;
   apiHeaderName: string;
+  apiParamName: string;
+  apiEnvVars: ApiEnvVarEntry[];
 }): string {
   if (options.connectorType === "file") {
     return [
@@ -211,11 +262,20 @@ function buildConnectorConfigTemplate(options: {
       `base_url: ${options.baseUrl || "https://api.example.com/v1"}`,
       "auth:",
       `  type: ${options.apiAuthType || "bearer"}`,
-      `  token_env: ${options.apiTokenEnv || "API_KEY"}`,
     ];
+
+    if (options.apiAuthType === "basic") {
+      lines.push(`  username_env: ${options.apiEnvVars[0]?.name || "API_USERNAME"}`);
+      lines.push(`  password_env: ${options.apiEnvVars[1]?.name || "API_PASSWORD"}`);
+    } else if (options.apiAuthType !== "none") {
+      lines.push(`  token_env: ${options.apiTokenEnv || "API_KEY"}`);
+    }
 
     if (options.apiAuthType === "header" && options.apiHeaderName) {
       lines.push(`  header_name: ${options.apiHeaderName}`);
+    }
+    if (options.apiAuthType === "query_param" && options.apiParamName) {
+      lines.push(`  param_name: ${options.apiParamName}`);
     }
 
     lines.push(
@@ -288,10 +348,15 @@ export function ConnectionWizardPageClient() {
   const [displayDatabaseUrl, setDisplayDatabaseUrl] = useState("");
   const [directory, setDirectory] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [apiTemplateId, setApiTemplateId] = useState("");
+  const [apiTemplates, setApiTemplates] = useState<ApiTemplateDescriptor[]>([]);
   const [apiAuthType, setApiAuthType] = useState("bearer");
   const [apiTokenEnv, setApiTokenEnv] = useState("");
   const [apiHeaderName, setApiHeaderName] = useState("");
+  const [apiParamName, setApiParamName] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [apiEnvVars, setApiEnvVars] = useState<ApiEnvVarEntry[]>([]);
+  const [apiEnvFeedback, setApiEnvFeedback] = useState<string | null>(null);
   const [resolvedDialect, setResolvedDialect] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<ConnectionTestStatus | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -325,6 +390,20 @@ export function ConnectionWizardPageClient() {
     () => connections.find((connection) => connection.name === currentName) || null,
     [connections, currentName],
   );
+  const selectedApiTemplate = useMemo(
+    () => apiTemplates.find((template) => template.id === apiTemplateId) || null,
+    [apiTemplateId, apiTemplates],
+  );
+  const effectiveApiBaseUrl = useMemo(
+    () => baseUrl.trim() || selectedApiTemplate?.baseUrl || "https://api.example.com/v1",
+    [baseUrl, selectedApiTemplate],
+  );
+  const effectiveApiTokenEnv = useMemo(() => {
+    if (apiAuthType === "basic" || apiAuthType === "none") {
+      return apiTokenEnv;
+    }
+    return apiEnvVars[0]?.name?.trim() || apiTokenEnv;
+  }, [apiAuthType, apiEnvVars, apiTokenEnv]);
   const canManageConnectorConfig = Boolean(currentName);
   const connectorConfigDirty = connectorConfigContent !== connectorConfigOriginal;
   const sqlConnectorOverrides = useMemo(
@@ -362,6 +441,135 @@ export function ConnectionWizardPageClient() {
     setConnectorType(initialType);
     setDiscoverState((prev) => ({ ...prev, connectorType: initialType }));
   }, [initialType]);
+
+  const loadApiTemplates = useCallback(async () => {
+    if (!isInitialized) {
+      return;
+    }
+
+    try {
+      const result = await call<ApiTemplatesResult>("connections/templates", {
+        connectorType: "api",
+      });
+      if (result.success && result.templates) {
+        setApiTemplates(result.templates);
+      }
+    } catch {
+      // Best-effort hydration only.
+    }
+  }, [call, isInitialized]);
+
+  useEffect(() => {
+    loadApiTemplates();
+  }, [loadApiTemplates]);
+
+  const handleApiTemplateSelect = useCallback(
+    (nextTemplateId: string) => {
+      setApiEnvFeedback(null);
+      setApiTemplateId(nextTemplateId);
+      if (!nextTemplateId) {
+        const nextEnvVars = buildApiEnvEntriesForAuth(apiAuthType, apiEnvVars, {
+          tokenEnv: apiTokenEnv,
+        });
+        setApiEnvVars(nextEnvVars);
+        if (nextEnvVars[0]?.name) {
+          setApiTokenEnv(nextEnvVars[0].name);
+        }
+        return;
+      }
+
+      const template = apiTemplates.find((entry) => entry.id === nextTemplateId);
+      if (!template) {
+        return;
+      }
+
+      const nextState = buildApiStateFromTemplate(template);
+      setApiAuthType(nextState.authType);
+      setApiTokenEnv(nextState.tokenEnv);
+      setApiHeaderName(nextState.headerName);
+      setApiParamName(nextState.paramName);
+      setApiEnvVars(nextState.envVars);
+      setApiKey("");
+    },
+    [apiAuthType, apiEnvVars, apiTemplates, apiTokenEnv],
+  );
+
+  const handleApiAuthTypeChange = useCallback(
+    (nextAuthType: string) => {
+      setApiEnvFeedback(null);
+      setApiAuthType(nextAuthType);
+      if (apiTemplateId) {
+        return;
+      }
+      const nextEnvVars = buildApiEnvEntriesForAuth(nextAuthType, apiEnvVars, {
+        tokenEnv: apiTokenEnv,
+      });
+      setApiEnvVars(nextEnvVars);
+      if (nextAuthType === "none") {
+        setApiTokenEnv("");
+      } else if (nextAuthType !== "basic" && nextEnvVars[0]?.name) {
+        setApiTokenEnv(nextEnvVars[0].name);
+      }
+    },
+    [apiEnvVars, apiTemplateId, apiTokenEnv],
+  );
+
+  const updateApiEnvVar = useCallback(
+    (index: number, patch: Partial<ApiEnvVarEntry>) => {
+      setApiEnvFeedback(null);
+      setApiEnvVars((previous) =>
+        previous.map((entry, entryIndex) => {
+          if (entryIndex !== index) {
+            return entry;
+          }
+          return normalizeApiEnvEntry({
+            ...entry,
+            ...patch,
+          });
+        }),
+      );
+    },
+    [],
+  );
+
+  const handleApiEnvValueChange = useCallback((index: number, nextValue: string) => {
+    setApiEnvFeedback(null);
+    setApiEnvVars((previous) =>
+      previous.map((entry, entryIndex) =>
+        entryIndex === index ? applyApiEnvValueChange(entry, nextValue) : entry,
+      ),
+    );
+  }, []);
+
+  const addApiEnvVar = useCallback(() => {
+    setApiEnvFeedback(null);
+    setApiEnvVars((previous) => [
+      ...previous,
+      {
+        slot: "",
+        name: "",
+        value: "",
+        prompt: "Additional env var",
+        secret: true,
+        hasSavedValue: false,
+        masked: false,
+        removed: false,
+      },
+    ]);
+  }, []);
+
+  useEffect(() => {
+    if (connectorType !== "api" || apiTemplateId) {
+      return;
+    }
+
+    setApiEnvVars((previous) => {
+      const next = buildApiEnvEntriesForAuth(apiAuthType, previous, {
+        tokenEnv: apiTokenEnv,
+      });
+      return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+    });
+  }, [apiAuthType, apiTemplateId, apiTokenEnv, connectorType]);
 
   const hydrateExistingDiscoveryState = useCallback(
     async (
@@ -423,14 +631,14 @@ export function ConnectionWizardPageClient() {
     [call, isInitialized],
   );
 
-  const loadExistingConnection = useCallback(async () => {
-    if (!isInitialized || !existingName) {
+  const hydrateConnectionForm = useCallback(async (name: string) => {
+    if (!isInitialized || !name) {
       return;
     }
 
     try {
       const result = await call<ConnectionGetResult>("connections/get", {
-        name: existingName,
+        name,
       });
       if (!result.success) {
         setFormError(result.error || "Failed to load connection");
@@ -439,26 +647,41 @@ export function ConnectionWizardPageClient() {
 
       const type = result.connectorType || "sql";
       setConnectorType(type);
-      setConnectionName(existingName);
+      setConnectionName(name);
       setDatabaseUrl(result.databaseUrl || "");
       setDisplayDatabaseUrl(maskDatabaseUrl(result.databaseUrl || ""));
       setDirectory(result.directory || "");
       setBaseUrl(result.baseUrl || "");
+      setApiTemplateId(result.presetId || "");
       setApiAuthType(result.auth?.type || "bearer");
       setApiTokenEnv(result.auth?.tokenEnv || "");
       setApiHeaderName(result.auth?.headerName || "");
+      setApiParamName(result.auth?.paramName || "");
+      setApiKey("");
+      setApiEnvVars(
+        (
+          result.envVars ||
+          buildApiEnvEntriesForAuth(result.auth?.type || "bearer", [], {
+            tokenEnv: result.auth?.tokenEnv || "",
+            usernameEnv: result.auth?.usernameEnv || "",
+            passwordEnv: result.auth?.passwordEnv || "",
+          })
+        ).map((entry) => normalizeApiEnvEntry(entry)),
+      );
       setResolvedDialect(inferDialect(type, { databaseUrl: result.databaseUrl }));
 
-      await switchConnection(existingName);
-      await hydrateExistingDiscoveryState(existingName, type, result.endpoints);
+      await switchConnection(name);
+      await hydrateExistingDiscoveryState(name, type, result.endpoints);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to load connection");
     }
-  }, [call, existingName, hydrateExistingDiscoveryState, isInitialized, switchConnection]);
+  }, [call, hydrateExistingDiscoveryState, isInitialized, switchConnection]);
 
   useEffect(() => {
-    loadExistingConnection();
-  }, [loadExistingConnection]);
+    if (existingName) {
+      hydrateConnectionForm(existingName);
+    }
+  }, [existingName, hydrateConnectionForm]);
 
   useEffect(() => {
     if (!existingName || !currentConnection || !isInitialized) {
@@ -525,6 +748,139 @@ export function ConnectionWizardPageClient() {
     refreshConnectorConfigState();
   }, [refreshConnectorConfigState]);
 
+  const persistApiEnvVars = useCallback(
+    async (nextEnvVars: ApiEnvVarEntry[], feedback: string) => {
+      const trimmedName = connectionName.trim();
+      if (!trimmedName) {
+        setFormError("Enter a connection name before saving env vars.");
+        return false;
+      }
+
+      const updateTargetName =
+        existingName || connectorConfigExists || currentConnection ? trimmedName : null;
+
+      try {
+        let success = false;
+
+        if (updateTargetName) {
+          const result = await call<UpdateResult>("connections/update", {
+            name: updateTargetName,
+            baseUrl: effectiveApiBaseUrl,
+            templateId: apiTemplateId || undefined,
+            auth: {
+              type: apiAuthType,
+              tokenEnv: effectiveApiTokenEnv.trim(),
+              headerName: apiAuthType === "header" ? apiHeaderName.trim() : undefined,
+              paramName: apiAuthType === "query_param" ? apiParamName.trim() : undefined,
+              usernameEnv:
+                apiAuthType === "basic" ? nextEnvVars[0]?.name.trim() : undefined,
+              passwordEnv:
+                apiAuthType === "basic" ? nextEnvVars[1]?.name.trim() : undefined,
+            },
+            envVars: nextEnvVars,
+          });
+          success = result.success;
+          if (!result.success) {
+            setFormError(result.error || "Failed to save env vars");
+            return false;
+          }
+        } else {
+          const result = await call<CreateResult>("connections/create", {
+            name: trimmedName,
+            connectorType: "api",
+            setActive: false,
+            baseUrl: effectiveApiBaseUrl,
+            templateId: apiTemplateId || undefined,
+            authType: apiAuthType,
+            tokenEnv: effectiveApiTokenEnv.trim() || undefined,
+            headerName: apiAuthType === "header" ? apiHeaderName.trim() || undefined : undefined,
+            paramName:
+              apiAuthType === "query_param" ? apiParamName.trim() || undefined : undefined,
+            envVars: nextEnvVars,
+          });
+          success = result.success;
+          if (!result.success) {
+            setFormError(result.error || "Failed to save env vars");
+            return false;
+          }
+        }
+
+        if (success) {
+          setApiEnvVars(nextEnvVars);
+          setApiEnvFeedback(feedback);
+          setFormError(null);
+          await refreshConnections();
+          await refreshConnectorConfigState();
+        }
+
+        return success;
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : "Failed to save env vars");
+        return false;
+      }
+    },
+    [
+      apiAuthType,
+      apiHeaderName,
+      apiParamName,
+      apiTemplateId,
+      call,
+      connectionName,
+      connectorConfigExists,
+      currentConnection,
+      effectiveApiBaseUrl,
+      effectiveApiTokenEnv,
+      existingName,
+      refreshConnections,
+      refreshConnectorConfigState,
+    ],
+  );
+
+  const handleSaveApiEnvVar = useCallback(
+    async (index: number) => {
+      const entry = apiEnvVars[index];
+      if (!entry?.value?.trim()) {
+        return;
+      }
+
+      const nextEnvVars = apiEnvVars.map((candidate, entryIndex) =>
+        entryIndex === index ? saveApiEnvEntry(candidate) : candidate,
+      );
+      const savedEntry = nextEnvVars[index];
+      await persistApiEnvVars(
+        nextEnvVars,
+        `Saved ${savedEntry?.name || savedEntry?.slot || "credential"} to .env`,
+      );
+    },
+    [apiEnvVars, persistApiEnvVars],
+  );
+
+  const handleRemoveApiEnvVar = useCallback(
+    async (index: number) => {
+      const entry = apiEnvVars[index];
+      if (!entry) {
+        return;
+      }
+
+      const normalized = normalizeApiEnvEntry(entry);
+      const shouldKeepRow = Boolean(normalized.slot) || normalized.hasSavedValue;
+      if (!shouldKeepRow) {
+        setApiEnvVars((previous) => previous.filter((_, entryIndex) => entryIndex !== index));
+        setApiEnvFeedback(null);
+        return;
+      }
+
+      const nextEnvVars = apiEnvVars.map((candidate, entryIndex) =>
+        entryIndex === index ? clearApiEnvEntry(candidate) : candidate,
+      );
+      await persistApiEnvVars(
+        nextEnvVars,
+        `Removed ${normalized.name || normalized.slot || "credential"} from .env`,
+      );
+    },
+    [apiEnvVars, persistApiEnvVars],
+  );
+
   const openConnectorConfigEditor = useCallback(async () => {
     if (!currentName) {
       setConnectorConfigError("Enter a connection name before editing connector.yaml.");
@@ -536,15 +892,33 @@ export function ConnectionWizardPageClient() {
 
     try {
       if (!connectorConfigExists) {
-        const template = buildConnectorConfigTemplate({
+        let template = buildConnectorConfigTemplate({
           connectorType,
           databaseUrl,
           directory,
           baseUrl,
           apiAuthType,
-          apiTokenEnv,
+          apiTokenEnv: effectiveApiTokenEnv,
           apiHeaderName,
+          apiParamName,
+          apiEnvVars,
         });
+
+        if (connectorType === "api" && apiTemplateId) {
+          const renderResult = await call<RenderTemplateResult>("connections/render-template", {
+            templateId: apiTemplateId,
+            baseUrl,
+            authType: apiAuthType,
+            headerName: apiHeaderName,
+            paramName: apiParamName,
+            envVars: apiEnvVars,
+          });
+          if (!renderResult.success || !renderResult.content) {
+            setConnectorConfigError(renderResult.error || "Failed to render template");
+            return;
+          }
+          template = renderResult.content;
+        }
 
         const createResult = await call<ContextCreateResult>("context/create", {
           connection: currentName,
@@ -583,7 +957,10 @@ export function ConnectionWizardPageClient() {
   }, [
     apiAuthType,
     apiHeaderName,
-    apiTokenEnv,
+    apiTemplateId,
+    apiEnvVars,
+    apiParamName,
+    effectiveApiTokenEnv,
     baseUrl,
     call,
     connectorConfigExists,
@@ -615,6 +992,9 @@ export function ConnectionWizardPageClient() {
 
       setConnectorConfigOriginal(connectorConfigContent);
       setConnectorConfigExists(true);
+      if (existingName) {
+        await hydrateConnectionForm(currentName);
+      }
       return true;
     } catch (err) {
       setConnectorConfigError(
@@ -624,7 +1004,7 @@ export function ConnectionWizardPageClient() {
     } finally {
       setConnectorConfigSaving(false);
     }
-  }, [call, connectorConfigContent, currentName]);
+  }, [call, connectorConfigContent, currentName, existingName, hydrateConnectionForm]);
 
   const navigateToStep = useCallback(
     (nextStep: WizardStep, nextName?: string) => {
@@ -656,13 +1036,20 @@ export function ConnectionWizardPageClient() {
           directory,
         });
       } else if (connectorType === "api") {
-        result = await call<TestResult>("connections/test", {
-          connectorType: "api",
-          baseUrl,
-          authType: apiAuthType,
-          apiKey: apiKey || undefined,
-          headerName: apiAuthType === "header" ? apiHeaderName || undefined : undefined,
-        });
+        result = await call<TestResult>(
+          "connections/test",
+          buildApiTestParams({
+            name: currentName,
+            templateId: apiTemplateId,
+            baseUrl,
+            authType: apiAuthType,
+            tokenEnv: effectiveApiTokenEnv,
+            apiKey,
+            headerName: apiHeaderName,
+            paramName: apiParamName,
+            envVars: apiEnvVars,
+          }),
+        );
       } else {
         if (connectorConfigExists && connectorConfigDirty) {
           const saved = await saveConnectorConfig();
@@ -719,11 +1106,16 @@ export function ConnectionWizardPageClient() {
     apiAuthType,
     apiHeaderName,
     apiKey,
+    apiTemplateId,
+    apiEnvVars,
+    apiParamName,
+    effectiveApiTokenEnv,
     baseUrl,
     call,
     connectorType,
     connectorConfigDirty,
     connectorConfigExists,
+    currentName,
     databaseUrl,
     directory,
     saveConnectorConfig,
@@ -773,11 +1165,16 @@ export function ConnectionWizardPageClient() {
           updateParams.directory = directory.trim();
         } else if (connectorType === "api") {
           updateParams.baseUrl = baseUrl.trim();
+          updateParams.templateId = apiTemplateId || undefined;
           updateParams.auth = {
             type: apiAuthType,
-            tokenEnv: apiTokenEnv.trim(),
+            tokenEnv: effectiveApiTokenEnv.trim(),
             headerName: apiAuthType === "header" ? apiHeaderName.trim() : undefined,
+            paramName: apiAuthType === "query_param" ? apiParamName.trim() : undefined,
+            usernameEnv: apiAuthType === "basic" ? apiEnvVars[0]?.name.trim() : undefined,
+            passwordEnv: apiAuthType === "basic" ? apiEnvVars[1]?.name.trim() : undefined,
           };
+          updateParams.envVars = apiEnvVars;
           if (apiKey.trim()) {
             updateParams.apiKey = apiKey.trim();
           }
@@ -801,10 +1198,14 @@ export function ConnectionWizardPageClient() {
           createParams.directory = directory.trim();
         } else if (connectorType === "api") {
           createParams.baseUrl = baseUrl.trim();
+          createParams.templateId = apiTemplateId || undefined;
           createParams.authType = apiAuthType;
-          createParams.tokenEnv = apiTokenEnv.trim() || undefined;
+          createParams.tokenEnv = effectiveApiTokenEnv.trim() || undefined;
           createParams.headerName =
             apiAuthType === "header" ? apiHeaderName.trim() || undefined : undefined;
+          createParams.paramName =
+            apiAuthType === "query_param" ? apiParamName.trim() || undefined : undefined;
+          createParams.envVars = apiEnvVars;
           createParams.apiKey = apiKey.trim() || undefined;
         } else {
           createParams.databaseUrl = effectiveDatabaseUrl;
@@ -830,7 +1231,10 @@ export function ConnectionWizardPageClient() {
     apiAuthType,
     apiHeaderName,
     apiKey,
-    apiTokenEnv,
+    apiTemplateId,
+    apiEnvVars,
+    apiParamName,
+    effectiveApiTokenEnv,
     baseUrl,
     call,
     connectionName,
@@ -1297,34 +1701,33 @@ export function ConnectionWizardPageClient() {
         </div>
 
         <div className="space-y-8">
-        <div className="space-y-4">
-          <nav className="flex flex-wrap items-center gap-3 text-lg font-medium">
-            {WIZARD_STEPS.map((wizardStep, index) => {
-              const isActive = step === wizardStep.id;
-              const isLocked = isWizardStepLocked(wizardStep.id, currentName);
-              return (
-                <span key={wizardStep.id} className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isLocked) {
-                        navigateToStep(wizardStep.id);
-                      }
-                    }}
-                    disabled={isLocked}
-                    className={`${
-                      isActive ? "text-brand" : "text-gray-200"
-                    } ${isLocked ? "cursor-not-allowed text-gray-600" : "hover:text-brand"}`}
-                  >
-                    {index + 1}. {wizardStep.label}
-                  </button>
-                  {index < WIZARD_STEPS.length - 1 && <span className="text-gray-600">•</span>}
-                </span>
-              );
-            })}
-          </nav>
-        </div>
-        <div className="space-y-8">
+          <div className="space-y-4">
+            <nav className="flex flex-wrap items-center gap-3 text-lg font-medium">
+              {WIZARD_STEPS.map((wizardStep, index) => {
+                const isActive = step === wizardStep.id;
+                const isLocked = isWizardStepLocked(wizardStep.id, currentName);
+                return (
+                  <span key={wizardStep.id} className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isLocked) {
+                          navigateToStep(wizardStep.id);
+                        }
+                      }}
+                      disabled={isLocked}
+                      className={`${
+                        isActive ? "text-brand" : "text-gray-200"
+                      } ${isLocked ? "cursor-not-allowed text-gray-600" : "hover:text-brand"}`}
+                    >
+                      {index + 1}. {wizardStep.label}
+                    </button>
+                    {index < WIZARD_STEPS.length - 1 && <span className="text-gray-600">•</span>}
+                  </span>
+                );
+              })}
+            </nav>
+          </div>
           {step === "connect" && (
             <div
               className={`items-stretch gap-6 ${connectorConfigOpen ? "xl:grid xl:grid-cols-[minmax(0,1fr)_1px_420px]" : "max-w-4xl"}`}
@@ -1445,14 +1848,98 @@ export function ConnectionWizardPageClient() {
                 {connectorType === "api" && (
                   <>
                     <div className="grid gap-4 sm:grid-cols-[180px_1fr] sm:items-center">
+                      <span className="text-sm font-medium text-gray-300">Preset</span>
+                      <div className="space-y-2">
+                        <select
+                          value={apiTemplateId}
+                          onChange={(event) => handleApiTemplateSelect(event.target.value)}
+                          className="h-10 rounded-md border border-gray-700 bg-gray-950 px-3 text-sm text-white"
+                        >
+                          <option value="">Custom</option>
+                          {apiTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.title}
+                            </option>
+                          ))}
+                        </select>
+                        {selectedApiTemplate && (
+                          <p className="text-xs text-gray-500">{selectedApiTemplate.description}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-[180px_1fr] sm:items-center">
                       <span className="text-sm font-medium text-gray-300">Base URL</span>
                       <Input
                         value={baseUrl}
                         onChange={(event) => setBaseUrl(event.target.value)}
-                        placeholder="https://api.example.com/v1"
+                        placeholder={selectedApiTemplate?.baseUrl || "https://api.example.com/v1"}
                         data-testid="connection-url-input"
                         className="border-gray-700 bg-gray-950 text-white"
                       />
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-[180px_1fr] sm:items-start">
+                      <span className="pt-2 text-sm font-medium text-gray-300">Auth</span>
+                      <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <select
+                            value={apiAuthType}
+                            onChange={(event) => handleApiAuthTypeChange(event.target.value)}
+                            disabled={Boolean(apiTemplateId)}
+                            className="h-10 rounded-md border border-gray-700 bg-gray-950 px-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <option value="none">None</option>
+                            <option value="bearer">Bearer</option>
+                            <option value="header">Header</option>
+                            <option value="query_param">Query param</option>
+                            <option value="basic">Basic</option>
+                          </select>
+                          {apiAuthType === "none" ? (
+                            <div className="md:col-span-2 flex items-center text-sm text-gray-500">
+                              No auth headers or tokens required.
+                            </div>
+                          ) : apiAuthType === "header" ? (
+                            <>
+                              <Input
+                                value={apiHeaderName}
+                                onChange={(event) => setApiHeaderName(event.target.value)}
+                                placeholder="x-api-key"
+                                disabled={Boolean(apiTemplateId)}
+                                className="border-gray-700 bg-gray-950 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                              />
+                              <div className="flex items-center rounded-md border border-gray-800 bg-gray-950 px-3 text-sm text-gray-500">
+                                Credentials come from the env rows below.
+                              </div>
+                            </>
+                          ) : apiAuthType === "query_param" ? (
+                            <>
+                              <Input
+                                value={apiParamName}
+                                onChange={(event) => setApiParamName(event.target.value)}
+                                placeholder="api_key"
+                                disabled={Boolean(apiTemplateId)}
+                                className="border-gray-700 bg-gray-950 text-white disabled:cursor-not-allowed disabled:opacity-60"
+                              />
+                              <div className="flex items-center rounded-md border border-gray-800 bg-gray-950 px-3 text-sm text-gray-500">
+                                Credentials come from the env rows below.
+                              </div>
+                            </>
+                          ) : apiAuthType === "basic" ? (
+                            <div className="md:col-span-2 flex items-center rounded-md border border-gray-800 bg-gray-950 px-3 text-sm text-gray-500">
+                              Username and password/token are taken from the env rows below.
+                            </div>
+                          ) : (
+                            <div className="md:col-span-2 flex items-center rounded-md border border-gray-800 bg-gray-950 px-3 text-sm text-gray-500">
+                              Uses an Authorization bearer token from the env rows below.
+                            </div>
+                          )}
+                        </div>
+                        {selectedApiTemplate && (
+                          <p className="text-xs text-gray-500">
+                            {selectedApiTemplate.title} locks auth type and protocol details so the
+                            wizard stays aligned with the generated connector.yaml.
+                          </p>
+                        )}
+                      </div>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-[180px_1fr] sm:items-start">
                       <span className="pt-2 text-sm font-medium text-gray-300">Config</span>
@@ -1482,38 +1969,89 @@ export function ConnectionWizardPageClient() {
                         )}
                       </div>
                     </div>
-                    <div className="grid gap-4 sm:grid-cols-[180px_1fr] sm:items-center">
-                      <span className="text-sm font-medium text-gray-300">Auth</span>
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <select
-                          value={apiAuthType}
-                          onChange={(event) => setApiAuthType(event.target.value)}
-                          className="h-10 rounded-md border border-gray-700 bg-gray-950 px-3 text-sm text-white"
-                        >
-                          <option value="none">None</option>
-                          <option value="bearer">Bearer</option>
-                          <option value="header">Header</option>
-                          <option value="query_param">Query param</option>
-                        </select>
-                        {apiAuthType === "none" ? (
-                          <div className="md:col-span-2 flex items-center text-sm text-gray-500">
-                            No auth headers or tokens required.
+                    <div className="grid gap-4 sm:grid-cols-[180px_1fr] sm:items-start">
+                      <span className="pt-2 text-sm font-medium text-gray-300">Env</span>
+                      <div className="space-y-3">
+                        {apiEnvVars.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-gray-800 bg-gray-950 px-3 py-2 text-sm text-gray-500">
+                            No env vars required for this auth mode.
                           </div>
                         ) : (
-                          <>
-                            <Input
-                              value={apiTokenEnv}
-                              onChange={(event) => setApiTokenEnv(event.target.value)}
-                              placeholder="API_KEY"
-                              className="border-gray-700 bg-gray-950 text-white"
-                            />
-                            <Input
-                              value={apiHeaderName}
-                              onChange={(event) => setApiHeaderName(event.target.value)}
-                              placeholder="Authorization"
-                              className="border-gray-700 bg-gray-950 text-white"
-                            />
-                          </>
+                          apiEnvVars.map((entry, index) => (
+                            <div
+                              key={`${entry.slot || "env"}-${index}`}
+                              className="space-y-1"
+                            >
+                              {(() => {
+                                const rowState = getApiEnvRowState(entry);
+                                return (
+                                  <>
+                                    <p className="text-xs text-gray-500">
+                                      {entry.prompt || entry.slot || "Environment variable"}
+                                    </p>
+                                    <div className="grid gap-2 md:grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto]">
+                                      <Input
+                                        value={entry.name}
+                                        onChange={(event) =>
+                                          updateApiEnvVar(index, {
+                                            name: event.target.value,
+                                            removed: false,
+                                          })}
+                                        placeholder={entry.slot || "API_KEY"}
+                                        className="border-gray-700 bg-gray-950 text-white"
+                                      />
+                                      <Input
+                                        type={entry.secret ? "password" : "text"}
+                                        value={rowState.displayValue}
+                                        onChange={(event) =>
+                                          handleApiEnvValueChange(index, event.target.value)
+                                        }
+                                        placeholder={rowState.placeholder}
+                                        className="border-gray-700 bg-gray-950 text-white"
+                                      />
+                                      <div className="flex items-center gap-2">
+                                        {rowState.primaryActionLabel && !rowState.isSaved && (
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => void handleSaveApiEnvVar(index)}
+                                            disabled={!entry.value?.trim()}
+                                          >
+                                            {rowState.primaryActionLabel}
+                                          </Button>
+                                        )}
+                                        {rowState.showTrash && (
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon"
+                                            onClick={() => void handleRemoveApiEnvVar(index)}
+                                            aria-label={`Remove ${entry.name || entry.slot || "environment variable"}`}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          ))
+                        )}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={addApiEnvVar}
+                          aria-label="Add environment variable"
+                          className="w-fit"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                        {apiEnvFeedback && (
+                          <p className="text-xs text-emerald-300">{apiEnvFeedback}</p>
                         )}
                       </div>
                     </div>
@@ -1540,10 +2078,6 @@ export function ConnectionWizardPageClient() {
                   <p>{testStatus?.message || "Run a connection test to validate the setup."}</p>
                   {testStatus?.hint && <p className="mt-2 text-amber-300">{testStatus.hint}</p>}
                 </div>
-
-                {(formError || connectorConfigError) && (
-                  <p className="text-sm text-red-300">{formError || connectorConfigError}</p>
-                )}
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 text-sm text-gray-300">
@@ -1805,7 +2339,13 @@ export function ConnectionWizardPageClient() {
               </div>
             </div>
           )}
-        </div>
+          <FloatingAlert
+            message={formError || connectorConfigError}
+            onClose={() => {
+              setFormError(null);
+              setConnectorConfigError(null);
+            }}
+          />
         </div>
       </div>
     </ConnectionWorkspaceShell>

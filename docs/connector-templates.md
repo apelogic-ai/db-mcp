@@ -2,7 +2,7 @@
 
 `db-mcp` ships built-in connector templates as single YAML files under:
 
-`packages/core/src/db_mcp/static/connector_templates/`
+`packages/core/src/db_mcp/templates/connectors/`
 
 The design goal is simple: for common integrations, a community contributor should be able to
 add one new template file in one PR without touching Python code.
@@ -53,7 +53,7 @@ connector:
 To keep template PRs single-file and low-friction:
 
 - Put the whole template in one YAML file under
-  `packages/core/src/db_mcp/static/connector_templates/`.
+  `packages/core/src/db_mcp/templates/connectors/`.
 - Reuse existing connector contract capabilities only.
 - Do not add Python code unless the target system requires runtime behavior that the current
   connector contract cannot express.
@@ -66,7 +66,7 @@ Before opening a PR, validate the template directly:
 
 ```bash
 cd packages/core
-uv run db-mcp connector validate src/db_mcp/static/connector_templates/<template>.yaml
+uv run db-mcp connector validate src/db_mcp/templates/connectors/<template>.yaml
 ```
 
 You can also list the catalog locally:
@@ -84,5 +84,5 @@ A template should stay single-file unless one of these is true:
 - The API needs new pagination or response handling behavior in the runtime.
 - The UI or onboarding flow needs provider-specific affordances.
 
-In those cases, the template file still belongs in `static/connector_templates/`, but the PR is
+In those cases, the template file still belongs in `templates/connectors/`, but the PR is
 no longer expected to be single-file.

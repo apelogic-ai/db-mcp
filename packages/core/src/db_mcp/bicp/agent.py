@@ -37,6 +37,12 @@ from db_mcp_models import OnboardingPhase
 from sqlalchemy import text
 
 from db_mcp.config import get_settings
+from db_mcp.connector_templates import (
+    get_connector_template,
+    list_connector_templates,
+    match_connector_template,
+    materialize_connector_template,
+)
 from db_mcp.connectors import get_connector, get_connector_capabilities
 from db_mcp.connectors.sql import SQLConnector
 from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
@@ -100,6 +106,10 @@ class DBMCPAgent(BICPAgent):
         self._method_handlers["connections/delete"] = self._handle_connections_delete
         self._method_handlers["connections/get"] = self._handle_connections_get
         self._method_handlers["connections/update"] = self._handle_connections_update
+        self._method_handlers["connections/templates"] = self._handle_connections_templates
+        self._method_handlers["connections/render-template"] = (
+            self._handle_connections_render_template
+        )
         self._method_handlers["connections/save-discovery"] = (
             self._handle_connections_save_discovery
         )
@@ -1017,6 +1027,177 @@ class DBMCPAgent(BICPAgent):
             "isActive": set_active,
         }
 
+    def _normalize_api_env_entries(self, raw_entries: Any) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        if not isinstance(raw_entries, list):
+            return entries
+
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict):
+                continue
+
+            name = str(raw_entry.get("name", "") or "").strip()
+            slot = str(raw_entry.get("slot", "") or "").strip()
+            if not name and not slot:
+                continue
+
+            resolved_name = name or slot
+            entries.append(
+                {
+                    "slot": slot or resolved_name,
+                    "name": resolved_name,
+                    "value": str(raw_entry.get("value", "") or "").strip(),
+                    "prompt": str(raw_entry.get("prompt", "") or "").strip(),
+                    "secret": bool(raw_entry.get("secret", True)),
+                    "removed": bool(raw_entry.get("removed", False)),
+                }
+            )
+
+        return entries
+
+    def _build_api_auth_overrides(self, params: dict[str, Any]) -> dict[str, Any]:
+        auth_params = params.get("auth") if isinstance(params.get("auth"), dict) else {}
+
+        def _value(primary_key: str, nested_key: str | None = None) -> str:
+            nested = nested_key or primary_key
+            raw = params.get(primary_key, "")
+            if raw in (None, ""):
+                raw = auth_params.get(nested, "")
+            return str(raw or "").strip()
+
+        overrides: dict[str, Any] = {}
+        auth_type = _value("authType", "type")
+        if auth_type:
+            overrides["type"] = auth_type
+
+        header_name = _value("headerName")
+        if header_name:
+            overrides["header_name"] = header_name
+
+        param_name = _value("paramName")
+        if param_name:
+            overrides["param_name"] = param_name
+
+        token_env = _value("tokenEnv")
+        if token_env:
+            overrides["token_env"] = token_env
+
+        username_env = _value("usernameEnv")
+        if username_env:
+            overrides["username_env"] = username_env
+
+        password_env = _value("passwordEnv")
+        if password_env:
+            overrides["password_env"] = password_env
+
+        return overrides
+
+    def _read_connection_env_values(self, conn_path: Path) -> dict[str, str]:
+        from dotenv import dotenv_values
+
+        env_file = conn_path / ".env"
+        if not env_file.exists():
+            return {}
+
+        env_vars = dotenv_values(env_file)
+        return {
+            str(key): str(value)
+            for key, value in env_vars.items()
+            if key and value is not None
+        }
+
+    def _resolve_api_env_values(
+        self,
+        conn_path: Path | None,
+        env_entries: list[dict[str, Any]],
+    ) -> dict[str, str]:
+        existing_env = self._read_connection_env_values(conn_path) if conn_path else {}
+        merged_env = dict(existing_env)
+
+        for entry in env_entries:
+            name = entry["name"]
+            slot = entry["slot"]
+            value = entry["value"]
+            removed = bool(entry.get("removed", False))
+
+            if removed:
+                merged_env.pop(name, None)
+                if slot:
+                    merged_env.pop(slot, None)
+                continue
+
+            if slot and slot != name:
+                merged_env.pop(slot, None)
+
+            resolved_value = value or existing_env.get(name) or existing_env.get(slot)
+            if resolved_value:
+                merged_env[name] = resolved_value
+
+        return merged_env
+
+    def _write_api_env_file(self, conn_path: Path, env_entries: list[dict[str, Any]]) -> None:
+        merged_env = self._resolve_api_env_values(conn_path, env_entries)
+        env_file = conn_path / ".env"
+        ordered_names: list[str] = []
+        for entry in env_entries:
+            if entry.get("removed", False):
+                continue
+            if entry["name"] not in ordered_names:
+                ordered_names.append(entry["name"])
+
+        remaining_names = sorted(name for name in merged_env if name not in ordered_names)
+        ordered_names.extend(remaining_names)
+
+        with open(env_file, "w") as f:
+            f.write("# API connection credentials\n")
+            f.write("# This file is gitignored - do not commit\n\n")
+            for name in ordered_names:
+                value = merged_env.get(name, "")
+                if value:
+                    f.write(f"{name}={value}\n")
+
+    def _build_template_env_name_overrides(
+        self, env_entries: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        return {
+            entry["slot"]: entry["name"]
+            for entry in env_entries
+            if entry["slot"] and entry["name"]
+        }
+
+    def _build_api_template_descriptor(self, template_id: str) -> dict[str, Any] | None:
+        template = get_connector_template(template_id)
+        if template is None:
+            return None
+
+        auth = template.connector.get("auth", {}) or {}
+        return {
+            "id": template.id,
+            "title": template.title,
+            "description": template.description,
+            "baseUrlPrompt": template.base_url_prompt,
+            "baseUrl": template.connector.get("base_url", ""),
+            "connectorType": template.connector.get("type", "api"),
+            "auth": {
+                "type": auth.get("type", "bearer"),
+                "tokenEnv": auth.get("token_env", ""),
+                "headerName": auth.get("header_name", "Authorization"),
+                "paramName": auth.get("param_name", "api_key"),
+                "usernameEnv": auth.get("username_env", ""),
+                "passwordEnv": auth.get("password_env", ""),
+            },
+            "env": [
+                {
+                    "slot": env_var.name,
+                    "name": env_var.name,
+                    "prompt": env_var.prompt,
+                    "secret": env_var.secret,
+                    "hasSavedValue": False,
+                }
+                for env_var in template.env
+            ],
+        }
+
     async def _create_api_connection(
         self,
         name: str,
@@ -1035,8 +1216,63 @@ class DBMCPAgent(BICPAgent):
         auth_type = params.get("authType", "bearer")
         token_env = params.get("tokenEnv", "").strip()
         api_key = params.get("apiKey", "").strip()
-
         header_name = params.get("headerName", "").strip()
+        param_name = params.get("paramName", "").strip()
+        template_id = str(params.get("templateId", "") or "").strip()
+        env_entries = self._normalize_api_env_entries(params.get("envVars"))
+
+        if template_id:
+            connector_data = materialize_connector_template(
+                template_id,
+                base_url=base_url,
+                env_name_overrides=self._build_template_env_name_overrides(env_entries),
+                auth_overrides=self._build_api_auth_overrides(params),
+            )
+            if connector_data is None:
+                return {"success": False, "error": f"Unknown connector template: {template_id}"}
+
+            conn_path.mkdir(parents=True, exist_ok=True)
+
+            connector_yaml = conn_path / "connector.yaml"
+            with open(connector_yaml, "w") as f:
+                yaml.dump(connector_data, f, default_flow_style=False, sort_keys=False)
+
+            self._write_api_env_file(conn_path, env_entries)
+
+            data_dir = conn_path / "data"
+            data_dir.mkdir(exist_ok=True)
+
+            gitignore_file = conn_path / ".gitignore"
+            with open(gitignore_file, "w") as f:
+                f.write("# Ignore credentials\n")
+                f.write(".env\n")
+                f.write("# Ignore local state\n")
+                f.write("state.yaml\n")
+                f.write("# Ignore synced data\n")
+                f.write("data/\n")
+
+            if set_active:
+                self._set_active_connection(name, config_file)
+
+            logger.info(f"Created API connection from template: {name} ({template_id})")
+            return {
+                "success": True,
+                "name": name,
+                "dialect": "duckdb",
+                "isActive": set_active,
+            }
+
+        if not env_entries and auth_type != "none":
+            env_var_name = token_env or "API_KEY"
+            env_entries = [
+                {
+                    "slot": env_var_name,
+                    "name": env_var_name,
+                    "value": api_key,
+                    "prompt": "",
+                    "secret": True,
+                }
+            ]
 
         # Build connector.yaml data
         auth_data: dict[str, Any] = {"type": auth_type}
@@ -1044,6 +1280,8 @@ class DBMCPAgent(BICPAgent):
             auth_data["token_env"] = token_env or "API_KEY"
         if auth_type == "header" and header_name:
             auth_data["header_name"] = header_name
+        if auth_type == "query_param" and param_name:
+            auth_data["param_name"] = param_name
 
         connector_data: dict[str, Any] = {
             "spec_version": CONNECTOR_SPEC_VERSION,
@@ -1065,16 +1303,7 @@ class DBMCPAgent(BICPAgent):
             yaml.dump(connector_data, f, default_flow_style=False)
 
         # Write .env with API key if provided
-        env_file = conn_path / ".env"
-        with open(env_file, "w") as f:
-            f.write("# API connection credentials\n")
-            f.write("# This file is gitignored - do not commit\n\n")
-            if auth_type != "none":
-                env_var_name = token_env or "API_KEY"
-                if api_key:
-                    f.write(f"{env_var_name}={api_key}\n")
-                else:
-                    f.write(f"# {env_var_name}=your_api_key_here\n")
+        self._write_api_env_file(conn_path, env_entries)
 
         # Create data directory for JSONL files
         data_dir = conn_path / "data"
@@ -1356,39 +1585,69 @@ class DBMCPAgent(BICPAgent):
 
     async def _test_api_connection(self, params: dict[str, Any]) -> dict[str, Any]:
         """Test an API connection by creating a temporary connector and testing it."""
+        from db_mcp.connectors import _load_api_config
         from db_mcp.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
 
         base_url = params.get("baseUrl", "").strip()
+        name = params.get("name", "").strip()
         api_key = params.get("apiKey", "").strip()
         auth_type = params.get("authType", "bearer")
         header_name = params.get("headerName", "Authorization")
+        param_name = params.get("paramName", "api_key")
         token_env = "" if auth_type == "none" else params.get("tokenEnv", "API_KEY")
+        template_id = str(params.get("templateId", "") or "").strip()
+        env_entries = self._normalize_api_env_entries(params.get("envVars"))
 
-        # Build auth config
-        auth = APIAuthConfig(
-            type=auth_type,
-            token_env=token_env,
-            header_name=header_name,
-        )
+        conn_path = Path.home() / ".db-mcp" / "connections" / name if name else None
+        resolved_env_values = self._resolve_api_env_values(conn_path, env_entries)
 
-        # Build minimal API config
-        config = APIConnectorConfig(
-            base_url=base_url,
-            auth=auth,
-        )
+        if api_key and token_env:
+            resolved_env_values[token_env] = api_key
+
+        if template_id:
+            connector_data = materialize_connector_template(
+                template_id,
+                base_url=base_url,
+                env_name_overrides=self._build_template_env_name_overrides(env_entries),
+                auth_overrides=self._build_api_auth_overrides(params),
+            )
+            if connector_data is None:
+                return {"success": False, "error": f"Unknown connector template: {template_id}"}
+            config = _load_api_config(connector_data)
+        else:
+            if not resolved_env_values and token_env and conn_path is not None:
+                existing_env = self._read_connection_env_values(conn_path)
+                if token_env in existing_env:
+                    resolved_env_values[token_env] = existing_env[token_env]
+
+            # Build auth config
+            auth = APIAuthConfig(
+                type=auth_type,
+                token_env=token_env,
+                header_name=header_name,
+                param_name=param_name,
+            )
+
+            # Build minimal API config
+            config = APIConnectorConfig(
+                base_url=base_url,
+                auth=auth,
+            )
 
         # Create temporary connector with in-memory data dir
         import tempfile
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Create temporary .env file if API key provided
+            # Create temporary .env file if API credentials are available
             env_path = None
-            if api_key:
+            if resolved_env_values:
                 import os
 
                 env_path = os.path.join(temp_dir, ".env")
                 with open(env_path, "w") as f:
-                    f.write(f"{token_env}={api_key}\n")
+                    for env_name, env_value in resolved_env_values.items():
+                        if env_value:
+                            f.write(f"{env_name}={env_value}\n")
 
             connector = APIConnector(config, temp_dir, env_path=env_path)
             result = connector.test_connection()
@@ -1550,6 +1809,43 @@ class DBMCPAgent(BICPAgent):
 
         return {"success": True, "name": name}
 
+    async def _handle_connections_templates(self, params: dict[str, Any]) -> dict[str, Any]:
+        connector_type = params.get("connectorType")
+        templates = [
+            self._build_api_template_descriptor(template.id)
+            for template in list_connector_templates()
+        ]
+        if connector_type:
+            templates = [
+                template
+                for template in templates
+                if template is not None and template.get("connectorType") == connector_type
+            ]
+        return {
+            "success": True,
+            "templates": [template for template in templates if template is not None],
+        }
+
+    async def _handle_connections_render_template(self, params: dict[str, Any]) -> dict[str, Any]:
+        import yaml
+
+        template_id = str(params.get("templateId", "") or "").strip()
+        if not template_id:
+            return {"success": False, "error": "Template id is required"}
+
+        env_entries = self._normalize_api_env_entries(params.get("envVars"))
+        connector_data = materialize_connector_template(
+            template_id,
+            base_url=str(params.get("baseUrl", "") or "").strip() or None,
+            env_name_overrides=self._build_template_env_name_overrides(env_entries),
+            auth_overrides=self._build_api_auth_overrides(params),
+        )
+        if connector_data is None:
+            return {"success": False, "error": f"Unknown connector template: {template_id}"}
+
+        content = yaml.dump(connector_data, default_flow_style=False, sort_keys=False)
+        return {"success": True, "content": content}
+
     async def _handle_connections_get(self, params: dict[str, Any]) -> dict[str, Any]:
         """Get connection details.
 
@@ -1593,17 +1889,79 @@ class DBMCPAgent(BICPAgent):
                 endpoints = connector_data.get("endpoints", [])
                 pagination = connector_data.get("pagination", {})
                 rate_limit = connector_data.get("rate_limit", {})
+                preset_id = match_connector_template(connector_data)
+                env_values = self._read_connection_env_values(conn_path)
+                env_vars: list[dict[str, Any]] = []
+
+                if preset_id:
+                    template = get_connector_template(preset_id)
+                    template_auth = (
+                        template.connector.get("auth", {}) if template is not None else {}
+                    )
+                    template_env_vars = template.env if template is not None else []
+                    for env_var in template_env_vars:
+                        resolved_name = env_var.name
+                        for auth_key in ("token_env", "username_env", "password_env"):
+                            if template_auth.get(auth_key) == env_var.name:
+                                resolved_name = auth.get(auth_key, resolved_name)
+                                break
+                        env_vars.append(
+                            {
+                                "slot": env_var.name,
+                                "name": resolved_name,
+                                "prompt": env_var.prompt,
+                                "secret": env_var.secret,
+                                "hasSavedValue": bool(env_values.get(resolved_name)),
+                            }
+                        )
+                elif auth.get("type") == "basic":
+                    username_env = auth.get("username_env", "API_USERNAME")
+                    password_env = auth.get("password_env", "API_PASSWORD")
+                    env_vars.extend(
+                        [
+                            {
+                                "slot": username_env,
+                                "name": username_env,
+                                "prompt": "Username/email",
+                                "secret": False,
+                                "hasSavedValue": bool(env_values.get(username_env)),
+                            },
+                            {
+                                "slot": password_env,
+                                "name": password_env,
+                                "prompt": "Password/token",
+                                "secret": True,
+                                "hasSavedValue": bool(env_values.get(password_env)),
+                            },
+                        ]
+                    )
+                elif auth.get("type") != "none":
+                    token_env = auth.get("token_env", "API_KEY")
+                    env_vars.append(
+                        {
+                            "slot": token_env,
+                            "name": token_env,
+                            "prompt": "API token",
+                            "secret": True,
+                            "hasSavedValue": bool(env_values.get(token_env)),
+                        }
+                    )
+
                 return {
                     "success": True,
                     "name": name,
                     "connectorType": "api",
                     "baseUrl": connector_data.get("base_url", ""),
+                    "presetId": preset_id,
                     "auth": {
                         "type": auth.get("type", "bearer"),
                         "tokenEnv": auth.get("token_env", ""),
                         "headerName": auth.get("header_name", "Authorization"),
                         "paramName": auth.get("param_name", "api_key"),
+                        "usernameEnv": auth.get("username_env", ""),
+                        "passwordEnv": auth.get("password_env", ""),
                     },
+                    "envVars": env_vars,
                     "endpoints": [
                         {
                             "name": ep.get("name", ""),
@@ -1838,17 +2196,39 @@ class DBMCPAgent(BICPAgent):
 
             if cdata.get("type") == "api":
                 # Update API config fields
-                if "baseUrl" in params:
-                    cdata["base_url"] = params["baseUrl"]
-                if "auth" in params:
-                    auth = params["auth"]
-                    auth_type = auth.get("type", "bearer")
-                    auth_data: dict[str, Any] = {"type": auth_type}
-                    if auth_type != "none":
-                        auth_data["token_env"] = auth.get("tokenEnv", "")
-                        auth_data["header_name"] = auth.get("headerName", "Authorization")
-                        auth_data["param_name"] = auth.get("paramName", "api_key")
-                    cdata["auth"] = auth_data
+                template_id = str(params.get("templateId", "") or "").strip()
+                env_entries = self._normalize_api_env_entries(params.get("envVars"))
+
+                if template_id:
+                    cdata = materialize_connector_template(
+                        template_id,
+                        base_url=str(params.get("baseUrl", "") or "").strip() or None,
+                        env_name_overrides=self._build_template_env_name_overrides(env_entries),
+                        auth_overrides=self._build_api_auth_overrides(params),
+                    )
+                    if cdata is None:
+                        return {
+                            "success": False,
+                            "error": f"Unknown connector template: {template_id}",
+                        }
+                else:
+                    cdata.pop("template_id", None)
+                    if "baseUrl" in params:
+                        cdata["base_url"] = params["baseUrl"]
+                    if "auth" in params:
+                        auth = params["auth"]
+                        auth_type = auth.get("type", "bearer")
+                        auth_data: dict[str, Any] = {"type": auth_type}
+                        if auth_type == "basic":
+                            auth_data["username_env"] = auth.get("usernameEnv", "")
+                            auth_data["password_env"] = auth.get("passwordEnv", "")
+                        elif auth_type != "none":
+                            auth_data["token_env"] = auth.get("tokenEnv", "")
+                            auth_data["header_name"] = auth.get(
+                                "headerName", "Authorization"
+                            )
+                            auth_data["param_name"] = auth.get("paramName", "api_key")
+                        cdata["auth"] = auth_data
                 if "endpoints" in params:
                     cdata["endpoints"] = [
                         {
@@ -1871,14 +2251,17 @@ class DBMCPAgent(BICPAgent):
                 if "rateLimitRps" in params:
                     cdata["rate_limit"] = {"requests_per_second": params["rateLimitRps"]}
 
-                # Update API key in .env if provided
-                api_key = params.get("apiKey", "").strip()
-                if api_key:
-                    token_env = cdata.get("auth", {}).get("token_env", "").strip()
-                    if token_env:
-                        env_file = conn_path / ".env"
-                        with open(env_file, "w") as f:
-                            f.write(f"{token_env}={api_key}\n")
+                if env_entries:
+                    self._write_api_env_file(conn_path, env_entries)
+                else:
+                    # Update API key in .env if provided
+                    api_key = params.get("apiKey", "").strip()
+                    if api_key:
+                        token_env = cdata.get("auth", {}).get("token_env", "").strip()
+                        if token_env:
+                            env_file = conn_path / ".env"
+                            with open(env_file, "w") as f:
+                                f.write(f"{token_env}={api_key}\n")
 
                 with open(connector_yaml, "w") as f:
                     yaml.dump(cdata, f, default_flow_style=False)

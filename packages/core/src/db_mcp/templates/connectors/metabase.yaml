@@ -3,7 +3,7 @@ title: Metabase API
 description: Metabase API-key connector for schema metadata and SQL execution via /api/dataset.
 base_url_prompt: Metabase base URL
 env:
-  - name: MB_API_KEY
+  - name: X_API_KEY
     prompt: Metabase API key
     secret: true
 connector:
@@ -15,7 +15,7 @@ connector:
   auth:
     type: header
     header_name: x-api-key
-    token_env: MB_API_KEY
+    token_env: X_API_KEY
   pagination:
     type: none
   endpoints:

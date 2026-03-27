@@ -1,5 +1,34 @@
 export type ConnectorType = "sql" | "file" | "api";
 
+export interface ApiEnvVarEntry {
+  slot?: string;
+  name: string;
+  value?: string;
+  prompt?: string;
+  secret: boolean;
+  hasSavedValue?: boolean;
+  masked?: boolean;
+  removed?: boolean;
+}
+
+export interface ApiTemplateDescriptor {
+  id: string;
+  title: string;
+  description: string;
+  baseUrlPrompt?: string;
+  baseUrl?: string;
+  connectorType: ConnectorType;
+  auth: {
+    type: string;
+    tokenEnv?: string;
+    headerName?: string;
+    paramName?: string;
+    usernameEnv?: string;
+    passwordEnv?: string;
+  };
+  env: ApiEnvVarEntry[];
+}
+
 export interface ConnectionRecord {
   name: string;
   isActive: boolean;
@@ -23,12 +52,16 @@ export interface ConnectionGetResult {
   connectorType?: ConnectorType;
   directory?: string;
   baseUrl?: string;
+  presetId?: string;
   auth?: {
     type: string;
     tokenEnv: string;
     headerName: string;
     paramName: string;
+    usernameEnv?: string;
+    passwordEnv?: string;
   };
+  envVars?: ApiEnvVarEntry[];
   endpoints?: Array<{ name: string; path: string; method: string }>;
   pagination?: {
     type: string;

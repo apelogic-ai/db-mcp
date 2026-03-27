@@ -78,11 +78,11 @@ export function ConnectionWorkspaceShell({
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-[1.2rem] font-semibold tracking-tight text-white">Connections</h2>
               <Button
-                asChild
                 size="sm"
                 className="bg-brand hover:bg-brand/90 text-white"
+                onClick={() => navigateWithinApp("/connection/new#connect")}
               >
-                <Link href="/connection/new#connect">+ New</Link>
+                + New
               </Button>
             </div>
           </div>

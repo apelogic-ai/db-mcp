@@ -207,6 +207,11 @@
       "title": "Spec Version",
       "type": "string"
     },
+    "template_id": {
+      "default": "",
+      "title": "Template Id",
+      "type": "string"
+    },
     "type": {
       "default": "sql",
       "enum": [

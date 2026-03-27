@@ -163,6 +163,7 @@ class APIConnectorConfig:
     profile: str = ""
     base_url: str = ""
     spec_url: str = ""
+    template_id: str = ""
     auth: APIAuthConfig = field(default_factory=APIAuthConfig)
     endpoints: list[APIEndpointConfig] = field(default_factory=list)
     pagination: APIPaginationConfig = field(default_factory=APIPaginationConfig)
@@ -1674,6 +1675,8 @@ class APIConnector(FileConnector):
         }
         if self.api_config.spec_url:
             data["spec_url"] = self.api_config.spec_url
+        if self.api_config.template_id:
+            data["template_id"] = self.api_config.template_id
         if self.api_config.capabilities:
             data["capabilities"] = self.api_config.capabilities
 
