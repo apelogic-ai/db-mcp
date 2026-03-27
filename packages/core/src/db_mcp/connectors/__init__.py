@@ -222,6 +222,7 @@ def _load_api_config(data: dict[str, Any]) -> APIConnectorConfig:
         profile=data.get("profile", ""),
         base_url=data.get("base_url", ""),
         spec_url=data.get("spec_url", ""),
+        template_id=data.get("template_id", ""),
         auth=auth,
         endpoints=endpoints,
         pagination=pagination,

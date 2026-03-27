@@ -1,11 +1,12 @@
 """Built-in connector template catalog.
 
-Templates are stored as single YAML files under ``db_mcp/static/connector_templates`` so
-community contributions can add or update one template per PR without touching Python code.
+Templates are stored as single YAML files under ``db_mcp/templates/connectors`` so
+they are not coupled to the staged UI static bundle under ``db_mcp/static``.
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ class ConnectorTemplate:
 
 
 def _template_dir() -> Path:
-    return Path(__file__).resolve().parent / "static" / "connector_templates"
+    return Path(__file__).resolve().parent / "templates" / "connectors"
 
 
 def _load_template(path: Path) -> ConnectorTemplate:
@@ -71,4 +72,89 @@ def get_connector_template(template_id: str) -> ConnectorTemplate | None:
     for template in list_connector_templates():
         if template.id == template_id:
             return template
+    return None
+
+
+def materialize_connector_template(
+    template_id: str,
+    *,
+    base_url: str | None = None,
+    env_name_overrides: dict[str, str] | None = None,
+    auth_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    template = get_connector_template(template_id)
+    if template is None:
+        return None
+
+    connector = deepcopy(template.connector)
+    connector["template_id"] = template.id
+    if base_url:
+        connector["base_url"] = base_url
+
+    auth = connector.get("auth")
+    if isinstance(auth, dict):
+        if env_name_overrides:
+            for env_key in ("token_env", "username_env", "password_env"):
+                current_name = auth.get(env_key)
+                if isinstance(current_name, str) and current_name in env_name_overrides:
+                    auth[env_key] = env_name_overrides[current_name]
+
+        if auth_overrides:
+            for key, value in auth_overrides.items():
+                if value not in (None, ""):
+                    auth[key] = value
+
+    return connector
+
+
+def match_connector_template(connector: dict[str, Any]) -> str | None:
+    explicit_template_id = str(connector.get("template_id", "") or "").strip()
+    if explicit_template_id:
+        if get_connector_template(explicit_template_id) is not None:
+            return explicit_template_id
+        return None
+
+    connector_type = connector.get("type")
+    profile = connector.get("profile")
+    auth = connector.get("auth", {}) or {}
+    auth_type = auth.get("type")
+    connector_endpoint_names = {
+        endpoint.get("name", "")
+        for endpoint in connector.get("endpoints", []) or []
+        if isinstance(endpoint, dict)
+    }
+    connector_endpoint_signatures = {
+        (
+            str(endpoint.get("path", "") or "").strip(),
+            str(endpoint.get("method", "GET") or "GET").strip().upper(),
+        )
+        for endpoint in connector.get("endpoints", []) or []
+        if isinstance(endpoint, dict)
+    }
+
+    for template in list_connector_templates(connector_type):
+        template_auth = template.connector.get("auth", {}) or {}
+        template_endpoint_names = {
+            endpoint.get("name", "")
+            for endpoint in template.connector.get("endpoints", []) or []
+            if isinstance(endpoint, dict)
+        }
+        template_endpoint_signatures = {
+            (
+                str(endpoint.get("path", "") or "").strip(),
+                str(endpoint.get("method", "GET") or "GET").strip().upper(),
+            )
+            for endpoint in template.connector.get("endpoints", []) or []
+            if isinstance(endpoint, dict)
+        }
+        if (
+            template.connector.get("profile") == profile
+            and template_auth.get("type") == auth_type
+            and (
+                template_endpoint_names.issubset(connector_endpoint_names)
+                or template_endpoint_signatures.issubset(connector_endpoint_signatures)
+            )
+        ):
+            return template.id
+
     return None

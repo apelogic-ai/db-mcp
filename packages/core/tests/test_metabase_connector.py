@@ -278,4 +278,4 @@ def test_bundled_metabase_api_key_template_loads():
     assert template.connector["profile"] == "hybrid_bi"
     assert template.connector["auth"]["type"] == "header"
     assert template.connector["auth"]["header_name"] == "x-api-key"
-    assert template.connector["auth"]["token_env"] == "MB_API_KEY"
+    assert template.connector["auth"]["token_env"] == "X_API_KEY"
