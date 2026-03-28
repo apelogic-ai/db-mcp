@@ -1,0 +1,27 @@
+id: example_widget
+title: Example Widget API
+description: Example community connector plugin showing YAML plus runtime packaging.
+base_url_prompt: Widget API base URL
+env:
+  - name: WIDGET_API_KEY
+    prompt: Widget API key
+    secret: true
+connector:
+  spec_version: 1.0.0
+  type: api
+  profile: api_openapi
+  base_url: https://widget.example.com
+  auth:
+    type: header
+    header_name: X-Api-Key
+    token_env: WIDGET_API_KEY
+  pagination:
+    type: none
+  endpoints:
+    - name: widgets
+      path: /api/widgets
+      method: GET
+  capabilities:
+    supports_sql: false
+    supports_validate_sql: false
+

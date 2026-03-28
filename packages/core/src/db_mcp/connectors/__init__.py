@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from db_mcp.capabilities import normalize_capabilities, resolve_connector_profile
 from db_mcp.config import get_settings
+from db_mcp.connector_plugins import get_connector_plugin
 from db_mcp.connectors.api import (
     APIAuthConfig,
     APIConnector,
@@ -19,13 +20,9 @@ from db_mcp.connectors.api import (
     APIEndpointConfig,
     APIPaginationConfig,
     APIQueryParamConfig,
+    build_api_connector_config,
 )
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig, FileSourceConfig
-from db_mcp.connectors.metabase import (
-    MetabaseAuthConfig,
-    MetabaseConnector,
-    MetabaseConnectorConfig,
-)
 from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
 from db_mcp.contracts.connector_contracts import (
     format_validation_error,
@@ -54,8 +51,7 @@ class ConnectorConfig:
         if not path.exists():
             return SQLConnectorConfig()
 
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
+        data = _load_connector_payload(path)
 
         if "spec_version" in data:
             try:
@@ -139,6 +135,12 @@ def get_connector(connection_path: str | None = None) -> Connector:
     conn_path = Path(connection_path)
     yaml_path = conn_path / "connector.yaml"
 
+    raw_data = _load_connector_payload(yaml_path) if yaml_path.exists() else {}
+    plugin_id = str(raw_data.get("template_id", "") or "").strip()
+    plugin = get_connector_plugin(plugin_id) if plugin_id else None
+    if plugin is not None and plugin.runtime_factory is not None:
+        return plugin.runtime_factory(raw_data, conn_path, settings)
+
     config = ConnectorConfig.from_yaml(yaml_path)
 
     factory = _CONNECTOR_FACTORIES.get(type(config))
@@ -168,6 +170,14 @@ def _load_database_url_from_env(conn_path: Path) -> str:
     return ""
 
 
+def _load_connector_payload(path: Path) -> dict[str, Any]:
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError("connector.yaml must contain a top-level mapping")
+    return data
+
+
 def _load_sql_config(data: dict[str, Any]) -> SQLConnectorConfig:
     from dataclasses import fields
 
@@ -195,55 +205,7 @@ def _load_file_config(data: dict[str, Any]) -> FileConnectorConfig:
 
 
 def _load_api_config(data: dict[str, Any]) -> APIConnectorConfig:
-    auth_data = data.get("auth", {})
-    auth = APIAuthConfig(**auth_data) if auth_data else APIAuthConfig()
-
-    endpoints_data = data.get("endpoints", [])
-    endpoints = []
-    for e in endpoints_data:
-        endpoint_data = dict(e)
-        qp_data = endpoint_data.pop("query_params", [])
-        query_params = [APIQueryParamConfig(**qp) for qp in qp_data]
-        method = str(endpoint_data.get("method", "GET")).upper()
-        if "body_mode" not in endpoint_data and method != "GET":
-            # Most write endpoints expect JSON body; explicit body_mode still wins.
-            endpoint_data["body_mode"] = "json"
-        endpoints.append(APIEndpointConfig(**endpoint_data, query_params=query_params))
-
-    pagination_data = data.get("pagination", {})
-    pagination = (
-        APIPaginationConfig(**pagination_data) if pagination_data else APIPaginationConfig()
-    )
-
-    rate_limit = data.get("rate_limit", {})
-    rate_limit_rps = rate_limit.get("requests_per_second", 10.0) if rate_limit else 10.0
-
-    return APIConnectorConfig(
-        profile=data.get("profile", ""),
-        base_url=data.get("base_url", ""),
-        spec_url=data.get("spec_url", ""),
-        template_id=data.get("template_id", ""),
-        auth=auth,
-        endpoints=endpoints,
-        pagination=pagination,
-        rate_limit_rps=rate_limit_rps,
-        capabilities=data.get("capabilities", {}) or {},
-        api_title=data.get("api_title", ""),
-        api_description=data.get("api_description", ""),
-    )
-
-
-def _load_metabase_config(data: dict[str, Any]) -> MetabaseConnectorConfig:
-    auth_data = data.get("auth", {})
-    auth = MetabaseAuthConfig(**auth_data) if auth_data else MetabaseAuthConfig()
-    return MetabaseConnectorConfig(
-        profile=data.get("profile", ""),
-        base_url=data.get("base_url", ""),
-        database_id=data.get("database_id"),
-        database_name=data.get("database_name"),
-        auth=auth,
-        capabilities=data.get("capabilities", {}) or {},
-    )
+    return build_api_connector_config(data)
 
 
 def _build_sql_connector(
@@ -268,27 +230,19 @@ def _build_api_connector(
     config: APIConnectorConfig, conn_path: Path, settings: Any
 ) -> APIConnector:
     data_dir = str(conn_path / "data")
-    return APIConnector(config, data_dir)
-
-
-def _build_metabase_connector(
-    config: MetabaseConnectorConfig, conn_path: Path, settings: Any
-) -> MetabaseConnector:
-    return MetabaseConnector(config, env_path=str(conn_path / ".env"))
+    return APIConnector(config, data_dir, env_path=str(conn_path / ".env"))
 
 
 _CONFIG_LOADERS: dict[str, Any] = {
     "sql": _load_sql_config,
     "file": _load_file_config,
     "api": _load_api_config,
-    "metabase": _load_metabase_config,
 }
 
 _CONNECTOR_FACTORIES: dict[type, Any] = {
     SQLConnectorConfig: _build_sql_connector,
     FileConnectorConfig: _build_file_connector,
     APIConnectorConfig: _build_api_connector,
-    MetabaseConnectorConfig: _build_metabase_connector,
 }
 
 
@@ -300,10 +254,6 @@ def _resolve_connector_descriptor(connector: Connector) -> tuple[str, dict[str, 
         configured_profile = connector.api_config.profile
     elif isinstance(connector, SQLConnector):
         connector_type = "sql"
-        config_caps = connector.config.capabilities
-        configured_profile = connector.config.profile
-    elif isinstance(connector, MetabaseConnector):
-        connector_type = "metabase"
         config_caps = connector.config.capabilities
         configured_profile = connector.config.profile
     elif isinstance(connector, FileConnector):
@@ -349,9 +299,6 @@ __all__ = [
     "get_connector_capabilities",
     "get_connector_profile",
     "normalize_capabilities",
-    "MetabaseAuthConfig",
-    "MetabaseConnector",
-    "MetabaseConnectorConfig",
     "SQLConnector",
     "SQLConnectorConfig",
     "get_connector",

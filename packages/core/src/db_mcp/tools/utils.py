@@ -129,18 +129,12 @@ def resolve_connection(
                 raise ValueError(f"The active connection does not support '{require_capability}'.")
 
         if require_type is not None:
-            from db_mcp.connectors import (
-                APIConnector,
-                FileConnector,
-                MetabaseConnector,
-                SQLConnector,
-            )
+            from db_mcp.connectors import APIConnector, FileConnector, SQLConnector
 
             type_map = {
                 "sql": SQLConnector,
                 "file": FileConnector,
                 "api": APIConnector,
-                "metabase": MetabaseConnector,
             }
             expected_cls = type_map.get(require_type)
             if expected_cls is not None and not isinstance(connector, expected_cls):

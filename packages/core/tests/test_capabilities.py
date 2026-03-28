@@ -33,7 +33,6 @@ def test_profile_defaults_defined_for_supported_types():
     assert DEFAULT_PROFILE_BY_TYPE["sql"] == "sql_db"
     assert DEFAULT_PROFILE_BY_TYPE["file"] == "file_local"
     assert DEFAULT_PROFILE_BY_TYPE["api"] == "api_openapi"
-    assert DEFAULT_PROFILE_BY_TYPE["metabase"] == "hybrid_bi"
 
 
 def test_profile_capability_defaults_cover_known_profiles():
@@ -73,7 +72,7 @@ def test_api_openapi_profile_enables_discovery_by_default():
 
 
 def test_hybrid_bi_profile_enables_sql_and_dashboard_api():
-    caps = normalize_capabilities("metabase", profile="hybrid_bi")
+    caps = normalize_capabilities("api", profile="hybrid_bi")
     assert caps["supports_sql"] is True
     assert caps["supports_dashboard_api"] is True
 
@@ -117,5 +116,5 @@ def test_overrides_take_precedence():
 
 
 def test_defaults_defined_for_all_supported_types():
-    for connector_type in ("sql", "file", "api", "metabase"):
+    for connector_type in ("sql", "file", "api"):
         assert connector_type in TYPE_CAPABILITY_DEFAULTS

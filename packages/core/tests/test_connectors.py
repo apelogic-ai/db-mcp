@@ -9,8 +9,6 @@ from db_mcp.connectors import (
     ConnectorConfig,
     FileConnector,
     FileConnectorConfig,
-    MetabaseConnector,
-    MetabaseConnectorConfig,
     SQLConnector,
     SQLConnectorConfig,
     get_connector_capabilities,
@@ -91,8 +89,8 @@ class TestConnectorConfig:
         config = ConnectorConfig.from_yaml(yaml_file)
         assert config.type == "sql"
 
-    def test_connector_config_from_yaml_metabase(self, tmp_path):
-        """ConnectorConfig.from_yaml loads metabase config."""
+    def test_connector_config_from_yaml_rejects_legacy_metabase_type(self, tmp_path):
+        """Legacy dedicated metabase connector type is no longer supported."""
         yaml_file = tmp_path / "connector.yaml"
         yaml_file.write_text(
             "type: metabase\n"
@@ -101,12 +99,8 @@ class TestConnectorConfig:
             "database_name: analytics\n"
         )
 
-        config = ConnectorConfig.from_yaml(yaml_file)
-        assert isinstance(config, MetabaseConnectorConfig)
-        assert config.type == "metabase"
-        assert config.base_url == "https://metabase.example.com"
-        assert config.database_id == 12
-        assert config.database_name == "analytics"
+        with pytest.raises(ValueError, match="Unknown connector type"):
+            ConnectorConfig.from_yaml(yaml_file)
 
     def test_api_capabilities_normalize_legacy_sql_flag(self, tmp_path):
         """Legacy `capabilities.sql` should map to `supports_sql`."""
@@ -401,26 +395,26 @@ class TestGetConnector:
                 == "trino://env-user:env-pass@env-host:8443/env/catalog"
             )
 
-    def test_get_connector_metabase(self, tmp_path):
-        """get_connector returns MetabaseConnector for type: metabase."""
+    def test_get_connector_metabase_template_uses_api_plugin_runtime(self, tmp_path):
+        """Metabase is resolved via api template plugin runtime, not a dedicated type."""
         from db_mcp.connectors import get_connector
 
         yaml_file = tmp_path / "connector.yaml"
         yaml_file.write_text(
-            "type: metabase\n"
+            "type: api\n"
+            "template_id: metabase\n"
+            "profile: hybrid_bi\n"
             "base_url: https://metabase.example.com\n"
-            "database_id: 12\n"
-            "database_name: analytics\n"
         )
         env_file = tmp_path / ".env"
-        env_file.write_text("MB_USERNAME=demo@example.com\nMB_PASSWORD=supersecret\n")
+        env_file.write_text("X_API_KEY=mb-api-key-123\n")
 
         with patch("db_mcp.connectors.get_settings") as mock_settings:
             mock_settings.return_value.database_url = "postgresql://host/db"
             mock_settings.return_value.get_effective_connection_path.return_value = str(tmp_path)
 
             connector = get_connector()
-            assert isinstance(connector, MetabaseConnector)
+            assert isinstance(connector, APIConnector)
 
 
 class TestFileConnectorFactory:

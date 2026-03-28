@@ -1,8 +1,4 @@
-"""Built-in connector template catalog.
-
-Templates are stored as single YAML files under ``db_mcp/templates/connectors`` so
-they are not coupled to the staged UI static bundle under ``db_mcp/static``.
-"""
+"""Connector template catalog backed by built-in and installed plugins."""
 
 from __future__ import annotations
 
@@ -13,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from db_mcp.connector_plugins import get_connector_plugin, list_connector_plugins
 from db_mcp.contracts.connector_contracts import validate_connector_contract
 
 
@@ -31,14 +28,17 @@ class ConnectorTemplate:
     connector: dict[str, Any]
     env: list[ConnectorTemplateEnvVar]
     base_url_prompt: str | None = None
+    source: str = "builtin"
+    package_name: str | None = None
 
 
-def _template_dir() -> Path:
-    return Path(__file__).resolve().parent / "templates" / "connectors"
-
-
-def _load_template(path: Path) -> ConnectorTemplate:
-    with path.open() as f:
+def _load_template(
+    path: Path,
+    *,
+    source: str = "builtin",
+    package_name: str | None = None,
+) -> ConnectorTemplate:
+    with Path(path).open() as f:
         payload = yaml.safe_load(f) or {}
 
     connector = payload.get("connector") or {}
@@ -53,13 +53,19 @@ def _load_template(path: Path) -> ConnectorTemplate:
         connector=connector,
         env=env,
         base_url_prompt=payload.get("base_url_prompt"),
+        source=source,
+        package_name=package_name,
     )
 
 
 def list_connector_templates(connector_type: str | None = None) -> list[ConnectorTemplate]:
     templates = [
-        _load_template(path)
-        for path in sorted(_template_dir().glob("*.yaml"))
+        _load_template(
+            plugin.template_path,
+            source=plugin.source,
+            package_name=plugin.package_name,
+        )
+        for plugin in list_connector_plugins()
     ]
     if connector_type:
         templates = [
@@ -69,10 +75,14 @@ def list_connector_templates(connector_type: str | None = None) -> list[Connecto
 
 
 def get_connector_template(template_id: str) -> ConnectorTemplate | None:
-    for template in list_connector_templates():
-        if template.id == template_id:
-            return template
-    return None
+    plugin = get_connector_plugin(template_id)
+    if plugin is None:
+        return None
+    return _load_template(
+        plugin.template_path,
+        source=plugin.source,
+        package_name=plugin.package_name,
+    )
 
 
 def materialize_connector_template(

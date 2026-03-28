@@ -46,7 +46,7 @@ class ConnectorContractV1(_StrictModel):
     """Versioned connector.yaml contract."""
 
     spec_version: str = Field(default=CONNECTOR_SPEC_VERSION)
-    type: Literal["sql", "api", "file", "metabase"] = "sql"
+    type: Literal["sql", "api", "file"] = "sql"
     profile: str = ""
     description: str = ""
     capabilities: dict[str, Any] = Field(default_factory=dict)
@@ -69,10 +69,6 @@ class ConnectorContractV1(_StrictModel):
     # File connector fields
     directory: str = ""
     sources: list[FileSourceContract] = Field(default_factory=list)
-
-    # Metabase connector fields
-    database_id: int | None = None
-    database_name: str | None = None
 
     # Optional external catalog metadata
     catalog: CatalogMetadataContract | None = None
@@ -113,8 +109,6 @@ class ConnectorContractV1(_StrictModel):
 
         if self.type == "api" and not self.base_url:
             raise ValueError("API connectors require 'base_url'.")
-        if self.type == "metabase" and not self.base_url:
-            raise ValueError("Metabase connectors require 'base_url'.")
         if self.type == "file" and not self.directory and not self.sources:
             raise ValueError("File connectors require either 'directory' or non-empty 'sources'.")
 

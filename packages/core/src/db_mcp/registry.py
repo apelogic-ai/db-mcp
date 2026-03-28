@@ -264,7 +264,7 @@ class ConnectionRegistry:
         return get_connector_capabilities(connector)
 
     def get_connections_by_type(self, conn_type: str) -> list[ConnectionInfo]:
-        """Return all connections of a given type (sql, api, file, metabase).
+        """Return all connections of a given type (sql, api, file).
 
         Args:
             conn_type: Connector type string.

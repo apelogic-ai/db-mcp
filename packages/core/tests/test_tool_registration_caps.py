@@ -61,9 +61,9 @@ class TestCapabilityDefaultsMatch:
         assert caps["supports_validate_sql"] is False
         assert caps["sql_mode"] == "api_async"
 
-    def test_metabase_defaults(self):
-        """Metabase: supports_sql=true, validate=false, sql_mode=api_sync."""
-        caps = _server_caps_for_type("metabase")
+    def test_hybrid_bi_api_defaults(self):
+        """Hybrid BI is now an API profile, not a dedicated connector type."""
+        caps = _server_caps_for_type("api", profile="hybrid_bi")
         assert caps["supports_sql"] is True
         assert caps["supports_validate_sql"] is False
         assert caps["sql_mode"] == "api_sync"
