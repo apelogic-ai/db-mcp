@@ -19,6 +19,17 @@ connector:
   pagination:
     type: none
   endpoints:
+    - name: dashboard
+      path: /api/dashboard
+      method: GET
+      query_params:
+        - name: f
+          type: string
+          description: Dashboard filter (`all`, `mine`, or `archived`)
+          default: all
+    - name: dashboard_detail
+      path: /api/dashboard/{id}
+      method: GET
     - name: schema
       path: /api/database/{database_id}/schema
       method: GET

@@ -402,7 +402,7 @@ async def test_connections_complete_onboarding_marks_connection_complete(monkeyp
 @pytest.mark.asyncio
 async def test_connections_discover_api_persists_onboarding_state(monkeypatch):
     from db_mcp.bicp.agent import DBMCPAgent
-    from db_mcp.connectors.api import APIConnectorConfig
+    from db_mcp.connectors.api import APIConnector, APIConnectorConfig
     from db_mcp.onboarding.state import load_state
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -420,7 +420,7 @@ async def test_connections_discover_api_persists_onboarding_state(monkeypatch):
         agent._dialect = "duckdb"
 
         mock_config = APIConnectorConfig(base_url="https://api.dune.com/api/v1")
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(spec=APIConnector)
         mock_connector.discover.return_value = {
             "strategy": "openapi",
             "endpoints_found": 2,
@@ -436,7 +436,7 @@ async def test_connections_discover_api_persists_onboarding_state(monkeypatch):
 
         with (
             patch("db_mcp.connectors.ConnectorConfig.from_yaml", return_value=mock_config),
-            patch("db_mcp.connectors.api.APIConnector", return_value=mock_connector),
+            patch("db_mcp.connectors.get_connector", return_value=mock_connector),
         ):
             result = await agent._handle_connections_discover({"name": "dune"})
 
@@ -453,6 +453,50 @@ async def test_connections_discover_api_persists_onboarding_state(monkeypatch):
             "/sql/execute",
         ]
         assert state.tables_total == 2
+
+
+@pytest.mark.asyncio
+async def test_connections_discover_api_uses_plugin_runtime(monkeypatch):
+    from db_mcp.bicp.agent import DBMCPAgent
+    from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("HOME", tmpdir)
+        conn_path = Path(tmpdir) / ".db-mcp" / "connections" / "lens"
+        conn_path.mkdir(parents=True)
+        (conn_path / "connector.yaml").write_text(
+            "spec_version: 1.0.0\n"
+            "type: api\n"
+            "template_id: metabase\n"
+            "base_url: https://metabase.example.com\n"
+        )
+
+        agent = DBMCPAgent.__new__(DBMCPAgent)
+        agent._method_handlers = {}
+        agent._settings = None
+        agent._dialect = "duckdb"
+
+        runtime_connector = MagicMock(spec=APIConnector)
+        runtime_connector.discover.return_value = {
+            "strategy": "openapi",
+            "endpoints_found": 1,
+            "endpoints": [{"name": "dashboard", "path": "/api/dashboard", "fields": 0}],
+        }
+
+        with (
+            patch(
+                "db_mcp.connectors.ConnectorConfig.from_yaml",
+                return_value=APIConnectorConfig(),
+            ),
+            patch(
+                "db_mcp.connectors.get_connector",
+                return_value=runtime_connector,
+            ) as get_connector,
+        ):
+            result = await agent._handle_connections_discover({"name": "lens"})
+
+        assert result["success"] is True
+        get_connector.assert_called_once_with(connection_path=str(conn_path))
 
 
 @pytest.mark.asyncio
