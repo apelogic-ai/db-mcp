@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.10] - 2026-03-28
+
+## Summary
+
+`v0.8.10` is a patch release on top of `v0.8.9`. It hardens API connector config loading so
+newly discovered or plugin-provided endpoint metadata no longer crashes runtime config parsing.
+
+## Highlights
+
+- Fixed API connector loading to accept endpoint-level descriptions produced by discovery.
+- Hardened nested API config parsing so unexpected keys in `auth`, `pagination`, `endpoints`, and
+  `query_params` are ignored instead of crashing connector initialization.
+- Added regression coverage for this broader class of nested API-config compatibility failures.
+
+## Breaking changes
+
+- None
+
+## Features
+
+- Preserved OpenAPI endpoint summaries as endpoint descriptions in discovered connector configs.
+
+## Fixes
+
+- Fixed `APIEndpointConfig.__init__() got an unexpected keyword argument 'description'` during API
+  discovery reloads.
+- Fixed API config loading so permissive contract fields do not fail when nested config blocks
+  include extra metadata such as `summary`, `style`, or `display_name`.
+- Added loader round-trip tests for endpoint descriptions and defensive handling of unknown nested
+  API keys.
+
+## Security
+
+- None
+
+## Upgrade notes
+
+- Existing API connections with saved endpoint descriptions or other extra nested metadata should
+  load and rediscover cleanly after upgrade.
+
+## Validation
+
+- `uv lock`
+- `python3 scripts/check_version_consistency.py`
+- `cd packages/core && uv run ruff check . --fix`
+- `cd packages/core && uv run pytest tests/ -v`
+
+Result:
+
+- Core suite: `1275 passed, 1 warning`
+
 ## [0.8.9] - 2026-03-28
 
 ## Summary
