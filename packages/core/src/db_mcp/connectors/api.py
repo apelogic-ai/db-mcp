@@ -6,7 +6,7 @@ import base64
 import json
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +75,7 @@ class APIEndpointConfig:
 
     name: str
     path: str
+    description: str = ""
     method: str = "GET"
     query_params: list[APIQueryParamConfig] = field(default_factory=list)
     body_mode: str = "query"  # query | json
@@ -173,17 +174,30 @@ class APIConnectorConfig:
     api_description: str = ""  # Description from API spec
 
 
+def _filter_dataclass_kwargs(cls: type[Any], raw: dict[str, Any]) -> dict[str, Any]:
+    """Keep only supported init kwargs for a dataclass."""
+    valid_fields = {f.name for f in fields(cls) if f.init}
+    return {key: value for key, value in raw.items() if key in valid_fields}
+
+
 def build_api_connector_config(data: dict[str, Any]) -> APIConnectorConfig:
     """Build ``APIConnectorConfig`` from a connector payload."""
     auth_data = data.get("auth", {})
-    auth = APIAuthConfig(**auth_data) if auth_data else APIAuthConfig()
+    auth = (
+        APIAuthConfig(**_filter_dataclass_kwargs(APIAuthConfig, auth_data))
+        if auth_data
+        else APIAuthConfig()
+    )
 
     endpoints_data = data.get("endpoints", [])
     endpoints = []
     for endpoint_entry in endpoints_data:
-        endpoint_data = dict(endpoint_entry)
+        endpoint_data = _filter_dataclass_kwargs(APIEndpointConfig, dict(endpoint_entry))
         qp_data = endpoint_data.pop("query_params", [])
-        query_params = [APIQueryParamConfig(**qp) for qp in qp_data]
+        query_params = [
+            APIQueryParamConfig(**_filter_dataclass_kwargs(APIQueryParamConfig, qp))
+            for qp in qp_data
+        ]
         method = str(endpoint_data.get("method", "GET")).upper()
         if "body_mode" not in endpoint_data and method != "GET":
             endpoint_data["body_mode"] = "json"
@@ -191,7 +205,9 @@ def build_api_connector_config(data: dict[str, Any]) -> APIConnectorConfig:
 
     pagination_data = data.get("pagination", {})
     pagination = (
-        APIPaginationConfig(**pagination_data) if pagination_data else APIPaginationConfig()
+        APIPaginationConfig(**_filter_dataclass_kwargs(APIPaginationConfig, pagination_data))
+        if pagination_data
+        else APIPaginationConfig()
     )
 
     rate_limit = data.get("rate_limit", {})
@@ -1684,6 +1700,7 @@ class APIConnector(FileConnector):
             APIEndpointConfig(
                 name=ep.name,
                 path=ep.path,
+                description=getattr(ep, "description", ""),
                 method=ep.method,
                 query_params=[
                     APIQueryParamConfig(
@@ -1841,6 +1858,7 @@ class APIConnector(FileConnector):
                     {
                         "name": ep.name,
                         "path": ep.path,
+                        **({"description": ep.description} if ep.description else {}),
                         "method": ep.method,
                         "body_mode": ep.body_mode,
                         "response_mode": ep.response_mode,

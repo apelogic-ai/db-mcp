@@ -1333,6 +1333,32 @@ class TestAPIConnectorResponseMode:
 class TestAPIConnectorYAMLRoundTrip:
     """Tests for saving and loading query_params in connector.yaml."""
 
+    def test_load_yaml_with_endpoint_description(self, tmp_path):
+        """Loading connector.yaml should accept endpoint-level descriptions."""
+        from db_mcp.connectors import ConnectorConfig
+        from db_mcp.connectors.api import APIConnectorConfig
+
+        yaml_path = tmp_path / "connector.yaml"
+        yaml_path.write_text(
+            yaml.dump(
+                {
+                    "type": "api",
+                    "base_url": "https://api.example.com",
+                    "endpoints": [
+                        {
+                            "name": "dashboards",
+                            "path": "/api/dashboard",
+                            "description": "List all available dashboards.",
+                        }
+                    ],
+                }
+            )
+        )
+
+        loaded = ConnectorConfig.from_yaml(yaml_path)
+        assert isinstance(loaded, APIConnectorConfig)
+        assert loaded.endpoints[0].description == "List all available dashboards."
+
     def test_save_and_load_query_params(self, tmp_path, data_dir, env_file):
         """query_params should survive save → load round-trip."""
         from db_mcp.connectors import ConnectorConfig
@@ -1351,6 +1377,7 @@ class TestAPIConnectorYAMLRoundTrip:
                 APIEndpointConfig(
                     name="events",
                     path="/events",
+                    description="Event listing endpoint.",
                     query_params=[
                         APIQueryParamConfig(
                             name="active",
@@ -1375,6 +1402,7 @@ class TestAPIConnectorYAMLRoundTrip:
         assert isinstance(loaded, APIConnectorConfig)
         assert len(loaded.endpoints) == 1
         ep = loaded.endpoints[0]
+        assert ep.description == "Event listing endpoint."
         assert len(ep.query_params) == 2
         active_qp = next(qp for qp in ep.query_params if qp.name == "active")
         assert active_qp.type == "boolean"
@@ -1401,6 +1429,59 @@ class TestAPIConnectorYAMLRoundTrip:
         loaded = ConnectorConfig.from_yaml(yaml_path)
         assert isinstance(loaded, APIConnectorConfig)
         assert loaded.endpoints[0].query_params == []
+
+    def test_load_yaml_ignores_unknown_nested_api_config_keys(self, tmp_path):
+        """Unknown nested API config keys should not crash connector loading."""
+        from db_mcp.connectors import ConnectorConfig
+        from db_mcp.connectors.api import APIConnectorConfig
+
+        yaml_path = tmp_path / "connector.yaml"
+        yaml_path.write_text(
+            yaml.dump(
+                {
+                    "type": "api",
+                    "base_url": "https://api.example.com",
+                    "auth": {
+                        "type": "header",
+                        "header_name": "Authorization",
+                        "token_env": "API_KEY",
+                        "display_name": "Primary token",
+                    },
+                    "pagination": {
+                        "type": "offset",
+                        "offset_param": "offset",
+                        "page_size_param": "limit",
+                        "page_size": 50,
+                        "strategy_name": "offset_limit",
+                    },
+                    "endpoints": [
+                        {
+                            "name": "dashboards",
+                            "path": "/api/dashboard",
+                            "description": "List all dashboards.",
+                            "summary": "Dashboards",
+                            "query_params": [
+                                {
+                                    "name": "archived",
+                                    "type": "boolean",
+                                    "description": "Include archived dashboards.",
+                                    "style": "form",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+
+        loaded = ConnectorConfig.from_yaml(yaml_path)
+        assert isinstance(loaded, APIConnectorConfig)
+        assert loaded.auth.type == "header"
+        assert loaded.auth.token_env == "API_KEY"
+        assert loaded.pagination.type == "offset"
+        assert loaded.pagination.page_size == 50
+        assert loaded.endpoints[0].description == "List all dashboards."
+        assert loaded.endpoints[0].query_params[0].description == "Include archived dashboards."
 
 
 # ---------------------------------------------------------------------------

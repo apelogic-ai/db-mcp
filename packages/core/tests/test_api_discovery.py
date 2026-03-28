@@ -430,6 +430,8 @@ class TestParseOpenAPISpec:
         names = {ep.name for ep in endpoints}
         assert "markets" in names
         assert "events" in names
+        markets = next(ep for ep in endpoints if ep.name == "markets")
+        assert markets.description == "List markets"
 
     def test_skips_detail_endpoints(self):
         """Should skip endpoints with path params like {id} or {slug}."""

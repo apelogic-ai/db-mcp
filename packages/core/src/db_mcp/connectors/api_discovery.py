@@ -55,6 +55,7 @@ class DiscoveredEndpoint:
 
     name: str  # table name (e.g., "markets")
     path: str  # API path (e.g., "/markets")
+    description: str = ""
     method: str = "GET"
     fields: list[DiscoveredField] = field(default_factory=list)
     query_params: list[DiscoveredQueryParam] = field(default_factory=list)
@@ -277,7 +278,13 @@ def parse_openapi_spec(
         if response_schema is None:
             # No schema — still include endpoint if it's a GET
             endpoint_name = _path_to_name(path)
-            endpoints.append(DiscoveredEndpoint(name=endpoint_name, path=path))
+            endpoints.append(
+                DiscoveredEndpoint(
+                    name=endpoint_name,
+                    path=path,
+                    description=get_op.get("summary") or get_op.get("description", ""),
+                )
+            )
             continue
 
         # Determine if this is a collection endpoint
@@ -313,7 +320,11 @@ def parse_openapi_spec(
         endpoint_name = _path_to_name(path)
         endpoints.append(
             DiscoveredEndpoint(
-                name=endpoint_name, path=path, fields=fields, query_params=discovered_params
+                name=endpoint_name,
+                path=path,
+                description=get_op.get("summary") or get_op.get("description", ""),
+                fields=fields,
+                query_params=discovered_params,
             )
         )
 
