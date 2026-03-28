@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.8] - 2026-03-27
+
+## Summary
+
+`v0.8.8` is a patch release on top of `v0.8.7`. It introduces a connector plugin/runtime
+model for API-backed products, moves vendor-specific Metabase and Superset behavior out of the
+generic API connector, and removes the legacy dedicated Metabase connector type.
+
+## Highlights
+
+- Added a connector plugin SDK and registry so built-in and community connectors can follow the
+  same packaging model: declarative template plus optional runtime logic.
+- Moved Metabase and Superset routing behavior into built-in plugin runtimes and kept the generic
+  API connector vendor-neutral.
+- Added a shipped example connector plugin package and authoring docs for community extensions.
+
+## Breaking changes
+
+- Legacy Metabase configs using `type: metabase` are no longer supported.
+- Metabase must now be configured as `type: api` with `template_id: metabase`.
+
+## Features
+
+- Added a connector plugin registry with built-in runtime factories and external plugin discovery
+  via Python entry points.
+- Added a generic catalog-routing SQL-over-API base for products that need runtime-aware routing
+  to underlying databases.
+- Added documentation and a minimal example package for authoring community connector plugins.
+
+## Fixes
+
+- Fixed the generic `APIConnector` so vendor-specific Metabase and Superset behavior no longer
+  leaks into shared connector code.
+- Fixed Metabase and Superset support so product-specific SQL routing can evolve in isolated
+  runtime modules instead of accumulating branches in the generic API path.
+- Fixed connector contract and capability handling so the supported Metabase path matches the
+  template/plugin architecture shipped by the repo.
+
+## Security
+
+- None
+
+## Upgrade notes
+
+- Existing Metabase connections that still use the removed legacy connector type need to be
+  rematerialized as API-template connections using `template_id: metabase`.
+- Community connector authors can now package connectors as installable Python plugins instead of
+  patching `db-mcp` core.
+
+## Validation
+
+- `cd packages/core && uv lock`
+- `cd packages/core && uv run ruff check . --fix`
+- `cd packages/core && uv run pytest tests/ -v`
+
+Result:
+
+- Core suite: `1270 passed, 1 warning`
+- Lockfile refreshed with `db-mcp` version `0.8.8`
+
+
 ## [0.8.7] - 2026-03-27
 
 ## Highlights
