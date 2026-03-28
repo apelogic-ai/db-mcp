@@ -1,6 +1,6 @@
 id: superset
 title: Apache Superset API
-description: Superset API connector using JWT login for read and create workflows.
+description: Superset API connector using JWT login for metadata discovery and SQL Lab execution.
 base_url_prompt: Superset base URL
 env:
   - name: SUPERSET_USERNAME
@@ -12,8 +12,9 @@ env:
 connector:
   spec_version: 1.0.0
   type: api
-  profile: api_openapi
+  profile: hybrid_bi
   base_url: https://superset.example.com
+  api_title: Superset
   auth:
     type: jwt_login
     login_endpoint: /api/v1/security/login
@@ -35,6 +36,21 @@ connector:
     - name: datasets
       path: /api/v1/dataset/
       method: GET
+    - name: execute_sql
+      path: /api/v1/sqllab/execute/
+      method: POST
+      body_mode: json
+      body_template:
+        database_id: "{{database_id}}"
+        catalog: "{{sql_catalog}}"
+        sql: "{{sql}}"
+        runAsync: false
+        json: true
+      response_mode: raw
+    - name: execution_results
+      path: /api/v1/sqllab/results/
+      method: GET
+      response_mode: raw
     - name: create_chart
       path: /api/v1/chart/
       method: POST
@@ -48,6 +64,7 @@ connector:
       method: POST
       response_mode: raw
   capabilities:
-    sql: false
+    supports_sql: true
     supports_validate_sql: false
-    supports_async_jobs: false
+    supports_async_jobs: true
+    sql_mode: api_sync

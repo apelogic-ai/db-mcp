@@ -63,13 +63,13 @@ def validate(connector_file: Path):
 @click.option(
     "--type",
     "connector_type",
-    type=click.Choice(["all", "api", "sql", "file", "metabase"]),
+    type=click.Choice(["all", "api", "sql", "file"]),
     default="all",
     show_default=True,
-    help="Filter built-in templates by connector type.",
+    help="Filter available templates by connector type.",
 )
 def templates(connector_type: str):
-    """List shipped connector templates."""
+    """List available connector templates."""
     selected_type = None if connector_type == "all" else connector_type
     templates = list_connector_templates(selected_type)
     for template in templates:

@@ -75,3 +75,14 @@ def test_validate_connector_contract_rejects_profile_type_mismatch():
 def test_validate_connector_contract_requires_file_source_or_directory():
     with pytest.raises(ValidationError, match="require either 'directory'"):
         validate_connector_contract({"spec_version": "1.0.0", "type": "file"})
+
+
+def test_validate_connector_contract_rejects_legacy_metabase_type():
+    with pytest.raises(ValidationError, match="Input should be"):
+        validate_connector_contract(
+            {
+                "spec_version": "1.0.0",
+                "type": "metabase",
+                "base_url": "https://metabase.example.com",
+            }
+        )

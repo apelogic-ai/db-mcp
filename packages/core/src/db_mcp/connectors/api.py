@@ -36,7 +36,7 @@ def _resolve_env_value(raw: str, env: dict[str, str]) -> str:
     Examples::
 
         _resolve_env_value("admin", env)              # → "admin"  (literal)
-        _resolve_env_value("${SUPERSET_PASSWORD}", env)  # → env["SUPERSET_PASSWORD"]
+        _resolve_env_value("${API_PASSWORD}", env)  # → env["API_PASSWORD"]
     """
     if not raw:
         return ""
@@ -169,8 +169,47 @@ class APIConnectorConfig:
     pagination: APIPaginationConfig = field(default_factory=APIPaginationConfig)
     rate_limit_rps: float = 10.0
     capabilities: dict[str, Any] = field(default_factory=dict)
-    api_title: str = ""  # Display name from discovery (e.g., "Dune Analytics API")
+    api_title: str = ""  # Display name from discovery
     api_description: str = ""  # Description from API spec
+
+
+def build_api_connector_config(data: dict[str, Any]) -> APIConnectorConfig:
+    """Build ``APIConnectorConfig`` from a connector payload."""
+    auth_data = data.get("auth", {})
+    auth = APIAuthConfig(**auth_data) if auth_data else APIAuthConfig()
+
+    endpoints_data = data.get("endpoints", [])
+    endpoints = []
+    for endpoint_entry in endpoints_data:
+        endpoint_data = dict(endpoint_entry)
+        qp_data = endpoint_data.pop("query_params", [])
+        query_params = [APIQueryParamConfig(**qp) for qp in qp_data]
+        method = str(endpoint_data.get("method", "GET")).upper()
+        if "body_mode" not in endpoint_data and method != "GET":
+            endpoint_data["body_mode"] = "json"
+        endpoints.append(APIEndpointConfig(**endpoint_data, query_params=query_params))
+
+    pagination_data = data.get("pagination", {})
+    pagination = (
+        APIPaginationConfig(**pagination_data) if pagination_data else APIPaginationConfig()
+    )
+
+    rate_limit = data.get("rate_limit", {})
+    rate_limit_rps = rate_limit.get("requests_per_second", 10.0) if rate_limit else 10.0
+
+    return APIConnectorConfig(
+        profile=data.get("profile", ""),
+        base_url=data.get("base_url", ""),
+        spec_url=data.get("spec_url", ""),
+        template_id=data.get("template_id", ""),
+        auth=auth,
+        endpoints=endpoints,
+        pagination=pagination,
+        rate_limit_rps=rate_limit_rps,
+        capabilities=data.get("capabilities", {}) or {},
+        api_title=data.get("api_title", ""),
+        api_description=data.get("api_description", ""),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +374,7 @@ class APIConnector(FileConnector):
         2. Otherwise fall back to the ``username`` field itself as a *literal* string.
 
         This means ``username: admin`` in connector.yaml passes "admin" directly,
-        while ``username: ${SUPERSET_USER}`` resolves to the env var value.
+        while ``username: ${API_USERNAME}`` resolves to the env var value.
         """
         auth = self.api_config.auth
         env = self._load_env()
@@ -404,6 +443,12 @@ class APIConnector(FileConnector):
             token = auth.token or ""
         return {auth.param_name: token}
 
+    def _runtime_path_params(self, path: str | None = None) -> dict[str, str]:
+        return {}
+
+    def _runtime_template_context(self) -> dict[str, Any]:
+        return {}
+
     # -- Unified HTTP dispatch ----------------------------------------------
 
     def _send_request(
@@ -449,16 +494,24 @@ class APIConnector(FileConnector):
             method = "GET"
             body: dict[str, Any] | None = None
 
-            # Try the first endpoint with a small limit
             if self.api_config.endpoints:
                 ep = self.api_config.endpoints[0]
-                url = self.api_config.base_url.rstrip("/") + ep.path
+                params.update(self._runtime_path_params(ep.path))
+                rendered_path, params = self._render_path(ep.path, params)
+                url = self.api_config.base_url.rstrip("/") + rendered_path
                 method = (ep.method or "GET").upper()
                 pg = self.api_config.pagination
-                if method == "GET" and pg.page_size_param:
+                if method == "GET" and pg.type != "none" and pg.page_size_param:
                     params[pg.page_size_param] = "1"
                 if method != "GET" and ep.name == "execute_sql":
-                    body = {ep.sql_field or "sql": "SELECT 1 AS db_mcp_doctor"}
+                    if ep.body_template is not None:
+                        _, body = self._build_execute_sql_request(
+                            ep,
+                            "SELECT 1 AS db_mcp_doctor",
+                            self._runtime_template_context(),
+                        )
+                    else:
+                        body = {ep.sql_field or "sql": "SELECT 1 AS db_mcp_doctor"}
             else:
                 url = self.api_config.base_url
 
@@ -556,7 +609,9 @@ class APIConnector(FileConnector):
             raise ValueError("sync only supports GET endpoints")
         headers = self._resolve_auth_headers()
         base_params = self._resolve_auth_params()
-        url = self.api_config.base_url.rstrip("/") + endpoint.path
+        base_params.update(self._runtime_path_params(endpoint.path))
+        rendered_path, base_params = self._render_path(endpoint.path, base_params)
+        url = self.api_config.base_url.rstrip("/") + rendered_path
         pg = self.api_config.pagination
 
         if pg.type == "none":
@@ -734,6 +789,9 @@ class APIConnector(FileConnector):
     def _render_template_value(cls, value: Any, context: dict[str, Any]) -> Any:
         """Recursively render ``{{key}}`` placeholders inside a JSON-compatible value."""
         if isinstance(value, str):
+            for key, replacement in context.items():
+                if value == f"{{{{{key}}}}}":
+                    return replacement
             rendered = value
             for key, replacement in context.items():
                 rendered = rendered.replace(f"{{{{{key}}}}}", str(replacement))
@@ -855,6 +913,7 @@ class APIConnector(FileConnector):
         try:
             headers = self._resolve_auth_headers()
             base_params = self._resolve_auth_params()
+            base_params.update(self._runtime_path_params(endpoint.path))
             method = (method_override or endpoint.method).upper()
 
             # Merge user params
@@ -910,8 +969,8 @@ class APIConnector(FileConnector):
                     effective_body = merged_params
                     effective_params = {}
                 elif effective_body is None and params and not endpoint.query_params:
-                    # Heuristic for write APIs (e.g., Superset): if endpoint declares
-                    # no query params, treat user-supplied params as JSON body.
+                    # Heuristic for write APIs: if the endpoint declares no query
+                    # params, treat user-supplied params as a JSON body.
                     user_payload = dict(merged_params)
                     for key, value in base_params.items():
                         if user_payload.get(key) == value:
@@ -971,11 +1030,17 @@ class APIConnector(FileConnector):
         return None
 
     def _build_execute_sql_request(
-        self, endpoint: APIEndpointConfig, sql: str
+        self,
+        endpoint: APIEndpointConfig,
+        sql: str,
+        template_context: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build query params and JSON body for a configured SQL execution endpoint."""
+        context = {"sql": sql}
+        if template_context:
+            context.update(template_context)
         if endpoint.body_template is not None:
-            body = self._render_template_value(endpoint.body_template, {"sql": sql})
+            body = self._render_template_value(endpoint.body_template, context)
             return {}, body
 
         sql_field = endpoint.sql_field or "sql"
@@ -983,7 +1048,7 @@ class APIConnector(FileConnector):
             return {}, {sql_field: sql}
         return {sql_field: sql}, {}
 
-    def submit_sql(self, sql: str) -> dict[str, Any]:
+    def submit_sql(self, sql: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Submit SQL to an API execute endpoint.
 
         Returns:
@@ -1006,8 +1071,18 @@ class APIConnector(FileConnector):
             )
 
         headers = self._resolve_auth_headers()
-        url = self.api_config.base_url.rstrip("/") + execute_endpoint.path
-        query_params, body = self._build_execute_sql_request(execute_endpoint, sql)
+        runtime_context = self._runtime_template_context()
+
+        runtime_params = self._runtime_path_params(execute_endpoint.path)
+        rendered_path, runtime_params = self._render_path(execute_endpoint.path, runtime_params)
+        url = self.api_config.base_url.rstrip("/") + rendered_path
+        query_params, body = self._build_execute_sql_request(
+            execute_endpoint,
+            sql,
+            runtime_context,
+        )
+        if body:
+            body = {key: value for key, value in body.items() if value is not None}
         try:
             request_kwargs: dict[str, Any] = {"headers": headers, "timeout": 60}
             if query_params:
@@ -1147,7 +1222,7 @@ class APIConnector(FileConnector):
         Raises:
             ValueError: If SQL execution is not supported or fails
         """
-        submission = self.submit_sql(sql)
+        submission = self.submit_sql(sql, params=params)
         if submission.get("mode") == "sync":
             rows = submission.get("rows", [])
             return rows if isinstance(rows, list) else []
@@ -1190,7 +1265,7 @@ class APIConnector(FileConnector):
                 status_data = self.get_execution_status(execution_id)
 
                 state = status_data.get("state", "").lower()
-                # Also check is_execution_finished for APIs like Dune
+                # Some APIs expose an explicit completion boolean.
                 is_finished = status_data.get("is_execution_finished", False)
 
                 if "failed" in state or "error" in state or "cancelled" in state:
@@ -1255,13 +1330,18 @@ class APIConnector(FileConnector):
         lowered = base_type.lower()
         if "integer" in lowered:
             return "INTEGER"
-        if "float" in lowered or "number" in lowered or "decimal" in lowered:
+        if "decimal" in lowered:
+            return "DECIMAL"
+        if "float" in lowered or "number" in lowered:
             return "DOUBLE"
         if "boolean" in lowered:
             return "BOOLEAN"
         if "datetime" in lowered or "date" in lowered:
             return "TIMESTAMP"
         return "VARCHAR"
+
+    def get_catalogs(self) -> list[str | None]:
+        return super().get_catalogs()
 
     def get_schemas(self, catalog: str | None = None) -> list[str | None]:
         schema_rows = self._get_schema_rows()
@@ -1344,7 +1424,7 @@ class APIConnector(FileConnector):
         """Extract rows from an API response.
 
         Handles common response formats:
-        - {result: {rows: [...]}} (Dune)
+        - {result: {rows: [...]}}
         - {data: [...]}
         - {rows: [...]}
         - {results: [...]}
@@ -1359,7 +1439,7 @@ class APIConnector(FileConnector):
         if isinstance(response, list):
             return response
 
-        # Try result wrappers first (Dune/Superset/common APIs).
+        # Try result wrappers first.
         result = response.get("result")
         if isinstance(result, list):
             return result

@@ -358,7 +358,50 @@ class TestAPIConnectorTestConnection:
         called_kwargs = req.call_args.kwargs
         assert called_kwargs["method"] == "POST"
         assert called_kwargs["url"] == "https://api.example.com/sql/execute"
-        assert called_kwargs["json"]["sql"] == "SELECT 1 AS db_mcp_doctor"
+        assert called_kwargs["json"] == {"sql": "SELECT 1 AS db_mcp_doctor"}
+
+    def test_connection_does_not_add_limit_when_pagination_is_none(self, data_dir, env_file):
+        from db_mcp.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
+
+        config = APIConnectorConfig(
+            base_url="https://api.example.com",
+            endpoints=[APIEndpointConfig(name="health", path="/health")],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response) as req:
+            result = conn.test_connection()
+
+        assert result["connected"] is True
+        assert req.call_args.kwargs["params"] == {}
+
+    def test_metabase_template_tests_auth_without_database_probe(self, data_dir, env_file):
+        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig
+
+        env_file.write_text("X_API_KEY=mb-api-key-123\n")
+        config = APIConnectorConfig(
+            base_url="https://metabase.example.com",
+            template_id="metabase",
+            api_title="Metabase",
+            auth=APIAuthConfig(type="header", token_env="X_API_KEY", header_name="x-api-key"),
+        )
+        conn = MetabasePluginConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": 1}
+
+        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response) as req:
+            result = conn.test_connection()
+
+        assert result["connected"] is True
+        assert req.call_args.kwargs["url"] == "https://metabase.example.com/api/user/current"
+        assert req.call_args.kwargs["params"] == {}
 
     def test_discover_updates_base_url_and_spec_url_from_direct_spec(self, data_dir):
         from db_mcp.connectors.api import APIConnector, APIConnectorConfig
@@ -2979,3 +3022,370 @@ class TestGenericSQLAPIConfig:
                 "comment": None,
             },
         ]
+
+    def test_metabase_template_resolves_database_id_for_schema_and_sql(self, data_dir, env_file):
+        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+
+        env_file.write_text("X_API_KEY=mb-api-key-123\n")
+        config = APIConnectorConfig(
+            base_url="https://metabase.example.com",
+            template_id="metabase",
+            api_title="Metabase",
+            auth=APIAuthConfig(type="header", token_env="X_API_KEY", header_name="x-api-key"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="schema",
+                    path="/api/database/{database_id}/schema",
+                    response_mode="raw",
+                ),
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/api/dataset",
+                    method="POST",
+                    body_mode="json",
+                    body_template={
+                        "database": "{{database_id}}",
+                        "type": "native",
+                        "native": {"query": "{{sql}}"},
+                    },
+                ),
+            ],
+            capabilities={"supports_sql": True},
+        )
+        conn = MetabasePluginConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        db_list_resp = MagicMock()
+        db_list_resp.status_code = 200
+        db_list_resp.json.return_value = [
+            {"id": 42, "name": "Primary Warehouse"},
+            {"id": 99, "name": "Sample Database", "is_sample": True},
+        ]
+
+        schema_resp = MagicMock()
+        schema_resp.status_code = 200
+        schema_resp.json.return_value = [
+            {
+                "schema": "public",
+                "name": "users",
+                "fields": [{"name": "id", "base_type": "type/Integer"}],
+            }
+        ]
+
+        dataset_resp = MagicMock()
+        dataset_resp.status_code = 200
+        dataset_resp.json.return_value = {
+            "data": {"cols": [{"name": "value"}], "rows": [[1]]}
+        }
+
+        def get_side_effect(url, *args, **kwargs):
+            if url == "https://metabase.example.com/api/database":
+                return db_list_resp
+            if url == "https://metabase.example.com/api/database/42/schema":
+                return schema_resp
+            raise AssertionError(f"Unexpected GET url: {url}")
+
+        with patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect) as mock_get:
+            assert conn.get_schemas() == ["public"]
+
+        with (
+            patch("db_mcp.connectors.api.requests.get", return_value=db_list_resp),
+            patch("db_mcp.connectors.api.requests.post", return_value=dataset_resp) as mock_post,
+        ):
+            rows = conn.execute_sql("SELECT 1")
+
+        assert rows == [{"value": 1}]
+        assert mock_get.call_args_list[0].args[0] == "https://metabase.example.com/api/database"
+        assert mock_post.call_args.kwargs["json"] == {
+            "database": 42,
+            "type": "native",
+            "native": {"query": "SELECT 1"},
+        }
+
+    def test_metabase_template_exposes_databases_as_catalogs_and_routes_sql(
+        self, data_dir, env_file
+    ):
+        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+
+        env_file.write_text("X_API_KEY=mb-api-key-123\n")
+        config = APIConnectorConfig(
+            base_url="https://metabase.example.com",
+            template_id="metabase",
+            api_title="Metabase",
+            auth=APIAuthConfig(type="header", token_env="X_API_KEY", header_name="x-api-key"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="schema",
+                    path="/api/database/{database_id}/schema",
+                    response_mode="raw",
+                ),
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/api/dataset",
+                    method="POST",
+                    body_mode="json",
+                    body_template={
+                        "database": "{{database_id}}",
+                        "type": "native",
+                        "native": {"query": "{{sql}}"},
+                    },
+                ),
+            ],
+            capabilities={"supports_sql": True},
+        )
+        conn = MetabasePluginConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        db_list_resp = MagicMock()
+        db_list_resp.status_code = 200
+        db_list_resp.json.return_value = [
+            {"id": 42, "name": "Primary Warehouse"},
+            {"id": 77, "name": "Finance"},
+        ]
+
+        schema_primary_resp = MagicMock()
+        schema_primary_resp.status_code = 200
+        schema_primary_resp.json.return_value = [
+            {
+                "schema": "public",
+                "name": "users",
+                "fields": [{"name": "id", "base_type": "type/Integer"}],
+            }
+        ]
+
+        dataset_resp = MagicMock()
+        dataset_resp.status_code = 200
+        dataset_resp.json.return_value = {
+            "data": {"cols": [{"name": "value"}], "rows": [[1]]}
+        }
+
+        def get_side_effect(url, *args, **kwargs):
+            if url == "https://metabase.example.com/api/database":
+                return db_list_resp
+            if url == "https://metabase.example.com/api/database/42/schema":
+                return schema_primary_resp
+            raise AssertionError(f"Unexpected GET url: {url}")
+
+        with patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect):
+            assert conn.get_catalogs() == ["finance", "primary_warehouse"]
+            assert conn.get_schemas(catalog="primary_warehouse") == ["public"]
+            tables = conn.get_tables(schema="public", catalog="primary_warehouse")
+            columns = conn.get_columns("users", schema="public", catalog="primary_warehouse")
+
+        assert tables == [
+            {
+                "name": "users",
+                "schema": "public",
+                "catalog": "primary_warehouse",
+                "type": "table",
+                "full_name": "primary_warehouse.public.users",
+            }
+        ]
+        assert columns == [
+            {
+                "name": "id",
+                "type": "INTEGER",
+                "nullable": True,
+                "default": None,
+                "primary_key": False,
+                "comment": None,
+            }
+        ]
+
+        with (
+            patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect),
+            patch("db_mcp.connectors.api.requests.post", return_value=dataset_resp) as mock_post,
+        ):
+            rows = conn.execute_sql("SELECT * FROM primary_warehouse.public.users LIMIT 1")
+
+        assert rows == [{"value": 1}]
+        assert mock_post.call_args.kwargs["json"] == {
+            "database": 42,
+            "type": "native",
+            "native": {"query": "SELECT * FROM public.users LIMIT 1"},
+        }
+
+    def test_metabase_template_requires_catalog_selection_for_ambiguous_sql(
+        self, data_dir, env_file
+    ):
+        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+
+        env_file.write_text("X_API_KEY=mb-api-key-123\n")
+        config = APIConnectorConfig(
+            base_url="https://metabase.example.com",
+            template_id="metabase",
+            api_title="Metabase",
+            auth=APIAuthConfig(type="header", token_env="X_API_KEY", header_name="x-api-key"),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/api/dataset",
+                    method="POST",
+                    body_mode="json",
+                    body_template={
+                        "database": "{{database_id}}",
+                        "type": "native",
+                        "native": {"query": "{{sql}}"},
+                    },
+                )
+            ],
+            capabilities={"supports_sql": True},
+        )
+        conn = MetabasePluginConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        db_list_resp = MagicMock()
+        db_list_resp.status_code = 200
+        db_list_resp.json.return_value = [
+            {"id": 42, "name": "Primary Warehouse"},
+            {"id": 77, "name": "Finance"},
+        ]
+
+        with patch("db_mcp.connectors.api.requests.get", return_value=db_list_resp):
+            with pytest.raises(ValueError, match="catalog"):
+                conn.execute_sql("SELECT * FROM public.users LIMIT 1")
+
+    def test_superset_template_routes_catalog_metadata_and_sql(self, data_dir, env_file):
+        from db_mcp.connector_plugins.builtin.superset import SupersetPluginConnector
+        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+
+        env_file.write_text("SUPERSET_PASSWORD=supersecret\n")
+        config = APIConnectorConfig(
+            base_url="https://superset.example.com",
+            template_id="superset",
+            api_title="Superset",
+            auth=APIAuthConfig(
+                type="jwt_login",
+                login_endpoint="/api/v1/security/login",
+                username="admin",
+                password_env="SUPERSET_PASSWORD",
+                token_field="access_token",
+                login_body={"provider": "db", "refresh": True},
+            ),
+            endpoints=[
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/api/v1/sqllab/execute/",
+                    method="POST",
+                    body_mode="json",
+                    body_template={
+                        "database_id": "{{database_id}}",
+                        "catalog": "{{sql_catalog}}",
+                        "sql": "{{sql}}",
+                        "runAsync": False,
+                        "json": True,
+                    },
+                )
+            ],
+            capabilities={"supports_sql": True},
+        )
+        conn = SupersetPluginConnector(config, data_dir=str(data_dir), env_path=str(env_file))
+
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {"access_token": "superset-jwt-token"}
+
+        databases_resp = MagicMock()
+        databases_resp.status_code = 200
+        databases_resp.json.return_value = {
+            "result": [{"id": 7, "database_name": "Analytics", "allow_multi_catalog": True}]
+        }
+
+        catalogs_resp = MagicMock()
+        catalogs_resp.status_code = 200
+        catalogs_resp.json.return_value = {"result": ["hive", "iceberg"]}
+
+        schemas_resp = MagicMock()
+        schemas_resp.status_code = 200
+        schemas_resp.json.return_value = {"result": ["public"]}
+
+        tables_resp = MagicMock()
+        tables_resp.status_code = 200
+        tables_resp.json.return_value = {"result": [{"value": "orders"}]}
+
+        table_metadata_resp = MagicMock()
+        table_metadata_resp.status_code = 200
+        table_metadata_resp.json.return_value = {
+            "columns": [
+                {"name": "id", "type": "INTEGER"},
+                {"name": "amount", "type": "DECIMAL"},
+            ]
+        }
+
+        sql_resp = MagicMock()
+        sql_resp.status_code = 200
+        sql_resp.json.return_value = {
+            "data": {"columns": [{"name": "value"}], "rows": [[1]]}
+        }
+
+        def get_side_effect(url, *args, **kwargs):
+            if url == "https://superset.example.com/api/v1/database/":
+                return databases_resp
+            if url == "https://superset.example.com/api/v1/database/7/catalogs/":
+                return catalogs_resp
+            if url == "https://superset.example.com/api/v1/database/7/schemas/":
+                assert kwargs["params"] == {"catalog": "hive"}
+                return schemas_resp
+            if url == "https://superset.example.com/api/v1/database/7/tables/":
+                assert kwargs["params"] == {"schema": "public", "catalog": "hive"}
+                return tables_resp
+            if url == "https://superset.example.com/api/v1/database/7/table_metadata/":
+                assert kwargs["params"] == {
+                    "table": "orders",
+                    "schema": "public",
+                    "catalog": "hive",
+                }
+                return table_metadata_resp
+            raise AssertionError(f"Unexpected GET url: {url}")
+
+        with (
+            patch("db_mcp.connectors.api.requests.post", return_value=login_resp),
+            patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect),
+        ):
+            assert conn.get_catalogs() == ["analytics__hive", "analytics__iceberg"]
+            assert conn.get_schemas(catalog="analytics__hive") == ["public"]
+            tables = conn.get_tables(schema="public", catalog="analytics__hive")
+            columns = conn.get_columns("orders", schema="public", catalog="analytics__hive")
+
+        assert tables == [
+            {
+                "name": "orders",
+                "schema": "public",
+                "catalog": "analytics__hive",
+                "type": "table",
+                "full_name": "analytics__hive.public.orders",
+            }
+        ]
+        assert columns == [
+            {
+                "name": "id",
+                "type": "INTEGER",
+                "nullable": True,
+                "default": None,
+                "primary_key": False,
+                "comment": None,
+            },
+            {
+                "name": "amount",
+                "type": "DECIMAL",
+                "nullable": True,
+                "default": None,
+                "primary_key": False,
+                "comment": None,
+            },
+        ]
+
+        with (
+            patch("db_mcp.connectors.api.requests.post", return_value=sql_resp) as post,
+            patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect),
+        ):
+            rows = conn.execute_sql("SELECT * FROM analytics__hive.public.orders LIMIT 1")
+
+        assert rows == [{"value": 1}]
+        assert post.call_args_list[-1].kwargs["json"] == {
+            "database_id": 7,
+            "catalog": "hive",
+            "sql": "SELECT * FROM hive.public.orders LIMIT 1",
+            "runAsync": False,
+            "json": True,
+        }

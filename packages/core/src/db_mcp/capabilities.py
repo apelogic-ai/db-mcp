@@ -39,14 +39,6 @@ TYPE_CAPABILITY_DEFAULTS: dict[str, dict[str, Any]] = {
         "supports_file_scan": True,
         "supports_sync": False,
     },
-    "metabase": {
-        "supports_sql": True,
-        "supports_validate_sql": False,
-        "supports_async_jobs": False,
-        "sql_mode": "api_sync",
-        "supports_endpoint_discovery": True,
-        "supports_dashboard_api": True,
-    },
     "api": {
         "supports_sql": False,
         "supports_validate_sql": False,
@@ -61,7 +53,6 @@ DEFAULT_PROFILE_BY_TYPE: dict[str, str] = {
     "sql": "sql_db",
     "file": "file_local",
     "api": "api_openapi",
-    "metabase": "hybrid_bi",
 }
 
 PROFILE_ALLOWED_TYPES: dict[str, set[str]] = {
@@ -70,7 +61,7 @@ PROFILE_ALLOWED_TYPES: dict[str, set[str]] = {
     "api_sql": {"api"},
     "api_openapi": {"api"},
     "api_probe": {"api"},
-    "hybrid_bi": {"api", "metabase"},
+    "hybrid_bi": {"api"},
 }
 
 PROFILE_CAPABILITY_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -158,7 +149,7 @@ def normalize_capabilities(
     """Return normalized capability flags for a connector type.
 
     Args:
-        connector_type: Connector type string (sql, file, api, metabase).
+        connector_type: Connector type string (sql, file, api).
         overrides: Optional capability map from connector.yaml.
     """
     caps: dict[str, Any] = dict(BASE_CAPABILITIES)

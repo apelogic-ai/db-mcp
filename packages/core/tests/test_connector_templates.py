@@ -33,7 +33,41 @@ def test_get_connector_template_returns_metabase_descriptor():
     assert template.connector["auth"]["type"] == "header"
     assert template.connector["auth"]["header_name"] == "x-api-key"
     assert any(endpoint["name"] == "execute_sql" for endpoint in template.connector["endpoints"])
+    schema_endpoint = next(
+        endpoint for endpoint in template.connector["endpoints"] if endpoint["name"] == "schema"
+    )
+    execute_sql_endpoint = next(
+        endpoint
+        for endpoint in template.connector["endpoints"]
+        if endpoint["name"] == "execute_sql"
+    )
+    assert schema_endpoint["path"] == "/api/database/{database_id}/schema"
+    assert execute_sql_endpoint["body_template"]["database"] == "{{database_id}}"
     assert [env_var.name for env_var in template.env] == ["X_API_KEY"]
+
+
+def test_get_connector_template_returns_superset_sql_descriptor():
+    template = get_connector_template("superset")
+
+    assert template is not None
+    assert template.connector["type"] == "api"
+    assert template.connector["profile"] == "hybrid_bi"
+    assert template.connector["auth"]["type"] == "jwt_login"
+    assert template.connector["capabilities"]["supports_sql"] is True
+    assert template.connector["capabilities"]["supports_async_jobs"] is True
+    assert any(endpoint["name"] == "execute_sql" for endpoint in template.connector["endpoints"])
+    assert any(
+        endpoint["name"] == "execution_results" for endpoint in template.connector["endpoints"]
+    )
+    execute_sql_endpoint = next(
+        endpoint
+        for endpoint in template.connector["endpoints"]
+        if endpoint["name"] == "execute_sql"
+    )
+    assert execute_sql_endpoint["path"] == "/api/v1/sqllab/execute/"
+    assert execute_sql_endpoint["body_template"]["database_id"] == "{{database_id}}"
+    assert execute_sql_endpoint["body_template"]["catalog"] == "{{sql_catalog}}"
+    assert [env_var.name for env_var in template.env] == ["SUPERSET_USERNAME", "SUPERSET_PASSWORD"]
 
 
 def test_materialize_connector_template_overrides_base_url_and_env_names():

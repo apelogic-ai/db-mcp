@@ -116,30 +116,6 @@
       ],
       "default": null
     },
-    "database_id": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Database Id"
-    },
-    "database_name": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Database Name"
-    },
     "database_url": {
       "default": "",
       "title": "Database Url",
@@ -217,8 +193,7 @@
       "enum": [
         "sql",
         "api",
-        "file",
-        "metabase"
+        "file"
       ],
       "title": "Type",
       "type": "string"

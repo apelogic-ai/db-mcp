@@ -1,0 +1,13 @@
+[project]
+name = "db-mcp-connector-example"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["db-mcp"]
+
+[project.entry-points."db_mcp.connector_plugins"]
+example_widget = "db_mcp_connector_example:plugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+

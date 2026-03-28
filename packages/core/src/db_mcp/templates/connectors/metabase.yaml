@@ -20,7 +20,7 @@ connector:
     type: none
   endpoints:
     - name: schema
-      path: /api/database/1/schema
+      path: /api/database/{database_id}/schema
       method: GET
       response_mode: raw
     - name: execute_sql
@@ -28,7 +28,7 @@ connector:
       method: POST
       body_mode: json
       body_template:
-        database: 1
+        database: "{{database_id}}"
         type: native
         native:
           query: "{{sql}}"
