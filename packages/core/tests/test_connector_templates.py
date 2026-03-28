@@ -41,6 +41,10 @@ def test_get_connector_template_returns_metabase_descriptor():
         for endpoint in template.connector["endpoints"]
         if endpoint["name"] == "execute_sql"
     )
+    assert any(endpoint["name"] == "dashboard" for endpoint in template.connector["endpoints"])
+    assert any(
+        endpoint["name"] == "dashboard_detail" for endpoint in template.connector["endpoints"]
+    )
     assert schema_endpoint["path"] == "/api/database/{database_id}/schema"
     assert execute_sql_endpoint["body_template"]["database"] == "{{database_id}}"
     assert [env_var.name for env_var in template.env] == ["X_API_KEY"]

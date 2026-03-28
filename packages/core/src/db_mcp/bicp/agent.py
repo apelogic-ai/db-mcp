@@ -1425,16 +1425,16 @@ class DBMCPAgent(BICPAgent):
             return {"success": False, "error": "No connector.yaml found"}
 
         try:
-            from db_mcp.connectors import ConnectorConfig
+            from db_mcp.connectors import ConnectorConfig, get_connector
             from db_mcp.connectors.api import APIConnector, APIConnectorConfig
 
             config = ConnectorConfig.from_yaml(connector_yaml)
             if not isinstance(config, APIConnectorConfig):
                 return {"success": False, "error": "Connection is not an API connector"}
 
-            data_dir = str(conn_path / "data")
-            env_path = str(conn_path / ".env")
-            connector = APIConnector(config, data_dir, env_path=env_path)
+            connector = get_connector(connection_path=str(conn_path))
+            if not isinstance(connector, APIConnector):
+                return {"success": False, "error": "Resolved connection is not an API connector"}
 
             result = connector.discover()
 

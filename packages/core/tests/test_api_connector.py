@@ -432,6 +432,54 @@ class TestAPIConnectorTestConnection:
         assert conn.api_config.base_url == "https://boost.example.com/api/public/v1"
         assert conn.api_config.spec_url == "https://boost.example.com/api/public/v1/openapi.json"
 
+    def test_discover_merges_template_endpoints_with_discovered_endpoints(self, data_dir):
+        from db_mcp.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
+        from db_mcp.connectors.api_discovery import (
+            DiscoveredEndpoint,
+            DiscoveredPagination,
+            DiscoveryResult,
+        )
+
+        config = APIConnectorConfig(
+            base_url="https://metabase.example.com",
+            endpoints=[
+                APIEndpointConfig(name="schema", path="/api/database/{database_id}/schema"),
+                APIEndpointConfig(
+                    name="execute_sql",
+                    path="/api/dataset",
+                    method="POST",
+                    body_mode="json",
+                    body_template={"database": "{{database_id}}", "type": "native"},
+                ),
+            ],
+        )
+        conn = APIConnector(config, data_dir=str(data_dir))
+
+        with patch(
+            "db_mcp.connectors.api.discover_api",
+            return_value=DiscoveryResult(
+                endpoints=[
+                    DiscoveredEndpoint(name="dashboard", path="/api/dashboard"),
+                    DiscoveredEndpoint(name="database", path="/api/database"),
+                ],
+                pagination=DiscoveredPagination(type="none"),
+                strategy="openapi",
+                spec_url="https://metabase.example.com/api/docs/openapi.json",
+                api_title="Metabase API",
+            ),
+        ):
+            result = conn.discover()
+
+        assert result["endpoints_found"] == 4
+        assert [ep.name for ep in conn.api_config.endpoints] == [
+            "schema",
+            "execute_sql",
+            "dashboard",
+            "database",
+        ]
+        assert conn._get_endpoint("execute_sql") is not None
+        assert conn._get_endpoint("dashboard") is not None
+
 
 # ---------------------------------------------------------------------------
 # Sync

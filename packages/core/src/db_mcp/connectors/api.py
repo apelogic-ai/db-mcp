@@ -1679,27 +1679,34 @@ class APIConnector(FileConnector):
             spec_url=self.api_config.spec_url or None,
         )
 
-        # Update config with discovered endpoints
-        if result.endpoints:
-            self.api_config.endpoints = [
-                APIEndpointConfig(
-                    name=ep.name,
-                    path=ep.path,
-                    method=ep.method,
-                    query_params=[
-                        APIQueryParamConfig(
-                            name=qp.name,
-                            type=qp.type,
-                            description=qp.description,
-                            required=qp.required,
-                            enum=qp.enum,
-                            default=qp.default,
-                        )
-                        for qp in ep.query_params
-                    ],
-                )
-                for ep in result.endpoints
-            ]
+        existing_endpoints = list(self.api_config.endpoints)
+        discovered_endpoints = [
+            APIEndpointConfig(
+                name=ep.name,
+                path=ep.path,
+                method=ep.method,
+                query_params=[
+                    APIQueryParamConfig(
+                        name=qp.name,
+                        type=qp.type,
+                        description=qp.description,
+                        required=qp.required,
+                        enum=qp.enum,
+                        default=qp.default,
+                    )
+                    for qp in ep.query_params
+                ],
+            )
+            for ep in result.endpoints
+        ]
+
+        if discovered_endpoints:
+            self.api_config.endpoints = self._merge_discovered_endpoints(
+                existing_endpoints,
+                discovered_endpoints,
+            )
+        elif existing_endpoints:
+            self.api_config.endpoints = existing_endpoints
 
         # Update pagination if discovered
         if result.pagination.type != "none":
@@ -1723,16 +1730,21 @@ class APIConnector(FileConnector):
         if result.base_url:
             self.api_config.base_url = result.base_url
 
+        visible_endpoints = self.api_config.endpoints or discovered_endpoints
         return {
             "strategy": result.strategy,
             "spec_url": result.spec_url,
             "base_url": result.base_url,
             "api_title": result.api_title,
             "api_description": result.api_description,
-            "endpoints_found": len(result.endpoints),
+            "endpoints_found": len(visible_endpoints),
             "endpoints": [
-                {"name": ep.name, "path": ep.path, "fields": len(ep.fields)}
-                for ep in result.endpoints
+                {
+                    "name": ep.name,
+                    "path": ep.path,
+                    "fields": len(getattr(ep, "fields", []) or []),
+                }
+                for ep in visible_endpoints
             ],
             "pagination": {
                 "type": result.pagination.type,
@@ -1740,6 +1752,28 @@ class APIConnector(FileConnector):
             },
             "errors": result.errors,
         }
+
+    @staticmethod
+    def _merge_discovered_endpoints(
+        existing: list[APIEndpointConfig],
+        discovered: list[APIEndpointConfig],
+    ) -> list[APIEndpointConfig]:
+        merged: list[APIEndpointConfig] = list(existing)
+        index_by_identity = {
+            (endpoint.name, endpoint.path, endpoint.method.upper()): idx
+            for idx, endpoint in enumerate(merged)
+        }
+
+        for endpoint in discovered:
+            identity = (endpoint.name, endpoint.path, endpoint.method.upper())
+            existing_idx = index_by_identity.get(identity)
+            if existing_idx is not None:
+                merged[existing_idx] = endpoint
+                continue
+            index_by_identity[identity] = len(merged)
+            merged.append(endpoint)
+
+        return merged
 
     def save_connector_yaml(self, yaml_path: str | Path) -> None:
         """Save current api_config to a connector.yaml file.

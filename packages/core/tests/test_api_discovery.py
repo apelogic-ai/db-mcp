@@ -310,6 +310,27 @@ class TestDiscoverOpenAPISpec:
         assert spec["openapi"] == "3.0.0"
         assert spec_url == "https://api.example.com/openapi.json"
 
+    def test_finds_spec_at_api_docs_openapi_json(self):
+        """Should find specs served from /api/docs/openapi.json."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.json.return_value = OPENAPI_3_SPEC
+
+        not_found = MagicMock()
+        not_found.status_code = 404
+
+        def mock_get(url, **kwargs):
+            if url.endswith("/api/docs/openapi.json"):
+                return mock_resp
+            return not_found
+
+        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+            spec, spec_url = discover_openapi_spec("https://api.example.com", {}, 10.0)
+
+        assert spec is not None
+        assert spec_url == "https://api.example.com/api/docs/openapi.json"
+
     def test_finds_swagger_spec(self):
         """Should find Swagger 2.0 spec at /swagger.json."""
         mock_resp = MagicMock()
