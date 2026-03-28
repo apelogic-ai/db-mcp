@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.8.9] - 2026-03-28
+
+## Summary
+
+`v0.8.9` is a patch release on top of `v0.8.8`. It fixes Metabase API onboarding and dashboard
+exploration by teaching discovery to find Metabase's published OpenAPI document, preserving
+runtime-critical template endpoints during discovery, and exposing dashboard endpoints in the
+shipped Metabase template.
+
+## Highlights
+
+- Fixed Metabase discovery so the wizard no longer reports `0 endpoints` against current Metabase
+  servers that publish their OpenAPI spec under `/api/docs/openapi.json`.
+- Restored dashboard listing for the shipped Metabase template by exposing built-in dashboard
+  endpoints before discovery runs.
+- Fixed the BICP connection-discover path to use the resolved connector runtime/plugin instead of
+  bypassing Metabase-specific runtime behavior.
+
+## Breaking changes
+
+- None
+
+## Features
+
+- Added Metabase dashboard endpoints to the built-in template so API queries can list dashboards
+  immediately after connection setup.
+
+## Fixes
+
+- Fixed OpenAPI discovery candidate paths to include Metabase's `api/docs` document locations.
+- Fixed API discovery so discovered endpoints are merged with existing template endpoints instead
+  of replacing them, preserving Metabase `schema` and `execute_sql` behavior.
+- Fixed connection discovery in the UI/server path so it resolves the actual connector runtime via
+  `get_connector(...)` rather than instantiating a generic `APIConnector`.
+- Added regression coverage for Metabase discovery, template endpoints, and runtime-backed
+  onboarding behavior.
+
+## Security
+
+- None
+
+## Upgrade notes
+
+- Existing Metabase template connections should discover endpoints correctly after upgrade and can
+  answer dashboard-listing requests without requiring a manual rediscovery workaround.
+
+## Validation
+
+- `uv lock`
+- `python3 scripts/check_version_consistency.py`
+- `cd packages/core && uv run ruff check . --fix`
+- `cd packages/core && uv run --no-sync pytest tests/ -v`
+
+Result:
+
+- Core suite: `1273 passed, 1 warning`
+- Verified against a real local `metabase/metabase:latest` instance with API key auth, sample
+  database, dashboard listing, and SQL execution
+
+
 ## [0.8.8] - 2026-03-27
 
 ## Summary
