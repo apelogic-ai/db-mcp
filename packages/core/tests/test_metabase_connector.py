@@ -151,3 +151,45 @@ def test_get_connector_uses_metabase_plugin_runtime(tmp_path):
         connector = get_connector()
 
     assert isinstance(connector, MetabasePluginConnector)
+
+
+def test_metabase_plugin_executes_sql_without_body_template(tmp_path, env_file):
+    connector_yaml = materialize_connector_template(
+        "metabase",
+        base_url="https://metabase.example.com",
+    )
+    assert connector_yaml is not None
+
+    execute_endpoint = next(
+        endpoint for endpoint in connector_yaml["endpoints"] if endpoint["name"] == "execute_sql"
+    )
+    execute_endpoint.pop("body_template", None)
+
+    from db_mcp.connectors.api import build_api_connector_config
+
+    connector = MetabasePluginConnector(
+        build_api_connector_config(connector_yaml),
+        data_dir=str(tmp_path / "data"),
+        env_path=str(env_file),
+    )
+
+    db_list_resp = MagicMock()
+    db_list_resp.status_code = 200
+    db_list_resp.json.return_value = [{"id": 42, "name": "analytics"}]
+
+    dataset_resp = MagicMock()
+    dataset_resp.status_code = 200
+    dataset_resp.json.return_value = {"data": {"cols": [{"name": "value"}], "rows": [[1]]}}
+
+    with (
+        patch("db_mcp.connectors.api.requests.get", return_value=db_list_resp),
+        patch("db_mcp.connectors.api.requests.post", return_value=dataset_resp) as mock_post,
+    ):
+        rows = connector.execute_sql("SELECT 1")
+
+    assert rows == [{"value": 1}]
+    assert mock_post.call_args.kwargs["json"] == {
+        "database": 42,
+        "type": "native",
+        "native": {"query": "SELECT 1"},
+    }

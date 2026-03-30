@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from db_mcp.connectors.api import APIConnectorConfig, build_api_connector_config
+from db_mcp.connectors.api import APIConnectorConfig, APIEndpointConfig, build_api_connector_config
 from db_mcp.connectors.api_sql import APICatalogRoute, CatalogRoutingAPIConnector
 
 
@@ -79,6 +79,28 @@ class MetabasePluginConnector(CatalogRoutingAPIConnector):
         if routes:
             return routes[0]
         return None
+
+    def _build_execute_sql_request(
+        self,
+        endpoint: APIEndpointConfig,
+        sql: str,
+        template_context: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if endpoint.name != "execute_sql":
+            return super()._build_execute_sql_request(endpoint, sql, template_context)
+
+        database_id = self._coerce_int((template_context or {}).get("database_id"))
+        if database_id is None:
+            route = self._default_route()
+            database_id = route.database_id if route is not None else None
+        if database_id is None:
+            return super()._build_execute_sql_request(endpoint, sql, template_context)
+
+        return {}, {
+            "database": database_id,
+            "type": "native",
+            "native": {"query": sql},
+        }
 
     def _get_catalog_routes(self) -> list[APICatalogRoute]:
         if self._catalog_routes_cache is not None:

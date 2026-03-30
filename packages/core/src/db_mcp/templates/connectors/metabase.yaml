@@ -38,11 +38,6 @@ connector:
       path: /api/dataset
       method: POST
       body_mode: json
-      body_template:
-        database: "{{database_id}}"
-        type: native
-        native:
-          query: "{{sql}}"
   capabilities:
     supports_sql: true
     supports_validate_sql: false
