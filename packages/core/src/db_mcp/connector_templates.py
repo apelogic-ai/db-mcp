@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from db_mcp.connector_compat import normalize_connector_payload
 from db_mcp.connector_plugins import get_connector_plugin, list_connector_plugins
 from db_mcp.contracts.connector_contracts import validate_connector_contract
 
@@ -114,7 +115,7 @@ def materialize_connector_template(
                 if value not in (None, ""):
                     auth[key] = value
 
-    return connector
+    return normalize_connector_payload(connector)
 
 
 def match_connector_template(connector: dict[str, Any]) -> str | None:

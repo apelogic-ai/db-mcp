@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from db_mcp.connector_compat import normalize_connector_payload
 from db_mcp.connectors.api import APIConnectorConfig, APIEndpointConfig, build_api_connector_config
 from db_mcp.connectors.api_sql import APICatalogRoute, CatalogRoutingAPIConnector
 
@@ -265,7 +266,7 @@ class MetabasePluginConnector(CatalogRoutingAPIConnector):
 
 
 def build_metabase_connector(connector_data: dict[str, Any], conn_path, settings):
-    config = build_api_connector_config(connector_data)
+    config = build_api_connector_config(normalize_connector_payload(connector_data))
     return MetabasePluginConnector(
         config,
         data_dir=str(conn_path / "data"),

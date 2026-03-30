@@ -13,6 +13,7 @@ from typing import Any
 import requests
 import yaml
 
+from db_mcp.connector_compat import normalize_connector_payload
 from db_mcp.connectors.api_discovery import discover_api, discover_openapi_spec
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig
 from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
@@ -1902,6 +1903,8 @@ class APIConnector(FileConnector):
                 },
             }
         )
+
+        data = normalize_connector_payload(data)
 
         if self.api_config.capabilities:
             data["capabilities"] = self.api_config.capabilities

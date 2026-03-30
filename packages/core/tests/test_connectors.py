@@ -153,6 +153,23 @@ class TestConnectorConfig:
         with pytest.raises(ValueError, match="Invalid connector contract"):
             ConnectorConfig.from_yaml(yaml_file)
 
+    def test_connector_config_with_spec_version_ignores_unknown_top_level_fields(self, tmp_path):
+        yaml_file = tmp_path / "connector.yaml"
+        yaml_file.write_text(
+            "spec_version: 1.0.0\n"
+            "type: api\n"
+            "profile: api_openapi\n"
+            "base_url: https://api.example.com/v1\n"
+            "description: Example API\n"
+            "unknown_flag: true\n"
+            "legacy_hint: keep-me-if-you-want\n"
+        )
+
+        config = ConnectorConfig.from_yaml(yaml_file)
+
+        assert isinstance(config, APIConnectorConfig)
+        assert config.base_url == "https://api.example.com/v1"
+
 
 class TestSQLConnector:
     """Test SQLConnector wrapping existing db/ functions."""

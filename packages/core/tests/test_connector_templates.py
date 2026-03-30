@@ -91,6 +91,27 @@ def test_materialize_connector_template_overrides_base_url_and_env_names():
     assert any(endpoint["name"] == "execute_sql" for endpoint in connector["endpoints"])
 
 
+def test_materialize_metabase_template_strips_legacy_endpoint_metadata():
+    connector = materialize_connector_template("metabase")
+
+    assert connector is not None
+    execute_sql_endpoint = next(
+        endpoint
+        for endpoint in connector["endpoints"]
+        if endpoint["name"] == "execute_sql"
+    )
+    dashboard_endpoint = next(
+        endpoint
+        for endpoint in connector["endpoints"]
+        if endpoint["name"] == "dashboard"
+    )
+
+    assert "body_template" not in execute_sql_endpoint
+    assert "description" not in execute_sql_endpoint
+    assert "description" not in dashboard_endpoint
+    assert dashboard_endpoint["query_params"] == [{"name": "f", "type": "string"}]
+
+
 def test_match_connector_template_identifies_metabase_shape():
     connector = materialize_connector_template("metabase")
 

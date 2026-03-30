@@ -5,7 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
+from db_mcp.connector_plugins.builtin.metabase import (
+    MetabasePluginConnector,
+    build_metabase_connector,
+)
 from db_mcp.connector_templates import get_connector_template, materialize_connector_template
 from db_mcp.connectors import Connector, get_connector
 
@@ -193,3 +196,81 @@ def test_metabase_plugin_executes_sql_without_body_template(tmp_path, env_file):
         "type": "native",
         "native": {"query": "SELECT 1"},
     }
+
+
+def test_build_metabase_connector_tolerates_legacy_endpoint_metadata(tmp_path):
+    connector_yaml = materialize_connector_template(
+        "metabase",
+        base_url="https://metabase.example.com",
+    )
+    assert connector_yaml is not None
+
+    execute_endpoint = next(
+        endpoint for endpoint in connector_yaml["endpoints"] if endpoint["name"] == "execute_sql"
+    )
+    execute_endpoint["body_template"] = {
+        "database": "{{database_id}}",
+        "type": "native",
+        "native": {"query": "{{sql}}"},
+    }
+    execute_endpoint["description"] = "Legacy SQL endpoint"
+
+    dashboard_endpoint = next(
+        endpoint for endpoint in connector_yaml["endpoints"] if endpoint["name"] == "dashboard"
+    )
+    dashboard_endpoint["description"] = "Legacy dashboard endpoint"
+    dashboard_endpoint["query_params"][0]["description"] = "Legacy filter description"
+    dashboard_endpoint["query_params"][0]["required"] = False
+    dashboard_endpoint["query_params"][0]["default"] = "all"
+
+    connector = build_metabase_connector(connector_yaml, tmp_path, settings=object())
+
+    execute_config = next(
+        endpoint for endpoint in connector.api_config.endpoints if endpoint.name == "execute_sql"
+    )
+    dashboard_config = next(
+        endpoint for endpoint in connector.api_config.endpoints if endpoint.name == "dashboard"
+    )
+
+    assert execute_config.body_template is None
+    assert execute_config.description == ""
+    assert dashboard_config.description == ""
+    assert dashboard_config.query_params[0].description == ""
+    assert dashboard_config.query_params[0].default is None
+
+
+def test_metabase_save_connector_yaml_strips_legacy_endpoint_metadata(tmp_path, env_file):
+    connector_yaml = materialize_connector_template(
+        "metabase",
+        base_url="https://metabase.example.com",
+    )
+    assert connector_yaml is not None
+
+    execute_endpoint = next(
+        endpoint for endpoint in connector_yaml["endpoints"] if endpoint["name"] == "execute_sql"
+    )
+    execute_endpoint["body_template"] = {
+        "database": "{{database_id}}",
+        "type": "native",
+        "native": {"query": "{{sql}}"},
+    }
+    execute_endpoint["description"] = "Legacy SQL endpoint"
+
+    from db_mcp.connectors.api import build_api_connector_config
+
+    connector = MetabasePluginConnector(
+        build_api_connector_config(connector_yaml),
+        data_dir=str(tmp_path / "data"),
+        env_path=str(env_file),
+    )
+
+    output_path = tmp_path / "connector.yaml"
+    connector.save_connector_yaml(output_path)
+    saved = yaml.safe_load(output_path.read_text())
+
+    saved_execute_endpoint = next(
+        endpoint for endpoint in saved["endpoints"] if endpoint["name"] == "execute_sql"
+    )
+
+    assert "body_template" not in saved_execute_endpoint
+    assert "description" not in saved_execute_endpoint
