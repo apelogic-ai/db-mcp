@@ -7,10 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Fixed the built-in Metabase template to avoid depending on endpoint-level `body_template`
-  config for SQL execution. The Metabase plugin runtime now constructs `/api/dataset` payloads
-  directly, which keeps SQL execution working even when older runtime surfaces reload the saved
-  connector config.
+- _Add entries here during development._
+
+## [0.8.11] - 2026-03-30
+
+## Summary
+
+`v0.8.11` is a patch release on top of `v0.8.10`. It fixes Metabase SQL execution for
+template-based API connections by moving `/api/dataset` payload construction into the Metabase
+plugin runtime instead of relying on endpoint-level `body_template` config.
+
+## Highlights
+
+- Fixed Metabase SQL execution for real field configurations that failed on `body_template`
+  reload/parse paths.
+- Removed the built-in Metabase template's dependency on endpoint-level `body_template` config.
+- Added regression coverage proving the Metabase plugin still executes SQL when the saved
+  connector config does not carry `body_template`.
+
+## Breaking changes
+
+- None
+
+## Features
+
+- The Metabase plugin runtime now builds native-query `/api/dataset` payloads directly from the
+  resolved database route and SQL text.
+
+## Fixes
+
+- Fixed field-reported Metabase API failures that surfaced as
+  `APIEndpointConfig.__init__() got an unexpected keyword argument 'body_template'`.
+- Fixed the shipped Metabase template so SQL execution no longer depends on every config-loading
+  surface tolerating `body_template`.
+- Added release coverage for the template/runtime combination that backs Metabase SQL execution.
+
+## Security
+
+- None
+
+## Upgrade notes
+
+- If you are using the built-in Metabase template, upgrade to `v0.8.11` to pick up the more robust
+  SQL execution path.
+- Existing saved Metabase connections continue to work; newly materialized templates no longer
+  persist `body_template` for the `execute_sql` endpoint.
+
+## Validation
+
+- `python3 scripts/check_version_consistency.py`
+- `cd packages/core && uv run ruff check . --fix`
+- `cd packages/core && UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/ -v`
+
 
 ## [0.8.10] - 2026-03-28
 
