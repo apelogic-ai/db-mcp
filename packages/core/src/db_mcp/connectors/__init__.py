@@ -25,6 +25,7 @@ from db_mcp.connectors.api import (
 from db_mcp.connectors.file import FileConnector, FileConnectorConfig, FileSourceConfig
 from db_mcp.connectors.sql import SQLConnector, SQLConnectorConfig
 from db_mcp.contracts.connector_contracts import (
+    ConnectorContractV1,
     format_validation_error,
     validate_connector_contract,
 )
@@ -55,7 +56,7 @@ class ConnectorConfig:
 
         if "spec_version" in data:
             try:
-                validate_connector_contract(data)
+                validate_connector_contract(_filter_contract_payload(data))
             except ValidationError as exc:
                 details = "; ".join(format_validation_error(exc))
                 raise ValueError(f"Invalid connector contract: {details}") from exc
@@ -65,6 +66,12 @@ class ConnectorConfig:
         if loader is None:
             raise ValueError(f"Unknown connector type: {connector_type}")
         return loader(data)
+
+
+def _filter_contract_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only known top-level connector contract keys for runtime loading."""
+    valid_fields = set(ConnectorContractV1.model_fields)
+    return {key: value for key, value in data.items() if key in valid_fields}
 
 
 @runtime_checkable
