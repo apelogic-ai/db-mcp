@@ -322,6 +322,24 @@ Also update `CHANGELOG.md` with a `## [{VERSION}]` entry.
 
 Always run linting and tests after making code changes.
 
+### Before pushing to a PR
+
+**ALWAYS run the full test suite across all Python packages before pushing.** Changing code in one package can break tests in another (e.g. changing `packages/data` can break `packages/core` tests that exercise the same connectors). Running only the package you edited is not sufficient.
+
+```bash
+# From repo root — run all Python packages
+cd packages/data      && uv run pytest tests/ -q; cd ../..
+cd packages/knowledge && uv run pytest tests/ -q; cd ../..
+cd packages/core      && uv run pytest tests/ -q; cd ../..
+cd packages/mcp-server && uv run pytest tests/ -q; cd ../..
+cd packages/cli       && uv run pytest tests/ -q; cd ../..
+
+# Lint (repo-wide)
+uv run ruff check . --fix
+```
+
+Only push when all suites are green and lint is clean.
+
 ### Python changes (`packages/core/`)
 
 ```bash
