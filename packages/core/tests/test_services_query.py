@@ -563,20 +563,7 @@ async def test_run_sql_executes_validated_query_synchronously(monkeypatch):
     assert result["statement_type"] == "SELECT"
     assert result["is_write"] is False
     mark_running.assert_awaited_once_with("q-sync")
-    mark_complete.assert_awaited_once_with(
-        "q-sync",
-        result={
-            "data": [{"answer": 1}],
-            "columns": ["answer"],
-            "rows_returned": 1,
-            "duration_ms": 2.5,
-            "provider_id": "prod",
-            "statement_type": "SELECT",
-            "is_write": False,
-            "rows_affected": None,
-        },
-        rows_returned=1,
-    )
+    mark_complete.assert_awaited_once_with("q-sync", rows_returned=1)
 
 
 @pytest.mark.asyncio

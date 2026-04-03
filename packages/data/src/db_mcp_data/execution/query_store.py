@@ -55,9 +55,9 @@ class Query(BaseModel):
     explanation: list[Any] = Field(default_factory=list)  # EXPLAIN rows (str or dict)
 
     # Execution info
+    execution_id: str | None = None  # ExecutionStore handle; set when dispatched
     started_at: float | None = None
     completed_at: float | None = None
-    result: dict[str, Any] | None = None
     error: str | None = None
     rows_returned: int = 0
 
@@ -189,7 +189,6 @@ class QueryStore:
         self,
         query_id: str,
         status: str,
-        result: dict | None = None,
         error: str | None = None,
         rows_returned: int = 0,
     ) -> None:
@@ -207,8 +206,6 @@ class QueryStore:
             elif status in (QueryStatus.COMPLETE, QueryStatus.ERROR):
                 query.completed_at = time.time()
 
-            if result is not None:
-                query.result = result
             if error is not None:
                 query.error = error
             query.rows_returned = rows_returned

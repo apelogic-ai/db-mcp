@@ -325,6 +325,10 @@ async def _execute_query_background(
     started = time.time()
 
     try:
+        if execution_id:
+            dispatched = await store.get(query_id)
+            if dispatched:
+                dispatched.execution_id = execution_id
         await store.update_status(query_id, QueryStatus.RUNNING)
         if execution_id:
             execution_engine.mark_running(execution_id)
@@ -348,7 +352,6 @@ async def _execute_query_background(
         await store.update_status(
             query_id,
             QueryStatus.COMPLETE,
-            result=result,
             rows_returned=result["rows_returned"],
         )
         if execution_id:
@@ -1175,12 +1178,12 @@ async def _get_result(query_id: str, connection: str) -> dict:
     from db_mcp.tools.utils import _resolve_connection_path
 
     store = get_query_store()
+    connection_path = Path(_resolve_connection_path(connection))
+    execution_engine = get_execution_engine(connection_path)
     query = await store.get(query_id)
 
     if query is None:
         # Fallback to unified execution store for direct SQL execution IDs.
-        connection_path = Path(_resolve_connection_path(connection))
-        execution_engine = get_execution_engine(connection_path)
         execution_result = execution_engine.get_result(query_id)
         if execution_result is not None:
             metadata = execution_result.metadata or {}
@@ -1364,8 +1367,12 @@ async def _get_result(query_id: str, connection: str) -> dict:
         )
 
     if query.status == QueryStatus.COMPLETE:
-        result = query.result or {}
-        rows_returned = result.get("rows_returned", 0)
+        exec_result = execution_engine.get_result(query.execution_id or query_id)
+        data = exec_result.data if exec_result else []
+        columns = exec_result.columns if exec_result else []
+        rows_returned = exec_result.rows_returned if exec_result else query.rows_returned
+        duration_ms = exec_result.duration_ms if exec_result else None
+        exec_meta = (exec_result.metadata or {}) if exec_result else {}
         is_large = rows_returned > 100
 
         return inject_protocol(
@@ -1374,11 +1381,11 @@ async def _get_result(query_id: str, connection: str) -> dict:
                 "query_id": query_id,
                 "elapsed_seconds": round(query.elapsed_seconds, 1),
                 "sql": query.sql,
-                "data": result.get("data", []),
-                "columns": result.get("columns", []),
+                "data": data,
+                "columns": columns,
                 "rows_returned": rows_returned,
-                "duration_ms": result.get("duration_ms"),
-                "provider_id": result.get("provider_id"),
+                "duration_ms": duration_ms,
+                "provider_id": exec_meta.get("provider_id"),
                 "presentation_hints": {
                     "downloadable": True,
                     "large_result": is_large,

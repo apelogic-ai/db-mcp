@@ -35,7 +35,7 @@ class TestServerCollabLifespan:
         mock_settings.get_effective_connection_path.return_value = Path("/fake/conn")
 
         with (
-            patch("db_mcp_server.server.get_task_store") as mock_store,
+            patch("db_mcp_server.server.get_query_store") as mock_store,
             patch("db_mcp_server.server.get_settings", return_value=mock_settings),
             patch("db_mcp_knowledge.collab.manifest.load_manifest", return_value=manifest),
             patch(
@@ -75,7 +75,7 @@ class TestServerCollabLifespan:
         mock_settings.get_effective_connection_path.return_value = Path("/fake/conn")
 
         with (
-            patch("db_mcp_server.server.get_task_store") as mock_store,
+            patch("db_mcp_server.server.get_query_store") as mock_store,
             patch("db_mcp_server.server.get_settings", return_value=mock_settings),
             patch("db_mcp_knowledge.collab.manifest.load_manifest", return_value=manifest),
             patch(
@@ -116,7 +116,7 @@ class TestServerCollabLifespan:
         mock_settings.get_effective_connection_path.return_value = Path("/fake/conn")
 
         with (
-            patch("db_mcp_server.server.get_task_store") as mock_store,
+            patch("db_mcp_server.server.get_query_store") as mock_store,
             patch("db_mcp_server.server.get_settings", return_value=mock_settings),
             patch("db_mcp_knowledge.collab.manifest.load_manifest", return_value=None),
             patch("db_mcp_knowledge.collab.sync.collaborator_pull") as mock_pull,
@@ -143,7 +143,7 @@ class TestServerCollabLifespan:
         mock_settings.get_effective_connection_path.return_value = Path("/fake/conn")
 
         with (
-            patch("db_mcp_server.server.get_task_store") as mock_store,
+            patch("db_mcp_server.server.get_query_store") as mock_store,
             patch("db_mcp_server.server.get_settings", return_value=mock_settings),
             patch("db_mcp_knowledge.collab.manifest.load_manifest", return_value=manifest),
             patch(
@@ -178,7 +178,7 @@ class TestServerCollabLifespan:
         mock_settings.get_effective_connection_path.return_value = Path("/fake/conn")
 
         with (
-            patch("db_mcp_server.server.get_task_store") as mock_store,
+            patch("db_mcp_server.server.get_query_store") as mock_store,
             patch("db_mcp_server.server.get_settings", return_value=mock_settings),
             patch("db_mcp_knowledge.collab.manifest.load_manifest", return_value=manifest),
             patch(

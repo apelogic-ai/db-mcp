@@ -664,7 +664,6 @@ async def run_sql(
             }
             await _gateway_module.mark_complete(
                 query_id,
-                result=result,
                 rows_returned=result["rows_returned"],
             )
             _execution_id = handle.execution_id
@@ -705,7 +704,6 @@ async def run_sql(
             }
             await _gateway_module.mark_complete(
                 query_id,
-                result=result,
                 rows_returned=result["rows_returned"],
             )
             _execution_id = query_id
