@@ -46,6 +46,17 @@ const BICPContext = createContext<BICPContextValue | null>(null);
 
 let requestId = 0;
 
+// Methods handled by the BICP protocol endpoint (/bicp).
+// All other methods are routed to the REST API (/api/{method}).
+const BICP_PROTOCOL_METHODS = new Set([
+  "initialize",
+  "generate_candidates",
+  "execute_query",
+  "list_schemas",
+  "describe_schema",
+  "semantic_search",
+]);
+
 interface BICPProviderProps {
   children: ReactNode;
   baseUrl?: string;
@@ -67,6 +78,20 @@ export function BICPProvider({
       method: string,
       params?: Record<string, unknown>
     ): Promise<T> => {
+      // Custom UI methods (connections, context, metrics, etc.) go to the REST
+      // API router. Only the core BICP protocol methods use JSON-RPC over /bicp.
+      if (!BICP_PROTOCOL_METHODS.has(method)) {
+        const response = await fetch(`/api/${method}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: params ? JSON.stringify(params) : undefined,
+        });
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
+        }
+        return response.json() as Promise<T>;
+      }
+
       const request: JSONRPCRequest = {
         jsonrpc: "2.0",
         method,
