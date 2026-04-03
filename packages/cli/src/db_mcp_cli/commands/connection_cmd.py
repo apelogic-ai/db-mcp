@@ -600,8 +600,8 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
             execution_engine = get_execution_engine(connection_path)
             request = ExecutionRequest(connection=connection_name, sql=test_sql)
 
-            def _runner(sql: str) -> dict[str, object]:
-                rows = connector.execute_sql(sql)
+            def _runner(payload: dict) -> dict[str, object]:
+                rows = connector.execute_sql(payload.get("sql", ""))
                 columns = list(rows[0].keys()) if rows else []
                 return {
                     "data": rows,

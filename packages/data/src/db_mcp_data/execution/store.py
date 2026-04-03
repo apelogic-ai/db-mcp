@@ -72,7 +72,10 @@ class ExecutionStore:
                     error_details TEXT,
                     data_json TEXT,
                     columns_json TEXT,
-                    metadata_json TEXT
+                    metadata_json TEXT,
+                    query_type TEXT NOT NULL DEFAULT 'sql',
+                    payload_json TEXT,
+                    payload_hash TEXT
                 )
                 """
             )
@@ -83,13 +86,31 @@ class ExecutionStore:
                 WHERE idempotency_key IS NOT NULL
                 """
             )
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Add columns introduced in B2d if the table predates them."""
+        existing = {
+            row[1] for row in conn.execute("PRAGMA table_info(executions)").fetchall()
+        }
+        if "query_type" not in existing:
+            conn.execute(
+                "ALTER TABLE executions ADD COLUMN query_type TEXT NOT NULL DEFAULT 'sql'"
+            )
+        if "payload_json" not in existing:
+            conn.execute("ALTER TABLE executions ADD COLUMN payload_json TEXT")
+        if "payload_hash" not in existing:
+            conn.execute("ALTER TABLE executions ADD COLUMN payload_hash TEXT")
 
     def create_submission(
         self,
         request: ExecutionRequest,
+        payload_hash: str | None = None,
+        # Deprecated: sql_hash= accepted for call-site compat, treated as payload_hash
         sql_hash: str | None = None,
     ) -> ExecutionHandle:
         """Create a submission record or return existing one for idempotency key."""
+        resolved_hash = payload_hash or sql_hash
         now = time.time()
         execution_id = str(uuid.uuid4())
 
@@ -98,24 +119,29 @@ class ExecutionStore:
             if existing is not None:
                 return existing
 
+        sql_str = request.sql  # None for non-SQL payloads; kept in deprecated column
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO executions (
                     execution_id, connection, query_id, sql, sql_hash,
-                    idempotency_key, state, created_at, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    idempotency_key, state, created_at, metadata_json,
+                    query_type, payload_json, payload_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     execution_id,
                     request.connection,
                     request.query_id,
-                    request.sql,
-                    sql_hash,
+                    sql_str,
+                    resolved_hash,
                     request.idempotency_key,
                     ExecutionState.SUBMITTED.value,
                     now,
                     json.dumps(request.metadata or {}),
+                    request.query_type,
+                    json.dumps(request.payload) if request.payload else None,
+                    resolved_hash,
                 ),
             )
 
@@ -125,7 +151,7 @@ class ExecutionStore:
             state=ExecutionState.SUBMITTED,
             submitted_at=_to_utc(now) or datetime.now(UTC),
             query_id=request.query_id,
-            sql_hash=sql_hash,
+            sql_hash=resolved_hash,
         )
 
     def get_by_idempotency(self, connection: str, idempotency_key: str) -> ExecutionHandle | None:

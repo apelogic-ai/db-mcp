@@ -517,7 +517,7 @@ async def test_run_sql_executes_validated_query_synchronously(monkeypatch):
             assert request.sql == "SELECT 1 AS answer"
             assert request.query_id == "q-sync"
             assert request.idempotency_key == "q-sync"
-            runner_result = runner("SELECT 1 AS answer")
+            runner_result = runner({"sql": "SELECT 1 AS answer"})
             assert runner_result == {
                 "data": [{"answer": 1}],
                 "columns": ["answer"],
@@ -763,7 +763,7 @@ async def test_run_sql_executes_direct_sql_synchronously_when_validate_is_disabl
             assert request.sql == "SELECT 1 AS answer"
             assert request.query_id == "q-direct"
             assert request.idempotency_key == "q-direct"
-            runner_result = runner("SELECT 1 AS answer")
+            runner_result = runner({"sql": "SELECT 1 AS answer"})
             assert runner_result == {
                 "data": [{"answer": 1}],
                 "columns": ["answer"],

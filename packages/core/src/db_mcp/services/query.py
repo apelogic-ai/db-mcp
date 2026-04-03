@@ -215,7 +215,8 @@ def _build_direct_sync_response(
         idempotency_key=direct_query_id,
     )
 
-    def _direct_runner(runner_sql: str) -> dict[str, Any]:
+    def _direct_runner(payload: dict[str, Any]) -> dict[str, Any]:
+        runner_sql = payload.get("sql", "")
         # Prefer injected callbacks for backward compat; fall back to gateway.
         if direct_execute is not None:
             raw = direct_execute(runner_sql)
@@ -625,7 +626,8 @@ async def run_sql(
                 idempotency_key=query_id,
             )
 
-            def _validated_runner(runner_sql: str) -> dict[str, Any]:
+            def _validated_runner(payload: dict[str, Any]) -> dict[str, Any]:
+                runner_sql = payload.get("sql", "")
                 raw = execute_query(runner_sql, connection=execution_connection, query_id=query_id)
                 return {
                     "data": raw.get("data", []),

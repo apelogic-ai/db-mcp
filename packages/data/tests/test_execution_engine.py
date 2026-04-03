@@ -41,8 +41,8 @@ def test_execution_engine_submit_sync_success(tmp_path: Path):
     engine = ExecutionEngine(store)
     request = ExecutionRequest(connection="analytics_connection", sql="SELECT 1")
 
-    def runner(sql: str):
-        assert sql == "SELECT 1"
+    def runner(payload: dict):
+        assert payload.get("sql") == "SELECT 1"
         return {
             "data": [{"ok": True}],
             "columns": ["ok"],
@@ -64,8 +64,8 @@ def test_execution_engine_submit_sync_failure(tmp_path: Path):
     engine = ExecutionEngine(store)
     request = ExecutionRequest(connection="analytics_connection", sql="SELECT broken")
 
-    def runner(sql: str):
-        raise RuntimeError(f"boom on {sql}")
+    def runner(payload: dict):
+        raise RuntimeError(f"boom on {payload.get('sql', '')}")
 
     handle, result = engine.submit_sync(request, runner)
 
@@ -85,7 +85,7 @@ def test_execution_engine_idempotency_returns_existing_execution(tmp_path: Path)
         idempotency_key="same-key",
     )
 
-    def runner(sql: str):
+    def runner(payload: dict):
         return {
             "data": [{"value": 1}],
             "columns": ["value"],

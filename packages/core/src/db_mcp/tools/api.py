@@ -128,7 +128,7 @@ async def _api_query(
         metadata={"endpoint": endpoint, "params": params or {}},
     )
 
-    def _run(_sql: str) -> dict:
+    def _run(_payload: dict) -> dict:
         res = connector.query_endpoint(endpoint, params, max_pages, id=id)
         if _is_auth_error(res):
             ConnectionRegistry.get_instance().invalidate_connector(connection)
