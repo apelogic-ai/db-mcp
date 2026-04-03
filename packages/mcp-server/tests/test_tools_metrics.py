@@ -31,14 +31,8 @@ async def test_metrics_list(mock_resolve):
     mock_bindings_catalog.bindings = {}
 
     with (
-        patch(
-            "db_mcp_server.tools.metrics.load_metrics",
-            return_value=mock_metrics_catalog,
-        ),
-        patch(
-            "db_mcp_server.tools.metrics.load_dimensions",
-            return_value=mock_dims_catalog,
-        ),
+        patch("db_mcp_server.tools.metrics.load_metrics", return_value=mock_metrics_catalog),
+        patch("db_mcp_server.tools.metrics.load_dimensions", return_value=mock_dims_catalog),
         patch(
             "db_mcp_server.tools.metrics.load_metric_bindings",
             return_value=mock_bindings_catalog,
@@ -57,9 +51,9 @@ async def test_metrics_list(mock_resolve):
 @pytest.mark.asyncio
 async def test_metrics_approve_metric(mock_resolve):
     with patch(
-        "db_mcp_server.tools.metrics.add_metric",
-        return_value={"added": True},
-    ) as mock_add:
+        "db_mcp_server.tools.metrics.vault_write_typed",
+        return_value={"saved": True},
+    ) as mock_write:
         from db_mcp_server.tools.metrics import _metrics_approve
 
         result = await _metrics_approve(
@@ -73,11 +67,11 @@ async def test_metrics_approve_metric(mock_resolve):
     assert result["approved"] is True
     assert result["type"] == "metric"
     assert result["name"] == "dau"
-    mock_add.assert_called_once()
-    call_kwargs = mock_add.call_args.kwargs
-    assert call_kwargs["name"] == "dau"
-    assert call_kwargs["description"] == "daily active users"
-    assert call_kwargs["sql"] == "COUNT(DISTINCT user_id)"
+    mock_write.assert_called_once()
+    call_args = mock_write.call_args
+    assert call_args.args[0] == "metric"
+    assert call_args.args[1]["name"] == "dau"
+    assert call_args.args[1]["description"] == "daily active users"
 
 
 @pytest.mark.asyncio
@@ -94,18 +88,30 @@ async def test_metrics_approve_missing_description(mock_resolve):
 @pytest.mark.asyncio
 async def test_metrics_remove(mock_resolve):
     with patch(
-        "db_mcp_server.tools.metrics.delete_metric",
+        "db_mcp_server.tools.metrics.vault_delete_typed",
         return_value={"deleted": True},
     ) as mock_del:
         from db_mcp_server.tools.metrics import _metrics_remove
 
-        result = await _metrics_remove(
-            type="metric", name="dau", connection="mydb"
-        )
+        result = await _metrics_remove(type="metric", name="dau", connection="mydb")
 
     assert result["removed"] is True
     assert result["name"] == "dau"
-    mock_del.assert_called_once_with("sqlite", "dau", connection_path=Path("/tmp/test"))
+    mock_del.assert_called_once_with("metric_deletion", "dau", "sqlite", Path("/tmp/test"))
+
+
+@pytest.mark.asyncio
+async def test_metrics_remove_nonexistent(mock_resolve):
+    with patch(
+        "db_mcp_server.tools.metrics.vault_delete_typed",
+        side_effect=ValueError("Metric 'dau' not found in catalog"),
+    ):
+        from db_mcp_server.tools.metrics import _metrics_remove
+
+        result = await _metrics_remove(type="metric", name="dau", connection="mydb")
+
+    assert result["removed"] is False
+    assert "not found" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -152,9 +158,9 @@ async def test_metrics_bindings_set(mock_resolve):
             return_value={"valid": True},
         ),
         patch(
-            "db_mcp_server.tools.metrics.upsert_metric_binding",
+            "db_mcp_server.tools.metrics.vault_write_typed",
             return_value={"saved": True, "file_path": "/tmp/test/metrics/bindings.yaml"},
-        ) as mock_upsert,
+        ) as mock_write,
         patch(
             "db_mcp_server.tools.metrics._serialize_metric_binding",
             return_value={"metric_name": "dau", "sql": "COUNT(...)"},
@@ -171,7 +177,8 @@ async def test_metrics_bindings_set(mock_resolve):
 
     assert result["saved"] is True
     assert result["metric_name"] == "dau"
-    mock_upsert.assert_called_once()
+    mock_write.assert_called_once()
+    assert mock_write.call_args.args[0] == "metric_binding"
 
 
 @pytest.mark.asyncio
