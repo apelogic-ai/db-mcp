@@ -6,13 +6,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-from db_mcp.execution.policy import (
+from db_mcp_data.execution.policy import (
     check_protocol_ack_gate,
     evaluate_sql_execution_policy,
     has_fresh_protocol_ack,
     record_protocol_ack,
 )
+
 from db_mcp.tools.shell import _protocol
 
 

@@ -33,10 +33,9 @@ def conn_path(tmp_path, monkeypatch):
     monkeypatch.setenv("CONNECTION_NAME", "test-conn")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///test.db")
 
-    # Patch _get_connection_dir in the store module
-    monkeypatch.setattr("db_mcp.metrics.store._get_connection_dir", lambda provider_id=None: conn)
-    monkeypatch.setattr("db_mcp.onboarding.state.get_provider_dir", lambda provider_id=None: conn)
-    monkeypatch.setattr("db_mcp.onboarding.state.get_connection_path", lambda: conn)
+    monkeypatch.setattr(
+        "db_mcp_knowledge.onboarding.state.get_provider_dir", lambda provider_id: conn
+    )
     # tools module now uses resolve_connection for path resolution
     monkeypatch.setattr(
         "db_mcp.tools.metrics.resolve_connection",

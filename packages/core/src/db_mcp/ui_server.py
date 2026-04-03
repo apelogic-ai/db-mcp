@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from db_mcp.api.router import router as api_router
 from db_mcp.bicp import DBMCPAgent
 from db_mcp.code_runtime.http import runtime_router
 
@@ -215,6 +216,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(runtime_router)
+    app.include_router(api_router, prefix="/api")
 
     def _serve_exported_page(*segments: str):
         page_path = STATIC_DIR.joinpath(*segments, "index.html")

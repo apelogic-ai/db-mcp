@@ -2,21 +2,22 @@
 
 from pathlib import Path
 
-from db_mcp.cli.init_flow import _init_greenfield
+import db_mcp_cli.init_flow as _init_flow_real_module
+from db_mcp_cli.init_flow import _init_greenfield
 
 
 def test_init_greenfield_api_flow_skips_database_url(monkeypatch, tmp_path):
     """Selecting API setup should avoid DATABASE_URL prompts."""
-    from db_mcp.cli import init_flow
+    init_flow = _init_flow_real_module
 
     called: dict[str, bool] = {}
 
     monkeypatch.setattr(
-        "db_mcp.cli.agent_config.extract_database_url_from_claude_config",
+        "db_mcp_cli.agent_config.extract_database_url_from_claude_config",
         lambda _cfg: None,
     )
     monkeypatch.setattr(
-        "db_mcp.cli.utils.load_claude_desktop_config",
+        "db_mcp_cli.utils.load_claude_desktop_config",
         lambda: ({}, Path(tmp_path / "claude_desktop_config.json")),
     )
     monkeypatch.setattr(init_flow, "load_config", lambda: {})
@@ -55,16 +56,16 @@ def test_init_greenfield_api_flow_skips_database_url(monkeypatch, tmp_path):
 
 def test_init_greenfield_api_flow_passes_template_name(monkeypatch, tmp_path):
     """API greenfield setup should forward the selected template name."""
-    from db_mcp.cli import init_flow
+    init_flow = _init_flow_real_module
 
     called: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "db_mcp.cli.agent_config.extract_database_url_from_claude_config",
+        "db_mcp_cli.agent_config.extract_database_url_from_claude_config",
         lambda _cfg: None,
     )
     monkeypatch.setattr(
-        "db_mcp.cli.utils.load_claude_desktop_config",
+        "db_mcp_cli.utils.load_claude_desktop_config",
         lambda: ({}, Path(tmp_path / "claude_desktop_config.json")),
     )
     monkeypatch.setattr(init_flow, "load_config", lambda: {})

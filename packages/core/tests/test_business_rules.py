@@ -3,12 +3,12 @@
 from pathlib import Path
 
 import yaml
+from db_mcp_knowledge.business_rules import compile_semantic_policy, extract_business_rule_texts
+from db_mcp_knowledge.training.store import load_instructions
 from db_mcp_models import BoundaryMode, SemanticPolicy
 from db_mcp_models.policy import TimeWindowPolicy, UnitConversionPolicy
 
 from db_mcp.bicp.traces import _check_knowledge_status
-from db_mcp.business_rules import compile_semantic_policy, extract_business_rule_texts
-from db_mcp.training.store import load_instructions
 
 
 def test_extract_business_rule_texts_supports_top_level_rule_list() -> None:
@@ -38,7 +38,7 @@ def test_load_instructions_supports_top_level_rule_list(tmp_path: Path, monkeypa
     )
 
     monkeypatch.setattr(
-        "db_mcp.training.store.get_provider_dir",
+        "db_mcp_knowledge.training.store.get_provider_dir",
         lambda provider_id: provider_path,
     )
 

@@ -11,7 +11,7 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from db_mcp.business_rules import extract_business_rule_texts
+from db_mcp_knowledge.business_rules import extract_business_rule_texts
 
 logger = logging.getLogger(__name__)
 
@@ -946,7 +946,7 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
     # Check which repeated queries / errors are already saved as training examples
     if connection_path and (repeated_queries or error_traces):
         try:
-            from db_mcp.training.store import load_examples
+            from db_mcp_knowledge.training.store import load_examples
 
             provider_id = connection_path.name
             examples = load_examples(provider_id)
@@ -1042,7 +1042,7 @@ def analyze_traces(traces: list[dict], connection_path: Path | None = None, days
     persisted_gaps: list[dict] = []
     if connection_path:
         try:
-            from db_mcp.gaps.store import load_gaps_from_path, merge_trace_gaps
+            from db_mcp_knowledge.gaps.store import load_gaps_from_path, merge_trace_gaps
 
             # Persist any newly detected trace gaps
             if trace_detected_gaps:

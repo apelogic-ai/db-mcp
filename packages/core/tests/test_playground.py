@@ -7,8 +7,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 from click.testing import CliRunner
+from db_mcp_cli.main import main
 
-from db_mcp.cli import main
 from db_mcp.playground import (
     PLAYGROUND_CONNECTION_NAME,
     install_playground,

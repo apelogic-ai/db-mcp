@@ -1,6 +1,15 @@
 """Shared Pydantic models for db-mcp."""
 
 from db_mcp_models.gaps import GapSource, GapStatus, KnowledgeGap, KnowledgeGaps
+from db_mcp_models.gateway import (
+    ColumnMeta,
+    DataRequest,
+    DataResponse,
+    EndpointQuery,
+    RunOptions,
+    SQLQuery,
+    ValidatedQuery,
+)
 from db_mcp_models.meta_query import (
     ExpectedCardinality,
     MetaDimension,
@@ -45,6 +54,7 @@ from db_mcp_models.policy import (
     UnitConversionPolicy,
 )
 from db_mcp_models.query import QueryMetadata, QueryResult
+from db_mcp_models.sql_expr import SqlExpr
 from db_mcp_models.task import Task, TaskStatus
 from db_mcp_models.training import (
     CandidateRule,
@@ -121,9 +131,19 @@ __all__ = [
     "ConfidenceVector",
     "ResultShape",
     "AnswerIntentResponse",
+    # Gateway
+    "ColumnMeta",
+    "DataResponse",
+    "DataRequest",
+    "SQLQuery",
+    "EndpointQuery",
+    "RunOptions",
+    "ValidatedQuery",
     # Policy
     "BoundaryMode",
     "TimeWindowPolicy",
     "UnitConversionPolicy",
     "SemanticPolicy",
+    # SQL expression type
+    "SqlExpr",
 ]

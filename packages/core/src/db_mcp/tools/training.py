@@ -1,12 +1,8 @@
 """Query training MCP tools - examples, feedback, and rule distillation."""
 
-from db_mcp_models import FeedbackType
-from opentelemetry import trace
-
-from db_mcp.onboarding.schema_store import load_schema_descriptions
-from db_mcp.onboarding.state import load_state
-from db_mcp.tools.utils import resolve_connection
-from db_mcp.training.store import (
+from db_mcp_knowledge.onboarding.schema_store import load_schema_descriptions
+from db_mcp_knowledge.onboarding.state import load_state
+from db_mcp_knowledge.training.store import (
     add_example,
     add_feedback,
     add_rule,
@@ -14,6 +10,10 @@ from db_mcp.training.store import (
     load_feedback,
     load_instructions,
 )
+from db_mcp_models import FeedbackType
+from opentelemetry import trace
+
+from db_mcp.tools.utils import resolve_connection
 
 
 async def _query_status(connection: str) -> dict:
@@ -26,10 +26,10 @@ async def _query_status(connection: str) -> dict:
         Dict with training phase status
     """
     # Resolve connection for validation and provider_id
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, conn_path = resolve_connection(connection)
 
     # Load current state
-    state = load_state(provider_id)
+    state = load_state(provider_id, connection_path=conn_path)
     examples = load_examples(provider_id)
     feedback_log = load_feedback(provider_id)
     instructions = load_instructions(provider_id)
@@ -508,7 +508,7 @@ async def _import_instructions(rules: list[str], connection: str) -> dict:
         else:
             skipped_count += 1
 
-    from db_mcp.training.store import save_instructions
+    from db_mcp_knowledge.training.store import save_instructions
 
     result = save_instructions(instructions)
 

@@ -2,8 +2,9 @@
 
 from typing import Any
 
-from db_mcp.connectors import APIConnector, get_connector_capabilities
-from db_mcp.execution import check_protocol_ack_gate, evaluate_sql_execution_policy
+from db_mcp_data.connectors import APIConnector, get_connector_capabilities
+from db_mcp_data.execution import check_protocol_ack_gate, evaluate_sql_execution_policy
+
 from db_mcp.registry import ConnectionRegistry
 from db_mcp.tools.utils import require_connection, resolve_connection
 

@@ -8,8 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-
-from db_mcp.cli.agent_config import (
+from db_mcp_cli.agent_config import (
     _configure_agents_interactive,
     _configure_claude_desktop,
     extract_database_url_from_claude_config,
@@ -101,9 +100,9 @@ class TestExtractDatabaseUrlFromClaudeConfig:
 
 
 class TestConfigureAgentsInteractive:
-    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=[])
+    @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=[])
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
             "claude-code": SimpleNamespace(name="Claude Code"),
@@ -115,9 +114,9 @@ class TestConfigureAgentsInteractive:
         assert result == []
         mock_detect.assert_called_once()
 
-    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
+    @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
         },
@@ -127,9 +126,9 @@ class TestConfigureAgentsInteractive:
         result = _configure_agents_interactive()
         assert result == ["claude-desktop"]
 
-    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
+    @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
         },
@@ -140,11 +139,11 @@ class TestConfigureAgentsInteractive:
         assert result == []
 
     @patch(
-        "db_mcp.cli.agent_config.detect_installed_agents",
+        "db_mcp_cli.agent_config.detect_installed_agents",
         return_value=["claude-desktop", "cursor"],
     )
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
             "cursor": SimpleNamespace(name="Cursor"),
@@ -157,11 +156,11 @@ class TestConfigureAgentsInteractive:
         assert result == ["claude-desktop", "cursor"]
 
     @patch(
-        "db_mcp.cli.agent_config.detect_installed_agents",
+        "db_mcp_cli.agent_config.detect_installed_agents",
         return_value=["claude-desktop", "cursor"],
     )
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
             "cursor": SimpleNamespace(name="Cursor"),
@@ -173,9 +172,9 @@ class TestConfigureAgentsInteractive:
         result = _configure_agents_interactive()
         assert result == ["claude-desktop"]
 
-    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
+    @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
         },
@@ -186,15 +185,15 @@ class TestConfigureAgentsInteractive:
         result = _configure_agents_interactive(preselect_installed=False)
         assert isinstance(result, list)
 
-    @patch("db_mcp.cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
+    @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
             "claude-code": SimpleNamespace(name="Claude Code"),
         },
     )
-    @patch("db_mcp.cli.agent_config.console.print")
+    @patch("db_mcp_cli.agent_config.console.print")
     @patch("rich.prompt.Prompt.ask", return_value="3")
     def test_configure_later_displays_relaunch_hints(
         self, mock_ask, mock_console_print, mock_detect
@@ -208,17 +207,17 @@ class TestConfigureAgentsInteractive:
         assert "db-mcp ui" in rendered
 
     @patch(
-        "db_mcp.cli.agent_config.detect_installed_agents",
+        "db_mcp_cli.agent_config.detect_installed_agents",
         return_value=["claude-desktop", "claude-code"],
     )
     @patch(
-        "db_mcp.cli.agent_config.AGENTS",
+        "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
             "claude-code": SimpleNamespace(name="Claude Code"),
         },
     )
-    @patch("db_mcp.cli.agent_config.console.print")
+    @patch("db_mcp_cli.agent_config.console.print")
     @patch("rich.prompt.Confirm.ask", side_effect=[False, False])
     @patch("rich.prompt.Prompt.ask", return_value="2")
     def test_select_specific_none_selected_displays_relaunch_hints(
@@ -234,13 +233,13 @@ class TestConfigureAgentsInteractive:
 
 
 class TestConfigureClaudeDesktop:
-    @patch("db_mcp.cli.agent_config.get_db_mcp_binary_path", return_value="/usr/local/bin/db-mcp")
+    @patch("db_mcp_cli.agent_config.get_db_mcp_binary_path", return_value="/usr/local/bin/db-mcp")
     @patch("db_mcp.agents.configure_agent_for_dbmcp")
     def test_calls_configure_agent_for_claude_desktop(self, mock_configure, mock_binary):
         _configure_claude_desktop("mydb")
         mock_configure.assert_called_once_with("claude-desktop", "/usr/local/bin/db-mcp")
 
-    @patch("db_mcp.cli.agent_config.get_db_mcp_binary_path", return_value="/custom/path/db-mcp")
+    @patch("db_mcp_cli.agent_config.get_db_mcp_binary_path", return_value="/custom/path/db-mcp")
     @patch("db_mcp.agents.configure_agent_for_dbmcp")
     def test_uses_binary_path_from_helper(self, mock_configure, mock_binary):
         _configure_claude_desktop("anything")

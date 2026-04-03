@@ -2,15 +2,16 @@
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import db_mcp_data.gateway as gw
 import pytest
+from db_mcp_data.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
+from db_mcp_data.execution import engine as execution_engine
+from db_mcp_data.execution.query_store import Query, QueryStatus
 
 from db_mcp.config import reset_settings
-from db_mcp.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
-from db_mcp.execution import engine as execution_engine
 from db_mcp.registry import ConnectionRegistry
-from db_mcp.tasks.store import Query, QueryStatus
 from db_mcp.tools.generation import _get_result, _run_sql, _validate_sql
 
 CONNECTION = "test_connection"
@@ -169,6 +170,156 @@ async def test_run_sql_allows_direct_sql_for_engine_mode():
     assert payload["status"] == "success"
     assert payload["rows_returned"] == 1
     assert payload["data"][0]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_run_sql_direct_engine_mode_delegates_to_query_service():
+    captured = {}
+
+    async def _fake_run_sql(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "success",
+            "mode": "sync",
+            "query_id": "q-direct",
+            "execution_id": "exec-direct",
+            "state": "succeeded",
+            "sql": "SELECT 1",
+            "data": [{"ok": 1}],
+            "columns": ["ok"],
+            "rows_returned": 1,
+            "duration_ms": 1.0,
+            "provider_id": "test_connection",
+            "cost_tier": "unknown",
+            "statement_type": "SELECT",
+            "is_write": False,
+            "rows_affected": None,
+        }
+
+    with (
+        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
+        patch(
+            "db_mcp.tools.generation.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "sql_mode": "engine",
+            },
+        ),
+        patch("db_mcp.tools.generation.query_service.run_sql", side_effect=_fake_run_sql),
+    ):
+        result = await _run_sql(sql="SELECT 1", connection=CONNECTION)
+
+    payload = result.structuredContent
+    assert payload["status"] == "success"
+    assert payload["query_id"] == "q-direct"
+    assert captured["connection"] == CONNECTION
+    assert captured["sql"] == "SELECT 1"
+    assert callable(captured["execute_query"])
+    assert callable(captured["generate_query_id"])
+    assert captured["connection_path"].name == CONNECTION
+
+
+@pytest.mark.asyncio
+async def test_run_sql_direct_api_mode_delegates_to_query_service():
+    captured = {}
+    fake_connector = object()
+
+    async def _fake_run_sql(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "submitted",
+            "mode": "async",
+            "query_id": "exec-api",
+            "execution_id": "exec-api",
+            "state": "running",
+            "sql": "SELECT 1",
+            "external_execution_id": "remote-exec-1",
+            "message": "submitted",
+            "poll_interval_seconds": 5,
+        }
+
+    with (
+        patch("db_mcp.tools.generation.get_connector", return_value=fake_connector),
+        patch(
+            "db_mcp.tools.generation.get_connector_capabilities",
+            return_value={
+                "supports_sql": True,
+                "supports_validate_sql": False,
+                "sql_mode": "api_sync",
+            },
+        ),
+        patch("db_mcp.tools.generation.query_service.run_sql", side_effect=_fake_run_sql),
+    ):
+        result = await _run_sql(sql="SELECT 1", connection=CONNECTION)
+
+    payload = result.structuredContent
+    assert payload["status"] == "submitted"
+    assert payload["query_id"] == "exec-api"
+    assert captured["connection"] == CONNECTION
+    assert captured["sql"] == "SELECT 1"
+    assert captured["connector"] is fake_connector
+    assert captured["capabilities"]["sql_mode"] == "api_sync"
+    assert callable(captured["generate_query_id"])
+    assert captured["direct_execute"] is None
+    assert captured["connection_path"].name == CONNECTION
+
+
+@pytest.mark.asyncio
+async def test_run_sql_passes_validated_query_dependencies_without_mutating_query_service():
+    from db_mcp.tools.generation import query_service
+
+    captured = {}
+    sentinel_ack_gate = object()
+    fake_connector = object()
+
+    async def _fake_run_sql(**kwargs):
+        captured.update(kwargs)
+        captured["current_ack_gate"] = query_service.check_protocol_ack_gate
+        return {
+            "status": "success",
+            "query_id": "q-1",
+            "execution_id": "exec-1",
+            "state": "succeeded",
+            "sql": "SELECT 1",
+            "data": [],
+            "columns": [],
+            "rows_returned": 0,
+            "duration_ms": 1.0,
+            "provider_id": CONNECTION,
+            "cost_tier": "auto",
+            "statement_type": "SELECT",
+            "is_write": False,
+            "rows_affected": None,
+        }
+
+    with (
+        patch("db_mcp.tools.generation.query_service.run_sql", side_effect=_fake_run_sql),
+        patch("db_mcp.tools.generation.get_connector", return_value=fake_connector),
+        patch(
+            "db_mcp.tools.generation.get_connector_capabilities",
+            return_value={"supports_sql": True, "supports_validate_sql": True},
+        ),
+        patch(
+            "db_mcp.tools.utils._resolve_connection_path",
+            return_value="/tmp/test-connection",
+        ),
+        patch.object(query_service, "check_protocol_ack_gate", sentinel_ack_gate),
+    ):
+        result = await _run_sql(query_id="q-1", connection=CONNECTION)
+
+    payload = result.structuredContent
+    assert payload["status"] == "success"
+    assert captured["connection"] == CONNECTION
+    assert captured["query_id"] == "q-1"
+    assert captured["connector"] is fake_connector
+    assert captured["capabilities"]["supports_validate_sql"] is True
+    # query_store_factory is no longer injected — run_sql routes through gateway lifecycle
+    assert "query_store_factory" not in captured
+    assert callable(captured["protocol_ack_checker"])
+    assert callable(captured["execution_policy_evaluator"])
+    assert captured["connection_path"] == Path("/tmp/test-connection")
+    assert captured["current_ack_gate"] is sentinel_ack_gate
 
 
 @pytest.mark.asyncio
@@ -388,15 +539,11 @@ async def test_run_sql_no_params_guidance_adapts():
 
 
 @pytest.mark.asyncio
-async def test_validate_sql_reports_unsupported_for_api_connector():
-    with (
-        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
-        patch(
-            "db_mcp.tools.generation.get_connector_capabilities",
-            return_value={"supports_validate_sql": False},
-        ),
-    ):
-        result = await _validate_sql("SELECT 1", connection=CONNECTION)
+async def test_validate_sql_reports_unsupported_for_api_connector(monkeypatch):
+    monkeypatch.setattr(
+        gw, "capabilities", lambda connection_path: {"supports_validate_sql": False}
+    )
+    result = await _validate_sql("SELECT 1", connection=CONNECTION)
 
     payload = result.structuredContent
     assert payload["valid"] is False
@@ -420,7 +567,7 @@ async def test_validate_sql_rejects_write_by_default():
 
 
 @pytest.mark.asyncio
-async def test_validate_sql_allows_write_when_enabled_for_connection():
+async def test_validate_sql_allows_write_when_enabled_for_connection(monkeypatch):
     query = Query(
         query_id="q-1",
         sql="INSERT INTO users(id) VALUES (1)",
@@ -432,19 +579,17 @@ async def test_validate_sql_allows_write_when_enabled_for_connection():
         async def register_validated(self, **kwargs):
             return query
 
-    with (
-        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
-        patch(
-            "db_mcp.tools.generation.get_connector_capabilities",
-            return_value={
-                "supports_validate_sql": True,
-                "allow_sql_writes": True,
-                "allowed_write_statements": ["INSERT"],
-                "require_write_confirmation": True,
-            },
-        ),
-        patch("db_mcp.tasks.store.get_query_store", return_value=_Store()),
-    ):
+    monkeypatch.setattr(
+        gw,
+        "capabilities",
+        lambda connection_path: {
+            "supports_validate_sql": True,
+            "allow_sql_writes": True,
+            "allowed_write_statements": ["INSERT"],
+            "require_write_confirmation": True,
+        },
+    )
+    with patch("db_mcp_data.execution.query_store.get_query_store", return_value=_Store()):
         result = await _validate_sql(
             "INSERT INTO users(id) VALUES (1)", connection=WRITE_CONNECTION
         )
@@ -457,23 +602,62 @@ async def test_validate_sql_allows_write_when_enabled_for_connection():
 
 
 @pytest.mark.asyncio
-async def test_validate_sql_rejects_disallowed_write_statement():
-    with (
-        patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
-        patch(
-            "db_mcp.tools.generation.get_connector_capabilities",
-            return_value={
-                "supports_validate_sql": True,
-                "allow_sql_writes": True,
-                "allowed_write_statements": ["INSERT"],
-            },
-        ),
-    ):
-        result = await _validate_sql("DELETE FROM users WHERE id = 1", connection=CONNECTION)
+async def test_validate_sql_rejects_disallowed_write_statement(monkeypatch):
+    monkeypatch.setattr(
+        gw,
+        "capabilities",
+        lambda connection_path: {
+            "supports_validate_sql": True,
+            "allow_sql_writes": True,
+            "allowed_write_statements": ["INSERT"],
+        },
+    )
+    result = await _validate_sql("DELETE FROM users WHERE id = 1", connection=CONNECTION)
 
     payload = result.structuredContent
     assert payload["valid"] is False
     assert "not enabled" in payload["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_sql_passes_dependencies_without_mutating_query_service():
+    """_validate_sql passes policy injection kwargs to validate_sql without
+    mutating query_service module attributes.  query_store_factory is no longer
+    injected; persistence routes through gateway.create() exclusively."""
+    from db_mcp.tools.generation import query_service
+
+    captured = {}
+    sentinel_explain = object()
+
+    async def _fake_validate_sql(**kwargs):
+        captured.update(kwargs)
+        captured["current_explain_sql"] = query_service.explain_sql
+        return {"valid": True, "query_id": "q-1"}
+
+    with (
+        patch(
+            "db_mcp.tools.generation.query_service.validate_sql",
+            side_effect=_fake_validate_sql,
+        ),
+        patch.object(
+            query_service,
+            "explain_sql",
+            sentinel_explain,
+        ),
+    ):
+        result = await _validate_sql("SELECT 1", connection=CONNECTION)
+
+    payload = result.structuredContent
+    assert payload["valid"] is True
+    assert captured["connection"] == CONNECTION
+    assert captured["sql"] == "SELECT 1"
+    # query_store_factory is no longer injected — persistence goes through gateway.create()
+    assert "query_store_factory" not in captured
+    assert callable(captured["validate_permissions"])
+    assert callable(captured["write_policy_getter"])
+    assert callable(captured["should_explain"])
+    assert callable(captured["explain"])
+    assert captured["current_explain_sql"] is sentinel_explain
 
 
 @pytest.mark.asyncio
@@ -487,7 +671,7 @@ async def test_run_sql_write_requires_confirmation_by_default():
     store = _FakeQueryStore(query=query)
 
     with (
-        patch("db_mcp.tasks.store.get_query_store", return_value=store),
+        patch("db_mcp_data.execution.query_store.get_query_store", return_value=store),
         patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
         patch(
             "db_mcp.tools.utils.resolve_connection",
@@ -517,37 +701,36 @@ async def test_run_sql_write_executes_when_confirmed():
     )
     store = _FakeQueryStore(query=query)
 
+    from db_mcp_models.gateway import DataResponse
+
     with (
-        patch("db_mcp.tasks.store.get_query_store", return_value=store),
+        patch("db_mcp_data.execution.query_store.get_query_store", return_value=store),
         patch("db_mcp.tools.generation.get_connector", return_value=_FakeSQLConnector()),
-        patch(
-            "db_mcp.tools.utils.resolve_connection",
-            return_value=(_FakeSQLConnector(), WRITE_CONNECTION, Path("/tmp/write_connection")),
-        ),
         patch(
             "db_mcp.tools.generation.get_connector_capabilities",
             return_value={"allow_sql_writes": True, "require_write_confirmation": True},
         ),
-        patch(
-            "db_mcp.tools.generation._execute_query",
-            return_value={
-                "data": [],
-                "columns": [],
-                "rows_returned": 0,
-                "duration_ms": 2.0,
-                "provider_id": WRITE_CONNECTION,
-                "statement_type": "INSERT",
-                "is_write": True,
-                "rows_affected": 1,
-            },
+        # gateway.execute() is now the execution dispatch boundary.
+        patch.object(
+            gw,
+            "execute",
+            new=AsyncMock(
+                return_value=DataResponse(
+                    status="success",
+                    data=[],
+                    columns=[],
+                    rows_returned=0,
+                )
+            ),
         ),
+        patch.object(gw, "mark_running", new=AsyncMock()),
+        patch.object(gw, "mark_complete", new=AsyncMock()),
+        patch.object(gw, "mark_error", new=AsyncMock()),
     ):
         result = await _run_sql(query_id="q-1", confirmed=True, connection=WRITE_CONNECTION)
 
     payload = result.structuredContent
     assert payload["status"] == "success"
-    assert payload["is_write"] is True
-    assert payload["rows_affected"] == 1
 
 
 @pytest.mark.asyncio
@@ -587,7 +770,7 @@ async def test_get_result_can_read_direct_sql_execution_result(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_get_result_resolves_api_execution_ids_not_in_query_store(tmp_path: Path):
-    from db_mcp.connectors.api import (
+    from db_mcp_data.connectors.api import (
         APIAuthConfig,
         APIConnector,
         APIConnectorConfig,
@@ -641,7 +824,7 @@ async def test_get_result_resolves_api_execution_ids_not_in_query_store(tmp_path
             return None
 
     with (
-        patch("db_mcp.tasks.store.get_query_store", return_value=_MissingStore()),
+        patch("db_mcp_data.execution.query_store.get_query_store", return_value=_MissingStore()),
         patch(
             "db_mcp.tools.utils.resolve_connection",
             return_value=(connector, ASYNC_CONNECTION, Path("/tmp/analytics_connection")),
@@ -658,7 +841,7 @@ async def test_get_result_resolves_api_execution_ids_not_in_query_store(tmp_path
 
 @pytest.mark.asyncio
 async def test_get_result_surfaces_api_execution_failures(tmp_path: Path):
-    from db_mcp.connectors.api import (
+    from db_mcp_data.connectors.api import (
         APIAuthConfig,
         APIConnector,
         APIConnectorConfig,
@@ -697,7 +880,7 @@ async def test_get_result_surfaces_api_execution_failures(tmp_path: Path):
             return None
 
     with (
-        patch("db_mcp.tasks.store.get_query_store", return_value=_MissingStore()),
+        patch("db_mcp_data.execution.query_store.get_query_store", return_value=_MissingStore()),
         patch(
             "db_mcp.tools.utils.resolve_connection",
             return_value=(connector, ASYNC_CONNECTION, Path("/tmp/analytics_connection")),

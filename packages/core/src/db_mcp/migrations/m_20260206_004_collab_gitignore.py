@@ -28,7 +28,7 @@ def collab_gitignore(connection_path: Path) -> bool:
     Returns:
         True if migration succeeded, False on error
     """
-    from db_mcp.git_utils import git
+    from db_mcp_knowledge.git_utils import git
 
     gitignore_path = connection_path / ".gitignore"
 

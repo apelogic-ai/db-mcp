@@ -5,7 +5,11 @@ requires-python = ">=3.13"
 [manifest]
 members = [
     "db-mcp",
+    "db-mcp-cli",
+    "db-mcp-data",
+    "db-mcp-knowledge",
     "db-mcp-models",
+    "db-mcp-server",
     "db-mcp-workspace",
 ]
 
@@ -624,13 +628,13 @@ version = "0.8.12"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "bicp-agent" },
-    { name = "click" },
     { name = "clickhouse-sqlalchemy" },
+    { name = "db-mcp-data" },
+    { name = "db-mcp-knowledge" },
     { name = "db-mcp-models" },
     { name = "duckdb" },
     { name = "dulwich" },
     { name = "fastapi" },
-    { name = "fastmcp" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "psycopg2-binary" },
@@ -640,7 +644,6 @@ dependencies = [
     { name = "pymssql" },
     { name = "pymysql" },
     { name = "pyyaml" },
-    { name = "rich" },
     { name = "sqlalchemy" },
     { name = "sqlglot" },
     { name = "trino" },
@@ -649,6 +652,8 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "db-mcp-cli" },
+    { name = "db-mcp-server" },
     { name = "pyinstaller" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -665,13 +670,15 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bicp-agent", git = "https://github.com/apelogic-ai/bicp.git?subdirectory=packages%2Fagent-python&rev=743ecc5" },
-    { name = "click", specifier = ">=8.0.0" },
     { name = "clickhouse-sqlalchemy", specifier = ">=0.3.0" },
+    { name = "db-mcp-cli", marker = "extra == 'dev'", editable = "packages/cli" },
+    { name = "db-mcp-data", editable = "packages/data" },
+    { name = "db-mcp-knowledge", editable = "packages/knowledge" },
     { name = "db-mcp-models", editable = "packages/models" },
+    { name = "db-mcp-server", marker = "extra == 'dev'", editable = "packages/mcp-server" },
     { name = "duckdb", specifier = ">=1.0.0" },
     { name = "dulwich", specifier = ">=0.22.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.0" },
@@ -684,7 +691,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
-    { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlglot", specifier = ">=26.0.0" },
@@ -701,6 +707,91 @@ dev = [
 ]
 
 [[package]]
+name = "db-mcp-cli"
+version = "0.1.0"
+source = { editable = "packages/cli" }
+dependencies = [
+    { name = "click" },
+    { name = "db-mcp" },
+    { name = "db-mcp-data" },
+    { name = "db-mcp-knowledge" },
+    { name = "db-mcp-models" },
+    { name = "db-mcp-server" },
+    { name = "fastmcp" },
+    { name = "rich" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.0.0" },
+    { name = "db-mcp", editable = "packages/core" },
+    { name = "db-mcp-data", editable = "packages/data" },
+    { name = "db-mcp-knowledge", editable = "packages/knowledge" },
+    { name = "db-mcp-models", editable = "packages/models" },
+    { name = "db-mcp-server", editable = "packages/mcp-server" },
+    { name = "fastmcp", specifier = ">=2.0.0" },
+    { name = "rich", specifier = ">=13.0.0" },
+]
+
+[[package]]
+name = "db-mcp-data"
+version = "0.1.0"
+source = { editable = "packages/data" }
+dependencies = [
+    { name = "clickhouse-sqlalchemy" },
+    { name = "db-mcp-models" },
+    { name = "duckdb" },
+    { name = "opentelemetry-api" },
+    { name = "psycopg2-binary" },
+    { name = "pymssql" },
+    { name = "pymysql" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "sqlalchemy" },
+    { name = "sqlglot" },
+    { name = "trino" },
+    { name = "urllib3" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "clickhouse-sqlalchemy", specifier = ">=0.3.0" },
+    { name = "db-mcp-models", editable = "packages/models" },
+    { name = "duckdb", specifier = ">=1.0.0" },
+    { name = "opentelemetry-api", specifier = ">=1.20.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9.0" },
+    { name = "pymssql", specifier = ">=2.2.0" },
+    { name = "pymysql", specifier = ">=1.1.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "requests", specifier = ">=2.28.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.0" },
+    { name = "sqlglot", specifier = ">=26.0.0" },
+    { name = "trino", specifier = ">=0.330.0" },
+    { name = "urllib3", specifier = ">=2.0.0" },
+]
+
+[[package]]
+name = "db-mcp-knowledge"
+version = "0.1.0"
+source = { editable = "packages/knowledge" }
+dependencies = [
+    { name = "db-mcp-models" },
+    { name = "dulwich" },
+    { name = "pydantic-ai" },
+    { name = "pyyaml" },
+    { name = "sqlglot" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "db-mcp-models", editable = "packages/models" },
+    { name = "dulwich", specifier = ">=0.22.0" },
+    { name = "pydantic-ai", specifier = ">=0.0.39" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlglot", specifier = ">=23.0.0" },
+]
+
+[[package]]
 name = "db-mcp-models"
 version = "0.3.0"
 source = { editable = "packages/models" }
@@ -710,6 +801,27 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pydantic", specifier = ">=2.0.0" }]
+
+[[package]]
+name = "db-mcp-server"
+version = "0.1.0"
+source = { editable = "packages/mcp-server" }
+dependencies = [
+    { name = "db-mcp" },
+    { name = "db-mcp-data" },
+    { name = "db-mcp-knowledge" },
+    { name = "db-mcp-models" },
+    { name = "fastmcp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "db-mcp", editable = "packages/core" },
+    { name = "db-mcp-data", editable = "packages/data" },
+    { name = "db-mcp-knowledge", editable = "packages/knowledge" },
+    { name = "db-mcp-models", editable = "packages/models" },
+    { name = "fastmcp", specifier = ">=2.0.0" },
+]
 
 [[package]]
 name = "db-mcp-workspace"

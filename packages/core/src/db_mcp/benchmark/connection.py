@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from db_mcp.connectors import get_connector
-from db_mcp.connectors.sql import SQLConnector
+from db_mcp_data.connectors import get_connector
+from db_mcp_data.connectors.sql import SQLConnector
+
 from db_mcp.registry import ConnectionRegistry
 
 

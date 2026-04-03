@@ -7,10 +7,10 @@ when used with a FileConnector (DuckDB backend) instead of SQLConnector.
 import textwrap
 
 import pytest
+from db_mcp_data.connectors.file import FileConnector, FileConnectorConfig, FileSourceConfig
+from db_mcp_data.validation.explain import CostTier, explain_sql
 
-from db_mcp.connectors.file import FileConnector, FileConnectorConfig, FileSourceConfig
 from db_mcp.tools.generation import _execute_query
-from db_mcp.validation.explain import CostTier, explain_sql
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ class TestExplainWithFileConnector:
     def test_valid_select_returns_valid(self, file_connector, monkeypatch):
         """A valid SELECT against a file connector should return valid=True."""
         monkeypatch.setattr(
-            "db_mcp.validation.explain.get_connector",
+            "db_mcp_data.validation.explain.get_connector",
             lambda **kwargs: file_connector,
         )
         result = explain_sql("SELECT * FROM users")
@@ -51,7 +51,7 @@ class TestExplainWithFileConnector:
     def test_valid_select_returns_auto_cost_tier(self, file_connector, monkeypatch):
         """File connector queries should default to AUTO cost tier (local data)."""
         monkeypatch.setattr(
-            "db_mcp.validation.explain.get_connector",
+            "db_mcp_data.validation.explain.get_connector",
             lambda **kwargs: file_connector,
         )
         result = explain_sql("SELECT * FROM users WHERE age > 25")
@@ -61,7 +61,7 @@ class TestExplainWithFileConnector:
     def test_invalid_sql_returns_invalid(self, file_connector, monkeypatch):
         """Invalid SQL should return valid=False with an error message."""
         monkeypatch.setattr(
-            "db_mcp.validation.explain.get_connector",
+            "db_mcp_data.validation.explain.get_connector",
             lambda **kwargs: file_connector,
         )
         result = explain_sql("SELECT * FROM nonexistent_table")
@@ -71,7 +71,7 @@ class TestExplainWithFileConnector:
     def test_syntax_error_returns_invalid(self, file_connector, monkeypatch):
         """SQL syntax errors should return valid=False."""
         monkeypatch.setattr(
-            "db_mcp.validation.explain.get_connector",
+            "db_mcp_data.validation.explain.get_connector",
             lambda **kwargs: file_connector,
         )
         result = explain_sql("SELCT * FORM users")
@@ -81,7 +81,7 @@ class TestExplainWithFileConnector:
     def test_aggregation_query_valid(self, file_connector, monkeypatch):
         """Aggregation queries should validate successfully."""
         monkeypatch.setattr(
-            "db_mcp.validation.explain.get_connector",
+            "db_mcp_data.validation.explain.get_connector",
             lambda **kwargs: file_connector,
         )
         result = explain_sql("SELECT COUNT(*), AVG(age) FROM users")

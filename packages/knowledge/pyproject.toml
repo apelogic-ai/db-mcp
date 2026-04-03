@@ -1,0 +1,32 @@
+[project]
+name = "db-mcp-knowledge"
+version = "0.1.0"
+description = "db-mcp knowledge layer: onboarding, training, metrics, vault, semantic, collab, planner"
+requires-python = ">=3.13"
+dependencies = [
+    "db-mcp-models",
+    "pyyaml>=6.0.0",
+    "dulwich>=0.22.0",
+    "sqlglot>=23.0.0",
+    "pydantic-ai>=0.0.39",
+]
+
+[tool.uv.sources]
+db-mcp-models = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/db_mcp_knowledge"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

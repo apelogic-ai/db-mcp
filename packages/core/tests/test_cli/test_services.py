@@ -7,12 +7,12 @@ import types
 
 import pytest
 from click.testing import CliRunner
-
-from db_mcp.cli.commands.services import (
+from db_mcp_cli.commands.services import (
     _configure_service_environment,
     _patch_fakeredis_for_frozen,
 )
-from db_mcp.cli.main import main
+from db_mcp_cli.main import main
+
 from db_mcp.config import reset_settings
 
 
@@ -33,13 +33,13 @@ def test_up_starts_local_service_and_writes_state(tmp_path, monkeypatch):
     connection_name = "demo"
     config_dir.mkdir(parents=True)
 
-    monkeypatch.setattr("db_mcp.cli.commands.services.CONFIG_DIR", config_dir)
+    monkeypatch.setattr("db_mcp_cli.commands.services.CONFIG_DIR", config_dir)
     monkeypatch.setenv("DB_MCP_LOCAL_SERVICE_STATE", str(config_dir / "local-service.json"))
     monkeypatch.setattr(
-        "db_mcp.cli.commands.services._configure_service_environment",
+        "db_mcp_cli.commands.services._configure_service_environment",
         lambda connection, **_: connection_name,
     )
-    monkeypatch.setattr("db_mcp.cli.commands.services.clear_local_service_state", lambda: None)
+    monkeypatch.setattr("db_mcp_cli.commands.services.clear_local_service_state", lambda: None)
 
     captured: dict[str, object] = {}
 
@@ -50,11 +50,11 @@ def test_up_starts_local_service_and_writes_state(tmp_path, monkeypatch):
         captured["mcp"] = {"host": host, "port": port, "path": path}
 
     monkeypatch.setattr(
-        "db_mcp.cli.commands.services._start_ui_background_service",
+        "db_mcp_cli.commands.services._start_ui_background_service",
         fake_start_ui_background_service,
     )
     monkeypatch.setattr(
-        "db_mcp.cli.commands.services._run_http_mcp_service",
+        "db_mcp_cli.commands.services._run_http_mcp_service",
         fake_run_http_mcp_service,
     )
 
@@ -94,15 +94,15 @@ def test_configure_service_environment_can_force_runtime_surface(tmp_path, monke
     config_dir.mkdir(parents=True)
     connections_dir.mkdir(parents=True)
 
-    monkeypatch.setattr("db_mcp.cli.commands.services.CONFIG_DIR", config_dir)
-    monkeypatch.setattr("db_mcp.cli.commands.services.CONNECTIONS_DIR", connections_dir)
+    monkeypatch.setattr("db_mcp_cli.commands.services.CONFIG_DIR", config_dir)
+    monkeypatch.setattr("db_mcp_cli.commands.services.CONNECTIONS_DIR", connections_dir)
     monkeypatch.setattr(
-        "db_mcp.cli.commands.services.CONFIG_FILE",
+        "db_mcp_cli.commands.services.CONFIG_FILE",
         config_dir / "config.json",
     )
     (config_dir / "config.json").write_text("{}")
     monkeypatch.setattr(
-        "db_mcp.cli.commands.services.load_config",
+        "db_mcp_cli.commands.services.load_config",
         lambda: {
             "active_connection": "demo",
             "tool_mode": "shell",
@@ -111,11 +111,11 @@ def test_configure_service_environment_can_force_runtime_surface(tmp_path, monke
         },
     )
     monkeypatch.setattr(
-        "db_mcp.cli.commands.services._load_connection_env",
+        "db_mcp_cli.commands.services._load_connection_env",
         lambda connection: {"DATABASE_URL": "sqlite:///demo.db"},
     )
     monkeypatch.setattr(
-        "db_mcp.cli.commands.services.get_connection_path",
+        "db_mcp_cli.commands.services.get_connection_path",
         lambda connection: connections_dir / connection,
     )
 

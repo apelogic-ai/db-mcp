@@ -484,8 +484,11 @@ class TestAgentConfiguration:
             agent = AGENTS["openclaw"]
             agent.config_path = config_path
 
+            from unittest.mock import MagicMock
+            mock_console = MagicMock()
             with patch("shutil.which", return_value=None):
-                with patch("db_mcp.agents.console.print") as mock_print:
+                with patch("db_mcp.agents._get_console", return_value=mock_console):
+                    mock_print = mock_console.print
                     result = configure_agent_for_dbmcp("openclaw", "/usr/local/bin/db-mcp")
 
                     # Should still succeed but print warning

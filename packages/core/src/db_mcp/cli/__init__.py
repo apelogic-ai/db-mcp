@@ -1,135 +1,42 @@
-"""db-mcp CLI package.
+"""Core config access — re-exports from db_mcp_cli when available.
 
-Re-exports `main` (the click group) and all public symbols from the
-original cli.py so that existing imports continue to work:
+Production code in the core package (traces.py, benchmark/) uses CONFIG_FILE,
+load_config, and save_config.  When db_mcp_cli is installed these come from
+the CLI package; otherwise minimal stubs are provided.
 
-    from db_mcp.cli import main
-    from db_mcp.cli import list_connections
-    from db_mcp.cli import CONFIG_FILE, load_config, save_config
-    ...
+For CLI-specific functions (console, get_db_mcp_binary_path, etc.) import
+from db_mcp_cli directly.
 """
 
-# ── Click entry point ──────────────────────────────────────────────────────────
-# ── Agent configuration ────────────────────────────────────────────────────────
-from db_mcp.cli.agent_config import (
-    _configure_agents,
-    _configure_agents_interactive,
-    _configure_claude_desktop,
-    extract_database_url_from_claude_config,
-)
+try:
+    from db_mcp_cli import (  # noqa: F401
+        CONFIG_DIR,
+        CONFIG_FILE,
+        CONNECTIONS_DIR,
+        LEGACY_PROVIDERS_DIR,
+        LEGACY_VAULT_DIR,
+        _auto_register_collaborator,
+        load_config,
+        save_config,
+    )
+except ImportError:
+    from pathlib import Path
 
-# ── Connection ─────────────────────────────────────────────────────────────────
-from db_mcp.cli.connection import (
-    _get_connection_env_path,
-    _load_connection_env,
-    _prompt_and_save_database_url,
-    _save_connection_env,
-    connection_exists,
-    get_active_connection,
-    get_connection_path,
-    list_connections,
-    set_active_connection,
-)
+    import yaml
 
-# ── Schema discovery ───────────────────────────────────────────────────────────
-from db_mcp.cli.discovery import _run_discovery_with_progress
+    CONFIG_DIR = Path.home() / ".db-mcp"
+    CONFIG_FILE = CONFIG_DIR / "config.yaml"
+    CONNECTIONS_DIR = CONFIG_DIR / "connections"
+    LEGACY_VAULT_DIR = CONFIG_DIR / "vault"
+    LEGACY_PROVIDERS_DIR = CONFIG_DIR / "providers"
 
-# ── Git operations ─────────────────────────────────────────────────────────────
-from db_mcp.cli.git_ops import (
-    GIT_INSTALL_URL,
-    GITIGNORE_CONTENT,
-    git_clone,
-    git_init,
-    git_pull,
-    git_sync,
-    is_git_installed,
-    is_git_repo,
-    is_git_url,
-)
+    def load_config() -> dict:
+        if not CONFIG_FILE.exists():
+            return {}
+        with open(CONFIG_FILE) as f:
+            return yaml.safe_load(f) or {}
 
-# ── Init flows ─────────────────────────────────────────────────────────────────
-from db_mcp.cli.init_flow import (
-    _attach_repo,
-    _auto_register_collaborator,
-    _init_brownfield,
-    _init_greenfield,
-    _offer_git_setup,
-    _recover_onboarding_state,
-)
-from db_mcp.cli.main import main
-
-# ── Utils ─────────────────────────────────────────────────────────────────────
-from db_mcp.cli.utils import (
-    CONFIG_DIR,
-    CONFIG_FILE,
-    CONNECTIONS_DIR,
-    LEGACY_PROVIDERS_DIR,
-    LEGACY_VAULT_DIR,
-    _get_cli_version,
-    _handle_sigint,
-    console,
-    get_claude_desktop_config_path,
-    get_db_mcp_binary_path,
-    is_claude_desktop_installed,
-    launch_claude_desktop,
-    load_claude_desktop_config,
-    load_config,
-    save_claude_desktop_config,
-    save_config,
-)
-
-__all__ = [
-    # Entry point
-    "main",
-    # Utils
-    "CONFIG_DIR",
-    "CONFIG_FILE",
-    "CONNECTIONS_DIR",
-    "LEGACY_PROVIDERS_DIR",
-    "LEGACY_VAULT_DIR",
-    "_get_cli_version",
-    "_handle_sigint",
-    "console",
-    "get_claude_desktop_config_path",
-    "get_db_mcp_binary_path",
-    "is_claude_desktop_installed",
-    "launch_claude_desktop",
-    "load_claude_desktop_config",
-    "load_config",
-    "save_claude_desktop_config",
-    "save_config",
-    # Connection
-    "_get_connection_env_path",
-    "_load_connection_env",
-    "_prompt_and_save_database_url",
-    "_save_connection_env",
-    "connection_exists",
-    "get_active_connection",
-    "get_connection_path",
-    "list_connections",
-    "set_active_connection",
-    # Git
-    "GIT_INSTALL_URL",
-    "GITIGNORE_CONTENT",
-    "git_clone",
-    "git_init",
-    "git_pull",
-    "git_sync",
-    "is_git_installed",
-    "is_git_repo",
-    "is_git_url",
-    # Agent config
-    "_configure_agents",
-    "_configure_agents_interactive",
-    "_configure_claude_desktop",
-    "extract_database_url_from_claude_config",
-    # Discovery
-    "_run_discovery_with_progress",
-    # Init flows
-    "_attach_repo",
-    "_auto_register_collaborator",
-    "_init_brownfield",
-    "_init_greenfield",
-    "_offer_git_setup",
-    "_recover_onboarding_state",
-]
+    def save_config(config: dict) -> None:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_FILE, "w") as f:
+            yaml.dump(config, f, default_flow_style=False)

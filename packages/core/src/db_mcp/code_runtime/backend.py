@@ -11,7 +11,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from db_mcp.business_rules import extract_business_rule_texts
+from db_mcp_knowledge.business_rules import extract_business_rule_texts
+
 from db_mcp.exec_runtime import ExecRuntimeError, ExecSandboxSpec, ExecSessionManager
 from db_mcp.tools.utils import require_connection, resolve_connection
 

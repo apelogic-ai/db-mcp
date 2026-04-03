@@ -5,9 +5,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import yaml
-
-from db_mcp.cli import _auto_register_collaborator
-from db_mcp.collab.manifest import CollabManifest, CollabMember
+from db_mcp_cli import _auto_register_collaborator
+from db_mcp_knowledge.collab.manifest import CollabManifest, CollabMember
 
 
 def _create_manifest(tmp_path: Path, members=None) -> CollabManifest:
@@ -47,20 +46,22 @@ class TestAutoRegisterCollaborator:
         mock_git = MagicMock()
 
         with (
-            patch("db_mcp.git_utils.git", mock_git),
-            patch("db_mcp.collab.manifest.get_user_name_from_config", return_value=None),
-            patch("db_mcp.collab.manifest.set_user_name_in_config") as mock_set_name,
+            patch("db_mcp_knowledge.git_utils.git", mock_git),
+            patch("db_mcp_knowledge.collab.manifest.get_user_name_from_config", return_value=None),
+            patch("db_mcp_knowledge.collab.manifest.set_user_name_in_config") as mock_set_name,
             patch("db_mcp.traces.get_user_id_from_config", return_value=None),
             patch("db_mcp.traces.generate_user_id", return_value="alice001"),
-            patch("db_mcp.cli.init_flow.load_config", return_value={"active_connection": "test"}),
-            patch("db_mcp.cli.init_flow.save_config"),
-            patch("db_mcp.cli.init_flow.click.prompt", return_value="alice"),
-            patch("db_mcp.cli.init_flow.console"),
+            patch("db_mcp_cli.init_flow.load_config", return_value={"active_connection": "test"}),
+            patch("db_mcp_cli.init_flow.save_config"),
+            patch("db_mcp_cli.init_flow.click.prompt", return_value="alice"),
+            patch("db_mcp_cli.init_flow.console"),
         ):
             _auto_register_collaborator(tmp_path)
 
         # Should have set user_name
-        mock_set_name.assert_called_once_with("alice")
+        # Called with (user_name, config_file)
+        assert mock_set_name.call_count == 1
+        assert mock_set_name.call_args[0][0] == "alice"
 
         # Should have created branch and committed
         mock_git.checkout.assert_called_once_with(tmp_path, "collaborator/alice", create=True)
@@ -69,7 +70,7 @@ class TestAutoRegisterCollaborator:
         mock_git.push_branch.assert_called_once_with(tmp_path, "collaborator/alice")
 
         # Manifest should now include alice
-        from db_mcp.collab.manifest import load_manifest
+        from db_mcp_knowledge.collab.manifest import load_manifest
 
         updated = load_manifest(tmp_path)
         assert updated is not None
@@ -95,13 +96,13 @@ class TestAutoRegisterCollaborator:
         mock_git = MagicMock()
 
         with (
-            patch("db_mcp.git_utils.git", mock_git),
+            patch("db_mcp_knowledge.git_utils.git", mock_git),
             patch(
-                "db_mcp.collab.manifest.get_user_name_from_config",
+                "db_mcp_knowledge.collab.manifest.get_user_name_from_config",
                 return_value="alice",
             ),
             patch("db_mcp.traces.get_user_id_from_config", return_value="alice001"),
-            patch("db_mcp.cli.init_flow.console"),
+            patch("db_mcp_cli.init_flow.console"),
         ):
             _auto_register_collaborator(tmp_path)
 
@@ -117,13 +118,13 @@ class TestAutoRegisterCollaborator:
         mock_git.push_branch.side_effect = Exception("auth failed")
 
         with (
-            patch("db_mcp.git_utils.git", mock_git),
+            patch("db_mcp_knowledge.git_utils.git", mock_git),
             patch(
-                "db_mcp.collab.manifest.get_user_name_from_config",
+                "db_mcp_knowledge.collab.manifest.get_user_name_from_config",
                 return_value="bob",
             ),
             patch("db_mcp.traces.get_user_id_from_config", return_value="bob00001"),
-            patch("db_mcp.cli.init_flow.console"),
+            patch("db_mcp_cli.init_flow.console"),
         ):
             _auto_register_collaborator(tmp_path)
 
@@ -133,7 +134,7 @@ class TestAutoRegisterCollaborator:
         mock_git.commit.assert_called_once()
 
         # Manifest should have bob
-        from db_mcp.collab.manifest import load_manifest
+        from db_mcp_knowledge.collab.manifest import load_manifest
 
         updated = load_manifest(tmp_path)
         assert updated is not None

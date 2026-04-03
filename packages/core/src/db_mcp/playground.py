@@ -10,8 +10,7 @@ import shutil
 from pathlib import Path
 
 import yaml
-
-from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
+from db_mcp_data.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 
 logger = logging.getLogger(__name__)
 

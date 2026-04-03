@@ -1,6 +1,6 @@
 "use client";
 
-// JSON-RPC 2.0 Types
+// JSON-RPC 2.0 Types (kept for BICP lifecycle only)
 export interface JSONRPCRequest {
   jsonrpc: "2.0";
   method: string;
@@ -64,7 +64,7 @@ function nextRequestId(): number {
   return ++requestId;
 }
 
-// Core BICP call function
+// Core BICP call function — used ONLY for BICP lifecycle (initialize)
 export async function bicpCall<T = unknown>(
   method: string,
   params?: Record<string, unknown>,
@@ -102,7 +102,30 @@ export async function bicpCall<T = unknown>(
   return jsonResponse.result as T;
 }
 
-// Initialize the BICP connection
+// ── REST API call function ─────────────────────────────────────────
+// All custom methods (connections, context, traces, insights, metrics,
+// schema, agents, playground) use this instead of bicpCall.
+
+export async function apiCall<T = unknown>(
+  method: string,
+  params?: Record<string, unknown>,
+): Promise<T> {
+  const response = await fetch(`/api/${method}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: params ? JSON.stringify(params) : undefined,
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// Initialize the BICP connection (stays on BICP protocol)
 export async function initialize(
   config: Partial<BICPConfig> = {},
 ): Promise<InitializeResult> {
@@ -187,18 +210,18 @@ export interface ValidateLinkResult {
 
 // Schema API functions
 export async function getCatalogs(): Promise<CatalogsResult> {
-  return bicpCall<CatalogsResult>("schema/catalogs", {});
+  return apiCall<CatalogsResult>("schema/catalogs", {});
 }
 
 export async function getSchemas(catalog?: string): Promise<SchemasResult> {
-  return bicpCall<SchemasResult>("schema/schemas", { catalog });
+  return apiCall<SchemasResult>("schema/schemas", { catalog });
 }
 
 export async function getTables(
   schema: string,
   catalog?: string,
 ): Promise<TablesResult> {
-  return bicpCall<TablesResult>("schema/tables", { schema, catalog });
+  return apiCall<TablesResult>("schema/tables", { schema, catalog });
 }
 
 export async function getColumns(
@@ -206,11 +229,11 @@ export async function getColumns(
   schema?: string,
   catalog?: string,
 ): Promise<ColumnsResult> {
-  return bicpCall<ColumnsResult>("schema/columns", { table, schema, catalog });
+  return apiCall<ColumnsResult>("schema/columns", { table, schema, catalog });
 }
 
 export async function validateLink(link: string): Promise<ValidateLinkResult> {
-  return bicpCall<ValidateLinkResult>("schema/validate-link", { link });
+  return apiCall<ValidateLinkResult>("schema/validate-link", { link });
 }
 
 // Git History types
@@ -247,7 +270,7 @@ export async function getGitHistory(
   path: string,
   limit: number = 50,
 ): Promise<GitHistoryResult> {
-  return bicpCall<GitHistoryResult>("context/git/history", {
+  return apiCall<GitHistoryResult>("context/git/history", {
     connection,
     path,
     limit,
@@ -259,7 +282,7 @@ export async function getGitShow(
   path: string,
   commit: string,
 ): Promise<GitShowResult> {
-  return bicpCall<GitShowResult>("context/git/show", {
+  return apiCall<GitShowResult>("context/git/show", {
     connection,
     path,
     commit,
@@ -271,7 +294,7 @@ export async function revertToCommit(
   path: string,
   commit: string,
 ): Promise<GitRevertResult> {
-  return bicpCall<GitRevertResult>("context/git/revert", {
+  return apiCall<GitRevertResult>("context/git/revert", {
     connection,
     path,
     commit,
@@ -296,7 +319,7 @@ export async function contextRead(
   connection: string,
   path: string,
 ): Promise<ContextReadResult> {
-  return bicpCall<ContextReadResult>("context/read", { connection, path });
+  return apiCall<ContextReadResult>("context/read", { connection, path });
 }
 
 export async function contextWrite(
@@ -304,7 +327,7 @@ export async function contextWrite(
   path: string,
   content: string,
 ): Promise<ContextWriteResult> {
-  return bicpCall<ContextWriteResult>("context/write", {
+  return apiCall<ContextWriteResult>("context/write", {
     connection,
     path,
     content,
@@ -316,7 +339,7 @@ export async function contextAddRule(
   rule: string,
   gapId?: string,
 ): Promise<{ success: boolean; duplicate?: boolean; error?: string }> {
-  return bicpCall<{ success: boolean; duplicate?: boolean; error?: string }>(
+  return apiCall<{ success: boolean; duplicate?: boolean; error?: string }>(
     "context/add-rule",
     { connection, rule, gapId },
   );
@@ -332,7 +355,7 @@ export async function saveExample(
   total_examples?: number;
   error?: string;
 }> {
-  return bicpCall<{
+  return apiCall<{
     success: boolean;
     example_id?: string;
     total_examples?: number;
@@ -345,7 +368,7 @@ export async function dismissGap(
   gapId: string,
   reason?: string,
 ): Promise<{ success: boolean; count?: number; error?: string }> {
-  return bicpCall<{ success: boolean; count?: number; error?: string }>(
+  return apiCall<{ success: boolean; count?: number; error?: string }>(
     "gaps/dismiss",
     { connection, gapId, reason },
   );
@@ -402,15 +425,15 @@ export async function listTraces(
   date?: string,
   limit?: number,
 ): Promise<TracesListResult> {
-  return bicpCall<TracesListResult>("traces/list", { source, date, limit });
+  return apiCall<TracesListResult>("traces/list", { source, date, limit });
 }
 
 export async function clearTraces(): Promise<TracesClearResult> {
-  return bicpCall<TracesClearResult>("traces/clear", {});
+  return apiCall<TracesClearResult>("traces/clear", {});
 }
 
 export async function getTraceDates(): Promise<TracesDatesResult> {
-  return bicpCall<TracesDatesResult>("traces/dates", {});
+  return apiCall<TracesDatesResult>("traces/dates", {});
 }
 
 // Insights types
@@ -426,8 +449,8 @@ export interface InsightsAnalysis {
     error: string;
     error_type?: "hard" | "soft";
     timestamp: number;
-    sql?: string; // SQL that caused the error, for save-as-learning
-    is_saved?: boolean; // Whether this error's SQL was already saved as a learning
+    sql?: string;
+    is_saved?: boolean;
     example_id?: string;
   }>;
   errorCount: number;
@@ -516,7 +539,7 @@ export interface InsightsAnalyzeResult {
 export async function analyzeInsights(
   days: number = 7,
 ): Promise<InsightsAnalyzeResult> {
-  return bicpCall<InsightsAnalyzeResult>("insights/analyze", { days });
+  return apiCall<InsightsAnalyzeResult>("insights/analyze", { days });
 }
 
 // Metrics & Dimensions types
@@ -596,7 +619,7 @@ export interface MetricsActionResult {
 export async function listMetrics(
   connection: string,
 ): Promise<MetricsListResult> {
-  return bicpCall<MetricsListResult>("metrics/list", { connection });
+  return apiCall<MetricsListResult>("metrics/list", { connection });
 }
 
 export async function addMetricOrDimension(
@@ -604,7 +627,7 @@ export async function addMetricOrDimension(
   type: "metric" | "dimension",
   data: Record<string, unknown>,
 ): Promise<MetricsActionResult> {
-  return bicpCall<MetricsActionResult>("metrics/add", {
+  return apiCall<MetricsActionResult>("metrics/add", {
     connection,
     type,
     data,
@@ -617,7 +640,7 @@ export async function updateMetricOrDimension(
   name: string,
   data: Record<string, unknown>,
 ): Promise<MetricsActionResult> {
-  return bicpCall<MetricsActionResult>("metrics/update", {
+  return apiCall<MetricsActionResult>("metrics/update", {
     connection,
     type,
     name,
@@ -630,7 +653,7 @@ export async function deleteMetricOrDimension(
   type: "metric" | "dimension",
   name: string,
 ): Promise<MetricsActionResult> {
-  return bicpCall<MetricsActionResult>("metrics/delete", {
+  return apiCall<MetricsActionResult>("metrics/delete", {
     connection,
     type,
     name,
@@ -640,7 +663,7 @@ export async function deleteMetricOrDimension(
 export async function mineMetricsCandidates(
   connection: string,
 ): Promise<MetricsCandidatesResult> {
-  return bicpCall<MetricsCandidatesResult>("metrics/candidates", {
+  return apiCall<MetricsCandidatesResult>("metrics/candidates", {
     connection,
   });
 }
@@ -650,7 +673,7 @@ export async function approveCandidate(
   type: "metric" | "dimension",
   data: Record<string, unknown>,
 ): Promise<MetricsActionResult> {
-  return bicpCall<MetricsActionResult>("metrics/approve", {
+  return apiCall<MetricsActionResult>("metrics/approve", {
     connection,
     type,
     data,
@@ -684,7 +707,7 @@ export async function syncConnection(
   name: string,
   endpoint?: string,
 ): Promise<ConnectionSyncResult> {
-  return bicpCall<ConnectionSyncResult>("connections/sync", {
+  return apiCall<ConnectionSyncResult>("connections/sync", {
     name,
     endpoint,
   });
@@ -693,5 +716,5 @@ export async function syncConnection(
 export async function discoverEndpoints(
   name: string,
 ): Promise<ConnectionDiscoverResult> {
-  return bicpCall<ConnectionDiscoverResult>("connections/discover", { name });
+  return apiCall<ConnectionDiscoverResult>("connections/discover", { name });
 }

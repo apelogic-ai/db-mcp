@@ -5,11 +5,15 @@ description = "Database MCP server workspace"
 requires-python = ">=3.13"
 
 [tool.uv.workspace]
-members = ["packages/core", "packages/models"]
+members = ["packages/core", "packages/models", "packages/mcp-server", "packages/cli", "packages/knowledge", "packages/data"]
 
 [tool.uv.sources]
 db-mcp = { workspace = true }
 db-mcp-models = { workspace = true }
+db-mcp-server = { workspace = true }
+db-mcp-cli = { workspace = true }
+db-mcp-knowledge = { workspace = true }
+db-mcp-data = { workspace = true }
 
 [dependency-groups]
 dev = [

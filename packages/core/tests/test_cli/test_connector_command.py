@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from click.testing import CliRunner
-
-from db_mcp.cli.main import main
+from db_mcp_cli.main import main
 
 
 def test_connector_help():

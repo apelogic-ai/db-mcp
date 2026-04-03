@@ -1,15 +1,14 @@
 """Tests for `db-mcp init` command behavior."""
 
 from click.testing import CliRunner
-
-from db_mcp.cli.main import main
+from db_mcp_cli.main import main
 
 
 def test_init_continues_when_no_mcp_clients_detected(monkeypatch):
     """Init should continue even when no supported MCP clients are detected."""
 
     monkeypatch.setattr(
-        "db_mcp.cli.commands.core.detect_installed_agents",
+        "db_mcp_cli.commands.core.detect_installed_agents",
         lambda: [],
     )
 
@@ -20,7 +19,7 @@ def test_init_continues_when_no_mcp_clients_detected(monkeypatch):
         called["template_name"] = template_name
 
     monkeypatch.setattr(
-        "db_mcp.cli.commands.core._init_greenfield",
+        "db_mcp_cli.commands.core._init_greenfield",
         _fake_greenfield,
     )
 
@@ -37,7 +36,7 @@ def test_init_continues_when_no_mcp_clients_detected(monkeypatch):
 
 def test_init_forwards_template_option(monkeypatch):
     monkeypatch.setattr(
-        "db_mcp.cli.commands.core.detect_installed_agents",
+        "db_mcp_cli.commands.core.detect_installed_agents",
         lambda: [],
     )
 
@@ -48,7 +47,7 @@ def test_init_forwards_template_option(monkeypatch):
         called["template_name"] = template_name
 
     monkeypatch.setattr(
-        "db_mcp.cli.commands.core._init_greenfield",
+        "db_mcp_cli.commands.core._init_greenfield",
         _fake_greenfield,
     )
 

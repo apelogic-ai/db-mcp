@@ -7,8 +7,8 @@ from urllib.error import HTTPError
 
 import yaml
 from click.testing import CliRunner
+from db_mcp_cli.main import main
 
-from db_mcp.cli.main import main
 from db_mcp.config import reset_settings
 from db_mcp.exec_runtime import ExecSessionManager, ProcessExecSandboxBackend
 from db_mcp.registry import ConnectionRegistry
@@ -374,7 +374,7 @@ def test_runtime_exec_posts_to_runtime_server(tmp_path, monkeypatch):
     script_path = tmp_path / "query.py"
     script_path.write_text("print(dbmcp.scalar('SELECT COUNT(*) FROM items'))\n")
 
-    monkeypatch.setattr("db_mcp.cli.commands.runtime_cmd.urlopen", fake_urlopen)
+    monkeypatch.setattr("db_mcp_cli.commands.runtime_cmd.urlopen", fake_urlopen)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -416,7 +416,7 @@ def test_runtime_exec_surfaces_server_errors(monkeypatch):
     def fake_urlopen(request, timeout=0):
         raise HTTPError(request.full_url, 500, "server error", hdrs=None, fp=FakeResponse())
 
-    monkeypatch.setattr("db_mcp.cli.commands.runtime_cmd.urlopen", fake_urlopen)
+    monkeypatch.setattr("db_mcp_cli.commands.runtime_cmd.urlopen", fake_urlopen)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -447,7 +447,7 @@ def test_runtime_serve_invokes_runtime_server(monkeypatch):
         captured["port"] = port
 
     monkeypatch.setattr(
-        "db_mcp.cli.commands.runtime_cmd.start_runtime_server",
+        "db_mcp_cli.commands.runtime_cmd.start_runtime_server",
         fake_start_runtime_server,
     )
 
@@ -464,15 +464,15 @@ def test_runtime_without_subcommand_starts_mcp_runtime_mode(tmp_path, monkeypatc
     monkeypatch.setenv("CONNECTION_NAME", connection_name)
     monkeypatch.delenv("CONNECTION_PATH", raising=False)
     monkeypatch.setattr(
-        "db_mcp.cli.commands.runtime_cmd.load_local_service_state",
+        "db_mcp_cli.commands.runtime_cmd.load_local_service_state",
         lambda: {},
     )
     monkeypatch.setattr(
-        "db_mcp.cli.commands.runtime_cmd.local_service_is_healthy",
+        "db_mcp_cli.commands.runtime_cmd.local_service_is_healthy",
         lambda state: False,
     )
     monkeypatch.setattr(
-        "db_mcp.cli.commands.core.load_config",
+        "db_mcp_cli.commands.core.load_config",
         lambda: {"active_connection": connection_name, "tool_mode": "shell"},
     )
 
@@ -487,7 +487,7 @@ def test_runtime_without_subcommand_starts_mcp_runtime_mode(tmp_path, monkeypatc
         captured["tool_mode"] = os.environ.get("TOOL_MODE")
         captured["runtime_interface"] = os.environ.get("RUNTIME_INTERFACE")
 
-    monkeypatch.setattr("db_mcp.cli.commands.runtime_cmd.start_cmd.callback", fake_start_callback)
+    monkeypatch.setattr("db_mcp_cli.commands.runtime_cmd.start_cmd.callback", fake_start_callback)
 
     runner = CliRunner()
     result = runner.invoke(main, ["runtime"])
@@ -504,11 +504,11 @@ def test_runtime_without_subcommand_proxies_to_local_service(monkeypatch):
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "db_mcp.cli.commands.runtime_cmd.load_local_service_state",
+        "db_mcp_cli.commands.runtime_cmd.load_local_service_state",
         lambda: {"mcp_url": "http://127.0.0.1:8000/mcp"},
     )
     monkeypatch.setattr(
-        "db_mcp.cli.commands.runtime_cmd.local_service_is_healthy",
+        "db_mcp_cli.commands.runtime_cmd.local_service_is_healthy",
         lambda state: True,
     )
 
@@ -516,11 +516,11 @@ def test_runtime_without_subcommand_proxies_to_local_service(monkeypatch):
         captured["url"] = url
 
     monkeypatch.setattr(
-        "db_mcp.cli.commands.runtime_cmd._proxy_runtime_to_local_service",
+        "db_mcp_cli.commands.runtime_cmd._proxy_runtime_to_local_service",
         fake_proxy,
     )
     monkeypatch.setattr(
-        "db_mcp.cli.commands.runtime_cmd.start_cmd.callback",
+        "db_mcp_cli.commands.runtime_cmd.start_cmd.callback",
         lambda connection, mode: (_ for _ in ()).throw(AssertionError("fallback should not run")),
     )
 

@@ -14,14 +14,14 @@ from db_mcp.tools.utils import get_resolved_provider_id, resolve_connection
 
 
 def _make_mock_sql_connector():
-    from db_mcp.connectors import SQLConnector
+    from db_mcp_data.connectors import SQLConnector
 
     mock = MagicMock(spec=SQLConnector)
     return mock
 
 
 def _make_mock_api_connector():
-    from db_mcp.connectors import APIConnector
+    from db_mcp_data.connectors import APIConnector
 
     mock = MagicMock(spec=APIConnector)
     return mock
@@ -343,14 +343,14 @@ class TestQueryStoreConnectionTracking:
 
     def test_query_has_connection_field(self):
         """Query dataclass has connection field."""
-        from db_mcp.tasks.store import Query
+        from db_mcp_data.execution.query_store import Query
 
         q = Query(query_id="test-id", sql="SELECT 1", connection="trino-prod")
         assert q.connection == "trino-prod"
 
     def test_query_connection_defaults_to_none(self):
         """Query connection defaults to None for backward compat."""
-        from db_mcp.tasks.store import Query
+        from db_mcp_data.execution.query_store import Query
 
         q = Query(query_id="test-id", sql="SELECT 1")
         assert q.connection is None
@@ -359,7 +359,7 @@ class TestQueryStoreConnectionTracking:
         """register_validated() stores connection name in Query."""
         import asyncio
 
-        from db_mcp.tasks.store import QueryStore
+        from db_mcp_data.execution.query_store import QueryStore
 
         store = QueryStore()
 
@@ -377,7 +377,7 @@ class TestQueryStoreConnectionTracking:
         """register_validated() without connection defaults to None."""
         import asyncio
 
-        from db_mcp.tasks.store import QueryStore
+        from db_mcp_data.execution.query_store import QueryStore
 
         store = QueryStore()
 

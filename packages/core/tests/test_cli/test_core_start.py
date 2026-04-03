@@ -2,8 +2,7 @@ import os
 from unittest.mock import patch
 
 from click.testing import CliRunner
-
-from db_mcp.cli.main import main
+from db_mcp_cli.main import main
 
 
 def test_start_honors_preconfigured_connection_environment(monkeypatch, tmp_path):
@@ -20,18 +19,18 @@ def test_start_honors_preconfigured_connection_environment(monkeypatch, tmp_path
         monkeypatch.setenv("CONNECTIONS_DIR", str(bench_connections_dir))
         monkeypatch.setenv("CONNECTION_PATH", str(bench_connection_path))
 
-        monkeypatch.setattr("db_mcp.cli.commands.core.CONFIG_FILE", config_file)
+        monkeypatch.setattr("db_mcp_cli.commands.core.CONFIG_FILE", config_file)
         monkeypatch.setattr(
-            "db_mcp.cli.commands.core.load_config",
+            "db_mcp_cli.commands.core.load_config",
             lambda: {"active_connection": "playground", "tool_mode": "shell", "log_level": "INFO"},
         )
         monkeypatch.setattr(
-            "db_mcp.cli.commands.core.get_connection_path",
+            "db_mcp_cli.commands.core.get_connection_path",
             lambda name: tmp_path / "wrong-from-cli" / name,
         )
         monkeypatch.setattr("db_mcp.migrations.run_migrations", lambda name: {"applied": []})
 
-        import db_mcp.server
+        import db_mcp_server.server
 
         def fake_server_main():
             captured["connection_path"] = os.environ["CONNECTION_PATH"]
@@ -39,7 +38,7 @@ def test_start_honors_preconfigured_connection_environment(monkeypatch, tmp_path
             captured["connection_name"] = os.environ["CONNECTION_NAME"]
             captured["database_url"] = os.environ["DATABASE_URL"]
 
-        monkeypatch.setattr(db_mcp.server, "main", fake_server_main)
+        monkeypatch.setattr(db_mcp_server.server, "main", fake_server_main)
 
         runner = CliRunner()
         result = runner.invoke(main, ["start", "-c", "playground"])

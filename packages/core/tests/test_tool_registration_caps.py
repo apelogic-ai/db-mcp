@@ -16,7 +16,7 @@ def _server_caps_for_type(
 
     Mirrors the logic in _create_server() without actually creating the server.
     """
-    from db_mcp.capabilities import normalize_capabilities
+    from db_mcp_data.capabilities import normalize_capabilities
 
     return normalize_capabilities(connector_type, yaml_caps or {}, profile=profile)
 
@@ -25,8 +25,8 @@ class TestCapabilityDefaultsMatch:
     """server.py defaults must match get_connector_capabilities() defaults."""
 
     def test_sql_defaults_match(self):
-        from db_mcp.connectors import SQLConnector, get_connector_capabilities
-        from db_mcp.connectors.sql import SQLConnectorConfig
+        from db_mcp_data.connectors import SQLConnector, get_connector_capabilities
+        from db_mcp_data.connectors.sql import SQLConnectorConfig
 
         connector = SQLConnector(SQLConnectorConfig(database_url="sqlite:///:memory:"))
         runtime = get_connector_capabilities(connector)

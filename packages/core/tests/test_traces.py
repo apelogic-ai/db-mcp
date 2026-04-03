@@ -472,7 +472,7 @@ class TestAnalyzeTracesIsSaved:
             ),
         ]
 
-        with patch("db_mcp.training.store.load_examples", mock_loader):
+        with patch("db_mcp_knowledge.training.store.load_examples", mock_loader):
             result = analyze_traces(traces, connection_path=conn_path)
 
         errors = result["errors"]
@@ -501,7 +501,7 @@ class TestAnalyzeTracesIsSaved:
             ),
         ]
 
-        with patch("db_mcp.training.store.load_examples", mock_loader):
+        with patch("db_mcp_knowledge.training.store.load_examples", mock_loader):
             result = analyze_traces(traces, connection_path=conn_path)
 
         errors = result["errors"]

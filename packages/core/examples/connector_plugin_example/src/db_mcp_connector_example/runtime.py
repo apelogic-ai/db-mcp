@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from db_mcp.connectors.api import (
+from db_mcp_data.connectors.api import (
     APIAuthConfig,
     APIConnector,
     APIConnectorConfig,

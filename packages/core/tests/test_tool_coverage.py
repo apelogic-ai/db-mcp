@@ -66,7 +66,11 @@ class TestToolRegistrationCompleteness:
         # This test verifies that tools registered in server.py have
         # corresponding function implementations in the tools/ directory
 
-        server_py = Path(__file__).parent.parent / "src" / "db_mcp" / "server.py"
+        # server.py has moved to packages/mcp-server/ (Phase 3.02)
+        server_py = (
+            Path(__file__).parents[3] / "packages" / "mcp-server"
+            / "src" / "db_mcp_server" / "server.py"
+        )
 
         # Read server.py and extract tool registrations
         server_content = server_py.read_text()

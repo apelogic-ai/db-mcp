@@ -4,7 +4,6 @@ version = "0.8.12"
 description = "MCP server for database semantics and query intelligence"
 requires-python = ">=3.13"
 dependencies = [
-    "fastmcp>=2.0.0",
     "pydantic-ai>=0.1.0",
     "pydantic-graph>=0.1.0",
     "pydantic-settings>=2.0.0",
@@ -16,9 +15,9 @@ dependencies = [
     "pymysql>=1.1.0",
     "pymssql>=2.2.0",
     "pyyaml>=6.0.0",
-    "click>=8.0.0",
-    "rich>=13.0.0",
     "db-mcp-models",
+    "db-mcp-knowledge",
+    "db-mcp-data",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "bicp-agent",
@@ -29,11 +28,12 @@ dependencies = [
 ]
 
 [project.scripts]
-db-mcp = "db_mcp.cli:main"
 db-mcp-benchmark = "db_mcp.benchmark:main"
 
 [tool.uv.sources]
 db-mcp-models = { workspace = true }
+db-mcp-knowledge = { workspace = true }
+db-mcp-data = { workspace = true }
 bicp-agent = { git = "https://github.com/apelogic-ai/bicp.git", subdirectory = "packages/agent-python", rev = "743ecc5" }
 
 [project.optional-dependencies]
@@ -42,6 +42,8 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
     "pyinstaller>=6.0.0",
+    "db-mcp-cli",
+    "db-mcp-server",
 ]
 
 [build-system]

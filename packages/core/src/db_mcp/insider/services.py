@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import yaml
+from db_mcp_knowledge.onboarding.schema_store import load_schema_descriptions
+from db_mcp_knowledge.onboarding.state import load_state
 
 from db_mcp.insider.config import InsiderConfig, get_insider_db_path, load_insider_config
 from db_mcp.insider.logging import log_event
@@ -19,8 +21,6 @@ from db_mcp.insider.models import (
 )
 from db_mcp.insider.review import ReviewApplier, _schema_digest_for_path
 from db_mcp.insider.store import InsiderStore
-from db_mcp.onboarding.schema_store import load_schema_descriptions
-from db_mcp.onboarding.state import load_state
 
 
 def _default_connection_resolver(connection: str) -> Path:

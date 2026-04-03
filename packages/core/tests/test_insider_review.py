@@ -4,9 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
+from db_mcp_knowledge.onboarding.schema_store import (
+    create_initial_schema,
+    save_schema_descriptions,
+)
 
 from db_mcp.insider.review import ReviewApplier
-from db_mcp.onboarding.schema_store import create_initial_schema, save_schema_descriptions
 
 
 def _seed_schema(connection_path: Path) -> None:

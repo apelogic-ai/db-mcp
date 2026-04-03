@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from db_mcp.connectors.api_discovery import (
+from db_mcp_data.connectors.api_discovery import (
     DiscoveredPagination,
     DiscoveryResult,
     detect_pagination,
@@ -277,7 +277,9 @@ class TestDiscoverOpenAPISpec:
         mock_resp.headers = {"content-type": "application/json"}
         mock_resp.json.return_value = OPENAPI_3_SPEC
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=mock_resp) as get:
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=mock_resp
+        ) as get:
             spec, spec_url = discover_openapi_spec(
                 "https://api.example.com/catalog/openapi.json",
                 {},
@@ -303,7 +305,9 @@ class TestDiscoverOpenAPISpec:
                 return mock_resp
             return not_found
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", side_effect=mock_get
+        ):
             spec, spec_url = discover_openapi_spec("https://api.example.com", {}, 10.0)
 
         assert spec is not None
@@ -325,7 +329,9 @@ class TestDiscoverOpenAPISpec:
                 return mock_resp
             return not_found
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", side_effect=mock_get
+        ):
             spec, spec_url = discover_openapi_spec("https://api.example.com", {}, 10.0)
 
         assert spec is not None
@@ -346,7 +352,9 @@ class TestDiscoverOpenAPISpec:
                 return mock_resp
             return not_found
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", side_effect=mock_get
+        ):
             spec, spec_url = discover_openapi_spec("https://api.example.com", {}, 10.0)
 
         assert spec is not None
@@ -357,7 +365,9 @@ class TestDiscoverOpenAPISpec:
         not_found = MagicMock()
         not_found.status_code = 404
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=not_found):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=not_found
+        ):
             spec, spec_url = discover_openapi_spec("https://api.example.com", {}, 10.0)
 
         assert spec is None
@@ -366,7 +376,7 @@ class TestDiscoverOpenAPISpec:
     def test_handles_timeout(self):
         """Should handle timeout gracefully."""
         with patch(
-            "db_mcp.connectors.api_discovery.requests.get",
+            "db_mcp_data.connectors.api_discovery.requests.get",
             side_effect=Exception("Timeout"),
         ):
             spec, spec_url = discover_openapi_spec("https://api.example.com", {}, 10.0)
@@ -379,7 +389,7 @@ class TestDiscoverOpenAPISpec:
         not_found.status_code = 404
 
         with patch(
-            "db_mcp.connectors.api_discovery.requests.get", return_value=not_found
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=not_found
         ) as mock_get:
             discover_openapi_spec(
                 "https://api.example.com",
@@ -409,7 +419,9 @@ class TestDiscoverOpenAPISpec:
                 return mock_resp
             return not_found
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", side_effect=mock_get
+        ):
             spec, spec_url = discover_openapi_spec("https://api.example.com", {}, 10.0)
 
         assert spec is not None
@@ -736,7 +748,9 @@ class TestProbeEndpoints:
             {"id": 2, "name": "Item 2"},
         ]
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=mock_resp
+        ):
             endpoints, pagination = probe_endpoints("https://api.example.com/items", {}, {}, 10.0)
 
         assert len(endpoints) >= 1
@@ -757,7 +771,9 @@ class TestProbeEndpoints:
             "total": 100,  # non-array, should be ignored
         }
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=mock_resp
+        ):
             endpoints, _ = probe_endpoints("https://api.example.com", {}, {}, 10.0)
 
         names = {ep.name for ep in endpoints}
@@ -781,7 +797,9 @@ class TestProbeEndpoints:
                 resp.json.side_effect = ValueError("Not JSON")
             return resp
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", side_effect=mock_get
+        ):
             endpoints, _ = probe_endpoints("https://api.example.com", {}, {}, 10.0)
 
         names = {ep.name for ep in endpoints}
@@ -799,7 +817,9 @@ class TestProbeEndpoints:
         not_found.headers = {"content-type": "text/html"}
         not_found.json.side_effect = ValueError("Not JSON")
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=not_found):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=not_found
+        ):
             endpoints, _ = probe_endpoints("https://api.example.com", {}, {}, 10.0)
 
         # Should not crash, may return empty
@@ -813,7 +833,7 @@ class TestProbeEndpoints:
         not_found.json.side_effect = ValueError("Not JSON")
 
         with patch(
-            "db_mcp.connectors.api_discovery.requests.get", return_value=not_found
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=not_found
         ) as mock_get:
             probe_endpoints(
                 "https://api.example.com",
@@ -983,7 +1003,9 @@ class TestDiscoverAPI:
 
         direct_url = "https://boost.example.com/api/public/v1/openapi.json"
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", return_value=spec_resp):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", return_value=spec_resp
+        ):
             result = discover_api(direct_url, {}, {}, 10.0)
 
         assert result.strategy == "openapi"
@@ -1006,7 +1028,9 @@ class TestDiscoverAPI:
                 return spec_resp
             return not_found
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", side_effect=mock_get
+        ):
             result = discover_api("https://api.example.com", {}, {}, 10.0)
 
         assert result.strategy == "openapi"
@@ -1055,7 +1079,9 @@ class TestDiscoverAPI:
                 return probe_resp
             return not_found
 
-        with patch("db_mcp.connectors.api_discovery.requests.get", side_effect=mock_get):
+        with patch(
+            "db_mcp_data.connectors.api_discovery.requests.get", side_effect=mock_get
+        ):
             result = discover_api("https://api.example.com", {}, {}, 10.0)
 
         assert result.strategy == "probe"
@@ -1064,7 +1090,7 @@ class TestDiscoverAPI:
     def test_returns_empty_on_total_failure(self):
         """Should return empty result with errors if nothing works."""
         with patch(
-            "db_mcp.connectors.api_discovery.requests.get",
+            "db_mcp_data.connectors.api_discovery.requests.get",
             side_effect=Exception("Network error"),
         ):
             result = discover_api("https://api.example.com", {}, {}, 10.0)

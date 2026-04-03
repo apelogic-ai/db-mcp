@@ -8,8 +8,7 @@ These are purely structural tests — no business logic is exercised.
 import click
 import pytest
 from click.testing import CliRunner
-
-from db_mcp.cli.main import main
+from db_mcp_cli.main import main
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -193,7 +192,7 @@ class TestRegisterCommands:
         return g
 
     def test_register_core(self):
-        from db_mcp.cli.commands.core import register_commands
+        from db_mcp_cli.commands.core import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "init" in g.commands
@@ -204,44 +203,44 @@ class TestRegisterCommands:
         assert "doctor" in g.commands
 
     def test_register_agents(self):
-        from db_mcp.cli.commands.agents_cmd import register_commands
+        from db_mcp_cli.commands.agents_cmd import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "agents" in g.commands
 
     def test_register_collab(self):
-        from db_mcp.cli.commands.collab import register_commands
+        from db_mcp_cli.commands.collab import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "collab" in g.commands
 
     def test_register_traces(self):
-        from db_mcp.cli.commands.traces import register_commands
+        from db_mcp_cli.commands.traces import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "traces" in g.commands
 
     def test_register_git(self):
-        from db_mcp.cli.commands.git_cmds import register_commands
+        from db_mcp_cli.commands.git_cmds import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "sync" in g.commands
         assert "pull" in g.commands
 
     def test_register_insider(self):
-        from db_mcp.cli.commands.insider import register_commands
+        from db_mcp_cli.commands.insider import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "insider" in g.commands
 
     def test_register_discover(self):
-        from db_mcp.cli.commands.discover_cmd import register_commands
+        from db_mcp_cli.commands.discover_cmd import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "discover" in g.commands
 
     def test_register_services(self):
-        from db_mcp.cli.commands.services import register_commands
+        from db_mcp_cli.commands.services import register_commands
 
         g = self._fresh_group()
         register_commands(g)
@@ -252,13 +251,13 @@ class TestRegisterCommands:
         assert "playground" in g.commands
 
     def test_register_connector(self):
-        from db_mcp.cli.commands.connector_cmd import register_commands
+        from db_mcp_cli.commands.connector_cmd import register_commands
         g = self._fresh_group()
         register_commands(g)
         assert "connector" in g.commands
 
     def test_register_runtime(self):
-        from db_mcp.cli.commands.runtime_cmd import register_commands
+        from db_mcp_cli.commands.runtime_cmd import register_commands
 
         g = self._fresh_group()
         register_commands(g)

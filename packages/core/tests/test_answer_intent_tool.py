@@ -4,6 +4,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from db_mcp_knowledge.semantic.core_loader import (
+    ConnectionSemanticCore,
+    load_connection_semantic_core,
+)
 from db_mcp_models import (
     BoundaryMode,
     Dimension,
@@ -15,8 +19,6 @@ from db_mcp_models import (
 )
 from db_mcp_models.policy import TimeWindowPolicy, UnitConversionPolicy
 
-from db_mcp.config import reset_settings
-from db_mcp.semantic.core_loader import ConnectionSemanticCore, load_connection_semantic_core
 from db_mcp.tools.intent import _answer_intent
 
 
@@ -87,10 +89,10 @@ async def test_answer_intent_executes_metric_and_returns_structured_contract(
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: semantic_core,
+        lambda provider_id, **kw: semantic_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -136,10 +138,10 @@ async def test_answer_intent_records_semantic_knowledge_files(monkeypatch, seman
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: semantic_core,
+        lambda provider_id, **kw: semantic_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -171,7 +173,7 @@ async def test_answer_intent_requires_metric_parameters(monkeypatch, semantic_co
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: semantic_core,
+        lambda provider_id, **kw: semantic_core,
     )
 
     result = await _answer_intent(
@@ -194,10 +196,10 @@ async def test_answer_intent_executes_metric_by_dimension(monkeypatch, semantic_
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: semantic_core,
+        lambda provider_id, **kw: semantic_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -258,10 +260,10 @@ async def test_answer_intent_executes_binding_only_metric(monkeypatch, semantic_
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: binding_only_core,
+        lambda provider_id, **kw: binding_only_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -320,10 +322,10 @@ async def test_answer_intent_uses_time_context_to_fill_metric_parameters(monkeyp
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: time_core,
+        lambda provider_id, **kw: time_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -398,10 +400,10 @@ async def test_answer_intent_metric_parameters_override_time_context(monkeypatch
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: time_core,
+        lambda provider_id, **kw: time_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -478,10 +480,10 @@ async def test_answer_intent_applies_semantic_filters_via_binding(monkeypatch):
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: filter_core,
+        lambda provider_id, **kw: filter_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -545,7 +547,7 @@ async def test_answer_intent_rejects_unknown_filter_field(monkeypatch):
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: filter_core,
+        lambda provider_id, **kw: filter_core,
     )
 
     result = await _answer_intent(
@@ -617,10 +619,10 @@ async def test_answer_intent_infers_period_ending_window_from_intent(monkeypatch
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: policy_core,
+        lambda provider_id, **kw: policy_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -695,10 +697,10 @@ async def test_answer_intent_infers_single_day_window_and_coerces_date_literals(
     )
     monkeypatch.setattr(
         "db_mcp.orchestrator.engine.load_connection_semantic_core",
-        lambda provider_id: policy_core,
+        lambda provider_id, **kw: policy_core,
     )
     monkeypatch.setattr(
-        "db_mcp.orchestrator.engine._run_sql",
+        "db_mcp.orchestrator.engine.run_sql",
         AsyncMock(
             return_value={
                 "status": "success",
@@ -732,12 +734,11 @@ async def test_answer_intent_infers_single_day_window_and_coerces_date_literals(
 def test_load_connection_semantic_core_reads_connection_local_playground_artifacts(monkeypatch):
     repo_root = Path(__file__).resolve().parents[1]
     connections_dir = repo_root / "src" / "db_mcp" / "data"
+    playground_path = connections_dir / "playground"
 
-    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
-    monkeypatch.setenv("CONNECTION_NAME", "playground")
-    reset_settings()
-
-    semantic_core = load_connection_semantic_core("playground")
+    semantic_core = load_connection_semantic_core(
+        "playground", connection_path=playground_path
+    )
 
     assert {metric.name for metric in semantic_core.metrics} >= {
         "total_customers",
@@ -746,5 +747,3 @@ def test_load_connection_semantic_core_reads_connection_local_playground_artifac
     }
     assert {dimension.name for dimension in semantic_core.dimensions} == {"billing_country"}
     assert semantic_core.get_metric_binding("invoice_revenue_in_window") is not None
-
-    reset_settings()

@@ -100,14 +100,61 @@ npx playwright test
 
 ## Test-Driven Development (TDD)
 
-All new Python code must follow TDD:
-1. Write tests first
-2. Run tests to confirm failure
-3. Implement minimal change
-4. Refactor
-5. Repeat
+All new Python code must follow strict TDD. Each cycle has discrete steps that
+must not be combined.
 
-Bug fixes should start with a failing test that reproduces the issue.
+### The TDD cycle
+
+1. **RED** — Write a failing test (and only enough type stubs to make it compile).
+   Run `uv run pytest` and show the failure output.
+2. **GREEN** — Write the minimal implementation to make the test pass.
+   Run `uv run pytest`. If REFACTOR follows, show the summary line only
+   (e.g. `42 passed in 3.1s`); full output is not required until after
+   REFACTOR. If stopping here (no refactor planned), show full output.
+3. **REFACTOR** — Clean up (no new behavior). Run `uv run pytest` and show
+   the full output to confirm nothing broke.
+
+### Hard rules
+
+- **Never produce implementation before a failing test exists.** If the task is
+  "implement X", the first deliverable is a test for X, not X itself.
+- **Test file comes first.** If `gateway/adapter.py` appears before
+  `tests/test_gateway_adapter.py`, that is a violation.
+- **Keep tests small and focused.** One behavior per test function. One TDD cycle
+  per behavior.
+- **Do not refactor and add behavior in the same step.** Refactor is a separate
+  cycle with its own GREEN confirmation.
+- **Each step must show explicit test output.** RED must include full
+  `uv run pytest` output. GREEN may show the summary line only when REFACTOR
+  follows immediately; show full output if no refactor is planned. REFACTOR
+  always shows full output.
+
+### Planned work (executing an agreed implementation plan)
+
+When working through a pre-reviewed plan (e.g., the step-by-step plan in
+`docs/architecture-review.md`), a full RED → GREEN cycle may be completed in
+one response:
+
+1. Write the test, run it, show the failure (RED).
+2. Write the implementation, run it, show it passing (GREEN).
+3. Stop. Wait for "next" before proceeding to the next commit.
+
+One response = one commit = one RED→GREEN cycle. Do not batch multiple
+commits into one response.
+
+### Unplanned work (ad-hoc requests, bug investigations, design exploration)
+
+Stop after RED and wait for confirmation before proceeding to GREEN. The test
+itself needs review because there is no pre-agreed spec.
+
+1. Write the test, run it, show the failure (RED). **Stop.**
+2. Wait for user to confirm the test is correct.
+3. Write the implementation, run it, show it passing (GREEN).
+
+### Bug fixes
+
+Bug fixes start with a failing test that reproduces the issue. The fix is the
+GREEN step of that cycle. Bug fixes are unplanned work — stop after RED.
 
 ## Documentation
 

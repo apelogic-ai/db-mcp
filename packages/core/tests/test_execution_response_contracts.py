@@ -6,8 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-from db_mcp.contracts.response_contracts import (
+from db_mcp_data.contracts.response_contracts import (
     GetResultCompleteContract,
     GetResultErrorContract,
     GetResultRunningContract,
@@ -15,6 +14,7 @@ from db_mcp.contracts.response_contracts import (
     RunSqlAsyncSubmittedContract,
     RunSqlSyncSuccessContract,
 )
+
 from db_mcp.tools.generation import _get_result, _run_sql
 
 CONNECTION = "contract-conn"

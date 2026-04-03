@@ -7,8 +7,9 @@ import json
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-
-from fastmcp import Context
+from typing import (
+    Any as Context,  # noqa: UP006 — Context was fastmcp.Context; moved to mcp-server in Phase 3
+)
 
 from db_mcp.exec_runtime import (
     ExecRuntimeError,

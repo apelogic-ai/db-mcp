@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 from click.testing import CliRunner
-
-from db_mcp.cli import main
+from db_mcp_cli.main import main
 
 
 def _make_mock_connector():
@@ -56,11 +55,11 @@ class TestDiscoverCommand:
         runner = CliRunner()
         with (
             patch(
-                "db_mcp.cli.commands.discover_cmd.get_active_connection",
+                "db_mcp_cli.commands.discover_cmd.get_active_connection",
                 return_value="default",
             ),
             patch(
-                "db_mcp.cli.commands.discover_cmd.get_connection_path",
+                "db_mcp_cli.commands.discover_cmd.get_connection_path",
                 return_value=tmp_path / "nonexistent",
             ),
         ):
@@ -71,21 +70,21 @@ class TestDiscoverCommand:
         """Should fail when named connection doesn't exist."""
         runner = CliRunner()
         with patch(
-                "db_mcp.cli.commands.discover_cmd.get_connection_path",
+                "db_mcp_cli.commands.discover_cmd.get_connection_path",
                 return_value=tmp_path / "nonexistent",
             ):
             result = runner.invoke(main, ["discover", "-c", "bogus"])
         assert result.exit_code != 0
         assert "not found" in result.output
 
-    @patch("db_mcp.cli.commands.discover_cmd.get_connection_path")
+    @patch("db_mcp_cli.commands.discover_cmd.get_connection_path")
     def test_discover_connection_failed(self, mock_path, tmp_path):
         """Should fail gracefully on connection error."""
         runner = CliRunner()
         mock_connector = MagicMock()
         mock_connector.test_connection.return_value = {"connected": False, "error": "refused"}
 
-        with patch("db_mcp.connectors.sql.SQLConnector", return_value=mock_connector):
+        with patch("db_mcp_data.connectors.sql.SQLConnector", return_value=mock_connector):
             result = runner.invoke(main, ["discover", "--url", "postgres://bad:url@host/db"])
         assert result.exit_code != 0
 
@@ -94,7 +93,7 @@ class TestDiscoverCommand:
         runner = CliRunner()
         mock_connector = _make_mock_connector()
 
-        with patch("db_mcp.connectors.sql.SQLConnector", return_value=mock_connector):
+        with patch("db_mcp_data.connectors.sql.SQLConnector", return_value=mock_connector):
             result = runner.invoke(main, ["discover", "--url", "postgres://u:p@h/db"])
 
         assert result.exit_code == 0
@@ -108,7 +107,7 @@ class TestDiscoverCommand:
         runner = CliRunner()
         mock_connector = _make_mock_connector()
 
-        with patch("db_mcp.connectors.sql.SQLConnector", return_value=mock_connector):
+        with patch("db_mcp_data.connectors.sql.SQLConnector", return_value=mock_connector):
             result = runner.invoke(
                 main, ["discover", "--url", "postgres://u:p@h/db", "--format", "json"]
             )
@@ -124,7 +123,7 @@ class TestDiscoverCommand:
         mock_connector = _make_mock_connector()
         out_file = tmp_path / "schema.yaml"
 
-        with patch("db_mcp.connectors.sql.SQLConnector", return_value=mock_connector):
+        with patch("db_mcp_data.connectors.sql.SQLConnector", return_value=mock_connector):
             result = runner.invoke(
                 main, ["discover", "--url", "postgres://u:p@h/db", "-o", str(out_file)]
             )
@@ -139,7 +138,7 @@ class TestDiscoverCommand:
         runner = CliRunner()
         mock_connector = _make_mock_connector()
 
-        with patch("db_mcp.connectors.sql.SQLConnector", return_value=mock_connector):
+        with patch("db_mcp_data.connectors.sql.SQLConnector", return_value=mock_connector):
             result = runner.invoke(main, ["discover", "--url", "postgres://u:p@h/db"])
 
         parsed = _extract_yaml(result.output)
@@ -148,9 +147,9 @@ class TestDiscoverCommand:
         assert table["columns"][0]["name"] == "id"
         assert table["columns"][0]["type"] == "integer"
 
-    @patch("db_mcp.cli.commands.discover_cmd._run_discovery_with_progress")
-    @patch("db_mcp.cli.commands.discover_cmd.get_connection_path")
-    @patch("db_mcp.connectors.get_connector")
+    @patch("db_mcp_cli.commands.discover_cmd._run_discovery_with_progress")
+    @patch("db_mcp_cli.commands.discover_cmd.get_connection_path")
+    @patch("db_mcp_data.connectors.get_connector")
     def test_discover_named_connection_auto_saves_to_connection(
         self, mock_get_connector, mock_get_connection_path, mock_run_discovery, tmp_path
     ):

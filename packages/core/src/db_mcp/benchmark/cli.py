@@ -7,13 +7,13 @@ import signal
 from pathlib import Path
 
 import click
+from db_mcp_cli import console
 
 from db_mcp.benchmark.runner import (
     run_benchmark_suite_from_cli,
     run_preflight,
     summarize_run_directory,
 )
-from db_mcp.cli import console
 
 
 @click.group()

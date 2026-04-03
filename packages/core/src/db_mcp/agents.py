@@ -10,9 +10,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from rich.console import Console
+# Lazy module-level console: avoids importing rich at import time.
+# rich lives in packages/cli/ after Phase 3.09; importlib keeps core clean.
+_console_instance: object | None = None
 
-console = Console()
+
+def _get_console() -> object:
+    global _console_instance
+    if _console_instance is None:
+        import importlib
+
+        _rich = importlib.import_module("rich.console")
+        _console_instance = _rich.Console()
+    return _console_instance
 
 DEFAULT_RUNTIME_MCP_URL = "http://127.0.0.1:8788/mcp"
 
@@ -209,7 +219,7 @@ def load_agent_config(agent: MCPAgent) -> dict:
             with open(agent.config_path, "rb") as f:
                 return tomllib.load(f)
     except Exception as e:
-        console.print(f"[yellow]Warning: Could not load {agent.name} config: {e}[/yellow]")
+        _get_console().print(f"[yellow]Warning: Could not load {agent.name} config: {e}[/yellow]")
         return {}
 
     return {}
@@ -297,7 +307,7 @@ def configure_agent_for_dbmcp(agent_id: str, binary_path: str) -> bool:
         True if successful, False otherwise
     """
     if agent_id not in AGENTS:
-        console.print(f"[red]Unknown agent: {agent_id}[/red]")
+        _get_console().print(f"[red]Unknown agent: {agent_id}[/red]")
         return False
 
     agent = AGENTS[agent_id]
@@ -305,7 +315,7 @@ def configure_agent_for_dbmcp(agent_id: str, binary_path: str) -> bool:
     # Special handling for OpenClaw - check mcporter dependency
     if agent_id == "openclaw":
         if not shutil.which("mcporter"):
-            console.print(
+            _get_console().print(
                 "[yellow]Warning: mcporter is required for OpenClaw integration. "
                 "Install with: npm i -g mcporter[/yellow]"
             )
@@ -344,11 +354,11 @@ def configure_agent_for_dbmcp(agent_id: str, binary_path: str) -> bool:
 
         # Save config
         save_agent_config(agent, config)
-        console.print(f"[green]✓ {agent.name} configured at {agent.config_path}[/green]")
+        _get_console().print(f"[green]✓ {agent.name} configured at {agent.config_path}[/green]")
         return True
 
     except Exception as e:
-        console.print(f"[red]Failed to configure {agent.name}: {e}[/red]")
+        _get_console().print(f"[red]Failed to configure {agent.name}: {e}[/red]")
         return False
 
 
@@ -390,7 +400,7 @@ def remove_dbmcp_from_agent(agent_id: str) -> bool:
 
         return True
     except Exception as e:
-        console.print(f"[red]Failed to remove db-mcp from {agent.name}: {e}[/red]")
+        _get_console().print(f"[red]Failed to remove db-mcp from {agent.name}: {e}[/red]")
         return False
 
 

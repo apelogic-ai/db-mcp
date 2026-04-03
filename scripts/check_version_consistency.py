@@ -72,7 +72,9 @@ def main() -> None:
             f"packages/core/src/db_mcp/__init__.py ({init_version})"
         )
     if pyproject_version != lock_version:
-        mismatches.append(f"packages/core/pyproject.toml ({pyproject_version}) != uv.lock ({lock_version})")
+        mismatches.append(
+            f"packages/core/pyproject.toml ({pyproject_version}) != uv.lock ({lock_version})"
+        )
 
     if mismatches:
         fail("Version mismatch detected:\n- " + "\n- ".join(mismatches))
