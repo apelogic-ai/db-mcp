@@ -388,7 +388,7 @@ async def test_run_sql_rejects_connection_mismatch(monkeypatch):
     query = Query(
         query_id="q-other",
         sql="SELECT 1",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="warehouse",
     )
 
@@ -435,7 +435,7 @@ async def test_run_sql_rejects_write_query_without_confirmation(monkeypatch):
     query = Query(
         query_id="q-write",
         sql="INSERT INTO users(id) VALUES (1)",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="confirm",
     )
@@ -471,7 +471,7 @@ async def test_run_sql_executes_validated_query_synchronously(monkeypatch):
     query = Query(
         query_id="q-sync",
         sql="SELECT 1 AS answer",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="auto",
     )
@@ -586,7 +586,7 @@ async def test_run_sql_returns_error_for_failed_sync_execution(monkeypatch):
     query = Query(
         query_id="q-fail",
         sql="SELECT broken()",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="auto",
     )
@@ -663,7 +663,7 @@ async def test_run_sql_submits_large_validated_query_for_async_execution(monkeyp
     query = Query(
         query_id="q-async",
         sql="SELECT * FROM events",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="auto",
         estimated_rows=75_000,

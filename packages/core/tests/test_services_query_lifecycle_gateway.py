@@ -44,7 +44,7 @@ def _query(query_id: str, sql: str, connection: str = "prod") -> Query:
     return Query(
         query_id=query_id,
         sql=sql,
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection=connection,
         cost_tier="auto",
     )

@@ -1285,7 +1285,7 @@ async def _get_result(query_id: str, connection: str) -> dict:
             }
         )
 
-    if query.status == QueryStatus.VALIDATED:
+    if query.status == QueryStatus.READY:
         return inject_protocol(
             {
                 "status": "validated",
@@ -1302,7 +1302,7 @@ async def _get_result(query_id: str, connection: str) -> dict:
             }
         )
 
-    if query.status == QueryStatus.PENDING:
+    if query.status == QueryStatus.DISPATCHED:
         return inject_protocol(
             {
                 "status": "pending",
@@ -1398,9 +1398,9 @@ async def _get_result(query_id: str, connection: str) -> dict:
     # Fallback for unknown status
     return inject_protocol(
         {
-            "status": query.status.value,
+            "status": query.status,
             "query_id": query_id,
-            "message": f"Query in unexpected state: {query.status.value}",
+            "message": f"Query in unexpected state: {query.status}",
         }
     )
 

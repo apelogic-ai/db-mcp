@@ -501,7 +501,7 @@ async def run_sql(
                     ],
                 },
             }
-        if query.status == query.status.EXPIRED:
+        if query.status == "expired":
             return {
                 "status": "error",
                 "error": "Query validation has expired. Please re-validate.",
@@ -525,7 +525,7 @@ async def run_sql(
         if not query.can_execute:
             return {
                 "status": "error",
-                "error": f"Query cannot be executed. Status: {query.status.value}",
+                "error": f"Query cannot be executed. Status: {query.status}",
                 "query_id": query_id,
             }
 

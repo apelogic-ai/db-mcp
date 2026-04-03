@@ -136,7 +136,7 @@ async def test_run_sql_validated_query_via_gateway(monkeypatch, tmp_path):
     query = Query(
         query_id="q-gw",
         sql="SELECT 99 AS val",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="low",
     )
@@ -188,7 +188,7 @@ async def test_run_sql_validated_query_gateway_execution_error(monkeypatch, tmp_
     query = Query(
         query_id="q-gw-fail",
         sql="SELECT boom()",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="low",
     )

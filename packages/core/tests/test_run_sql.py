@@ -571,7 +571,7 @@ async def test_validate_sql_allows_write_when_enabled_for_connection(monkeypatch
     query = Query(
         query_id="q-1",
         sql="INSERT INTO users(id) VALUES (1)",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection=WRITE_CONNECTION,
     )
 
@@ -665,7 +665,7 @@ async def test_run_sql_write_requires_confirmation_by_default():
     query = Query(
         query_id="q-1",
         sql="INSERT INTO users(id) VALUES (1)",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection=WRITE_CONNECTION,
     )
     store = _FakeQueryStore(query=query)
@@ -696,7 +696,7 @@ async def test_run_sql_write_executes_when_confirmed():
     query = Query(
         query_id="q-1",
         sql="INSERT INTO users(id) VALUES (1)",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection=WRITE_CONNECTION,
     )
     store = _FakeQueryStore(query=query)
