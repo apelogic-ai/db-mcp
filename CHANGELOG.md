@@ -9,6 +9,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.0] - 2026-04-03
+
+## Overview
+
+v0.9.0 is a large structural release covering Phase 7 and Phase 8 of the monorepo extraction work. It breaks the codebase into properly isolated packages (`cli`, `mcp-server`, `knowledge`, `data`), removes the dead BICP JSON-RPC layer entirely, eliminates package entanglement, and splits god modules across service, command, and connector layers. No user-facing query or connection features changed — this is purely internal architecture.
+
+## Highlights
+
+- **Monorepo extraction complete**: `db_mcp_cli`, `db_mcp_server`, `db_mcp_knowledge`, and `db_mcp_data` are now independent UV workspace packages with explicit dependency declarations
+- **BICP protocol removed**: The JSON-RPC 2.0 agent layer (`/bicp` endpoint, `bicp/` module, JSON-RPC context) is fully deleted; the UI now talks REST-only
+- **New CLI commands**: `metrics`, `examples`, `rules`, `schema`, `gaps`, `domain`, `query`, `ask` command groups added via flat CLI surface
+- **New MCP tools**: `vault_write`, `vault_append` with `SqlExpr` type and SQL validation
+- **Router split**: `router.py` split into 9 handler modules under `api/handlers/` for maintainability
+- **APIConnector modularized**: Auth, pagination, and schema logic extracted to dedicated modules
+- **1708 tests passing** across all packages
+
+## New Features
+
+- `vault_write` and `vault_append` MCP tools for direct vault operations with SQL validation (`SqlExpr` type guard)
+- Flat CLI command groups: `db-mcp metrics`, `db-mcp examples`, `db-mcp rules`, `db-mcp schema`, `db-mcp gaps`, `db-mcp domain`, `db-mcp query`, `db-mcp ask`
+- Vault path constants module (`knowledge/vault/paths.py`) replacing ~120 hardcoded string literals
+- `services/environment.py` — deduplicated environment helper functions
+- `services/metrics.py` — deduplicated metric binding helpers (stricter validation)
+- `mcp-server/tool_registration.py` — tool registration extracted from server.py into 6 focused register functions
+- `api/handlers/` — 9 handler modules split from the 900-line router
+- APIConnector split: `api_auth.py`, `api_pagination.py`, `api_schema.py`
+- Vitest coverage via `@vitest/coverage-v8` (`bun run test --coverage`)
+
+## Bug Fixes
+
+- Narrow `except` clauses in `data/db/introspection.py` and `data/validation/explain.py` (previously caught all exceptions silently)
+- Silent `except Exception: pass` in `services/insights.py` replaced with `logger.warning(...)` (4 sites)
+- E2E static-navigation spec updated to use REST API instead of removed `/bicp` endpoint
+- Playwright real config updated for CLI package extraction (`db_mcp_cli` module path)
+- Config constants (`CONFIG_FILE`, `load_config`, `save_config`) moved from `db_mcp.cli` shim to `db_mcp.config` — `core` no longer depends on `cli`
+- APIConnector switched from inheritance to composition (`FileConnector`) to satisfy `Connector` Protocol `isinstance` checks
+- `.gitignore`: add `packages/ui/coverage/`, `*.tsbuildinfo`, `package-lock.json`
+
+## Files Changed
+
+| Area | Change |
+|------|--------|
+| `packages/cli/` | New package: `db_mcp_cli` extracted from `packages/core` |
+| `packages/mcp-server/` | New package: `db_mcp_server` extracted from `packages/core` |
+| `packages/knowledge/` | New package: `db_mcp_knowledge` extracted from `packages/core` |
+| `packages/data/` | New package: `db_mcp_data` extracted from `packages/core` |
+| `packages/core/src/db_mcp/bicp/` | Deleted (BICP agent, traces — traces moved to `traces_reader.py`) |
+| `packages/core/src/db_mcp/ui_server.py` | Removed `/bicp` POST + `/bicp/stream` WebSocket endpoints |
+| `packages/core/src/db_mcp/config.py` | Added `CONFIG_DIR`, `CONFIG_FILE`, `CONNECTIONS_DIR`, `load_config`, `save_config` |
+| `packages/core/src/db_mcp/traces_reader.py` | New: moved from `bicp/traces.py` |
+| `packages/core/src/db_mcp/services/connection.py` | Split into `connection.py` + `connection_crud.py` + `connection_test.py` |
+| `packages/core/src/db_mcp/api/handlers/` | 9 new handler modules split from `router.py` |
+| `packages/core/src/db_mcp/api/helpers.py` | New: shared router helpers |
+| `packages/core/src/db_mcp/services/environment.py` | New: deduplicated environment helpers |
+| `packages/core/src/db_mcp/services/metrics.py` | New: deduplicated metric binding helpers |
+| `packages/data/src/db_mcp_data/connectors/api.py` | Composition refactor + `api_auth.py`, `api_pagination.py`, `api_schema.py` extracted |
+| `packages/cli/src/db_mcp_cli/commands/core.py` | Split into `core.py` + `init_cmd.py` + `server_cmd.py` + `connection_cmd.py` |
+| `packages/ui/src/lib/bicp-context.tsx` | Rewritten to pure REST (no JSON-RPC) |
+| `packages/ui/src/lib/bicp.ts` | Dead BICP exports removed; typed REST wrappers kept |
+| `packages/knowledge/src/db_mcp_knowledge/vault/paths.py` | New: vault path constants |
+| `packages/mcp-server/src/db_mcp_server/tool_registration.py` | New: tool registration extracted from server.py |
+
+## Testing
+
+- Core: 1148 tests passing
+- Knowledge: 214 tests passing
+- Data: 268 tests passing
+- CLI: 35 tests passing
+- MCP-server: 43 tests passing
+- **Total: 1708 tests passing**
+- Lint: `ruff check` clean across all packages
+- TypeScript: `tsc --noEmit` clean
+
+
 ## [0.8.12] - 2026-03-30
 
 ## Summary
