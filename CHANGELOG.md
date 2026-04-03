@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.3] - 2026-04-03
+
+## Overview
+
+This release removes the silent DuckDB fallback in `APIConnector.submit_sql()`. Previously, calling `execute_sql` on a connector without `supports_sql: true` would silently query stale JSONL files from the last `sync()` call via an in-memory DuckDB instance — with no indication that sync was required, and no way for the caller to know the data might be arbitrarily old. Both `APIConnector` and `CatalogRoutingAPIConnector` now raise a clear `ValueError` directing callers to use `api_query` instead. Schema introspection fallbacks (`get_tables`, `get_columns`, etc.) via `_file_connector` are unchanged.
+
+## Highlights
+
+- **No more silent stale data** — non-SQL connectors raise `ValueError("This connector does not support SQL execution. Use api_query to fetch endpoint data directly.")` instead of querying JSONL files
+- **`CatalogRoutingAPIConnector` fixed too** — the identical fallback in the catalog-routing subclass is also removed
+- **Cross-package test rule** — new standing rule to run all Python package suites before pushing to a PR; motivated by this fix exposing tests in `packages/core` that exercise `packages/data` connectors
+- **`/test-all` skill** — new skill for running the full test suite with a summary table
+
+## Bug Fixes
+
+- `APIConnector.submit_sql()` no longer silently delegates to DuckDB when `supports_sql` is false or absent (`packages/data/src/db_mcp_data/connectors/api.py`)
+- `CatalogRoutingAPIConnector.submit_sql()` same fix (`packages/data/src/db_mcp_data/connectors/api_sql.py`)
+
+## Files Changed
+
+| File | Change |
+|---|---|
+| `packages/data/src/db_mcp_data/connectors/api.py` | Replace DuckDB fallback with `ValueError` in `submit_sql` |
+| `packages/data/src/db_mcp_data/connectors/api_sql.py` | Same fix in `CatalogRoutingAPIConnector.submit_sql` |
+| `packages/data/tests/test_b1_duckdb_executor.py` | 3 new tests asserting `ValueError` for non-SQL connectors |
+| `packages/core/tests/test_api_connector.py` | 3 tests updated from asserting rows to asserting `ValueError` |
+| `CLAUDE.md` | Pre-push cross-package test rule added |
+| `.claude/skills/test-all` | New skill for full suite runs |
+
+## Testing
+
+- Data: 298 tests
+- Knowledge: 249 tests
+- Core: 1152 tests
+- MCP-server: 44 tests
+- **Total: 1743 tests**
+- Lint: `ruff check` clean
+
+
 ## [0.9.2] - 2026-04-03
 
 ## Overview
