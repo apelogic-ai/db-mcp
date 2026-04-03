@@ -11,7 +11,7 @@ from typing import Any
 import requests
 import yaml
 
-from db_mcp_data.connector_compat import normalize_connector_payload
+from db_mcp_data.connector_plugins.compat import normalize_connector_payload
 from db_mcp_data.connectors import api_auth as _api_auth
 from db_mcp_data.connectors import api_pagination as _api_pg
 from db_mcp_data.connectors.api_config import (

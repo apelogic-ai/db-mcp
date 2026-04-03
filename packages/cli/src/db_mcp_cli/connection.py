@@ -7,7 +7,7 @@ Handles listing, reading, writing, and activating connections stored in
 from pathlib import Path
 
 import yaml
-from db_mcp_data.connector_templates import get_connector_template
+from db_mcp_data.connectors.templates import get_connector_template
 from db_mcp_data.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 from rich.prompt import Prompt
 
@@ -18,6 +18,22 @@ from db_mcp_cli.utils import (
     load_config,
     save_config,
 )
+
+
+def resolve_connection(connection: str | None) -> tuple[str, Path]:
+    """Resolve a connection name (or active) to (name, path), raising ClickException if missing.
+
+    Routes through ConnectionRegistry so CLI and MCP server share the same resolution logic.
+    """
+    import click
+    from db_mcp.registry import ConnectionRegistry
+
+    registry = ConnectionRegistry.get_instance()
+    name = connection or registry.get_active_connection_name()
+    path = registry.get_connection_path(name)
+    if not path.exists():
+        raise click.ClickException(f"Connection '{name}' not found")
+    return name, path
 
 
 def get_connection_path(name: str) -> Path:

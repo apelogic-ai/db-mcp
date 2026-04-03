@@ -9,8 +9,8 @@ from db_mcp_data.connector_plugins.builtin.metabase import (
     MetabasePluginConnector,
     build_metabase_connector,
 )
-from db_mcp_data.connector_templates import get_connector_template, materialize_connector_template
 from db_mcp_data.connectors import Connector, get_connector
+from db_mcp_data.connectors.templates import get_connector_template, materialize_connector_template
 
 
 @pytest.fixture

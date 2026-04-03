@@ -1,21 +1,10 @@
 """CLI commands for business rule management."""
 
-from pathlib import Path
-
 import click
 from rich.table import Table
 
-from db_mcp_cli.connection import get_active_connection, get_connection_path
+from db_mcp_cli.connection import resolve_connection as _resolve_connection
 from db_mcp_cli.utils import console
-
-
-def _resolve_connection(connection: str | None) -> tuple[str, Path]:
-
-    name = connection or get_active_connection()
-    path = get_connection_path(name)
-    if not path.exists():
-        raise click.ClickException(f"Connection '{name}' not found")
-    return name, path
 
 
 @click.group("rules")

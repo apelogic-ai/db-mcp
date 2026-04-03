@@ -7,8 +7,8 @@ from click.testing import CliRunner
 from db_mcp_cli.main import main
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.onboarding.schema_store.load_schema_descriptions")
 def test_schema_show_empty(mock_load, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -21,8 +21,8 @@ def test_schema_show_empty(mock_load, mock_path, mock_active, tmp_path):
     assert "No schema descriptions" in result.output
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.onboarding.schema_store.load_schema_descriptions")
 def test_schema_show_with_data(mock_load, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -46,8 +46,8 @@ def test_schema_show_with_data(mock_load, mock_path, mock_active, tmp_path):
     assert "id" in result.output
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.onboarding.schema_store.load_schema_descriptions")
 def test_schema_export_yaml(mock_load, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -62,8 +62,8 @@ def test_schema_export_yaml(mock_load, mock_path, mock_active, tmp_path):
     assert "tables" in result.output
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.onboarding.schema_store.load_schema_descriptions")
 def test_schema_export_json(mock_load, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -78,8 +78,8 @@ def test_schema_export_json(mock_load, mock_path, mock_active, tmp_path):
     assert '"tables"' in result.output
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.schema.list_catalogs")
 def test_schema_catalogs(mock_list, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -93,8 +93,8 @@ def test_schema_catalogs(mock_list, mock_path, mock_active, tmp_path):
     assert "analytics" in result.output
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.schema.list_tables")
 def test_schema_tables(mock_list, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -108,8 +108,8 @@ def test_schema_tables(mock_list, mock_path, mock_active, tmp_path):
     assert "orders" in result.output
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.schema.describe_table")
 def test_schema_describe(mock_desc, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -128,8 +128,8 @@ def test_schema_describe(mock_desc, mock_path, mock_active, tmp_path):
     assert "email" in result.output
 
 
-@patch("db_mcp_cli.commands.schema_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.schema_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.schema.sample_table")
 def test_schema_sample(mock_sample, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path

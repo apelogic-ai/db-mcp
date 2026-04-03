@@ -1,4 +1,4 @@
-from db_mcp_data.connector_templates import (
+from db_mcp_data.connectors.templates import (
     get_connector_template,
     list_connector_templates,
     match_connector_template,

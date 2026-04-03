@@ -7,8 +7,8 @@ from click.testing import CliRunner
 from db_mcp_cli.main import main
 
 
-@patch("db_mcp_cli.commands.metrics_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.metrics_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.metrics.store.load_metrics")
 def test_metrics_list_empty(mock_load, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -23,8 +23,8 @@ def test_metrics_list_empty(mock_load, mock_path, mock_active, tmp_path):
     assert "No metrics defined" in result.output
 
 
-@patch("db_mcp_cli.commands.metrics_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.metrics_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.metrics.store.load_metrics")
 def test_metrics_list_shows_table(mock_load, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -45,8 +45,8 @@ def test_metrics_list_shows_table(mock_load, mock_path, mock_active, tmp_path):
     assert "Daily active users" in result.output
 
 
-@patch("db_mcp_cli.commands.metrics_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.metrics_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.metrics.store.add_metric")
 def test_metrics_add_success(mock_add, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -63,8 +63,8 @@ def test_metrics_add_success(mock_add, mock_path, mock_active, tmp_path):
     mock_add.assert_called_once()
 
 
-@patch("db_mcp_cli.commands.metrics_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.metrics_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.metrics.store.delete_metric")
 def test_metrics_remove_success(mock_delete, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -77,8 +77,8 @@ def test_metrics_remove_success(mock_delete, mock_path, mock_active, tmp_path):
     assert "removed" in result.output.lower()
 
 
-@patch("db_mcp_cli.commands.metrics_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.metrics_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp_knowledge.metrics.store.delete_metric")
 def test_metrics_remove_not_found(mock_delete, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -92,7 +92,7 @@ def test_metrics_remove_not_found(mock_delete, mock_path, mock_active, tmp_path)
 
 def test_metrics_list_with_connection_flag(tmp_path):
     with patch(
-        "db_mcp_cli.commands.metrics_cmd.get_connection_path", return_value=tmp_path
+        "db_mcp.registry.ConnectionRegistry.get_connection_path", return_value=tmp_path
     ), patch("db_mcp_knowledge.metrics.store.load_metrics") as mock_load:
         (tmp_path / "dummy").write_text("")
         catalog = MagicMock()
