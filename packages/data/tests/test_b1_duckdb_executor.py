@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # 1. DuckDBExecutor exists at db_mcp_data.db.duckdb
 # ---------------------------------------------------------------------------
@@ -183,3 +185,60 @@ def test_dispatcher_comment_no_longer_says_extends():
     assert "extends FileConnector" not in source, (
         "Dispatcher comment refers to the old inheritance. Update it."
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. APIConnector.submit_sql raises for non-SQL connectors (no silent DuckDB)
+# ---------------------------------------------------------------------------
+
+
+def test_api_connector_submit_sql_raises_for_non_sql_connector(tmp_path: Path):
+    """submit_sql must raise ValueError when supports_sql is false, not silently query DuckDB."""
+    from db_mcp_data.connectors.api import APIConnector
+    from db_mcp_data.connectors.api_config import APIConnectorConfig
+
+    config = APIConnectorConfig(
+        base_url="https://api.example.com",
+        endpoints=[],
+        capabilities={"supports_sql": False},
+    )
+    connector = APIConnector(config, data_dir=str(tmp_path))
+
+    with pytest.raises(ValueError, match="does not support SQL execution"):
+        connector.submit_sql("SELECT 1")
+
+
+def test_api_connector_submit_sql_raises_when_supports_sql_absent(tmp_path: Path):
+    """submit_sql must raise ValueError when capabilities has no supports_sql key."""
+    from db_mcp_data.connectors.api import APIConnector
+    from db_mcp_data.connectors.api_config import APIConnectorConfig
+
+    config = APIConnectorConfig(
+        base_url="https://api.example.com",
+        endpoints=[],
+        capabilities={},
+    )
+    connector = APIConnector(config, data_dir=str(tmp_path))
+
+    with pytest.raises(ValueError, match="does not support SQL execution"):
+        connector.submit_sql("SELECT 1")
+
+
+def test_catalog_routing_api_connector_submit_sql_raises_for_non_sql_connector(tmp_path: Path):
+    """CatalogRoutingAPIConnector.submit_sql must also raise for non-SQL connectors."""
+    from db_mcp_data.connectors.api_config import APIConnectorConfig
+    from db_mcp_data.connectors.api_sql import APICatalogRoute, CatalogRoutingAPIConnector
+
+    class _ConcreteConnector(CatalogRoutingAPIConnector):
+        def _get_catalog_routes(self):
+            return [APICatalogRoute(alias="main", database_id=1, display_name="Main")]
+
+    config = APIConnectorConfig(
+        base_url="https://api.example.com",
+        endpoints=[],
+        capabilities={"supports_sql": False},
+    )
+    connector = _ConcreteConnector(config, data_dir=str(tmp_path))
+
+    with pytest.raises(ValueError, match="does not support SQL execution"):
+        connector.submit_sql("SELECT 1")
