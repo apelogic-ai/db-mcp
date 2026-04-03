@@ -9,6 +9,16 @@ from db_mcp_data.connector_templates import get_connector_template
 from db_mcp_data.connectors import get_connector, get_connector_capabilities
 from db_mcp_data.db.connection import detect_dialect_from_url, get_engine
 from db_mcp_knowledge.onboarding.state import create_initial_state, load_state, save_state
+from db_mcp_knowledge.vault.paths import (
+    DESCRIPTIONS_FILE,
+    DOMAIN_MODEL_FILE,
+)
+from db_mcp_knowledge.vault.paths import (
+    connector_path as _connector_path,
+)
+from db_mcp_knowledge.vault.paths import (
+    state_path as _state_path,
+)
 from db_mcp_models import OnboardingPhase
 from dotenv import dotenv_values
 
@@ -213,16 +223,16 @@ def list_connections_summary(
                 continue
 
             name = conn_path.name
-            has_schema = (conn_path / "schema" / "descriptions.yaml").exists()
-            has_domain = (conn_path / "domain" / "model.md").exists()
+            has_schema = (conn_path / DESCRIPTIONS_FILE).exists()
+            has_domain = (conn_path / DOMAIN_MODEL_FILE).exists()
             has_credentials = (conn_path / ".env").exists()
-            has_state = (conn_path / "state.yaml").exists()
+            has_state = _state_path(conn_path).exists()
             has_discovery = has_schema
 
             connector_type = "sql"
             api_title = None
             base_url = None
-            connector_yaml = conn_path / "connector.yaml"
+            connector_yaml = _connector_path(conn_path)
             if connector_yaml.exists():
                 try:
                     with open(connector_yaml) as f:
@@ -276,7 +286,7 @@ def list_connections_summary(
             onboarding_phase = None
             if has_state:
                 try:
-                    with open(conn_path / "state.yaml") as f:
+                    with open(_state_path(conn_path)) as f:
                         state = yaml.safe_load(f) or {}
                         onboarding_phase = state.get("phase")
                 except Exception:
@@ -454,7 +464,7 @@ def get_named_connection_details(
         return {"success": False, "error": f"Connection '{name}' not found"}
 
     connector_data: dict[str, object] = {}
-    connector_yaml = conn_path / "connector.yaml"
+    connector_yaml = _connector_path(conn_path)
     if connector_yaml.exists():
         with open(connector_yaml) as f:
             connector_data = yaml.safe_load(f) or {}
@@ -591,7 +601,7 @@ def update_api_connection(
     materialize_connector_template,
 ) -> dict[str, Any]:
     """Update a persisted API connection."""
-    connector_yaml = conn_path / "connector.yaml"
+    connector_yaml = _connector_path(conn_path)
     with open(connector_yaml) as f:
         cdata = yaml.safe_load(f) or {}
 
@@ -702,7 +712,7 @@ def create_api_connection(
 
         conn_path.mkdir(parents=True, exist_ok=True)
 
-        connector_yaml = conn_path / "connector.yaml"
+        connector_yaml = _connector_path(conn_path)
         with open(connector_yaml, "w") as f:
             yaml.dump(connector_data, f, default_flow_style=False, sort_keys=False)
 
@@ -740,7 +750,7 @@ def create_api_connection(
         }
 
         conn_path.mkdir(parents=True, exist_ok=True)
-        connector_yaml = conn_path / "connector.yaml"
+        connector_yaml = _connector_path(conn_path)
         with open(connector_yaml, "w") as f:
             yaml.dump(connector_data, f, default_flow_style=False)
 
@@ -780,7 +790,7 @@ def update_sql_connection(name: str, database_url: str, *, conn_path: Path) -> d
 
 def update_file_connection(name: str, directory: str, *, conn_path: Path) -> dict[str, Any]:
     """Update the configured directory for a file connection."""
-    connector_yaml = conn_path / "connector.yaml"
+    connector_yaml = _connector_path(conn_path)
     with open(connector_yaml) as f:
         cdata = yaml.safe_load(f) or {}
 
@@ -804,7 +814,7 @@ def discover_api_connection(
     if not conn_path.exists():
         return {"success": False, "error": f"Connection '{name}' not found"}
 
-    connector_yaml = conn_path / "connector.yaml"
+    connector_yaml = _connector_path(conn_path)
     if not connector_yaml.exists():
         return {"success": False, "error": "No connector.yaml found"}
 
@@ -1199,7 +1209,7 @@ def create_file_connection(
 
     conn_path.mkdir(parents=True, exist_ok=True)
 
-    connector_yaml = conn_path / "connector.yaml"
+    connector_yaml = _connector_path(conn_path)
     with open(connector_yaml, "w") as f:
         yaml.dump(
             {
@@ -1274,7 +1284,7 @@ def sync_api_connection(
     if not conn_path.exists():
         return {"success": False, "error": f"Connection '{name}' not found"}
 
-    connector_yaml = conn_path / "connector.yaml"
+    connector_yaml = _connector_path(conn_path)
     if not connector_yaml.exists():
         return {"success": False, "error": "No connector.yaml found"}
 

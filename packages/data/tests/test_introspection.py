@@ -108,10 +108,12 @@ class TestGetTables:
             public_tables_result.fetchall.return_value = [("users",)]
 
             # Third call: SHOW TABLES FROM dwh.broken_schema - throws exception
+            from sqlalchemy.exc import ProgrammingError as _PE
+
             mock_conn.execute.side_effect = [
                 schema_result,
                 public_tables_result,
-                Exception("Permission denied"),
+                _PE("SHOW TABLES", {}, Exception("Permission denied")),
             ]
 
             mock_trino_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)

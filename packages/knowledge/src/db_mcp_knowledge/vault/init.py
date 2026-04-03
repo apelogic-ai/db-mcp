@@ -3,6 +3,14 @@
 import logging
 from pathlib import Path
 
+from db_mcp_knowledge.vault.paths import (
+    DOMAIN_MODEL_FILE,
+    EXAMPLES_DIR,
+    LEARNINGS_DIR,
+    PROTOCOL_FILE,
+    SQL_RULES_FILE,
+)
+
 logger = logging.getLogger(__name__)
 
 # Default PROTOCOL.md content
@@ -448,20 +456,20 @@ CONNECTION_DIRS = [
     "schema",
     "domain",
     "instructions",
-    "examples",
-    "learnings",
+    EXAMPLES_DIR,
+    LEARNINGS_DIR,
     "learnings/failures",
     "metrics",
 ]
 
 # Files to always overwrite (system-controlled, shipped with each deploy)
 CONNECTION_SYSTEM_FILES = {
-    "PROTOCOL.md": PROTOCOL_MD,
+    PROTOCOL_FILE: PROTOCOL_MD,
 }
 
 # Initial files to create only if missing (user-editable templates)
 CONNECTION_TEMPLATE_FILES = {
-    "instructions/sql_rules.md": """# SQL Generation Rules
+    SQL_RULES_FILE: """# SQL Generation Rules
 
 ## Database Hierarchy
 
@@ -490,7 +498,7 @@ Add domain-specific SQL rules below this line.
 ---
 
 """,
-    "domain/model.md": "# Domain Model\n\nGenerated domain model will be saved here.\n",
+    DOMAIN_MODEL_FILE: "# Domain Model\n\nGenerated domain model will be saved here.\n",
     "learnings/patterns.md": "# Query Patterns\n\nDocument successful patterns here.\n",
     "learnings/schema_gotchas.md": "# Schema Gotchas\n\nDocument schema quirks here.\n",
 }

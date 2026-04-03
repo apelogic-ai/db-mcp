@@ -15,6 +15,7 @@ from db_mcp_models import Dimension, Metric, MetricBinding, SemanticPolicy
 
 from db_mcp_knowledge.business_rules import compile_semantic_policy
 from db_mcp_knowledge.metrics.store import load_dimensions, load_metric_bindings, load_metrics
+from db_mcp_knowledge.vault.paths import business_rules_path
 
 
 @dataclass(slots=True)
@@ -53,7 +54,7 @@ def load_connection_semantic_core(
     dimensions_catalog = load_dimensions(provider_id, connection_path=connection_root)
     bindings_catalog = load_metric_bindings(provider_id, connection_path=connection_root)
     policy_payload = None
-    rules_path = connection_root / "instructions" / "business_rules.yaml"
+    rules_path = business_rules_path(connection_root)
     if rules_path.exists():
         try:
             policy_payload = yaml.safe_load(rules_path.read_text())

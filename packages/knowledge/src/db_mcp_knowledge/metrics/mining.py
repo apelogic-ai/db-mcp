@@ -20,6 +20,11 @@ from db_mcp_models.metrics import (
 )
 
 from db_mcp_knowledge.business_rules import extract_business_rule_texts
+from db_mcp_knowledge.vault.paths import (
+    EXAMPLES_DIR,
+    business_rules_path,
+    descriptions_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 def _load_examples(connection_path: Path) -> list[dict]:
     """Load training examples from the vault."""
-    examples_dir = connection_path / "training" / "examples"
+    examples_dir = connection_path / "training" / EXAMPLES_DIR
     examples = []
     if not examples_dir.exists():
         return examples
@@ -50,7 +55,7 @@ def _load_examples(connection_path: Path) -> list[dict]:
 
 def _load_rules(connection_path: Path) -> list[str]:
     """Load business rules from the vault."""
-    rules_file = connection_path / "instructions" / "business_rules.yaml"
+    rules_file = business_rules_path(connection_path)
     if not rules_file.exists():
         return []
 
@@ -65,7 +70,7 @@ def _load_rules(connection_path: Path) -> list[str]:
 
 def _load_schema(connection_path: Path) -> dict:
     """Load schema descriptions from the vault."""
-    schema_file = connection_path / "schema" / "descriptions.yaml"
+    schema_file = descriptions_path(connection_path)
     if not schema_file.exists():
         return {}
 

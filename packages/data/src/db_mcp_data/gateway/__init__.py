@@ -17,6 +17,19 @@ from typing import Any
 
 from db_mcp_models.gateway import DataRequest, DataResponse, RunOptions, ValidatedQuery
 
+__all__ = [
+    "capabilities",
+    "create",
+    "execute",
+    "get_query",
+    "introspect",
+    "mark_complete",
+    "mark_error",
+    "mark_running",
+    "run",
+    "start_query_execution",
+]
+
 
 async def create(
     request: DataRequest,

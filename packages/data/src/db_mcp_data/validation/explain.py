@@ -9,6 +9,7 @@ from opentelemetry import trace
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlglot import parse as sqlglot_parse
+from sqlglot.errors import SqlglotError
 
 from db_mcp_data.connectors import get_connector
 from db_mcp_data.connectors.file import FileConnector
@@ -112,7 +113,7 @@ def _extract_statement_types(sql: str) -> list[str]:
                 raw_type = str(statement.args.get("this", "")).strip() or raw_type
             statement_types.append(_normalize_statement_type(raw_type))
         return statement_types
-    except Exception:
+    except SqlglotError:
         return [_fallback_statement_type(sql)]
 
 

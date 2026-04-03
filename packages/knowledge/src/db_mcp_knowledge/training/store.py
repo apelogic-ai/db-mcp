@@ -20,16 +20,21 @@ from db_mcp_models import (
 
 from db_mcp_knowledge.business_rules import prompt_instructions_from_payload
 from db_mcp_knowledge.onboarding.state import get_provider_dir
+from db_mcp_knowledge.vault.paths import (
+    BUSINESS_RULES_FILE,
+    EXAMPLES_DIR,
+    FEEDBACK_LOG_FILE,
+)
 
 
 def get_examples_dir(provider_id: str) -> Path:
     """Get path to examples directory."""
-    return get_provider_dir(provider_id) / "examples"
+    return get_provider_dir(provider_id) / EXAMPLES_DIR
 
 
 def get_feedback_file_path(provider_id: str) -> Path:
     """Get path to feedback log file."""
-    return get_provider_dir(provider_id) / "feedback_log.yaml"
+    return get_provider_dir(provider_id) / FEEDBACK_LOG_FILE
 
 
 def get_instructions_dir(provider_id: str) -> Path:
@@ -39,7 +44,7 @@ def get_instructions_dir(provider_id: str) -> Path:
 
 def get_instructions_file_path(provider_id: str) -> Path:
     """Get path to business rules file."""
-    return get_instructions_dir(provider_id) / "business_rules.yaml"
+    return get_instructions_dir(provider_id) / Path(BUSINESS_RULES_FILE).name
 
 
 # =============================================================================

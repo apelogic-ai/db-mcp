@@ -28,63 +28,15 @@ from db_mcp_server.instructions import (
     _strip_validate_sql_from_instructions,
 )
 from db_mcp_server.tool_catalog import build_tool_catalog, render_python_sdk, search_tool_catalog
-from db_mcp_server.tools.api import (
-    _api_describe_endpoint,
-    _api_discover,
-    _api_execute_sql,
-    _api_mutate,
-    _api_query,
+from db_mcp_server.tool_registration import (
+    register_api_tools,
+    register_database_tools,
+    register_metrics_tools,
+    register_query_tools,
+    register_shell_tools,
+    register_vault_tools,
 )
-from db_mcp_server.tools.code import _code
-from db_mcp_server.tools.daemon import (
-    _execute_task,
-    _prepare_task,
-)
-from db_mcp_server.tools.database import (
-    _describe_table,
-    _list_catalogs,
-    _list_connections,
-    _list_schemas,
-    _list_tables,
-    _sample_table,
-    _test_connection,
-)
-from db_mcp_server.tools.exec import _exec
-from db_mcp_server.tools.gaps import _dismiss_knowledge_gap, _get_knowledge_gaps
-from db_mcp_server.tools.generation import (
-    _export_results,
-    _get_data,
-    _get_result,
-    _run_sql,
-    _validate_sql,
-)
-from db_mcp_server.tools.intent import _answer_intent
-from db_mcp_server.tools.metrics import (
-    _metrics_add,
-    _metrics_approve,
-    _metrics_bindings_list,
-    _metrics_bindings_set,
-    _metrics_bindings_validate,
-    _metrics_discover,
-    _metrics_list,
-    _metrics_remove,
-)
-from db_mcp_server.tools.shell import (
-    SHELL_DESCRIPTION_DETAILED,
-    SHELL_DESCRIPTION_SHELL_MODE,
-    _protocol,
-    _shell,
-)
-from db_mcp_server.tools.training import (
-    _query_add_rule,
-    _query_approve,
-    _query_feedback,
-    _query_generate,
-    _query_list_examples,
-    _query_list_rules,
-    _query_status,
-)
-from db_mcp_server.tools.vault import _save_artifact, _vault_append, _vault_write
+from db_mcp_server.tools.database import _list_connections
 
 
 def get_connection_path() -> Path:
@@ -532,12 +484,18 @@ def _create_server() -> FastMCP:
         )
 
     if is_exec_mode:
+        from db_mcp.tools.exec import _exec
+
         server.tool(name="exec")(_exec)
         return server
     if is_code_mode:
+        from db_mcp.tools.code import _code
+
         server.tool(name="code")(_code)
         return server
     if is_daemon_mode:
+        from db_mcp.tools.daemon_tasks import _execute_task, _prepare_task
+
         server.tool(name="prepare_task")(_prepare_task)
         server.tool(name="execute_task")(_execute_task)
         return server
@@ -548,7 +506,7 @@ def _create_server() -> FastMCP:
 
     def _resolve_tool_connection_path(connection: str) -> Path:
         """Resolve connection arg to a concrete connection path."""
-        from db_mcp_server.tools.utils import require_connection, resolve_connection
+        from db_mcp.tools.utils import require_connection, resolve_connection
 
         connection = require_connection(connection, tool_name="insights")
         _, _, conn_path = resolve_connection(connection)
@@ -733,90 +691,34 @@ def _create_server() -> FastMCP:
     server.tool(name="export_tool_sdk")(_export_tool_sdk)
 
     # =========================================================================
-    # Shell tool - with mode-specific description
+    # Grouped tool registrations (delegated to tool_registration module)
     # =========================================================================
 
-    shell_description = (
-        SHELL_DESCRIPTION_SHELL_MODE if is_shell_mode else SHELL_DESCRIPTION_DETAILED
+    register_shell_tools(server, is_shell_mode=is_shell_mode)
+    register_query_tools(
+        server,
+        supports_sql=supports_sql,
+        supports_validate=supports_validate,
+        supports_async_jobs=supports_async_jobs,
     )
-    server.tool(name="shell", description=shell_description)(_shell)
-    server.tool(name="protocol")(_protocol)
-
-    # =========================================================================
-    # SQL execution tools - SQL, File, and SQL-like API connectors
-    # =========================================================================
-
-    if supports_sql:
-        server.tool(name="answer_intent")(_answer_intent)
-        if supports_validate:
-            server.tool(name="validate_sql")(_validate_sql)
-        server.tool(name="run_sql")(_run_sql)
-        if supports_async_jobs:
-            server.tool(name="get_result")(_get_result)
-        server.tool(name="export_results")(_export_results)
-
-    # =========================================================================
-    # API connector tools - registered when ANY connection is API type
-    # =========================================================================
-
-    if has_api:
-        server.tool(name="api_query")(_api_query)
-        server.tool(name="api_describe_endpoint")(_api_describe_endpoint)
-        if has_api_sql:
-            server.tool(name="api_execute_sql")(_api_execute_sql)
-        if is_full_profile:
-            server.tool(name="api_discover")(_api_discover)
-            server.tool(name="api_mutate")(_api_mutate)
-
-    # =========================================================================
-    # Admin/Setup tools - always available (not for casual query use)
-    # =========================================================================
-
-    if is_full_profile:
-        # Typed artifact save for connection-local knowledge files
-        server.tool(name="save_artifact")(_save_artifact)
-        # Low-level vault primitives — validated write and append
-        server.tool(name="vault_write")(_vault_write)
-        server.tool(name="vault_append")(_vault_append)
-
-    # =========================================================================
-    # Detailed mode ONLY - schema discovery and query helper tools
-    # =========================================================================
-
-    if is_full_profile and not is_shell_mode and (has_sql or has_api):
-        # Database introspection tools
-        server.tool(name="test_connection")(_test_connection)
-        server.tool(name="list_catalogs")(_list_catalogs)
-        server.tool(name="list_schemas")(_list_schemas)
-        server.tool(name="list_tables")(_list_tables)
-        server.tool(name="describe_table")(_describe_table)
-        server.tool(name="sample_table")(_sample_table)
-
-        # Query training tools
-        server.tool(name="query_status")(_query_status)
-        server.tool(name="query_generate")(_query_generate)
-        server.tool(name="query_approve")(_query_approve)
-        server.tool(name="query_feedback")(_query_feedback)
-        server.tool(name="query_add_rule")(_query_add_rule)
-        server.tool(name="query_list_examples")(_query_list_examples)
-        server.tool(name="query_list_rules")(_query_list_rules)
-
-        # Knowledge gaps tools
-        server.tool(name="get_knowledge_gaps")(_get_knowledge_gaps)
-        server.tool(name="dismiss_knowledge_gap")(_dismiss_knowledge_gap)
-
-        # Metrics & dimensions tools
-        server.tool(name="metrics_discover")(_metrics_discover)
-        server.tool(name="metrics_list")(_metrics_list)
-        server.tool(name="metrics_approve")(_metrics_approve)
-        server.tool(name="metrics_add")(_metrics_add)
-        server.tool(name="metrics_remove")(_metrics_remove)
-        server.tool(name="metrics_bindings_list")(_metrics_bindings_list)
-        server.tool(name="metrics_bindings_validate")(_metrics_bindings_validate)
-        server.tool(name="metrics_bindings_set")(_metrics_bindings_set)
-
-        # Advanced generation tools
-        server.tool(name="get_data")(_get_data)
+    register_api_tools(
+        server, has_api=has_api, has_api_sql=has_api_sql, is_full_profile=is_full_profile
+    )
+    register_vault_tools(server, is_full_profile=is_full_profile)
+    register_database_tools(
+        server,
+        is_full_profile=is_full_profile,
+        is_shell_mode=is_shell_mode,
+        has_sql=has_sql,
+        has_api=has_api,
+    )
+    register_metrics_tools(
+        server,
+        is_full_profile=is_full_profile,
+        is_shell_mode=is_shell_mode,
+        has_sql=has_sql,
+        has_api=has_api,
+    )
 
     return server
 

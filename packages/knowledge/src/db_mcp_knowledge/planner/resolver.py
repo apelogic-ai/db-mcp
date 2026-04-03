@@ -6,6 +6,7 @@ from db_mcp_models import MetaQueryPlan, MetricExecutionPlan
 from sqlglot import exp, parse_one
 
 from db_mcp_knowledge.semantic.core_loader import ConnectionSemanticCore
+from db_mcp_knowledge.vault.paths import METRICS_BINDINGS_FILE
 
 
 def _render_metric_sql(metric_sql: str, parameters: dict[str, object]) -> str:
@@ -98,7 +99,7 @@ def resolve_metric_execution_plan(
     metric_sql = metric.sql
     metric_tables = metric.tables
     if binding is not None:
-        binding_source = "metrics/bindings.yaml"
+        binding_source = METRICS_BINDINGS_FILE
         metric_sql = binding.sql
         metric_tables = binding.tables or metric_tables
 

@@ -10,6 +10,11 @@ from typing import Any
 from db_mcp_knowledge.planner.meta_query import compile_metric_intent
 from db_mcp_knowledge.planner.resolver import resolve_metric_execution_plan
 from db_mcp_knowledge.semantic.core_loader import load_connection_semantic_core
+from db_mcp_knowledge.vault.paths import (
+    DIMENSIONS_FILE,
+    METRICS_BINDINGS_FILE,
+    METRICS_CATALOG_FILE,
+)
 from db_mcp_models import (
     AnswerIntentResponse,
     BoundaryMode,
@@ -276,7 +281,7 @@ def _answer_summary(metric_name: str, connection: str, rows_returned: int) -> st
 
 
 def _binding_confidence(binding_source: str) -> float:
-    return 1.0 if binding_source == "metrics/bindings.yaml" else 0.7
+    return 1.0 if binding_source == METRICS_BINDINGS_FILE else 0.7
 
 
 def preview_answer_intent(
@@ -301,10 +306,10 @@ def preview_answer_intent(
         connection_path=resolved_connection_path,
     )
     _record_knowledge_files(
-        "metrics/catalog.yaml",
-        "metrics/bindings.yaml",
+        METRICS_CATALOG_FILE,
+        METRICS_BINDINGS_FILE,
         *(
-            ["metrics/dimensions.yaml"]
+            [DIMENSIONS_FILE]
             if semantic_core.dimensions
             else []
         ),

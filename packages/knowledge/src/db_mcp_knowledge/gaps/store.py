@@ -13,6 +13,10 @@ import yaml
 from db_mcp_models import GapSource, GapStatus, KnowledgeGap, KnowledgeGaps
 
 from db_mcp_knowledge.business_rules import extract_business_rule_texts
+from db_mcp_knowledge.vault.paths import (
+    KNOWLEDGE_GAPS_FILE,
+    business_rules_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +28,7 @@ def _get_connection_dir(provider_id: str) -> Path:
 
 def get_gaps_file_path(provider_id: str) -> Path:
     """Get path to knowledge_gaps.yaml."""
-    return _get_connection_dir(provider_id) / "knowledge_gaps.yaml"
+    return _get_connection_dir(provider_id) / KNOWLEDGE_GAPS_FILE
 
 
 def load_gaps(provider_id: str) -> KnowledgeGaps:
@@ -264,7 +268,7 @@ def auto_resolve_gaps(provider_id: str) -> int:
         return 0
 
     # Read business rules directly from the connection directory
-    rules_file = _get_connection_dir(provider_id) / "instructions" / "business_rules.yaml"
+    rules_file = business_rules_path(_get_connection_dir(provider_id))
     if not rules_file.exists():
         return 0
 
@@ -302,7 +306,7 @@ def load_gaps_from_path(connection_path: Path) -> KnowledgeGaps:
 
     Used by BICP agent which has the path but not necessarily the provider_id.
     """
-    gaps_file = connection_path / "knowledge_gaps.yaml"
+    gaps_file = connection_path / KNOWLEDGE_GAPS_FILE
     if not gaps_file.exists():
         return KnowledgeGaps(provider_id="unknown")
 

@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 from db_mcp_data.connectors import Connector, get_connector
+from db_mcp_knowledge.vault.paths import CONNECTOR_FILE, STATE_FILE
 
 from db_mcp.config import Settings, get_settings
 
@@ -132,8 +133,8 @@ class ConnectionRegistry:
                 continue
 
             name = entry.name
-            yaml_path = entry / "connector.yaml"
-            state_yaml_path = entry / "state.yaml"
+            yaml_path = entry / CONNECTOR_FILE
+            state_yaml_path = entry / STATE_FILE
 
             # Check if this is a real connection directory
             # Must have either connector.yaml, state.yaml, or .env to be considered valid

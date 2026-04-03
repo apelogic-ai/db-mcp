@@ -10,6 +10,21 @@ from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 
 import yaml
+from db_mcp_knowledge.vault.paths import (
+    BUSINESS_RULES_FILE,
+    CONNECTOR_FILE,
+    DESCRIPTIONS_FILE,
+    DIMENSIONS_FILE,
+    DOMAIN_MODEL_FILE,
+    EXAMPLES_DIR,
+    FEEDBACK_LOG_FILE,
+    KNOWLEDGE_GAPS_FILE,
+    LEARNINGS_DIR,
+    METRICS_BINDINGS_FILE,
+    METRICS_CATALOG_FILE,
+    PROTOCOL_FILE,
+    SQL_RULES_FILE,
+)
 from db_mcp_models import (
     DimensionsCatalog,
     FeedbackLog,
@@ -39,67 +54,67 @@ def _get_git_for_delete():
 
 
 VAULT_SCHEMA_PATHS: set[str] = {
-    "schema/descriptions.yaml",
-    "metrics/catalog.yaml",
-    "metrics/dimensions.yaml",
-    "metrics/bindings.yaml",
-    "knowledge_gaps.yaml",
-    "instructions/business_rules.yaml",
-    "feedback_log.yaml",
+    DESCRIPTIONS_FILE,
+    METRICS_CATALOG_FILE,
+    DIMENSIONS_FILE,
+    METRICS_BINDINGS_FILE,
+    KNOWLEDGE_GAPS_FILE,
+    BUSINESS_RULES_FILE,
+    FEEDBACK_LOG_FILE,
     "ignore.yaml",
 }
 
 VAULT_SCHEMA_GLOBS: set[str] = {
-    "examples/*.yaml",
+    f"{EXAMPLES_DIR}/*.yaml",
 }
 
 VAULT_MARKDOWN_PATHS: set[str] = {
-    "domain/model.md",
-    "instructions/sql_rules.md",
-    "learnings/patterns.md",
-    "learnings/schema_gotchas.md",
-    "learnings/trace-analysis-patterns.md",
+    DOMAIN_MODEL_FILE,
+    SQL_RULES_FILE,
+    f"{LEARNINGS_DIR}/patterns.md",
+    f"{LEARNINGS_DIR}/schema_gotchas.md",
+    f"{LEARNINGS_DIR}/trace-analysis-patterns.md",
 }
 
 VAULT_MARKDOWN_GLOBS: set[str] = {
-    "learnings/*.md",
+    f"{LEARNINGS_DIR}/*.md",
 }
 
 CONTEXT_EXTRA_PATHS: set[str] = {
-    "connector.yaml",
-    "PROTOCOL.md",
+    CONNECTOR_FILE,
+    PROTOCOL_FILE,
 }
 
 VAULT_SCHEMA_MODELS: dict[str, type] = {
-    "schema/descriptions.yaml": SchemaDescriptions,
-    "metrics/catalog.yaml": MetricsCatalog,
-    "metrics/dimensions.yaml": DimensionsCatalog,
-    "metrics/bindings.yaml": MetricBindingsCatalog,
-    "knowledge_gaps.yaml": KnowledgeGaps,
-    "instructions/business_rules.yaml": PromptInstructions,
-    "feedback_log.yaml": FeedbackLog,
+    DESCRIPTIONS_FILE: SchemaDescriptions,
+    METRICS_CATALOG_FILE: MetricsCatalog,
+    DIMENSIONS_FILE: DimensionsCatalog,
+    METRICS_BINDINGS_FILE: MetricBindingsCatalog,
+    KNOWLEDGE_GAPS_FILE: KnowledgeGaps,
+    BUSINESS_RULES_FILE: PromptInstructions,
+    FEEDBACK_LOG_FILE: FeedbackLog,
 }
 
 VAULT_SCHEMA_GLOB_MODELS: dict[str, type] = {
-    "examples/*.yaml": QueryExample,
+    f"{EXAMPLES_DIR}/*.yaml": QueryExample,
 }
 
 ARTIFACT_WRITE_TARGETS: dict[str, str] = {
-    "schema_descriptions": "schema/descriptions.yaml",
-    "domain_model": "domain/model.md",
-    "business_rules": "instructions/business_rules.yaml",
-    "sql_rules": "instructions/sql_rules.md",
-    "metrics_catalog": "metrics/catalog.yaml",
-    "metrics_dimensions": "metrics/dimensions.yaml",
-    "metrics_bindings": "metrics/bindings.yaml",
-    "knowledge_gaps": "knowledge_gaps.yaml",
-    "feedback_log": "feedback_log.yaml",
+    "schema_descriptions": DESCRIPTIONS_FILE,
+    "domain_model": DOMAIN_MODEL_FILE,
+    "business_rules": BUSINESS_RULES_FILE,
+    "sql_rules": SQL_RULES_FILE,
+    "metrics_catalog": METRICS_CATALOG_FILE,
+    "metrics_dimensions": DIMENSIONS_FILE,
+    "metrics_bindings": METRICS_BINDINGS_FILE,
+    "knowledge_gaps": KNOWLEDGE_GAPS_FILE,
+    "feedback_log": FEEDBACK_LOG_FILE,
     "ignore": "ignore.yaml",
 }
 
 ARTIFACT_APPEND_TARGETS: dict[str, str] = {
-    "example": "examples/{name}.yaml",
-    "learning_note": "learnings/{name}.md",
+    "example": f"{EXAMPLES_DIR}/{{name}}.yaml",
+    "learning_note": f"{LEARNINGS_DIR}/{{name}}.md",
 }
 
 
@@ -692,7 +707,7 @@ def add_business_rule(connection_path: Path, connection_name: str, rule: str) ->
             "error": f"Connection '{connection_name}' not found",
         }
 
-    rules_path = connection_path / "instructions" / "business_rules.yaml"
+    rules_path = connection_path / BUSINESS_RULES_FILE
 
     try:
         if rules_path.exists():
@@ -725,8 +740,9 @@ def add_business_rule(connection_path: Path, connection_name: str, rule: str) ->
                 sort_keys=False,
             )
 
-        rel = "instructions/business_rules.yaml"
-        git_committed = try_git_commit(connection_path, "Add business rule", [rel])
+        git_committed = try_git_commit(
+            connection_path, "Add business rule", [BUSINESS_RULES_FILE]
+        )
         return {"success": True, "duplicate": False, "gitCommit": git_committed, "error": None}
     except Exception as e:
         return {"success": False, "duplicate": False, "gitCommit": False, "error": str(e)}
@@ -754,7 +770,9 @@ def list_context_tree(
     """List the context tree for all connections."""
     allowed_extensions = {".yaml", ".yml", ".md"}
     hidden_prefixes = (".", "_")
-    skip_files = {"state.yaml"}
+    from db_mcp_knowledge.vault.paths import STATE_FILE
+
+    skip_files = {STATE_FILE}
 
     connections = []
     if connections_dir.exists():

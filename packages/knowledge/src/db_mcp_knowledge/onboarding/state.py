@@ -7,6 +7,15 @@ from pathlib import Path
 import yaml
 from db_mcp_models import OnboardingPhase, OnboardingState
 
+from db_mcp_knowledge.vault.paths import (
+    connector_path,
+    descriptions_path,
+    domain_model_path,
+)
+from db_mcp_knowledge.vault.paths import (
+    state_path as _state_path,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +44,7 @@ def get_state_file_path(
     Returns:
         Path to state YAML file
     """
-    return connection_path / "state.yaml"
+    return _state_path(connection_path)
 
 
 def create_initial_state(provider_id: str) -> OnboardingState:
@@ -145,8 +154,8 @@ def _recover_state_from_files(
         Recovered OnboardingState or None if no files found
     """
     # Check what files exist
-    schema_file = connection_path / "schema" / "descriptions.yaml"
-    domain_file = connection_path / "domain" / "model.md"
+    schema_file = descriptions_path(connection_path)
+    domain_file = domain_model_path(connection_path)
 
     has_schema = schema_file.exists()
     has_domain = domain_file.exists()
@@ -246,9 +255,9 @@ def delete_state(
             }
 
         # New behavior: check if there are other files that would allow recovery or discovery
-        connector_file = conn_path / "connector.yaml"
-        schema_file = conn_path / "schema" / "descriptions.yaml"
-        domain_file = conn_path / "domain" / "model.md"
+        connector_file = connector_path(conn_path)
+        schema_file = descriptions_path(conn_path)
+        domain_file = domain_model_path(conn_path)
         env_file = conn_path / ".env"
 
         has_recoverable_files = (

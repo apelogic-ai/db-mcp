@@ -11,6 +11,8 @@ from db_mcp_models import (
     TableDescriptionStatus,
 )
 
+from db_mcp_knowledge.vault.paths import descriptions_path
+
 
 def get_schema_file_path(
     connection_path: Path,
@@ -25,7 +27,7 @@ def get_schema_file_path(
     Returns:
         Path to schema/descriptions.yaml
     """
-    return connection_path / "schema" / "descriptions.yaml"
+    return descriptions_path(connection_path)
 
 
 def load_schema_descriptions(

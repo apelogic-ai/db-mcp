@@ -20,6 +20,12 @@ from db_mcp_models import (
     MetricsCatalog,
 )
 
+from db_mcp_knowledge.vault.paths import (
+    DIMENSIONS_FILE,
+    METRICS_BINDINGS_FILE,
+    METRICS_CATALOG_FILE,
+)
+
 
 def get_metrics_dir(provider_id: str, *, connection_path: Path) -> Path:
     """Get path to metrics directory."""
@@ -28,12 +34,14 @@ def get_metrics_dir(provider_id: str, *, connection_path: Path) -> Path:
 
 def get_catalog_file_path(provider_id: str, *, connection_path: Path) -> Path:
     """Get path to metrics catalog file."""
-    return get_metrics_dir(provider_id, connection_path=connection_path) / "catalog.yaml"
+    metrics_dir = get_metrics_dir(provider_id, connection_path=connection_path)
+    return metrics_dir / Path(METRICS_CATALOG_FILE).name
 
 
 def get_bindings_file_path(provider_id: str, *, connection_path: Path) -> Path:
     """Get path to metrics bindings file."""
-    return get_metrics_dir(provider_id, connection_path=connection_path) / "bindings.yaml"
+    metrics_dir = get_metrics_dir(provider_id, connection_path=connection_path)
+    return metrics_dir / Path(METRICS_BINDINGS_FILE).name
 
 
 # =============================================================================
@@ -487,7 +495,8 @@ def search_metrics(provider_id: str, query: str, *, connection_path: Path) -> li
 
 def get_dimensions_file_path(provider_id: str, *, connection_path: Path) -> Path:
     """Get path to dimensions catalog file."""
-    return get_metrics_dir(provider_id, connection_path=connection_path) / "dimensions.yaml"
+    metrics_dir = get_metrics_dir(provider_id, connection_path=connection_path)
+    return metrics_dir / Path(DIMENSIONS_FILE).name
 
 
 def _dimension_from_dict(data: dict) -> Dimension:

@@ -5,6 +5,7 @@ from typing import Any
 
 from db_mcp_knowledge.onboarding.schema_store import load_schema_descriptions
 from db_mcp_knowledge.training.store import load_examples, load_instructions
+from db_mcp_knowledge.vault.paths import BUSINESS_RULES_FILE, DESCRIPTIONS_FILE, EXAMPLES_DIR
 from opentelemetry import trace
 
 
@@ -20,7 +21,7 @@ def build_schema_context(
 
     current_span = trace.get_current_span()
     files_used = current_span.get_attribute("knowledge.files_used") or []
-    files_used.append("schema/descriptions.yaml")
+    files_used.append(DESCRIPTIONS_FILE)
     current_span.set_attribute("knowledge.files_used", files_used)
 
     lines = ["## Available Tables\n"]
@@ -52,7 +53,7 @@ def build_examples_context(provider_id: str, limit: int = 5) -> str:
     files_used = list(current_span.get_attribute("knowledge.files_used") or [])
 
     for example in examples.examples[:limit]:
-        files_used.append(f"examples/{example.id}.yaml")
+        files_used.append(f"{EXAMPLES_DIR}/{example.id}.yaml")
 
     current_span.set_attribute("knowledge.files_used", files_used)
 
@@ -74,7 +75,7 @@ def build_rules_context(provider_id: str) -> str:
 
     current_span = trace.get_current_span()
     files_used = list(current_span.get_attribute("knowledge.files_used") or [])
-    files_used.append("instructions/business_rules.yaml")
+    files_used.append(BUSINESS_RULES_FILE)
     current_span.set_attribute("knowledge.files_used", files_used)
 
     lines = ["## Business Rules\n"]

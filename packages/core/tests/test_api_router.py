@@ -48,7 +48,7 @@ class TestDispatch:
 
     def test_empty_body_passes_empty_dict(self, client):
         with patch(
-            "db_mcp.api.router.traces_service.clear_traces",
+            "db_mcp.api.handlers.traces.traces_service.clear_traces",
             return_value={"success": True},
         ):
             resp = _post(client, "traces/clear")
@@ -63,7 +63,7 @@ class TestConnectionHandlers:
     def test_connections_list(self, client):
         expected = {"connections": [{"name": "prod", "isActive": True}]}
         with patch(
-            "db_mcp.api.router.connection_service.list_connections_summary",
+            "db_mcp.api.handlers.connections.connection_service.list_connections_summary",
             return_value=expected,
         ):
             resp = _post(client, "connections/list")
@@ -72,7 +72,7 @@ class TestConnectionHandlers:
 
     def test_connections_switch(self, client):
         with patch(
-            "db_mcp.api.router.switch_active_connection",
+            "db_mcp.api.handlers.connections.switch_active_connection",
             return_value={"success": True},
         ):
             resp = _post(client, "connections/switch", {"name": "prod"})
@@ -80,7 +80,7 @@ class TestConnectionHandlers:
 
     def test_connections_create_sql(self, client):
         with patch(
-            "db_mcp.api.router.create_sql_connection",
+            "db_mcp.api.handlers.connections.create_sql_connection",
             return_value={"success": True, "dialect": "postgresql"},
         ):
             resp = _post(
@@ -102,7 +102,7 @@ class TestConnectionHandlers:
 
     def test_connections_test_named(self, client):
         with patch(
-            "db_mcp.api.router.connection_service.test_named_connection",
+            "db_mcp.api.handlers.connections.connection_service.test_named_connection",
             return_value={"success": True, "dialect": "postgresql"},
         ):
             resp = _post(client, "connections/test", {"name": "prod"})
@@ -110,7 +110,7 @@ class TestConnectionHandlers:
 
     def test_connections_test_database_url(self, client):
         with patch(
-            "db_mcp.api.router.test_database_url",
+            "db_mcp.api.handlers.connections.test_database_url",
             return_value={"success": True, "dialect": "postgresql"},
         ):
             resp = _post(
@@ -120,7 +120,7 @@ class TestConnectionHandlers:
 
     def test_connections_test_api(self, client):
         with patch(
-            "db_mcp.api.router.test_api_connection",
+            "db_mcp.api.handlers.connections.test_api_connection",
             return_value={"success": True},
         ):
             resp = _post(
@@ -132,7 +132,7 @@ class TestConnectionHandlers:
 
     def test_connections_test_file(self, client):
         with patch(
-            "db_mcp.api.router.test_file_directory",
+            "db_mcp.api.handlers.connections.test_file_directory",
             return_value={"success": True},
         ):
             resp = _post(
@@ -144,7 +144,7 @@ class TestConnectionHandlers:
 
     def test_connections_delete(self, client):
         with patch(
-            "db_mcp.api.router.delete_connection",
+            "db_mcp.api.handlers.connections.delete_connection",
             return_value={"success": True},
         ):
             resp = _post(client, "connections/delete", {"name": "old"})
@@ -152,7 +152,7 @@ class TestConnectionHandlers:
 
     def test_connections_get(self, client):
         with patch(
-            "db_mcp.api.router.connection_service.get_named_connection_details",
+            "db_mcp.api.handlers.connections.connection_service.get_named_connection_details",
             return_value={"success": True, "name": "prod", "connectorType": "sql"},
         ):
             resp = _post(client, "connections/get", {"name": "prod"})
@@ -160,11 +160,11 @@ class TestConnectionHandlers:
 
     def test_connections_templates(self, client):
         with patch(
-            "db_mcp.api.router.list_connector_templates",
+            "db_mcp.api.handlers.connections.list_connector_templates",
             return_value=[MagicMock(id="dune")],
         ):
             with patch(
-                "db_mcp.api.router.build_api_template_descriptor",
+                "db_mcp.api.handlers.connections.build_api_template_descriptor",
                 return_value={"id": "dune", "connectorType": "api"},
             ):
                 resp = _post(client, "connections/templates", {})
@@ -178,7 +178,7 @@ class TestContextHandlers:
     def test_context_tree(self, client):
         expected = {"connections": []}
         with patch(
-            "db_mcp.api.router.vault_service.list_context_tree",
+            "db_mcp.api.handlers.context.vault_service.list_context_tree",
             return_value=expected,
         ):
             resp = _post(client, "context/tree")
@@ -187,7 +187,7 @@ class TestContextHandlers:
 
     def test_context_read(self, client):
         with patch(
-            "db_mcp.api.router.vault_service.read_context_file",
+            "db_mcp.api.handlers.context.vault_service.read_context_file",
             return_value={"success": True, "content": "hello"},
         ):
             resp = _post(
@@ -201,10 +201,13 @@ class TestContextHandlers:
 
     def test_context_write(self, client):
         with patch(
-            "db_mcp.api.router.vault_service.write_context_file",
+            "db_mcp.api.handlers.context.vault_service.write_context_file",
             return_value={"success": True},
         ):
-            with patch("db_mcp.api.router.vault_service.try_git_commit", return_value=False):
+            with patch(
+                "db_mcp.api.handlers.context.vault_service.try_git_commit",
+                return_value=False,
+            ):
                 resp = _post(
                     client,
                     "context/write",
@@ -214,10 +217,13 @@ class TestContextHandlers:
 
     def test_context_create(self, client):
         with patch(
-            "db_mcp.api.router.vault_service.create_context_file",
+            "db_mcp.api.handlers.context.vault_service.create_context_file",
             return_value={"success": True},
         ):
-            with patch("db_mcp.api.router.vault_service.try_git_commit", return_value=False):
+            with patch(
+                "db_mcp.api.handlers.context.vault_service.try_git_commit",
+                return_value=False,
+            ):
                 resp = _post(
                     client,
                     "context/create",
@@ -227,10 +233,12 @@ class TestContextHandlers:
 
     def test_context_delete(self, client):
         with patch(
-            "db_mcp.api.router.vault_service.delete_context_file",
+            "db_mcp.api.handlers.context.vault_service.delete_context_file",
             return_value={"success": True, "trashedTo": ".trash/README.md"},
         ):
-            with patch("db_mcp.api.router._is_git_enabled", return_value=False):
+            with patch(
+                "db_mcp.api.handlers.context._is_git_enabled", return_value=False
+            ):
                 with patch("pathlib.Path.exists", return_value=True):
                     resp = _post(
                         client,
@@ -247,10 +255,13 @@ class TestContextHandlers:
 
     def test_context_add_rule(self, client):
         with patch(
-            "db_mcp.api.router.vault_service.add_business_rule",
+            "db_mcp.api.handlers.context.vault_service.add_business_rule",
             return_value={"success": True},
         ):
-            with patch("db_mcp.api.router.vault_service.try_git_commit", return_value=False):
+            with patch(
+                "db_mcp.api.handlers.context.vault_service.try_git_commit",
+                return_value=False,
+            ):
                 with patch("pathlib.Path.exists", return_value=True):
                     resp = _post(
                         client,
@@ -261,7 +272,7 @@ class TestContextHandlers:
 
     def test_context_usage(self, client):
         with patch(
-            "db_mcp.api.router.vault_service.get_context_usage",
+            "db_mcp.api.handlers.context.vault_service.get_context_usage",
             return_value={"files": {}, "folders": {}},
         ):
             with patch("pathlib.Path.exists", return_value=True):
@@ -275,7 +286,7 @@ class TestContextHandlers:
 class TestGitHandlers:
     def test_git_history(self, client):
         with patch(
-            "db_mcp.api.router.git_service.get_git_history",
+            "db_mcp.api.handlers.git.git_service.get_git_history",
             return_value={"success": True, "commits": []},
         ):
             resp = _post(
@@ -287,7 +298,7 @@ class TestGitHandlers:
 
     def test_git_show(self, client):
         with patch(
-            "db_mcp.api.router.git_service.get_git_content",
+            "db_mcp.api.handlers.git.git_service.get_git_content",
             return_value={"success": True, "content": "old content"},
         ):
             resp = _post(
@@ -299,7 +310,7 @@ class TestGitHandlers:
 
     def test_git_revert(self, client):
         with patch(
-            "db_mcp.api.router.git_service.revert_git_file",
+            "db_mcp.api.handlers.git.git_service.revert_git_file",
             return_value={"success": True},
         ):
             resp = _post(
@@ -316,7 +327,7 @@ class TestGitHandlers:
 class TestTraceHandlers:
     def test_traces_list(self, client):
         with patch(
-            "db_mcp.api.router.traces_service.list_traces",
+            "db_mcp.api.handlers.traces.traces_service.list_traces",
             return_value={"success": True, "traces": [], "source": "live"},
         ):
             resp = _post(client, "traces/list", {"source": "live"})
@@ -324,7 +335,7 @@ class TestTraceHandlers:
 
     def test_traces_clear(self, client):
         with patch(
-            "db_mcp.api.router.traces_service.clear_traces",
+            "db_mcp.api.handlers.traces.traces_service.clear_traces",
             return_value={"success": True},
         ):
             resp = _post(client, "traces/clear")
@@ -332,7 +343,7 @@ class TestTraceHandlers:
 
     def test_traces_dates(self, client):
         with patch(
-            "db_mcp.api.router.traces_service.get_trace_dates",
+            "db_mcp.api.handlers.traces.traces_service.get_trace_dates",
             return_value={"success": True, "enabled": True, "dates": ["2026-04-01"]},
         ):
             resp = _post(client, "traces/dates")
@@ -345,7 +356,7 @@ class TestTraceHandlers:
 class TestInsightsHandlers:
     def test_insights_analyze(self, client):
         with patch(
-            "db_mcp.api.router.insights_service.analyze_insights",
+            "db_mcp.api.handlers.insights.insights_service.analyze_insights",
             return_value={"traceCount": 10},
         ):
             resp = _post(client, "insights/analyze", {"days": 7})
@@ -354,7 +365,7 @@ class TestInsightsHandlers:
 
     def test_gaps_dismiss(self, client):
         with patch(
-            "db_mcp.api.router.insights_service.dismiss_gap",
+            "db_mcp.api.handlers.insights.insights_service.dismiss_gap",
             return_value={"success": True, "count": 5},
         ):
             resp = _post(
@@ -366,10 +377,13 @@ class TestInsightsHandlers:
 
     def test_insights_save_example(self, client):
         with patch(
-            "db_mcp.api.router.insights_service.save_example",
+            "db_mcp.api.handlers.insights.insights_service.save_example",
             return_value={"success": True, "example_id": "ex-1", "total_examples": 5},
         ):
-            with patch("db_mcp.api.router.vault_service.try_git_commit", return_value=False):
+            with patch(
+                "db_mcp.api.handlers.insights.vault_service.try_git_commit",
+                return_value=False,
+            ):
                 with patch("pathlib.Path.exists", return_value=True):
                     resp = _post(
                         client,
@@ -386,7 +400,7 @@ class TestInsightsHandlers:
 class TestMetricsHandlers:
     def test_metrics_list(self, client):
         with patch(
-            "db_mcp.api.router.metrics_service.list_approved_metrics",
+            "db_mcp.api.handlers.metrics.metrics_service.list_approved_metrics",
             return_value={"metrics": [], "dimensions": [], "metricCount": 0, "dimensionCount": 0},
         ):
             with patch("pathlib.Path.exists", return_value=True):
@@ -395,10 +409,13 @@ class TestMetricsHandlers:
 
     def test_metrics_add(self, client):
         with patch(
-            "db_mcp.api.router.metrics_service.add_metric_definition",
+            "db_mcp.api.handlers.metrics.metrics_service.add_metric_definition",
             return_value={"success": True, "name": "revenue"},
         ):
-            with patch("db_mcp.api.router.vault_service.try_git_commit", return_value=False):
+            with patch(
+                "db_mcp.api.handlers.metrics.vault_service.try_git_commit",
+                return_value=False,
+            ):
                 with patch("pathlib.Path.exists", return_value=True):
                     resp = _post(
                         client,
@@ -413,10 +430,13 @@ class TestMetricsHandlers:
 
     def test_metrics_delete(self, client):
         with patch(
-            "db_mcp.api.router.metrics_service.delete_metric_definition",
+            "db_mcp.api.handlers.metrics.metrics_service.delete_metric_definition",
             return_value={"success": True},
         ):
-            with patch("db_mcp.api.router.vault_service.try_git_commit", return_value=False):
+            with patch(
+                "db_mcp.api.handlers.metrics.vault_service.try_git_commit",
+                return_value=False,
+            ):
                 with patch("pathlib.Path.exists", return_value=True):
                     resp = _post(
                         client,
@@ -427,7 +447,7 @@ class TestMetricsHandlers:
 
     def test_metrics_candidates(self, client):
         with patch(
-            "db_mcp.api.router.metrics_service.discover_metric_candidates",
+            "db_mcp.api.handlers.metrics.metrics_service.discover_metric_candidates",
             new_callable=AsyncMock,
             return_value={"metricCandidates": [], "dimensionCandidates": []},
         ):
@@ -442,11 +462,11 @@ class TestMetricsHandlers:
 class TestSchemaHandlers:
     def test_schema_catalogs(self, client):
         with patch(
-            "db_mcp.api.router.resolve_connection_context",
+            "db_mcp.api.handlers.schema.resolve_connection_context",
             return_value=("prod", Path("/tmp/prod")),
         ):
             with patch(
-                "db_mcp.api.router.schema_service.list_catalogs",
+                "db_mcp.api.handlers.schema.schema_service.list_catalogs",
                 return_value={"success": True, "catalogs": ["default"]},
             ):
                 resp = _post(client, "schema/catalogs")
@@ -454,11 +474,11 @@ class TestSchemaHandlers:
 
     def test_schema_tables(self, client):
         with patch(
-            "db_mcp.api.router.resolve_connection_context",
+            "db_mcp.api.handlers.schema.resolve_connection_context",
             return_value=("prod", Path("/tmp/prod")),
         ):
             with patch(
-                "db_mcp.api.router.schema_service.list_tables_with_descriptions",
+                "db_mcp.api.handlers.schema.schema_service.list_tables_with_descriptions",
                 return_value={"success": True, "tables": [{"name": "orders"}]},
             ):
                 resp = _post(client, "schema/tables", {"schema": "public"})
@@ -466,7 +486,7 @@ class TestSchemaHandlers:
 
     def test_sample_table(self, client):
         with patch(
-            "db_mcp.api.router.schema_service.sample_table",
+            "db_mcp.api.handlers.schema.schema_service.sample_table",
             return_value={"rows": [{"id": 1}], "row_count": 1, "limit": 5},
         ):
             resp = _post(
@@ -483,7 +503,7 @@ class TestSchemaHandlers:
 class TestAgentHandlers:
     def test_agents_list(self, client):
         with patch(
-            "db_mcp.api.router.agents_service.list_agents",
+            "db_mcp.api.handlers.agents.agents_service.list_agents",
             return_value={"agents": []},
         ):
             resp = _post(client, "agents/list")
@@ -491,7 +511,7 @@ class TestAgentHandlers:
 
     def test_agents_configure(self, client):
         with patch(
-            "db_mcp.api.router.agents_service.configure_agent",
+            "db_mcp.api.handlers.agents.agents_service.configure_agent",
             return_value={"success": True},
         ):
             resp = _post(client, "agents/configure", {"agentId": "claude-desktop"})
@@ -499,7 +519,7 @@ class TestAgentHandlers:
 
     def test_agents_remove(self, client):
         with patch(
-            "db_mcp.api.router.agents_service.remove_agent",
+            "db_mcp.api.handlers.agents.agents_service.remove_agent",
             return_value={"success": True},
         ):
             resp = _post(client, "agents/remove", {"agentId": "claude-desktop"})

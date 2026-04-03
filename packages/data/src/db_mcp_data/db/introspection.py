@@ -3,6 +3,7 @@
 from typing import Any
 
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from db_mcp_data.db.connection import DatabaseError, get_engine
 
@@ -86,7 +87,7 @@ def get_catalogs(
                     # Filter out system catalogs
                     catalogs = [c for c in catalogs if c not in ("system", "information_schema")]
                     return catalogs if catalogs else [None]
-            except Exception:
+            except (OperationalError, ProgrammingError):
                 # Fallback to extracting from URL if SHOW CATALOGS fails
                 url = engine.url
                 if url.database:
@@ -135,19 +136,19 @@ def get_schemas(
                     # Filter out system schemas
                     schemas = [s for s in schemas if s not in ("information_schema",)]
                     return schemas if schemas else [None]
-            except Exception:
+            except (OperationalError, ProgrammingError):
                 # Fallback to inspector if query fails
                 try:
                     inspector = inspect(engine)
                     return inspector.get_schema_names()
-                except Exception:
+                except (OperationalError, ProgrammingError):
                     return [None]
         else:
             # Use SQLAlchemy inspector for other databases
             try:
                 inspector = inspect(engine)
                 return inspector.get_schema_names()
-            except Exception:
+            except (OperationalError, ProgrammingError):
                 return [None]
     except Exception as e:
         raise DatabaseError(f"Failed to get schemas: {e}") from e
@@ -228,7 +229,7 @@ def get_tables(
                                     "full_name": f"{catalog}.{schema_name}.{name}",
                                 }
                             )
-                    except Exception:
+                    except (OperationalError, ProgrammingError):
                         # Skip schemas that error
                         continue
         else:
@@ -260,7 +261,7 @@ def get_tables(
                             "full_name": make_full_name(name),
                         }
                     )
-            except Exception:
+            except (OperationalError, ProgrammingError):
                 # Some databases don't support view introspection
                 pass
 
@@ -313,7 +314,7 @@ def get_columns(
                             }
                         )
                     return columns
-            except Exception:
+            except (OperationalError, ProgrammingError):
                 # Fallback to inspector
                 pass
 
@@ -321,7 +322,7 @@ def get_columns(
         inspector = inspect(engine)
         try:
             columns = inspector.get_columns(table_name, schema=schema)
-        except Exception:
+        except (OperationalError, ProgrammingError):
             # Fallback for restricted Postgres roles
             columns = _fallback_information_schema_columns(
                 engine=engine, schema=schema, table_name=table_name

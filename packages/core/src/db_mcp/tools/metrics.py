@@ -1,6 +1,5 @@
 """Metrics and dimensions MCP tools — discover, manage, and catalog business metrics."""
 
-from pathlib import Path
 
 from db_mcp_knowledge.metrics.mining import mine_metrics_and_dimensions
 from db_mcp_knowledge.metrics.store import (
@@ -15,97 +14,12 @@ from db_mcp_knowledge.metrics.store import (
 )
 from db_mcp_models import MetricBinding, MetricDimensionBinding
 
+from db_mcp.services.metrics import serialize_metric_binding, validate_metric_binding
 from db_mcp.tools.utils import resolve_connection
 
-
-def _serialize_metric_binding(binding: MetricBinding) -> dict:
-    """Convert a binding model to a JSON-safe payload."""
-    return {
-        "metric_name": binding.metric_name,
-        "sql": binding.sql,
-        "tables": binding.tables,
-        "dimensions": [
-            {
-                "dimension_name": dimension_binding.dimension_name,
-                "projection_sql": dimension_binding.projection_sql,
-                "filter_sql": dimension_binding.filter_sql,
-                "group_by_sql": dimension_binding.group_by_sql,
-                "tables": dimension_binding.tables,
-            }
-            for _, dimension_binding in sorted(binding.dimensions.items())
-        ],
-    }
-
-
-def _validate_metric_binding(
-    *,
-    provider_id: str,
-    connection_path: Path,
-    metric_name: str,
-    sql: str,
-    tables: list[str] | None = None,
-    dimensions: list[dict] | None = None,
-) -> dict:
-    """Validate a metric binding against the approved logical catalogs."""
-    metrics_catalog = load_metrics(provider_id, connection_path=connection_path)
-    dimensions_catalog = load_dimensions(provider_id, connection_path=connection_path)
-
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    metric = metrics_catalog.get_metric(metric_name)
-    if metric is None:
-        errors.append(f"Metric '{metric_name}' not found in the approved catalog.")
-    if not sql.strip():
-        errors.append("Binding SQL is required.")
-
-    binding_tables = tables or []
-    binding_dimensions = dimensions or []
-    seen_dimensions: set[str] = set()
-
-    for raw_dimension in binding_dimensions:
-        dimension_name = raw_dimension.get("dimension_name")
-        if not isinstance(dimension_name, str) or not dimension_name:
-            errors.append("Each binding dimension must include a non-empty dimension_name.")
-            continue
-        if dimension_name in seen_dimensions:
-            errors.append(f"Duplicate binding dimension '{dimension_name}'.")
-            continue
-        seen_dimensions.add(dimension_name)
-
-        dimension = dimensions_catalog.get_dimension(dimension_name)
-        if dimension is None:
-            errors.append(f"Dimension '{dimension_name}' not found in the approved catalog.")
-            continue
-        if metric is not None and metric.dimensions and dimension_name not in metric.dimensions:
-            errors.append(
-                f"Metric '{metric_name}' is not approved for dimension '{dimension_name}'."
-            )
-
-        projection_sql = raw_dimension.get("projection_sql")
-        if not isinstance(projection_sql, str) or not projection_sql.strip():
-            errors.append(f"Binding dimension '{dimension_name}' requires projection_sql.")
-
-        dimension_tables = raw_dimension.get("tables") or []
-        if (
-            binding_tables
-            and dimension_tables
-            and not set(binding_tables).intersection(dimension_tables)
-        ):
-            errors.append(
-                f"Binding dimension '{dimension_name}' does not share a table with metric "
-                f"'{metric_name}'."
-            )
-
-    if metric is not None and metric.dimensions:
-        missing_dimensions = sorted(set(metric.dimensions) - seen_dimensions)
-        if missing_dimensions:
-            warnings.append(
-                "Metric binding does not define projections for approved dimensions: "
-                + ", ".join(missing_dimensions)
-            )
-
-    return {"valid": not errors, "errors": errors, "warnings": warnings}
+# Keep underscore-prefixed aliases for backwards compatibility within this module
+_serialize_metric_binding = serialize_metric_binding
+_validate_metric_binding = validate_metric_binding
 
 
 async def _metrics_discover(connection: str) -> dict:

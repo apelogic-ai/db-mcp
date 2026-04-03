@@ -1,12 +1,17 @@
 """Thin MCP tool wrappers for metrics tools (step 3.06).
 
 Calls db_mcp.services.metrics and underlying knowledge-layer stores directly.
-Does not import from db_mcp.tools.metrics.
 """
 
 from __future__ import annotations
 
 from db_mcp.services.connection import resolve_connection
+from db_mcp.services.metrics import (
+    serialize_metric_binding as _serialize_metric_binding,
+)
+from db_mcp.services.metrics import (
+    validate_metric_binding as _validate_metric_binding,
+)
 from db_mcp_knowledge.metrics.mining import mine_metrics_and_dimensions
 from db_mcp_knowledge.metrics.store import (
     add_dimension,
@@ -19,79 +24,6 @@ from db_mcp_knowledge.metrics.store import (
     upsert_metric_binding,
 )
 from db_mcp_models import MetricBinding, MetricDimensionBinding
-
-# ---------------------------------------------------------------------------
-# Helpers (inlined from db_mcp.tools.metrics — no import from tools.metrics)
-# ---------------------------------------------------------------------------
-
-def _serialize_metric_binding(binding: MetricBinding) -> dict:
-    return {
-        "metric_name": binding.metric_name,
-        "sql": binding.sql,
-        "tables": binding.tables,
-        "dimensions": [
-            {
-                "dimension_name": d.dimension_name,
-                "projection_sql": d.projection_sql,
-                "filter_sql": d.filter_sql,
-                "group_by_sql": d.group_by_sql,
-                "tables": d.tables,
-            }
-            for _, d in sorted(binding.dimensions.items())
-        ],
-    }
-
-
-def _validate_metric_binding(
-    *,
-    provider_id: str,
-    connection_path,
-    metric_name: str,
-    sql: str,
-    tables: list[str] | None = None,
-    dimensions: list[dict] | None = None,
-) -> dict:
-    metrics_catalog = load_metrics(provider_id, connection_path=connection_path)
-    dimensions_catalog = load_dimensions(provider_id, connection_path=connection_path)
-
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    metric = metrics_catalog.get_metric(metric_name)
-    if metric is None:
-        errors.append(f"Metric '{metric_name}' not found in the approved catalog.")
-    if not sql.strip():
-        errors.append("Binding SQL is required.")
-
-    seen_dimensions: set[str] = set()
-    for raw_dimension in dimensions or []:
-        dimension_name = raw_dimension.get("dimension_name")
-        if not isinstance(dimension_name, str) or not dimension_name:
-            errors.append("Each binding dimension must include a non-empty dimension_name.")
-            continue
-        if dimension_name in seen_dimensions:
-            errors.append(f"Duplicate binding dimension '{dimension_name}'.")
-            continue
-        seen_dimensions.add(dimension_name)
-        dimension = dimensions_catalog.get_dimension(dimension_name)
-        if dimension is None:
-            errors.append(f"Dimension '{dimension_name}' not found in the approved catalog.")
-            continue
-        if metric is not None and metric.dimensions and dimension_name not in metric.dimensions:
-            errors.append(
-                f"Metric '{metric_name}' is not approved for dimension '{dimension_name}'."
-            )
-
-    if metric is not None and metric.dimensions:
-        missing = [d for d in metric.dimensions if d not in seen_dimensions]
-        if missing:
-            warnings.append(
-                "Metric binding does not define projections for approved dimensions: "
-                + ", ".join(missing)
-            )
-
-    return {"valid": not errors, "errors": errors, "warnings": warnings}
-
 
 # ---------------------------------------------------------------------------
 # Public tool functions

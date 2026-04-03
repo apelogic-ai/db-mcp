@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import time
@@ -14,7 +13,10 @@ import requests
 import yaml
 
 from db_mcp_data.connector_compat import normalize_connector_payload
+from db_mcp_data.connectors import api_auth as _api_auth
+from db_mcp_data.connectors import api_pagination as _api_pg
 from db_mcp_data.connectors.api_discovery import discover_api, discover_openapi_spec
+from db_mcp_data.connectors.api_schema import map_schema_type as _schema_map_type
 from db_mcp_data.connectors.file import FileConnector, FileConnectorConfig
 from db_mcp_data.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
 
@@ -287,160 +289,30 @@ class APIConnector(FileConnector):
 
     def _load_env(self) -> dict[str, str]:
         """Load environment variables from .env file."""
-        env: dict[str, str] = {}
-        if self._env_path:
-            env_path = Path(self._env_path)
-        else:
-            # Default: .env in parent of data_dir (connection directory)
-            env_path = self._data_dir.parent / ".env"
-
-        if env_path.exists():
-            for line in env_path.read_text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                env[key.strip()] = value.strip().strip("\"'")
-        return env
+        return _api_auth.load_env(self._env_path, self._data_dir)
 
     def _resolve_auth_headers(self) -> dict[str, str]:
         """Build auth headers from config + .env."""
-        auth_type = self.api_config.auth.type
 
-        if auth_type == "none":
-            return {}
+        def _login_fn() -> str:
+            self._jwt_login()
+            return self._jwt_token  # type: ignore[return-value]
 
-        if auth_type in {"jwt_login", "login"}:
-            if self._jwt_token is None:
-                self._jwt_login()
-            token_prefix = self.api_config.auth.token_prefix
-            token = f"{token_prefix}{self._jwt_token}" if token_prefix else self._jwt_token
-            return {self.api_config.auth.header_name: token}
-
-        if auth_type == "basic":
-            username, password = self._resolve_basic_credentials()
-            token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
-            return {"Authorization": f"Basic {token}"}
-
-        env = self._load_env()
-        auth = self.api_config.auth
-        token_env = auth.token_env
-
-        if token_env:
-            # Explicit env var name — validate and look up.
-            if token_env not in env:
-                raise ValueError(
-                    f"Auth token env var '{token_env}' not found in .env file. "
-                    f"Add {token_env}=<your-token> to your .env file."
-                )
-            token = env[token_env]
-        else:
-            # Fall back to ``token`` alias field (literal or already-resolved by __post_init__).
-            token = auth.token or ""
-
-        if auth_type == "bearer":
-            return {"Authorization": f"Bearer {token}"}
-        elif auth_type == "header":
-            return {auth.header_name: token}
-        elif auth_type == "query_param":
-            # Query params handled in _build_params, not headers
-            return {}
-        else:
-            return {}
+        return _api_auth.resolve_auth_headers(
+            self.api_config, self._env_path, self._data_dir, self._jwt_token, _login_fn
+        )
 
     def _resolve_basic_credentials(self) -> tuple[str, str]:
         """Resolve username/password for basic auth from env or literal aliases."""
-        auth = self.api_config.auth
-        env = self._load_env()
-
-        if auth.username_env:
-            if auth.username_env not in env:
-                raise ValueError(
-                    f"Basic auth username env var '{auth.username_env}' not found in .env file. "
-                    f"Add {auth.username_env}=<username> to your .env file."
-                )
-            username = env[auth.username_env]
-        else:
-            username = auth.username or ""
-
-        if auth.password_env:
-            if auth.password_env not in env:
-                raise ValueError(
-                    f"Basic auth password env var '{auth.password_env}' not found in .env file. "
-                    f"Add {auth.password_env}=<password> to your .env file."
-                )
-            password = env[auth.password_env]
-        else:
-            password = auth.password or ""
-
-        if not username:
-            raise ValueError("Basic auth requires a username or username_env")
-        if not password:
-            raise ValueError("Basic auth requires a password or password_env")
-
-        return username, password
+        return _api_auth.resolve_basic_credentials(
+            self.api_config.auth, self._env_path, self._data_dir
+        )
 
     def _jwt_login(self) -> None:
-        """Perform JWT login: POST creds to login endpoint, cache token.
-
-        Credential resolution follows these rules (same for username and password):
-
-        1. If ``username_env`` is set (either directly in config or extracted from a
-           ``${VAR}`` alias by ``__post_init__``), treat it as an env var *name* and
-           look it up in the ``.env`` file.
-        2. Otherwise fall back to the ``username`` field itself as a *literal* string.
-
-        This means ``username: admin`` in connector.yaml passes "admin" directly,
-        while ``username: ${API_USERNAME}`` resolves to the env var value.
-        """
-        auth = self.api_config.auth
-        env = self._load_env()
-
-        # -- resolve username --
-        if auth.username_env:
-            if auth.username_env not in env:
-                raise ValueError(
-                    f"JWT username env var '{auth.username_env}' not found in .env file. "
-                    f"Add {auth.username_env}=<username> to your .env file."
-                )
-            username = env[auth.username_env]
-        else:
-            username = auth.username or ""
-
-        # -- resolve password --
-        if auth.password_env:
-            if auth.password_env not in env:
-                raise ValueError(
-                    f"JWT password env var '{auth.password_env}' not found in .env file. "
-                    f"Add {auth.password_env}=<password> to your .env file."
-                )
-            password = env[auth.password_env]
-        else:
-            password = auth.password or ""
-
-        login_url = self.api_config.base_url.rstrip("/") + auth.login_endpoint
-        payload: dict[str, Any] = {"username": username, "password": password}
-        if auth.login_body:
-            payload.update(auth.login_body)
-            # Ensure username/password are not overridden by login_body
-            payload["username"] = username
-            payload["password"] = password
-        resp = requests.post(
-            login_url,
-            json=payload,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        token_field = auth.token_field or "access_token"
-        self._jwt_token = data.get(token_field)
-        if not self._jwt_token:
-            raise ValueError(
-                f"JWT login response missing token field '{token_field}'. "
-                f"Response keys: {list(data.keys())}"
-            )
-        self._jwt_expires = time.time() + 3600  # Default 1h cache
+        """Perform JWT login: POST creds to login endpoint, cache token."""
+        token, expires_at = _api_auth.jwt_login(self.api_config, self._env_path, self._data_dir)
+        self._jwt_token = token
+        self._jwt_expires = expires_at
 
     def _jwt_refresh(self) -> None:
         """Force refresh JWT token by re-logging in."""
@@ -450,15 +322,7 @@ class APIConnector(FileConnector):
 
     def _resolve_auth_params(self) -> dict[str, str]:
         """Build auth query params (for query_param auth type)."""
-        if self.api_config.auth.type != "query_param":
-            return {}
-        auth = self.api_config.auth
-        env = self._load_env()
-        if auth.token_env:
-            token = env.get(auth.token_env, "")
-        else:
-            token = auth.token or ""
-        return {auth.param_name: token}
+        return _api_auth.resolve_auth_params(self.api_config, self._env_path, self._data_dir)
 
     def _runtime_path_params(self, path: str | None = None) -> dict[str, str]:
         return {}
@@ -730,25 +594,8 @@ class APIConnector(FileConnector):
 
     @staticmethod
     def _extract_cursor(data: list[dict], cursor_field: str) -> str | None:
-        """Extract cursor value from data using a simple field path.
-
-        Supports:
-          - "data[-1].id" → last item's "id" field
-          - "id" → last item's "id" field (shorthand)
-        """
-        if not data:
-            return None
-
-        # Always use the last item
-        item = data[-1]
-
-        # Strip any array prefix like "data[-1]."
-        field = cursor_field
-        if "." in field:
-            field = field.rsplit(".", 1)[-1]
-
-        value = item.get(field)
-        return str(value) if value is not None else None
+        """Extract cursor value from data using a simple field path."""
+        return _api_pg.extract_cursor(data, cursor_field)
 
     def _rate_limit(self) -> None:
         """Simple rate limiting between requests."""
@@ -766,26 +613,12 @@ class APIConnector(FileConnector):
     @staticmethod
     def _get_nested_value(payload: Any, path: str) -> Any:
         """Resolve a dotted field path from a nested JSON-like payload."""
-        if not path:
-            return None
-
-        value = payload
-        for part in path.split("."):
-            if not isinstance(value, dict):
-                return None
-            value = value.get(part)
-        return value
+        return _api_pg.get_nested_value(payload, path)
 
     @staticmethod
     def _normalize_column_names(columns: list[Any]) -> list[str]:
         """Normalize column descriptors into a list of output field names."""
-        names: list[str] = []
-        for column in columns:
-            if isinstance(column, dict):
-                names.append(str(column.get("name") or column.get("field") or ""))
-            else:
-                names.append(str(column))
-        return names
+        return _api_pg.normalize_column_names(columns)
 
     @classmethod
     def _rows_from_columnar_payload(
@@ -794,32 +627,12 @@ class APIConnector(FileConnector):
         rows_data: Any,
     ) -> list[dict[str, Any]]:
         """Convert column names plus row arrays into row dicts."""
-        if not isinstance(columns, list) or not isinstance(rows_data, list):
-            return []
-        if not rows_data or not isinstance(rows_data[0], list):
-            return []
-
-        names = cls._normalize_column_names(columns)
-        return [dict(zip(names, row)) for row in rows_data]
+        return _api_pg.rows_from_columnar_payload(columns, rows_data)
 
     @classmethod
     def _render_template_value(cls, value: Any, context: dict[str, Any]) -> Any:
         """Recursively render ``{{key}}`` placeholders inside a JSON-compatible value."""
-        if isinstance(value, str):
-            for key, replacement in context.items():
-                if value == f"{{{{{key}}}}}":
-                    return replacement
-            rendered = value
-            for key, replacement in context.items():
-                rendered = rendered.replace(f"{{{{{key}}}}}", str(replacement))
-            return rendered
-        if isinstance(value, list):
-            return [cls._render_template_value(item, context) for item in value]
-        if isinstance(value, dict):
-            return {
-                key: cls._render_template_value(item, context) for key, item in value.items()
-            }
-        return value
+        return _api_pg.render_template_value(value, context)
 
     def _extract_response_rows(
         self,
@@ -1342,20 +1155,7 @@ class APIConnector(FileConnector):
     @staticmethod
     def _map_schema_type(base_type: str | None) -> str:
         """Best-effort type mapping for API schema metadata."""
-        if not base_type:
-            return "VARCHAR"
-        lowered = base_type.lower()
-        if "integer" in lowered:
-            return "INTEGER"
-        if "decimal" in lowered:
-            return "DECIMAL"
-        if "float" in lowered or "number" in lowered:
-            return "DOUBLE"
-        if "boolean" in lowered:
-            return "BOOLEAN"
-        if "datetime" in lowered or "date" in lowered:
-            return "TIMESTAMP"
-        return "VARCHAR"
+        return _schema_map_type(base_type)
 
     def get_catalogs(self) -> list[str | None]:
         return super().get_catalogs()

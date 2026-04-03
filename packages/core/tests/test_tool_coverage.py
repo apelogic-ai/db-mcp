@@ -67,18 +67,23 @@ class TestToolRegistrationCompleteness:
         # corresponding function implementations in the tools/ directory
 
         # server.py has moved to packages/mcp-server/ (Phase 3.02)
-        server_py = (
+        mcp_server_dir = (
             Path(__file__).parents[3] / "packages" / "mcp-server"
-            / "src" / "db_mcp_server" / "server.py"
+            / "src" / "db_mcp_server"
         )
 
-        # Read server.py and extract tool registrations
-        server_content = server_py.read_text()
+        # Read server.py and tool_registration.py, extract tool registrations
         import re
 
-        registered_tools = set(
-            re.findall(r'server\.tool\(\s*name\s*=\s*["\']([^"\']+)["\']', server_content)
-        )
+        registered_tools: set[str] = set()
+        for filename in ("server.py", "tool_registration.py"):
+            filepath = mcp_server_dir / filename
+            if filepath.exists():
+                content = filepath.read_text()
+                # Match both server.tool(...) and mcp.tool(...)
+                registered_tools.update(
+                    re.findall(r'(?:server|mcp)\.tool\(\s*name\s*=\s*["\']([^"\']+)["\']', content)
+                )
 
         # All registered tools should be discoverable at runtime
         # (This is verified by the audit script, but we check registration exists)

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from db_mcp_knowledge.vault.paths import CONNECTOR_FILE
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -109,7 +110,7 @@ def load_insider_config(connection_path: Path | None = None) -> InsiderConfig:
                 conn_path = connections_dir / connection_name
 
     if conn_path is not None:
-        connector_cfg = _read_yaml_file(conn_path / "connector.yaml").get("insider", {})
+        connector_cfg = _read_yaml_file(conn_path / CONNECTOR_FILE).get("insider", {})
         if isinstance(connector_cfg, dict):
             for key, value in connector_cfg.items():
                 if isinstance(value, dict) and isinstance(merged.get(key), dict):

@@ -22,6 +22,19 @@ from pathlib import Path
 
 import yaml
 
+from db_mcp_knowledge.vault.paths import (
+    EXAMPLES_DIR,
+    FEEDBACK_LOG_FILE,
+    LEARNINGS_DIR,
+    STATE_FILE,
+)
+from db_mcp_knowledge.vault.paths import (
+    examples_dir as _examples_dir,
+)
+from db_mcp_knowledge.vault.paths import (
+    learnings_dir as _learnings_dir,
+)
+
 logger = logging.getLogger(__name__)
 
 STORAGE_VERSION = 2
@@ -356,7 +369,7 @@ def _migrate_onboarding_state(src_path: Path, connection_path: Path) -> bool:
     if not legacy_file.exists():
         return False
 
-    dest_file = connection_path / "state.yaml"
+    dest_file = connection_path / STATE_FILE
 
     if dest_file.exists():
         logger.debug("state.yaml already exists, skipping")
@@ -381,7 +394,7 @@ def _migrate_query_examples(src_path: Path, connection_path: Path) -> int:
     if not legacy_file.exists():
         return 0
 
-    examples_dir = connection_path / "examples"
+    examples_dir = _examples_dir(connection_path)
     examples_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -428,11 +441,11 @@ def _migrate_feedback_log(src_path: Path, connection_path: Path) -> int:
     Returns:
         Number of failures migrated
     """
-    legacy_file = src_path / "feedback_log.yaml"
+    legacy_file = src_path / FEEDBACK_LOG_FILE
     if not legacy_file.exists():
         return 0
 
-    failures_dir = connection_path / "learnings" / "failures"
+    failures_dir = _learnings_dir(connection_path) / "failures"
     failures_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -497,9 +510,9 @@ def _migrate_vault_files(vault_path: Path, connection_path: Path) -> dict:
                     stats["instructions"] += 1
 
     # Copy examples
-    src_examples = vault_path / "examples"
+    src_examples = vault_path / EXAMPLES_DIR
     if src_examples.exists():
-        dest_examples = connection_path / "examples"
+        dest_examples = _examples_dir(connection_path)
         dest_examples.mkdir(parents=True, exist_ok=True)
 
         for file in src_examples.iterdir():
@@ -510,9 +523,9 @@ def _migrate_vault_files(vault_path: Path, connection_path: Path) -> dict:
                     stats["examples"] += 1
 
     # Copy learnings
-    src_learnings = vault_path / "learnings"
+    src_learnings = vault_path / LEARNINGS_DIR
     if src_learnings.exists():
-        dest_learnings = connection_path / "learnings"
+        dest_learnings = _learnings_dir(connection_path)
         shutil.copytree(src_learnings, dest_learnings, dirs_exist_ok=True)
         stats["learnings"] = sum(1 for _ in src_learnings.rglob("*") if _.is_file())
 

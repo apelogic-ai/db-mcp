@@ -9,6 +9,14 @@ from typing import Any, Callable
 import yaml
 from db_mcp_knowledge.onboarding.schema_store import load_schema_descriptions
 from db_mcp_knowledge.onboarding.state import load_state
+from db_mcp_knowledge.vault.paths import (
+    DESCRIPTIONS_FILE,
+    DOMAIN_MODEL_FILE,
+    KNOWLEDGE_GAPS_FILE,
+    descriptions_path,
+    domain_model_path,
+    examples_dir,
+)
 
 from db_mcp.insider.config import InsiderConfig, get_insider_db_path, load_insider_config
 from db_mcp.insider.logging import log_event
@@ -189,20 +197,20 @@ class InsiderService:
         """Build deterministic insider model input from vault artifacts."""
         schema = load_schema_descriptions(connection, connection_path=connection_path)
         onboarding_state = load_state(connection, connection_path=connection_path)
-        examples_dir = connection_path / "examples"
+        ex_dir = examples_dir(connection_path)
         example_files = (
-            sorted(path for path in examples_dir.glob("*.yaml") if path.is_file())[:5]
-            if examples_dir.exists()
+            sorted(path for path in ex_dir.glob("*.yaml") if path.is_file())[:5]
+            if ex_dir.exists()
             else []
         )
         examples = []
         for path in example_files:
             with open(path) as f:
                 examples.append(yaml.safe_load(f) or {})
-        gaps_path = connection_path / "knowledge_gaps.yaml"
+        gaps_path = connection_path / KNOWLEDGE_GAPS_FILE
         knowledge_gaps = yaml.safe_load(gaps_path.read_text()) if gaps_path.exists() else []
-        domain_model_path = connection_path / "domain" / "model.md"
-        schema_path = connection_path / "schema" / "descriptions.yaml"
+        dm_path = domain_model_path(connection_path)
+        schema_path = descriptions_path(connection_path)
         return InsiderRunRequest(
             connection=connection,
             connection_path=str(connection_path),
@@ -214,8 +222,8 @@ class InsiderService:
                 "onboarding_state": onboarding_state.model_dump(mode="json")
                 if onboarding_state
                 else {},
-                "domain_model_markdown": domain_model_path.read_text()
-                if domain_model_path.exists()
+                "domain_model_markdown": dm_path.read_text()
+                if dm_path.exists()
                 else None,
                 "examples": examples,
                 "knowledge_gaps": knowledge_gaps,
@@ -274,7 +282,7 @@ class InsiderService:
                                 f"{update.table_full_name}.{column_update.name}"
                             )
                         column.description = column_update.description
-                relative_path = Path("schema/descriptions.yaml")
+                relative_path = Path(DESCRIPTIONS_FILE)
                 proposed_content = yaml.dump(
                     schema.model_dump(mode="json", by_alias=True),
                     default_flow_style=False,
@@ -282,7 +290,7 @@ class InsiderService:
                     allow_unicode=True,
                 )
             elif review_item.kind == "canonical_domain_model":
-                relative_path = Path("domain/model.md")
+                relative_path = Path(DOMAIN_MODEL_FILE)
                 proposed_content = str(review_item.payload.get("markdown", "")).rstrip() + "\n"
             elif review_item.kind == "canonical_examples":
                 example_payload = review_item.payload.get("example", {})
