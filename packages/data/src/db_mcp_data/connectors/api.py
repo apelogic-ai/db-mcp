@@ -600,34 +600,43 @@ class APIConnector:
                     return {"data": raw, "rows_returned": 1}
                 rows = self._fetch_with_pagination(base_url, headers, merged_params, max_pages)
             if method in ("POST", "PUT", "PATCH", "DELETE"):
-                # Determine the effective JSON body:
-                # - Explicit body parameter takes priority
-                # - Backward compat: body_mode=json with no explicit body → params as body
-                effective_body = body
-                effective_params = merged_params
-                if effective_body is None and endpoint.body_mode == "json":
-                    effective_body = merged_params
-                    effective_params = {}
-                elif effective_body is None and params and not endpoint.query_params:
-                    # Heuristic for write APIs: if the endpoint declares no query
-                    # params, treat user-supplied params as a JSON body.
-                    user_payload = dict(merged_params)
-                    for key, value in base_params.items():
-                        if user_payload.get(key) == value:
-                            user_payload.pop(key, None)
-                    if user_payload:
-                        effective_body = user_payload
-                        effective_params = dict(base_params)
+                if endpoint.body_mode == "jsonrpc":
+                    # JSON-RPC: wrap params in envelope, unwrap result field
+                    raw = self._send_non_get(base_url, headers, merged_params, endpoint)
+                    if endpoint.response_mode == "raw":
+                        return {"data": raw, "rows_returned": 1}
+                    rows = raw if isinstance(raw, list) else (
+                        self._extract_rows_from_response(raw) if isinstance(raw, dict) else []
+                    )
+                else:
+                    # Determine the effective JSON body:
+                    # - Explicit body parameter takes priority
+                    # - Backward compat: body_mode=json with no explicit body → params as body
+                    effective_body = body
+                    effective_params = merged_params
+                    if effective_body is None and endpoint.body_mode == "json":
+                        effective_body = merged_params
+                        effective_params = {}
+                    elif effective_body is None and params and not endpoint.query_params:
+                        # Heuristic for write APIs: if the endpoint declares no query
+                        # params, treat user-supplied params as a JSON body.
+                        user_payload = dict(merged_params)
+                        for key, value in base_params.items():
+                            if user_payload.get(key) == value:
+                                user_payload.pop(key, None)
+                        if user_payload:
+                            effective_body = user_payload
+                            effective_params = dict(base_params)
 
-                raw = self._send_request_with_retry(
-                    method, base_url, headers, effective_params, effective_body
-                )
-                if endpoint.response_mode == "raw":
-                    return {"data": raw, "rows_returned": 1}
-                rows = self._extract_rows_from_response(raw)
-                if not rows and isinstance(raw, dict):
-                    # Preserve prior behavior for single-object create/update responses.
-                    rows = [raw]
+                    raw = self._send_request_with_retry(
+                        method, base_url, headers, effective_params, effective_body
+                    )
+                    if endpoint.response_mode == "raw":
+                        return {"data": raw, "rows_returned": 1}
+                    rows = self._extract_rows_from_response(raw)
+                    if not rows and isinstance(raw, dict):
+                        # Preserve prior behavior for single-object create/update responses.
+                        rows = [raw]
             elif method not in ("GET",):
                 rows = self._fetch_non_get(base_url, headers, merged_params, endpoint)
 
@@ -1162,6 +1171,23 @@ class APIConnector:
         endpoint: APIEndpointConfig,
     ) -> Any:
         """Send a non-GET request and return the raw JSON body."""
+        if endpoint.body_mode == "jsonrpc":
+            import uuid
+
+            envelope = {
+                "jsonrpc": "2.0",
+                "method": endpoint.rpc_method,
+                "params": params,
+                "id": str(uuid.uuid4()),
+            }
+            resp = requests.post(url, headers=headers, json=envelope, params={}, timeout=30)
+            resp.raise_for_status()
+            body = resp.json()
+            if "error" in body and body["error"] is not None:
+                err = body["error"]
+                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                raise RuntimeError(f"JSON-RPC error: {msg}")
+            return body.get("result")
         if endpoint.body_mode == "json":
             resp = requests.post(url, headers=headers, json=params, params={}, timeout=30)
         else:

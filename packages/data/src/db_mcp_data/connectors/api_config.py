@@ -71,10 +71,11 @@ class APIEndpointConfig:
     description: str = ""
     method: str = "GET"
     query_params: list[APIQueryParamConfig] = field(default_factory=list)
-    body_mode: str = "query"  # query | json
+    body_mode: str = "query"  # query | json | jsonrpc
     body_template: dict[str, Any] | None = None
     response_mode: str = "data"  # data | raw
     sql_field: str = "sql"  # Field name for SQL in execute_sql endpoints
+    rpc_method: str = ""  # JSON-RPC method name (used when body_mode='jsonrpc')
 
 
 @dataclass
