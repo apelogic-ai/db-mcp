@@ -20,16 +20,21 @@ Compute the new version by applying the bump:
 
 State the bump type and new version clearly before proceeding.
 
-## Step 2 — Verify we are on main and it is clean
+## Step 2 — Ensure we are on main and it is clean
 
 ```bash
-git status --short
 git branch --show-current
+git status --short
 ```
 
-Abort with a clear message if:
-- Not on `main`
-- There are uncommitted changes unrelated to release prep
+If not on `main`, switch to main and pull latest:
+```bash
+git checkout main
+git pull origin main
+```
+
+Abort with a clear message if there are uncommitted changes (tracked files only — untracked files are fine).
+Do NOT stash or discard changes; ask the user to handle them first.
 
 ## Step 3 — Bump version in two files
 
@@ -121,5 +126,5 @@ CI will build and publish the platform binaries automatically.
 - **Never edit existing release notes** in `docs/releases/`. Each version gets exactly one file, written once.
 - **Never push if tests fail.** Fix first.
 - **Never skip version consistency check.** It validates pyproject.toml, `__init__.py`, and uv.lock all agree.
-- **Always be on `main`** before cutting a release.
+- **Switch to `main` automatically** if on a feature branch — pull latest before proceeding.
 - The release commit must contain only the 5 release files listed in Step 7 — no code changes.
