@@ -43,10 +43,10 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class APIConnector(FileConnector):
+class APIConnector:
     """API connector — fetches REST API data into JSONL, queries via DuckDB.
 
-    Inherits all query capabilities from FileConnector. After sync(),
+    Uses FileConnector internally for all DuckDB query capabilities. After sync(),
     the data directory contains JSONL files that DuckDB queries directly.
     """
 
@@ -64,9 +64,9 @@ class APIConnector(FileConnector):
         self._jwt_expires: float = 0.0
         self._schema_cache: list[dict[str, Any]] | None = None
 
-        # Build FileConnectorConfig pointing to the data directory
+        # Delegate DuckDB query capabilities to an internal FileConnector
         file_config = FileConnectorConfig(directory=str(self._data_dir))
-        super().__init__(file_config)
+        self._file_connector = FileConnector(file_config)
 
     @staticmethod
     def _format_api_error(error: Any, default: str) -> str:
@@ -164,6 +164,10 @@ class APIConnector(FileConnector):
         resp = requests.request(**kwargs)
         resp.raise_for_status()
         return resp.json()
+
+    def get_dialect(self) -> str:
+        """Return dialect identifier (delegated to internal FileConnector)."""
+        return self._file_connector.get_dialect()
 
     # -- Test connection ----------------------------------------------------
 
@@ -697,7 +701,7 @@ class APIConnector(FileConnector):
         if supports_sql is None:
             supports_sql = caps.get("sql")
         if not supports_sql:
-            rows = super().execute_sql(sql, None)
+            rows = self._file_connector.execute_sql(sql, None)
             return {"mode": "sync", "rows": rows}
 
         execute_endpoint = self._get_endpoint("execute_sql")
@@ -965,12 +969,12 @@ class APIConnector(FileConnector):
         return _schema_map_type(base_type)
 
     def get_catalogs(self) -> list[str | None]:
-        return super().get_catalogs()
+        return self._file_connector.get_catalogs()
 
     def get_schemas(self, catalog: str | None = None) -> list[str | None]:
         schema_rows = self._get_schema_rows()
         if schema_rows is None:
-            return super().get_schemas(catalog)
+            return self._file_connector.get_schemas(catalog)
 
         schemas = {row.get("schema") for row in schema_rows if row.get("schema")}
         return sorted(schemas) if schemas else [None]
@@ -980,7 +984,7 @@ class APIConnector(FileConnector):
     ) -> list[dict[str, Any]]:
         schema_rows = self._get_schema_rows()
         if schema_rows is None:
-            return super().get_tables(schema, catalog)
+            return self._file_connector.get_tables(schema, catalog)
 
         tables: list[dict[str, Any]] = []
         catalog_name = self.get_catalogs()[0]
@@ -1008,7 +1012,7 @@ class APIConnector(FileConnector):
     ) -> list[dict[str, Any]]:
         schema_rows = self._get_schema_rows()
         if schema_rows is None:
-            return super().get_columns(table_name, schema, catalog)
+            return self._file_connector.get_columns(table_name, schema, catalog)
 
         for row in schema_rows:
             if row.get("name") != table_name:
@@ -1029,7 +1033,7 @@ class APIConnector(FileConnector):
                 if isinstance(field, dict) and field.get("name")
             ]
 
-        return super().get_columns(table_name, schema, catalog)
+        return self._file_connector.get_columns(table_name, schema, catalog)
 
     def get_table_sample(
         self,
@@ -1039,7 +1043,7 @@ class APIConnector(FileConnector):
         limit: int = 5,
     ) -> list[dict[str, Any]]:
         if self._get_schema_rows() is None or self._get_endpoint("execute_sql") is None:
-            return super().get_table_sample(table_name, schema, catalog, limit)
+            return self._file_connector.get_table_sample(table_name, schema, catalog, limit)
 
         source = f"{schema}.{table_name}" if schema else table_name
         return self.execute_sql(f"SELECT * FROM {source} LIMIT {limit}")

@@ -346,8 +346,5 @@ def get_query_store() -> QueryStore:
     return _query_store
 
 
-# Backwards compatibility aliases
-TaskStatus = QueryStatus
-QueryTask = Query
-QueryTaskStore = QueryStore
+# Backwards compatibility alias used by db_mcp_server.server
 get_task_store = get_query_store

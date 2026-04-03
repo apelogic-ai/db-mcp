@@ -21,8 +21,7 @@ from shutil import which
 from typing import Any
 from urllib.request import urlopen
 
-from db_mcp_cli.utils import get_db_mcp_binary_path
-
+from db_mcp.agents import get_db_mcp_binary_path
 from db_mcp.benchmark.connection import resolve_sql_connection_access
 from db_mcp.benchmark.driver import ClaudeCliDriver, LoopBreakerConfig
 from db_mcp.benchmark.loader import load_case_pack
