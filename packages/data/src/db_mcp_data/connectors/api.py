@@ -709,8 +709,10 @@ class APIConnector:
         if supports_sql is None:
             supports_sql = caps.get("sql")
         if not supports_sql:
-            rows = self._file_connector.execute_sql(sql, None)
-            return {"mode": "sync", "rows": rows}
+            raise ValueError(
+                "This connector does not support SQL execution. "
+                "Use api_query to fetch endpoint data directly."
+            )
 
         execute_endpoint = self._get_endpoint("execute_sql")
         if execute_endpoint is None:

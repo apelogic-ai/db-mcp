@@ -586,17 +586,16 @@ class TestAPIConnectorQuery:
         assert "name" in col_names
         assert "email" in col_names
 
-    def test_execute_sql(self, synced_connector):
-        rows = synced_connector.execute_sql("SELECT COUNT(*) AS cnt FROM users")
-        assert rows[0]["cnt"] == 3
+    def test_execute_sql_raises_for_non_sql_connector(self, synced_connector):
+        with pytest.raises(ValueError, match="does not support SQL execution"):
+            synced_connector.execute_sql("SELECT COUNT(*) AS cnt FROM users")
 
-    def test_execute_sql_join(self, synced_connector):
-        rows = synced_connector.execute_sql(
-            "SELECT u.name, o.amount FROM users u "
-            "JOIN orders o ON u.id = o.user_id ORDER BY o.amount"
-        )
-        assert len(rows) == 2
-        assert rows[0]["name"] == "Alice"
+    def test_execute_sql_join_raises_for_non_sql_connector(self, synced_connector):
+        with pytest.raises(ValueError, match="does not support SQL execution"):
+            synced_connector.execute_sql(
+                "SELECT u.name, o.amount FROM users u "
+                "JOIN orders o ON u.id = o.user_id ORDER BY o.amount"
+            )
 
     def test_get_table_sample(self, synced_connector):
         sample = synced_connector.get_table_sample("users", limit=2)
@@ -1547,22 +1546,10 @@ class TestAPIConnectorYAMLRoundTrip:
 class TestAPIConnectorSQLExecution:
     """Tests for execute_sql with SQL-like APIs."""
 
-    def test_execute_sql_without_supports_sql_falls_back_to_duckdb(self, api_connector, data_dir):
-        """Without supports_sql, execute_sql falls back to DuckDB on local files."""
-        # Sync some data first
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"data": [{"id": 1, "name": "Alice"}]}
-
-        with patch(
-            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
-        ):
-            api_connector.sync("users")
-
-        # Now execute_sql should use DuckDB on the JSONL
-        result = api_connector.execute_sql("SELECT * FROM users")
-        assert len(result) == 1
-        assert result[0]["name"] == "Alice"
+    def test_execute_sql_without_supports_sql_raises(self, api_connector, data_dir):
+        """Without supports_sql, execute_sql raises ValueError instead of silently querying DuckDB."""  # noqa: E501
+        with pytest.raises(ValueError, match="does not support SQL execution"):
+            api_connector.execute_sql("SELECT * FROM users")
 
     def test_execute_sql_with_supports_sql_calls_api(self, data_dir, env_file):
         """With supports_sql=true, execute_sql POSTs to the execute_sql endpoint."""
