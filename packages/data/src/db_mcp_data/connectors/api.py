@@ -285,9 +285,8 @@ class APIConnector:
             except Exception as exc:
                 errors.append(f"{ep.name}: {exc}")
 
-        # Invalidate cached DuckDB connection so views refresh
-        self._conn = None
-        self._resolved_sources = None
+        # Invalidate cached DuckDB connection so views refresh with new JSONL files
+        self._file_connector.invalidate_cache()
 
         return {
             "synced": synced,

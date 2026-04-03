@@ -545,7 +545,7 @@ def _explain_duckdb(connector: "FileConnector", sql: str, span: Any) -> ExplainR
     span.set_attribute("db.dialect", "duckdb")
 
     try:
-        conn = connector._get_connection()
+        conn = connector._duckdb._ensure_connection()
         rows_raw = conn.execute(f"EXPLAIN {sql}").fetchall()
         rows = [{"explain": row[1] if len(row) > 1 else row[0]} for row in rows_raw]
     except (duckdb.CatalogException, duckdb.BinderException) as exc:
