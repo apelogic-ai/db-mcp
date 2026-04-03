@@ -1,0 +1,37 @@
+# Test-All Skill
+
+Run the full test suite across every Python package, then lint. Use this before pushing to a PR.
+
+## Step 1 — Run all Python package test suites
+
+Run each package sequentially. Report pass/fail counts as you go.
+
+```bash
+cd packages/data      && uv run pytest tests/ -q --tb=short; cd ../..
+cd packages/knowledge && uv run pytest tests/ -q --tb=short; cd ../..
+cd packages/core      && uv run pytest tests/ -q --tb=short; cd ../..
+cd packages/mcp-server && uv run pytest tests/ -q --tb=short; cd ../..
+cd packages/cli       && uv run pytest tests/ -q --tb=short; cd ../..
+```
+
+## Step 2 — Lint
+
+```bash
+uv run ruff check . --fix
+```
+
+## Step 3 — Report
+
+Print a summary table:
+
+| Package   | Tests | Status |
+|-----------|-------|--------|
+| data      | N     | ✓ / ✗  |
+| knowledge | N     | ✓ / ✗  |
+| core      | N     | ✓ / ✗  |
+| mcp-server| N     | ✓ / ✗  |
+| cli       | N     | ✓ / ✗  |
+| lint      | —     | ✓ / ✗  |
+
+If any suite fails, print the failure output and stop — do not push.
+If all suites pass, confirm it is safe to push.
