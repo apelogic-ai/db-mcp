@@ -356,15 +356,20 @@ async def _get_result(query_id: str, connection: str) -> object:
     store = get_query_store()
     query = await store.get(query_id)
 
+    connection_path = Path(_resolve_connection_path(connection))
+    execution_engine = get_execution_engine(connection_path)
+
     if query is not None:
         from db_mcp_data.execution.query_store import QueryStatus  # local import
 
         if query.status == QueryStatus.COMPLETE:
+            exec_result = execution_engine.get_result(query.execution_id or query_id)
             return inject_protocol({
                 "status": "complete",
                 "query_id": query_id,
-                "data": query.result or [],
-                "rows_returned": len(query.result or []),
+                "data": exec_result.data if exec_result else [],
+                "columns": exec_result.columns if exec_result else [],
+                "rows_returned": exec_result.rows_returned if exec_result else query.rows_returned,
             })
         if query.status == QueryStatus.ERROR:
             return inject_protocol({
@@ -379,8 +384,6 @@ async def _get_result(query_id: str, connection: str) -> object:
         })
 
     # Fall back to unified execution store
-    connection_path = Path(_resolve_connection_path(connection))
-    execution_engine = get_execution_engine(connection_path)
     execution_result = execution_engine.get_result(query_id)
 
     if execution_result is None:

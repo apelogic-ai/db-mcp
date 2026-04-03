@@ -215,7 +215,8 @@ def _build_direct_sync_response(
         idempotency_key=direct_query_id,
     )
 
-    def _direct_runner(runner_sql: str) -> dict[str, Any]:
+    def _direct_runner(payload: dict[str, Any]) -> dict[str, Any]:
+        runner_sql = payload.get("sql", "")
         # Prefer injected callbacks for backward compat; fall back to gateway.
         if direct_execute is not None:
             raw = direct_execute(runner_sql)
@@ -501,7 +502,7 @@ async def run_sql(
                     ],
                 },
             }
-        if query.status == query.status.EXPIRED:
+        if query.status == "expired":
             return {
                 "status": "error",
                 "error": "Query validation has expired. Please re-validate.",
@@ -525,7 +526,7 @@ async def run_sql(
         if not query.can_execute:
             return {
                 "status": "error",
-                "error": f"Query cannot be executed. Status: {query.status.value}",
+                "error": f"Query cannot be executed. Status: {query.status}",
                 "query_id": query_id,
             }
 
@@ -625,7 +626,8 @@ async def run_sql(
                 idempotency_key=query_id,
             )
 
-            def _validated_runner(runner_sql: str) -> dict[str, Any]:
+            def _validated_runner(payload: dict[str, Any]) -> dict[str, Any]:
+                runner_sql = payload.get("sql", "")
                 raw = execute_query(runner_sql, connection=execution_connection, query_id=query_id)
                 return {
                     "data": raw.get("data", []),
@@ -664,7 +666,6 @@ async def run_sql(
             }
             await _gateway_module.mark_complete(
                 query_id,
-                result=result,
                 rows_returned=result["rows_returned"],
             )
             _execution_id = handle.execution_id
@@ -705,7 +706,6 @@ async def run_sql(
             }
             await _gateway_module.mark_complete(
                 query_id,
-                result=result,
                 rows_returned=result["rows_returned"],
             )
             _execution_id = query_id

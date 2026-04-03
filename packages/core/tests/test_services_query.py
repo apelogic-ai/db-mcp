@@ -388,7 +388,7 @@ async def test_run_sql_rejects_connection_mismatch(monkeypatch):
     query = Query(
         query_id="q-other",
         sql="SELECT 1",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="warehouse",
     )
 
@@ -435,7 +435,7 @@ async def test_run_sql_rejects_write_query_without_confirmation(monkeypatch):
     query = Query(
         query_id="q-write",
         sql="INSERT INTO users(id) VALUES (1)",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="confirm",
     )
@@ -471,7 +471,7 @@ async def test_run_sql_executes_validated_query_synchronously(monkeypatch):
     query = Query(
         query_id="q-sync",
         sql="SELECT 1 AS answer",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="auto",
     )
@@ -517,7 +517,7 @@ async def test_run_sql_executes_validated_query_synchronously(monkeypatch):
             assert request.sql == "SELECT 1 AS answer"
             assert request.query_id == "q-sync"
             assert request.idempotency_key == "q-sync"
-            runner_result = runner("SELECT 1 AS answer")
+            runner_result = runner({"sql": "SELECT 1 AS answer"})
             assert runner_result == {
                 "data": [{"answer": 1}],
                 "columns": ["answer"],
@@ -563,20 +563,7 @@ async def test_run_sql_executes_validated_query_synchronously(monkeypatch):
     assert result["statement_type"] == "SELECT"
     assert result["is_write"] is False
     mark_running.assert_awaited_once_with("q-sync")
-    mark_complete.assert_awaited_once_with(
-        "q-sync",
-        result={
-            "data": [{"answer": 1}],
-            "columns": ["answer"],
-            "rows_returned": 1,
-            "duration_ms": 2.5,
-            "provider_id": "prod",
-            "statement_type": "SELECT",
-            "is_write": False,
-            "rows_affected": None,
-        },
-        rows_returned=1,
-    )
+    mark_complete.assert_awaited_once_with("q-sync", rows_returned=1)
 
 
 @pytest.mark.asyncio
@@ -586,7 +573,7 @@ async def test_run_sql_returns_error_for_failed_sync_execution(monkeypatch):
     query = Query(
         query_id="q-fail",
         sql="SELECT broken()",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="auto",
     )
@@ -663,7 +650,7 @@ async def test_run_sql_submits_large_validated_query_for_async_execution(monkeyp
     query = Query(
         query_id="q-async",
         sql="SELECT * FROM events",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="auto",
         estimated_rows=75_000,
@@ -776,7 +763,7 @@ async def test_run_sql_executes_direct_sql_synchronously_when_validate_is_disabl
             assert request.sql == "SELECT 1 AS answer"
             assert request.query_id == "q-direct"
             assert request.idempotency_key == "q-direct"
-            runner_result = runner("SELECT 1 AS answer")
+            runner_result = runner({"sql": "SELECT 1 AS answer"})
             assert runner_result == {
                 "data": [{"answer": 1}],
                 "columns": ["answer"],

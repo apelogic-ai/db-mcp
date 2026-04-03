@@ -5,6 +5,7 @@ Discovers, caches, and provides access to multiple database connections.
 
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ import yaml
 from db_mcp_data.connectors import Connector, get_connector
 from db_mcp_knowledge.vault.paths import CONNECTOR_FILE, STATE_FILE
 
-from db_mcp.config import Settings, get_settings
+from db_mcp.config import Settings, get_settings, load_config
 
 
 def _detect_dialect_from_database_url(database_url: str) -> str:
@@ -126,7 +127,7 @@ class ConnectionRegistry:
             self._discovered = True
             return self._connections
 
-        default_name = self._settings.connection_name or "default"
+        default_name = self.get_active_connection_name()
 
         for entry in sorted(connections_dir.iterdir()):
             if not entry.is_dir():
@@ -203,7 +204,9 @@ class ConnectionRegistry:
             name: Connection name. If None, uses the default.
         """
         if name is None:
-            return self._settings.get_effective_connection_path()
+            if self._settings.connection_path:
+                return Path(self._settings.connection_path)
+            return self._get_connections_dir() / self.get_active_connection_name()
 
         if not self._discovered:
             self.discover()
@@ -287,6 +290,22 @@ class ConnectionRegistry:
         except Exception:
             return False
 
+    def get_active_connection_name(self) -> str:
+        """Resolve the active connection name, with config.yaml fallback.
+
+        Priority:
+        1. CONNECTION_NAME env var (explicit server/container deployment)
+        2. active_connection in ~/.db-mcp/config.yaml (CLI / local usage)
+        3. Settings default ("default")
+        """
+        if os.environ.get("CONNECTION_NAME"):
+            return self._settings.connection_name
+        config = load_config()
+        active = config.get("active_connection")
+        if active:
+            return active
+        return self._settings.connection_name or "default"
+
     def get_default_name(self) -> str:
         """Return the configured default connection name."""
-        return self._settings.connection_name or self._settings.provider_id or "default"
+        return self.get_active_connection_name()

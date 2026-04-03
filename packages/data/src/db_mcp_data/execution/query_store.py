@@ -1,62 +1,69 @@
 """Unified query store for validation and async execution.
 
 Queries go through a lifecycle:
-1. VALIDATED - Query passed validation, ready to execute
-2. PENDING - Submitted for async execution, waiting to start
-3. RUNNING - Currently executing
-4. COMPLETE - Finished successfully with results
-5. ERROR - Failed with error
-6. EXPIRED - TTL exceeded, cleaned up
+1. READY      - Query passed validation, ready to execute
+2. DISPATCHED - Submitted for async execution, waiting to start
+3. RUNNING    - Currently executing (transitional; terminal state lives in ExecutionStore)
+4. COMPLETE   - Finished successfully (transitional; use ExecutionStore.get_result)
+5. ERROR      - Failed with error (transitional; use ExecutionStore.get_result)
+6. EXPIRED    - TTL exceeded, cleaned up
 """
 
 import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
+
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
 
-class QueryStatus(str, Enum):
-    """Status of a query in the store."""
+class QueryStatus(str):
+    """QueryStatus string constants.
 
-    VALIDATED = "validated"  # Passed validation, ready to execute
-    PENDING = "pending"  # Submitted for async execution
-    RUNNING = "running"  # Currently executing
-    COMPLETE = "complete"  # Finished successfully
-    ERROR = "error"  # Failed with error
-    EXPIRED = "expired"  # TTL exceeded
+    READY and DISPATCHED are the two pre-execution states owned by QueryStore.
+    RUNNING / COMPLETE / ERROR are transitional values written during execution;
+    terminal result state is authoritative in ExecutionStore (see B2b).
+    EXPIRED marks TTL-exceeded entries cleaned up by the store.
+    """
+
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    RUNNING = "running"
+    COMPLETE = "complete"
+    ERROR = "error"
+    EXPIRED = "expired"
 
 
-@dataclass
-class Query:
+class Query(BaseModel):
     """A query with full lifecycle tracking."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     query_id: str
     sql: str
-    status: QueryStatus = QueryStatus.VALIDATED
-    created_at: float = field(default_factory=time.time)
+    status: str = QueryStatus.READY
+    created_at: float = Field(default_factory=time.time)
     connection: str | None = None  # Connection name for multi-connection dispatch
 
     # Validation info
     estimated_rows: int | None = None
     estimated_cost: float | None = None
     cost_tier: str = "unknown"
-    explanation: list[str] = field(default_factory=list)
+    explanation: list[Any] = Field(default_factory=list)  # EXPLAIN rows (str or dict)
 
     # Execution info
+    execution_id: str | None = None  # ExecutionStore handle; set when dispatched
     started_at: float | None = None
     completed_at: float | None = None
-    result: dict[str, Any] | None = None
     error: str | None = None
     rows_returned: int = 0
 
-    # TTL settings
-    VALIDATION_TTL = 1800  # 30 minutes for validated but not executed
-    RESULT_TTL = 3600  # 1 hour for completed results
+    # TTL settings (class-level, not model fields)
+    VALIDATION_TTL: ClassVar[int] = 1800  # 30 minutes for validated but not executed
+    RESULT_TTL: ClassVar[int] = 3600  # 1 hour for completed results
 
     @property
     def elapsed_seconds(self) -> float:
@@ -79,9 +86,9 @@ class Query:
         """Check if query has expired based on its status."""
         age = time.time() - self.created_at
 
-        if self.status == QueryStatus.VALIDATED:
+        if self.status == QueryStatus.READY:
             return age > self.VALIDATION_TTL
-        elif self.status in (QueryStatus.COMPLETE, QueryStatus.ERROR):
+        if self.status in (QueryStatus.COMPLETE, QueryStatus.ERROR):
             if self.completed_at:
                 result_age = time.time() - self.completed_at
                 return result_age > self.RESULT_TTL
@@ -90,23 +97,7 @@ class Query:
     @property
     def can_execute(self) -> bool:
         """Check if query can be executed."""
-        return self.status == QueryStatus.VALIDATED and not self.is_expired
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for API response."""
-        return {
-            "query_id": self.query_id,
-            "status": self.status.value,
-            "sql": self.sql,
-            "elapsed_seconds": round(self.elapsed_seconds, 1),
-            "running_seconds": round(self.running_seconds, 1) if self.running_seconds else None,
-            "estimated_rows": self.estimated_rows,
-            "estimated_cost": self.estimated_cost,
-            "cost_tier": self.cost_tier,
-            "rows_returned": self.rows_returned,
-            "error": self.error,
-            "is_expired": self.is_expired,
-        }
+        return self.status == QueryStatus.READY and not self.is_expired
 
 
 class QueryStore:
@@ -116,11 +107,6 @@ class QueryStore:
     """
 
     def __init__(self, max_queries: int = 1000):
-        """Initialize query store.
-
-        Args:
-            max_queries: Maximum number of queries to store
-        """
         self._queries: dict[str, Query] = {}
         self._lock = asyncio.Lock()
         self._max_queries = max_queries
@@ -139,22 +125,14 @@ class QueryStore:
 
         Called by validate_sql after successful validation.
 
-        Args:
-            sql: The validated SQL query
-            estimated_rows: Estimated row count from EXPLAIN
-            estimated_cost: Estimated cost from EXPLAIN
-            cost_tier: Cost tier (auto, confirm, reject)
-            explanation: EXPLAIN output lines
-            connection: Connection name for multi-connection dispatch
-
         Returns:
-            Query with unique query_id in VALIDATED status
+            Query with unique query_id in READY status
         """
         query_id = str(uuid.uuid4())
         query = Query(
             query_id=query_id,
             sql=sql,
-            status=QueryStatus.VALIDATED,
+            status=QueryStatus.READY,
             estimated_rows=estimated_rows,
             estimated_cost=estimated_cost,
             cost_tier=cost_tier,
@@ -163,7 +141,6 @@ class QueryStore:
         )
 
         async with self._lock:
-            # Enforce max limit
             if len(self._queries) >= self._max_queries:
                 await self._cleanup_oldest_locked()
 
@@ -173,30 +150,20 @@ class QueryStore:
         return query
 
     async def get(self, query_id: str) -> Query | None:
-        """Get a query by ID.
-
-        Args:
-            query_id: The query UUID
-
-        Returns:
-            Query if found, None otherwise
-        """
+        """Get a query by ID."""
         async with self._lock:
             query = self._queries.get(query_id)
 
             if query and query.is_expired:
-                logger.info(f"Query {query_id} has expired (status: {query.status.value})")
+                logger.info(f"Query {query_id} has expired (status: {query.status})")
                 query.status = QueryStatus.EXPIRED
 
             return query
 
     async def start_execution(self, query_id: str) -> Query | None:
-        """Mark query as pending execution.
+        """Mark query as dispatched for execution.
 
         Called when run_sql starts async execution.
-
-        Args:
-            query_id: The query UUID
 
         Returns:
             Query if found and can execute, None otherwise
@@ -209,32 +176,23 @@ class QueryStore:
 
             if not query.can_execute:
                 logger.warning(
-                    f"Query {query_id} cannot execute: status={query.status.value}, "
+                    f"Query {query_id} cannot execute: status={query.status}, "
                     f"expired={query.is_expired}"
                 )
                 return None
 
-            query.status = QueryStatus.PENDING
-            logger.info(f"Query {query_id} submitted for execution")
+            query.status = QueryStatus.DISPATCHED
+            logger.info(f"Query {query_id} dispatched for execution")
             return query
 
     async def update_status(
         self,
         query_id: str,
-        status: QueryStatus,
-        result: dict | None = None,
+        status: str,
         error: str | None = None,
         rows_returned: int = 0,
     ) -> None:
-        """Update query status during execution.
-
-        Args:
-            query_id: The query UUID
-            status: New status
-            result: Query result (for COMPLETE status)
-            error: Error message (for ERROR status)
-            rows_returned: Number of rows returned
-        """
+        """Update query status during execution."""
         async with self._lock:
             query = self._queries.get(query_id)
             if not query:
@@ -248,13 +206,11 @@ class QueryStore:
             elif status in (QueryStatus.COMPLETE, QueryStatus.ERROR):
                 query.completed_at = time.time()
 
-            if result is not None:
-                query.result = result
             if error is not None:
                 query.error = error
             query.rows_returned = rows_returned
 
-            logger.info(f"Query {query_id} status: {status.value}")
+            logger.info(f"Query {query_id} status: {status}")
 
     async def _cleanup_oldest_locked(self) -> None:
         """Remove oldest queries to make room (must hold lock)."""
@@ -289,11 +245,7 @@ class QueryStore:
         return removed
 
     async def start_cleanup_loop(self, interval_seconds: int = 300) -> None:
-        """Start background cleanup loop.
-
-        Args:
-            interval_seconds: How often to run cleanup (default 5 minutes)
-        """
+        """Start background cleanup loop."""
         if self._cleanup_task is not None:
             return
 
@@ -323,9 +275,9 @@ class QueryStore:
 
     def stats(self) -> dict:
         """Get store statistics."""
-        statuses = {}
+        statuses: dict[str, int] = {}
         for query in self._queries.values():
-            statuses[query.status.value] = statuses.get(query.status.value, 0) + 1
+            statuses[query.status] = statuses.get(query.status, 0) + 1
 
         return {
             "total_queries": len(self._queries),
@@ -344,7 +296,3 @@ def get_query_store() -> QueryStore:
     if _query_store is None:
         _query_store = QueryStore()
     return _query_store
-
-
-# Backwards compatibility alias used by db_mcp_server.server
-get_task_store = get_query_store

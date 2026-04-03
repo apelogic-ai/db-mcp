@@ -5,9 +5,9 @@ from pathlib import Path
 
 import yaml
 from db_mcp_data.connector_plugins.builtin.metabase import MetabasePluginConnector
-from db_mcp_data.connector_templates import materialize_connector_template
 from db_mcp_data.connectors import ConnectorConfig, get_connector
 from db_mcp_data.connectors.api import APIConnector, APIConnectorConfig
+from db_mcp_data.connectors.templates import materialize_connector_template
 
 from db_mcp.config import Settings
 from db_mcp.registry import ConnectionRegistry

@@ -1,5 +1,37 @@
 """Shared Pydantic models for db-mcp."""
 
+from db_mcp_models.connector import (
+    CONNECTOR_CONTRACT_SCHEMA_VERSION,
+    CONNECTOR_SPEC_VERSION,
+    CatalogMetadataContract,
+    ConnectorContractV1,
+    FileSourceContract,
+    build_connector_contract_schemas,
+    format_validation_error,
+    get_connector_contract_models,
+    validate_connector_contract,
+)
+from db_mcp_models.connector_capabilities import (
+    BASE_CAPABILITIES,
+    DEFAULT_PROFILE_BY_TYPE,
+    LEGACY_CAPABILITY_ALIASES,
+    PROFILE_ALLOWED_TYPES,
+    PROFILE_CAPABILITY_DEFAULTS,
+    TYPE_CAPABILITY_DEFAULTS,
+    normalize_capabilities,
+    resolve_connector_profile,
+)
+from db_mcp_models.execution_contracts import (
+    RESPONSE_CONTRACT_SCHEMA_VERSION,
+    GetResultCompleteContract,
+    GetResultErrorContract,
+    GetResultRunningContract,
+    RunSqlAsyncErrorContract,
+    RunSqlAsyncSubmittedContract,
+    RunSqlSyncSuccessContract,
+    build_response_contract_schemas,
+    get_response_contract_models,
+)
 from db_mcp_models.gaps import GapSource, GapStatus, KnowledgeGap, KnowledgeGaps
 from db_mcp_models.gateway import (
     ColumnMeta,
@@ -146,4 +178,33 @@ __all__ = [
     "SemanticPolicy",
     # SQL expression type
     "SqlExpr",
+    # Connector capabilities
+    "BASE_CAPABILITIES",
+    "DEFAULT_PROFILE_BY_TYPE",
+    "LEGACY_CAPABILITY_ALIASES",
+    "PROFILE_ALLOWED_TYPES",
+    "PROFILE_CAPABILITY_DEFAULTS",
+    "TYPE_CAPABILITY_DEFAULTS",
+    "normalize_capabilities",
+    "resolve_connector_profile",
+    # Execution contracts
+    "RESPONSE_CONTRACT_SCHEMA_VERSION",
+    "GetResultCompleteContract",
+    "GetResultErrorContract",
+    "GetResultRunningContract",
+    "RunSqlAsyncErrorContract",
+    "RunSqlAsyncSubmittedContract",
+    "RunSqlSyncSuccessContract",
+    "build_response_contract_schemas",
+    "get_response_contract_models",
+    # Connector contracts
+    "CONNECTOR_CONTRACT_SCHEMA_VERSION",
+    "CONNECTOR_SPEC_VERSION",
+    "CatalogMetadataContract",
+    "ConnectorContractV1",
+    "FileSourceContract",
+    "build_connector_contract_schemas",
+    "format_validation_error",
+    "get_connector_contract_models",
+    "validate_connector_contract",
 ]

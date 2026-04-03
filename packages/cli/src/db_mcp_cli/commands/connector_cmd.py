@@ -7,7 +7,7 @@ from typing import Any
 
 import click
 import yaml
-from db_mcp_data.connector_templates import list_connector_templates
+from db_mcp_data.connectors.templates import list_connector_templates
 from db_mcp_data.contracts.connector_contracts import (
     format_validation_error,
     validate_connector_contract,

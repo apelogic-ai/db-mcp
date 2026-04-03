@@ -14,8 +14,6 @@ class FileAdapter:
     """Stateless adapter for FileConnector (DuckDB-backed local file queries).
 
     Accepts only SQLQuery requests — FileConnector has no endpoint concept.
-    APIConnector extends FileConnector but is explicitly excluded; it is
-    handled by APIAdapter.
     """
 
     # ------------------------------------------------------------------
@@ -23,11 +21,10 @@ class FileAdapter:
     # ------------------------------------------------------------------
 
     def can_handle(self, connector: Any) -> bool:
-        """True for FileConnector instances that are not also APIConnectors."""
-        from db_mcp_data.connectors.api import APIConnector
+        """True for FileConnector instances."""
         from db_mcp_data.connectors.file import FileConnector
 
-        return isinstance(connector, FileConnector) and not isinstance(connector, APIConnector)
+        return isinstance(connector, FileConnector)
 
     # ------------------------------------------------------------------
     # Protocol: execute

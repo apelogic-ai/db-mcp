@@ -1,8 +1,4 @@
-"""Gateway dispatcher — resolves connectors to adapters.
-
-_ADAPTERS is ordered: APIAdapter must precede FileAdapter because
-APIConnector extends FileConnector, and can_handle checks use isinstance.
-"""
+"""Gateway dispatcher — resolves connectors to adapters."""
 
 from __future__ import annotations
 
@@ -18,7 +14,7 @@ from db_mcp_data.gateway.file_adapter import FileAdapter
 from db_mcp_data.gateway.sql_adapter import SQLAdapter
 
 _ADAPTERS: list[ConnectorAdapter] = [
-    APIAdapter(),   # must precede FileAdapter — APIConnector extends FileConnector
+    APIAdapter(),
     FileAdapter(),
     SQLAdapter(),
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -20,11 +21,21 @@ _STORE_FILENAME = "executions.sqlite"
 _EXECUTION_STORE_CACHE: dict[Path, ExecutionStore] = {}
 
 
+def _payload_hash(payload: dict | None) -> str | None:
+    if not payload:
+        return None
+    # Sort keys for deterministic hashing; normalize whitespace in SQL strings
+    normalized = json.dumps(
+        {k: " ".join(v.split()) if isinstance(v, str) else v for k, v in sorted(payload.items())}
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+# Backward-compat alias
 def _sql_hash(sql: str | None) -> str | None:
     if not sql:
         return None
-    normalized = " ".join(sql.split())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return _payload_hash({"sql": sql})
 
 
 def get_execution_store(connection_path: Path) -> ExecutionStore:
@@ -53,8 +64,8 @@ class ExecutionEngine:
         runner: Any,
     ) -> tuple[ExecutionHandle, ExecutionResult]:
         """Execute a request synchronously and persist lifecycle transitions."""
-        sql_hash = _sql_hash(request.sql)
-        handle = self._store.create_submission(request, sql_hash=sql_hash)
+        ph = _payload_hash(request.payload)
+        handle = self._store.create_submission(request, payload_hash=ph)
         existing_result = self._store.get_result(handle.execution_id)
 
         if existing_result is not None and existing_result.state in {
@@ -69,7 +80,7 @@ class ExecutionEngine:
         started = time.time()
 
         try:
-            runner_result = runner(request.sql or "")
+            runner_result = runner(request.payload)
             duration_ms = (time.time() - started) * 1000
 
             data = runner_result.get("data", [])
@@ -123,7 +134,7 @@ class ExecutionEngine:
 
     def submit_async(self, request: ExecutionRequest) -> ExecutionHandle:
         """Create an async execution submission without running it."""
-        return self._store.create_submission(request, sql_hash=_sql_hash(request.sql))
+        return self._store.create_submission(request, payload_hash=_payload_hash(request.payload))
 
     def mark_running(self, execution_id: str) -> None:
         """Mark an existing execution as running."""

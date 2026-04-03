@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 import yaml
-from db_mcp_data.connector_templates import (
+from db_mcp_data.connectors.templates import (
     list_connector_templates,
     materialize_connector_template,
 )
@@ -168,7 +168,7 @@ async def handle_connections_get(params: dict[str, Any]) -> dict[str, Any]:
     if not name:
         return {"success": False, "error": "Connection name is required"}
 
-    from db_mcp_data.connector_templates import get_connector_template, match_connector_template
+    from db_mcp_data.connectors.templates import get_connector_template, match_connector_template
 
     return connection_service.get_named_connection_details(
         name,

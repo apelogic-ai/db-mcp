@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import glob as globmod
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import duckdb
-
-from db_mcp_data.db.connection import DatabaseError
+from db_mcp_data.db.duckdb import (  # noqa: F401
+    _FORMAT_MAP,
+    DuckDBExecutor,
+    _read_function_for_path,
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -37,39 +38,10 @@ class FileConnectorConfig:
 
 
 # ---------------------------------------------------------------------------
-# Format detection
+# Source discovery
 # ---------------------------------------------------------------------------
-
-_EXT_RE = re.compile(r"\.(\w+)$")
-
-_FORMAT_MAP: dict[str, str] = {
-    "csv": "read_csv_auto",
-    "tsv": "read_csv_auto",
-    "parquet": "read_parquet",
-    "json": "read_json_auto",
-    "jsonl": "read_json_auto",
-    "ndjson": "read_json_auto",
-}
 
 _SUPPORTED_EXTENSIONS = set(_FORMAT_MAP.keys())
-
-
-def _read_function_for_path(path: str) -> str:
-    """Return the DuckDB read function name for a file path or glob pattern."""
-    # Strip glob metacharacters to isolate the extension
-    clean = path.rstrip("*").rstrip("/")
-    m = _EXT_RE.search(clean)
-    if not m:
-        raise ValueError(f"Cannot determine file format from path: {path}")
-    ext = m.group(1).lower()
-    if ext not in _FORMAT_MAP:
-        raise ValueError(f"Unsupported file extension: .{ext}")
-    return _FORMAT_MAP[ext]
-
-
-# ---------------------------------------------------------------------------
-# Connector
-# ---------------------------------------------------------------------------
 
 
 def _discover_directory(directory: str) -> list[FileSourceConfig]:
@@ -94,13 +66,18 @@ def _discover_directory(directory: str) -> list[FileSourceConfig]:
     return sources
 
 
+# ---------------------------------------------------------------------------
+# Connector
+# ---------------------------------------------------------------------------
+
+
 class FileConnector:
     """Connector that queries local files via an in-memory DuckDB instance."""
 
     def __init__(self, config: FileConnectorConfig) -> None:
         self.config = config
         self._resolved_sources: list[FileSourceConfig] | None = None
-        self._conn: duckdb.DuckDBPyConnection | None = None
+        self._duckdb = DuckDBExecutor(self._get_sources)
 
     def _get_sources(self) -> list[FileSourceConfig]:
         """Return all sources: explicit + discovered from directory."""
@@ -111,22 +88,10 @@ class FileConnector:
             self._resolved_sources = sources
         return self._resolved_sources
 
-    # -- lazy DuckDB setup --------------------------------------------------
-
-    def _get_connection(self) -> duckdb.DuckDBPyConnection:
-        if self._conn is None:
-            self._conn = duckdb.connect(":memory:")
-            self._create_views(self._conn)
-        return self._conn
-
-    def _create_views(self, conn: duckdb.DuckDBPyConnection) -> None:
-        for source in self._get_sources():
-            func = _read_function_for_path(source.path)
-            if func == "read_parquet":
-                expr = f"read_parquet('{source.path}', hive_partitioning=true)"
-            else:
-                expr = f"{func}('{source.path}')"
-            conn.execute(f'CREATE OR REPLACE VIEW "{source.name}" AS SELECT * FROM {expr}')
+    def invalidate_cache(self) -> None:
+        """Clear resolved sources and DuckDB connection so the next query re-discovers files."""
+        self._resolved_sources = None
+        self._duckdb.invalidate()
 
     # -- Protocol methods ---------------------------------------------------
 
@@ -185,22 +150,7 @@ class FileConnector:
         schema: str | None = None,
         catalog: str | None = None,
     ) -> list[dict[str, Any]]:
-        conn = self._get_connection()
-        try:
-            rows = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
-        except duckdb.CatalogException as exc:
-            raise DatabaseError(str(exc)) from exc
-        return [
-            {
-                "name": row[0],
-                "type": row[1],
-                "nullable": row[2] == "YES",
-                "default": row[3],
-                "primary_key": False,
-                "comment": None,
-            }
-            for row in rows
-        ]
+        return self._duckdb.get_columns(table_name)
 
     def get_table_sample(
         self,
@@ -209,16 +159,7 @@ class FileConnector:
         catalog: str | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        conn = self._get_connection()
-        result = conn.execute(f'SELECT * FROM "{table_name}" LIMIT {limit}')
-        columns = [desc[0] for desc in result.description]
-        return [dict(zip(columns, row)) for row in result.fetchall()]
+        return self._duckdb.get_table_sample(table_name, limit)
 
     def execute_sql(self, sql: str, params: dict | None = None) -> list[dict[str, Any]]:
-        conn = self._get_connection()
-        try:
-            result = conn.execute(sql)
-        except (duckdb.CatalogException, duckdb.BinderException, duckdb.ParserException) as exc:
-            raise DatabaseError(str(exc)) from exc
-        columns = [desc[0] for desc in result.description]
-        return [dict(zip(columns, row)) for row in result.fetchall()]
+        return self._duckdb.execute_sql(sql)

@@ -7,9 +7,9 @@ from db_mcp_data.connector_plugins import (
     list_connector_plugins,
     yaml_connector_plugin,
 )
-from db_mcp_data.connector_templates import get_connector_template
 from db_mcp_data.connectors import get_connector
 from db_mcp_data.connectors.api import APIConnector
+from db_mcp_data.connectors.templates import get_connector_template
 
 
 class _StubConnector:

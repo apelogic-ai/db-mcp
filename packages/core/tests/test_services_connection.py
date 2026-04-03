@@ -65,7 +65,7 @@ def test_service_get_named_connection_details_prefers_connector_yaml_database_ur
 
 
 def test_service_update_api_connection_from_template_rewrites_connector_and_env(tmp_path: Path):
-    from db_mcp_data.connector_templates import materialize_connector_template
+    from db_mcp_data.connectors.templates import materialize_connector_template
 
     from db_mcp.services.connection import update_api_connection
 
@@ -113,7 +113,7 @@ def test_service_update_api_connection_from_template_rewrites_connector_and_env(
 
 
 def test_service_create_api_connection_from_template_saves_connector_and_env(tmp_path: Path):
-    from db_mcp_data.connector_templates import materialize_connector_template
+    from db_mcp_data.connectors.templates import materialize_connector_template
 
     from db_mcp.services.connection import create_api_connection
 

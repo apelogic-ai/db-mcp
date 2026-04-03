@@ -10,7 +10,7 @@ from pathlib import Path
 from db_mcp.config import get_settings
 from db_mcp.exec_runtime import shutdown_exec_session_manager
 from db_mcp.insider import start_insider_supervisor, stop_insider_supervisor
-from db_mcp_data.execution.query_store import get_task_store
+from db_mcp_data.execution.query_store import get_query_store
 from db_mcp_knowledge.vault import ensure_connection_structure, migrate_to_connection_structure
 from db_mcp_knowledge.vault.migrate import migrate_namespace
 from fastmcp import FastMCP
@@ -99,7 +99,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
     logger = logging.getLogger(__name__)
 
     # Startup: Start background task cleanup loop
-    task_store = get_task_store()
+    task_store = get_query_store()
     await task_store.start_cleanup_loop(interval_seconds=300)  # Every 5 minutes
     logger.info("Task store cleanup loop started")
 

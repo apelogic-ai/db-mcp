@@ -7,8 +7,8 @@ from click.testing import CliRunner
 from db_mcp_cli.main import main
 
 
-@patch("db_mcp_cli.commands.domain_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.domain_cmd.get_connection_path")
+@patch("db_mcp.registry.ConnectionRegistry.get_active_connection_name", return_value="test")
+@patch("db_mcp.registry.ConnectionRegistry.get_connection_path")
 def test_domain_show_no_model(mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
     (tmp_path / "dummy").write_text("")
@@ -19,8 +19,8 @@ def test_domain_show_no_model(mock_path, mock_active, tmp_path):
     assert "No domain model found" in result.output
 
 
-@patch("db_mcp_cli.commands.domain_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.domain_cmd.get_connection_path")
+@patch("db_mcp.registry.ConnectionRegistry.get_active_connection_name", return_value="test")
+@patch("db_mcp.registry.ConnectionRegistry.get_connection_path")
 def test_domain_show_with_model(mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
     (tmp_path / "dummy").write_text("")

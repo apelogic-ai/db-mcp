@@ -7,8 +7,8 @@ from click.testing import CliRunner
 from db_mcp_cli.main import main
 
 
-@patch("db_mcp_cli.commands.query_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.query_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.query.run_sql", new_callable=AsyncMock)
 def test_query_run_table_output(mock_run, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -24,8 +24,8 @@ def test_query_run_table_output(mock_run, mock_path, mock_active, tmp_path):
     assert "Alice" in result.output
 
 
-@patch("db_mcp_cli.commands.query_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.query_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.query.run_sql", new_callable=AsyncMock)
 def test_query_run_csv_export(mock_run, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -44,8 +44,8 @@ def test_query_run_csv_export(mock_run, mock_path, mock_active, tmp_path):
     assert "1,Alice" in result.output
 
 
-@patch("db_mcp_cli.commands.query_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.query_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.query.run_sql", new_callable=AsyncMock)
 def test_query_run_json_export(mock_run, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -64,8 +64,8 @@ def test_query_run_json_export(mock_run, mock_path, mock_active, tmp_path):
     assert '"Alice"' in result.output
 
 
-@patch("db_mcp_cli.commands.query_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.query_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.query.run_sql", new_callable=AsyncMock)
 def test_query_run_error(mock_run, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -77,8 +77,8 @@ def test_query_run_error(mock_run, mock_path, mock_active, tmp_path):
     assert result.exit_code != 0
 
 
-@patch("db_mcp_cli.commands.query_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.query_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.services.query.validate_sql", new_callable=AsyncMock)
 def test_query_validate_success(mock_validate, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -92,8 +92,8 @@ def test_query_validate_success(mock_validate, mock_path, mock_active, tmp_path)
     assert "q123" in result.output
 
 
-@patch("db_mcp_cli.commands.query_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.query_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.orchestrator.engine.answer_intent", new_callable=AsyncMock)
 def test_ask_success(mock_answer, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
@@ -110,8 +110,8 @@ def test_ask_success(mock_answer, mock_path, mock_active, tmp_path):
     assert "42" in result.output
 
 
-@patch("db_mcp_cli.commands.query_cmd.get_active_connection", return_value="test")
-@patch("db_mcp_cli.commands.query_cmd.get_connection_path")
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
 @patch("db_mcp.orchestrator.engine.answer_intent", new_callable=AsyncMock)
 def test_ask_error(mock_answer, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path

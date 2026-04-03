@@ -550,9 +550,36 @@ class TestAPIToolConnectionDispatch:
                 ],
             ),
             patch("db_mcp.tools.api.ConnectionRegistry") as mock_registry_cls,
+            patch("db_mcp.tools.api.get_execution_engine") as mock_get_engine,
         ):
             mock_registry = MagicMock()
             mock_registry_cls.get_instance.return_value = mock_registry
+
+            from db_mcp_data.execution.models import (
+                ExecutionHandle,
+                ExecutionResult,
+                ExecutionState,
+            )
+
+            def _submit_sync(request, runner):
+                runner_result = runner("")
+                h = ExecutionHandle(
+                    execution_id="exec-auth-retry",
+                    connection="my-api",
+                    state=ExecutionState.SUCCEEDED,
+                )
+                r = ExecutionResult(
+                    execution_id="exec-auth-retry",
+                    state=ExecutionState.SUCCEEDED,
+                    data=runner_result.get("data", []),
+                    columns=[],
+                    rows_returned=runner_result.get("rows_returned", 0),
+                )
+                return h, r
+
+            mock_engine = MagicMock()
+            mock_engine.submit_sync.side_effect = _submit_sync
+            mock_get_engine.return_value = mock_engine
 
             result = asyncio.run(
                 __import__("db_mcp.tools.api", fromlist=["_api_query"])._api_query(
@@ -561,7 +588,9 @@ class TestAPIToolConnectionDispatch:
                 )
             )
 
-        assert result == {"data": [{"id": 3}], "rows_returned": 1}
+        assert result["execution_id"] == "exec-auth-retry"
+        assert result["data"] == [{"id": 3}]
+        assert result["rows_returned"] == 1
         mock_registry.invalidate_connector.assert_called_once_with("my-api")
         stale_connector.query_endpoint.assert_called_once_with(
             "list_dashboards",

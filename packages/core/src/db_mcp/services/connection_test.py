@@ -169,7 +169,7 @@ def test_api_connection(
         resolved_env_values[token_env] = api_key
 
     if template_id:
-        from db_mcp_data.connector_templates import materialize_connector_template
+        from db_mcp_data.connectors.templates import materialize_connector_template
 
         connector_data = materialize_connector_template(
             template_id,

@@ -44,7 +44,7 @@ def _query(query_id: str, sql: str, connection: str = "prod") -> Query:
     return Query(
         query_id=query_id,
         sql=sql,
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection=connection,
         cost_tier="auto",
     )
@@ -161,7 +161,7 @@ async def test_run_sql_status_transitions_use_gateway_lifecycle(monkeypatch, tmp
     async def mock_mark_running(query_id: str) -> None:
         mark_running_calls.append(query_id)
 
-    async def mock_mark_complete(query_id: str, *, result: dict, rows_returned: int) -> None:
+    async def mock_mark_complete(query_id: str, *, rows_returned: int) -> None:
         mark_complete_calls.append((query_id, rows_returned))
 
     monkeypatch.setattr(gw, "get_query", AsyncMock(return_value=expected_q))

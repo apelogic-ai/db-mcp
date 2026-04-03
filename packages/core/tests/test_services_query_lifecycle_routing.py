@@ -188,7 +188,7 @@ async def test_run_sql_query_id_path_capability_check_uses_gateway(monkeypatch, 
     validated_q = Query(
         query_id="q-gw-cap",
         sql="SELECT 1 AS n",
-        status=QueryStatus.VALIDATED,
+        status=QueryStatus.READY,
         connection="prod",
         cost_tier="auto",
     )

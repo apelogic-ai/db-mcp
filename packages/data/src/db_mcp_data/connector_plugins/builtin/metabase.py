@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from db_mcp_data.connector_compat import normalize_connector_payload
+from db_mcp_data.connector_plugins.compat import normalize_connector_payload
 from db_mcp_data.connectors.api import (
     APIConnectorConfig,
     APIEndpointConfig,

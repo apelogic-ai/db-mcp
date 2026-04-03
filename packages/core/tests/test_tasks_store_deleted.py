@@ -50,11 +50,6 @@ def test_execution_query_store_exports_get_query_store():
     assert callable(get_query_store)
 
 
-def test_execution_query_store_exports_get_task_store():
-    """get_task_store alias must survive the migration."""
-    from db_mcp_data.execution.query_store import get_task_store
-    assert callable(get_task_store)
-
 
 def test_no_production_code_imports_from_tasks_store():
     """Verify known production modules no longer import from db_mcp.tasks.store."""

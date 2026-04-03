@@ -187,8 +187,17 @@ async def test_export_results_rejected():
 async def test_get_result_from_query_store(_patch_inject):
     mock_query = MagicMock()
     mock_query.status = "complete"
-    mock_query.result = [{"a": 1}]
+    mock_query.execution_id = "exec-1"
+    mock_query.rows_returned = 1
     mock_query.error = None
+
+    mock_exec_result = MagicMock()
+    mock_exec_result.data = [{"a": 1}]
+    mock_exec_result.columns = ["a"]
+    mock_exec_result.rows_returned = 1
+
+    mock_engine = MagicMock()
+    mock_engine.get_result.return_value = mock_exec_result
 
     mock_store = MagicMock()
     mock_store.get = AsyncMock(return_value=mock_query)
@@ -200,6 +209,7 @@ async def test_get_result_from_query_store(_patch_inject):
         ),
         patch(
             "db_mcp_server.tools.generation.get_execution_engine",
+            return_value=mock_engine,
         ),
         patch(
             "db_mcp_data.execution.query_store.QueryStatus",
@@ -214,6 +224,7 @@ async def test_get_result_from_query_store(_patch_inject):
 
     assert result["status"] == "complete"
     assert result["query_id"] == "q1"
+    assert result["data"] == [{"a": 1}]
 
 
 @pytest.mark.asyncio

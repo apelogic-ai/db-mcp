@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from db_mcp_data.dialect import get_dialect_file_path, load_dialect_rules
+from db_mcp_data.connectors.dialect import get_dialect_file_path, load_dialect_rules
 
 
 @pytest.fixture

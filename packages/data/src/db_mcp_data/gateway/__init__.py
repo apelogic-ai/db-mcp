@@ -254,15 +254,13 @@ async def mark_running(query_id: str) -> None:
 async def mark_complete(
     query_id: str,
     *,
-    result: dict[str, Any],
     rows_returned: int,
 ) -> None:
-    """Transition a query to COMPLETE state with its result."""
+    """Transition a query to COMPLETE state. Results are stored in ExecutionStore."""
     from db_mcp_data.execution.query_store import QueryStatus, get_query_store
     await get_query_store().update_status(
         query_id,
         QueryStatus.COMPLETE,
-        result=result,
         rows_returned=rows_returned,
     )
 

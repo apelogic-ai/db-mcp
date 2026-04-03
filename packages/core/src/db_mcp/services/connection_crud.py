@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from db_mcp_data.connector_templates import get_connector_template
+from db_mcp_data.connectors.templates import get_connector_template
 from db_mcp_data.db.connection import detect_dialect_from_url
 from db_mcp_knowledge.onboarding.state import create_initial_state, load_state, save_state
 from db_mcp_knowledge.vault.paths import connector_path as _connector_path

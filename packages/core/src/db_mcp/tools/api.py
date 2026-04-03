@@ -4,6 +4,8 @@ from typing import Any
 
 from db_mcp_data.connectors import APIConnector, get_connector_capabilities
 from db_mcp_data.execution import check_protocol_ack_gate, evaluate_sql_execution_policy
+from db_mcp_data.execution.engine import get_execution_engine
+from db_mcp_data.execution.models import ExecutionRequest, ExecutionState
 
 from db_mcp.registry import ConnectionRegistry
 from db_mcp.tools.utils import require_connection, resolve_connection
@@ -110,19 +112,46 @@ async def _api_query(
             `/resource/{id}`, this substitutes the `{id}` placeholder.
             For non-templated GET endpoints, this fetches detail paths via `/{id}`.
     Returns:
-        {data: [...], rows_returned: int} or {error: "..."}.
+        {execution_id: str, data: [...], rows_returned: int} or {error: "..."}.
     """
-    connector, err = _get_api_connector(connection)
-    if err:
-        return err
-    result = connector.query_endpoint(endpoint, params, max_pages, id=id)
-    if _is_auth_error(result):
-        ConnectionRegistry.get_instance().invalidate_connector(connection)
-        connector, err = _get_api_connector(connection)
-        if err:
-            return err
-        result = connector.query_endpoint(endpoint, params, max_pages, id=id)
-    return result
+    try:
+        connection = require_connection(connection, tool_name="api_query")
+        connector, _, conn_path = resolve_connection(connection, require_type="api")
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    if not isinstance(connector, APIConnector):
+        return {"error": "Resolved connection is not an API connector"}
+
+    request = ExecutionRequest(
+        connection=connection,
+        metadata={"endpoint": endpoint, "params": params or {}},
+    )
+
+    def _run(_payload: dict) -> dict:
+        res = connector.query_endpoint(endpoint, params, max_pages, id=id)
+        if _is_auth_error(res):
+            ConnectionRegistry.get_instance().invalidate_connector(connection)
+            refreshed, conn_err = _get_api_connector(connection)
+            if conn_err:
+                raise RuntimeError(conn_err.get("error", "Authentication failed"))
+            res = refreshed.query_endpoint(endpoint, params, max_pages, id=id)
+            if _is_auth_error(res):
+                raise RuntimeError(res.get("error", "Authentication failed after retry"))
+        return res
+
+    engine = get_execution_engine(conn_path)
+    handle, exec_result = engine.submit_sync(request, _run)
+
+    if exec_result.state == ExecutionState.FAILED:
+        err_msg = exec_result.error.message if exec_result.error else "Execution failed"
+        return {"error": err_msg}
+
+    return {
+        "execution_id": handle.execution_id,
+        "data": exec_result.data,
+        "rows_returned": exec_result.rows_returned,
+    }
 
 
 async def _api_execute_sql(sql: str, connection: str) -> dict[str, Any]:
