@@ -3,8 +3,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from db_mcp_data.db.connection import detect_dialect_from_url, normalize_database_url
+from db_mcp_data.db.connection import test_connection as db_test_connection
 
-from db_mcp.db.connection import detect_dialect_from_url, normalize_database_url, test_connection
 from db_mcp.tools.database import _detect_dialect
 
 
@@ -70,8 +71,10 @@ def test_test_connection_forwards_connect_args_to_get_engine():
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
     mock_engine.connect.return_value.__exit__.return_value = False
 
-    with patch("db_mcp.db.connection.get_engine", return_value=mock_engine) as mock_get_engine:
-        result = test_connection(
+    with patch(
+        "db_mcp_data.db.connection.get_engine", return_value=mock_engine
+    ) as mock_get_engine:
+        result = db_test_connection(
             "trino://user@localhost:8080/catalog",
             connect_args={"http_scheme": "http"},
         )
@@ -85,10 +88,10 @@ def test_test_connection_forwards_connect_args_to_get_engine():
 
 def test_get_engine_accepts_connect_args_dict():
     """get_engine should accept connect_args without hashing errors."""
-    from db_mcp.db import connection
+    from db_mcp_data.db import connection
 
     mock_engine = MagicMock()
-    with patch("db_mcp.db.connection.create_engine", return_value=mock_engine) as mock_create:
+    with patch("db_mcp_data.db.connection.create_engine", return_value=mock_engine) as mock_create:
         engine = connection.get_engine("sqlite:///:memory:", connect_args={"timeout": 5})
 
     assert engine is mock_engine

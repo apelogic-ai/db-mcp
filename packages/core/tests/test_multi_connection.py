@@ -48,11 +48,13 @@ class TestResolveConnectionPath:
 class TestDatabaseToolsConnection:
     """Test that database tools pass connection_path through to get_connector."""
 
-    @patch("db_mcp.tools.database.get_connector")
+    @patch("db_mcp_data.gateway.dispatcher.get_connector")
     async def test_list_catalogs_passes_connection(self, mock_gc):
+        from db_mcp_data.connectors.sql import SQLConnector
+
         from db_mcp.tools.database import _list_catalogs
 
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(spec=SQLConnector)
         mock_connector.get_catalogs.return_value = ["cat1"]
         mock_gc.return_value = mock_connector
 
@@ -69,11 +71,13 @@ class TestDatabaseToolsConnection:
         payload = result.structuredContent
         assert "connection is required" in payload["error"]
 
-    @patch("db_mcp.tools.database.get_connector")
+    @patch("db_mcp_data.gateway.dispatcher.get_connector")
     async def test_list_schemas_passes_connection(self, mock_gc):
+        from db_mcp_data.connectors.sql import SQLConnector
+
         from db_mcp.tools.database import _list_schemas
 
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(spec=SQLConnector)
         mock_connector.get_schemas.return_value = []
         mock_gc.return_value = mock_connector
 
@@ -82,11 +86,13 @@ class TestDatabaseToolsConnection:
 
         mock_gc.assert_called_once_with(connection_path="/p/staging")
 
-    @patch("db_mcp.tools.database.get_connector")
+    @patch("db_mcp_data.gateway.dispatcher.get_connector")
     async def test_list_tables_passes_connection(self, mock_gc):
+        from db_mcp_data.connectors.sql import SQLConnector
+
         from db_mcp.tools.database import _list_tables
 
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(spec=SQLConnector)
         mock_connector.get_tables.return_value = []
         mock_gc.return_value = mock_connector
 
@@ -95,11 +101,13 @@ class TestDatabaseToolsConnection:
 
         mock_gc.assert_called_once_with(connection_path="/p/dev")
 
-    @patch("db_mcp.tools.database.get_connector")
+    @patch("db_mcp_data.gateway.dispatcher.get_connector")
     async def test_describe_table_passes_connection(self, mock_gc):
+        from db_mcp_data.connectors.sql import SQLConnector
+
         from db_mcp.tools.database import _describe_table
 
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(spec=SQLConnector)
         mock_connector.get_columns.return_value = []
         mock_gc.return_value = mock_connector
 
@@ -108,7 +116,7 @@ class TestDatabaseToolsConnection:
 
         mock_gc.assert_called_once_with(connection_path="/p/prod")
 
-    @patch("db_mcp.tools.database.get_connector")
+    @patch("db_mcp.services.schema.get_connector")
     async def test_sample_table_passes_connection(self, mock_gc):
         from db_mcp.tools.database import _sample_table
 
@@ -126,24 +134,35 @@ class TestDatabaseToolsConnection:
 class TestGenerationToolsConnection:
     """Test that generation tools pass connection_path through."""
 
-    @patch("db_mcp.tools.generation.get_connector")
-    @patch("db_mcp.tools.generation.get_connector_capabilities")
     @patch("db_mcp.tools.generation.explain_sql")
-    async def test_validate_sql_passes_connection(self, mock_explain, mock_caps, mock_gc):
+    async def test_validate_sql_passes_connection(self, mock_explain):
+        """_validate_sql must route capability resolution through gateway.capabilities().
+        The connection_path derived from the connection name must be passed to the
+        gateway, not directly to get_connector.
+        """
+        import db_mcp_data.gateway as gw
+
         from db_mcp.tools.generation import _validate_sql
 
-        mock_connector = MagicMock()
-        mock_gc.return_value = mock_connector
-        mock_caps.return_value = {"supports_validate_sql": True}
+        caps_calls: list = []
+
+        def mock_caps(connection_path):
+            caps_calls.append(connection_path)
+            return {"supports_validate_sql": True}
+
         mock_explain_result = MagicMock()
         mock_explain_result.valid = False
         mock_explain_result.error = "test"
         mock_explain.return_value = mock_explain_result
 
-        with patch("db_mcp.tools.utils._resolve_connection_path", return_value="/p/prod"):
+        with (
+            patch.object(gw, "capabilities", mock_caps),
+            patch("db_mcp.tools.utils._resolve_connection_path", return_value="/p/prod"),
+        ):
             await _validate_sql(sql="SELECT 1", connection="prod")
 
-        mock_gc.assert_called_once_with(connection_path="/p/prod")
+        assert len(caps_calls) == 1
+        assert str(caps_calls[0]) == "/p/prod"
 
     @patch("db_mcp.tools.generation.get_connector")
     @patch("db_mcp.tools.generation.get_connector_capabilities")
@@ -160,7 +179,7 @@ class TestGenerationToolsConnection:
         mock_connector = MagicMock()
         mock_gc.return_value = mock_connector
         mock_caps.return_value = {"supports_validate_sql": True}
-        from db_mcp.validation.explain import CostTier, ExplainResult
+        from db_mcp_data.validation.explain import CostTier, ExplainResult
 
         mock_explain_result = ExplainResult(
             valid=True,

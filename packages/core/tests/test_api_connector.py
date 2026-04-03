@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests as requests_lib
 import yaml
-
-from db_mcp.connectors import Connector
+from db_mcp_data.connectors import Connector
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -35,7 +34,7 @@ def env_file(tmp_path):
 @pytest.fixture
 def api_config():
     """Minimal API connector config."""
-    from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+    from db_mcp_data.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
 
     return APIConnectorConfig(
         base_url="https://api.example.com/v1",
@@ -50,7 +49,7 @@ def api_config():
 @pytest.fixture
 def api_connector(api_config, data_dir, env_file):
     """APIConnector instance with test config."""
-    from db_mcp.connectors.api import APIConnector
+    from db_mcp_data.connectors.api import APIConnector
 
     return APIConnector(api_config, data_dir=str(data_dir), env_path=str(env_file))
 
@@ -85,7 +84,7 @@ def synced_data_dir(data_dir):
 @pytest.fixture
 def synced_connector(api_config, synced_data_dir, env_file):
     """APIConnector with pre-synced data (ready to query)."""
-    from db_mcp.connectors.api import APIConnector
+    from db_mcp_data.connectors.api import APIConnector
 
     return APIConnector(api_config, data_dir=str(synced_data_dir), env_path=str(env_file))
 
@@ -112,21 +111,21 @@ class TestAPIConnectorConfig:
         assert api_config.auth.token_env == "TEST_API_KEY"
 
     def test_default_pagination(self):
-        from db_mcp.connectors.api import APIConnectorConfig
+        from db_mcp_data.connectors.api import APIConnectorConfig
 
         config = APIConnectorConfig(base_url="https://api.example.com")
         assert config.pagination.type == "none"
         assert config.pagination.page_size == 100
 
     def test_default_rate_limit(self):
-        from db_mcp.connectors.api import APIConnectorConfig
+        from db_mcp_data.connectors.api import APIConnectorConfig
 
         config = APIConnectorConfig(base_url="https://api.example.com")
         assert config.rate_limit_rps == 10.0
 
 
 def test_resolve_auth_headers_none_does_not_require_env(tmp_path, data_dir):
-    from db_mcp.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
+    from db_mcp_data.connectors.api import APIAuthConfig, APIConnector, APIConnectorConfig
 
     env_file = tmp_path / ".env"
     env_file.write_text("")
@@ -177,7 +176,7 @@ class TestAPIConnectorAuth:
         assert headers["Authorization"] == "Bearer sk-test-12345"
 
     def test_resolve_basic_auth(self, data_dir, env_file):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -201,7 +200,7 @@ class TestAPIConnectorAuth:
         assert headers["Authorization"] == f"Basic {expected}"
 
     def test_resolve_basic_auth_strips_surrounding_quotes_from_env(self, data_dir, env_file):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -225,7 +224,7 @@ class TestAPIConnectorAuth:
         assert headers["Authorization"] == f"Basic {expected}"
 
     def test_resolve_header_auth(self, data_dir, env_file):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -240,7 +239,7 @@ class TestAPIConnectorAuth:
         assert headers["X-Api-Key"] == "sk-test-12345"
 
     def test_missing_env_var_raises(self, data_dir, env_file):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -255,7 +254,7 @@ class TestAPIConnectorAuth:
             conn._resolve_auth_headers()
 
     def test_basic_auth_missing_username_env_raises(self, data_dir, env_file):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -285,7 +284,7 @@ class TestAPIConnectorAuth:
 class TestAPIConnectorTestConnection:
     def test_connection_accepts_direct_openapi_document_url(self, data_dir):
         """A reachable OpenAPI document should count as a successful API connect step."""
-        from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+        from db_mcp_data.connectors.api import APIConnector, APIConnectorConfig
 
         config = APIConnectorConfig(
             base_url="https://api.example.com/public/v1/openapi.json",
@@ -293,7 +292,7 @@ class TestAPIConnectorTestConnection:
         conn = APIConnector(config, data_dir=str(data_dir))
 
         with patch(
-            "db_mcp.connectors.api.discover_openapi_spec",
+            "db_mcp_data.connectors.api.discover_openapi_spec",
             return_value=({"openapi": "3.0.0", "paths": {}}, config.base_url),
         ):
             result = conn.test_connection()
@@ -307,7 +306,9 @@ class TestAPIConnectorTestConnection:
         mock_response.status_code = 200
         mock_response.json.return_value = {"data": []}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response):
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_response
+        ):
             result = api_connector.test_connection()
         assert result["connected"] is True
         assert result["dialect"] == "duckdb"
@@ -319,13 +320,15 @@ class TestAPIConnectorTestConnection:
         mock_response.text = "Unauthorized"
         mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response):
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_response
+        ):
             result = api_connector.test_connection()
         assert result["connected"] is False
         assert result["error"] is not None
 
     def test_connection_uses_endpoint_method_and_sql_probe(self, data_dir, env_file):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -350,7 +353,9 @@ class TestAPIConnectorTestConnection:
         mock_response.status_code = 200
         mock_response.json.return_value = {"result": {"rows": [{"db_mcp_doctor": 1}]}}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response) as req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_response
+        ) as req:
             result = conn.test_connection()
 
         assert result["connected"] is True
@@ -361,7 +366,7 @@ class TestAPIConnectorTestConnection:
         assert called_kwargs["json"] == {"sql": "SELECT 1 AS db_mcp_doctor"}
 
     def test_connection_does_not_add_limit_when_pagination_is_none(self, data_dir, env_file):
-        from db_mcp.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
+        from db_mcp_data.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
 
         config = APIConnectorConfig(
             base_url="https://api.example.com",
@@ -373,15 +378,17 @@ class TestAPIConnectorTestConnection:
         mock_response.status_code = 200
         mock_response.json.return_value = {"ok": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response) as req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_response
+        ) as req:
             result = conn.test_connection()
 
         assert result["connected"] is True
         assert req.call_args.kwargs["params"] == {}
 
     def test_metabase_template_tests_auth_without_database_probe(self, data_dir, env_file):
-        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
-        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig
+        from db_mcp_data.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp_data.connectors.api import APIAuthConfig, APIConnectorConfig
 
         env_file.write_text("X_API_KEY=mb-api-key-123\n")
         config = APIConnectorConfig(
@@ -396,7 +403,9 @@ class TestAPIConnectorTestConnection:
         mock_response.status_code = 200
         mock_response.json.return_value = {"id": 1}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_response) as req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_response
+        ) as req:
             result = conn.test_connection()
 
         assert result["connected"] is True
@@ -404,8 +413,8 @@ class TestAPIConnectorTestConnection:
         assert req.call_args.kwargs["params"] == {}
 
     def test_discover_updates_base_url_and_spec_url_from_direct_spec(self, data_dir):
-        from db_mcp.connectors.api import APIConnector, APIConnectorConfig
-        from db_mcp.connectors.api_discovery import (
+        from db_mcp_data.connectors.api import APIConnector, APIConnectorConfig
+        from db_mcp_data.connectors.api_discovery import (
             DiscoveredPagination,
             DiscoveryResult,
         )
@@ -416,7 +425,7 @@ class TestAPIConnectorTestConnection:
         conn = APIConnector(config, data_dir=str(data_dir))
 
         with patch(
-            "db_mcp.connectors.api.discover_api",
+            "db_mcp_data.connectors.api.discover_api",
             return_value=DiscoveryResult(
                 endpoints=[],
                 pagination=DiscoveredPagination(),
@@ -433,8 +442,8 @@ class TestAPIConnectorTestConnection:
         assert conn.api_config.spec_url == "https://boost.example.com/api/public/v1/openapi.json"
 
     def test_discover_merges_template_endpoints_with_discovered_endpoints(self, data_dir):
-        from db_mcp.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
-        from db_mcp.connectors.api_discovery import (
+        from db_mcp_data.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
+        from db_mcp_data.connectors.api_discovery import (
             DiscoveredEndpoint,
             DiscoveredPagination,
             DiscoveryResult,
@@ -456,7 +465,7 @@ class TestAPIConnectorTestConnection:
         conn = APIConnector(config, data_dir=str(data_dir))
 
         with patch(
-            "db_mcp.connectors.api.discover_api",
+            "db_mcp_data.connectors.api.discover_api",
             return_value=DiscoveryResult(
                 endpoints=[
                     DiscoveredEndpoint(name="dashboard", path="/api/dashboard"),
@@ -498,7 +507,9 @@ class TestAPIConnectorSync:
             ]
         }
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_response):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_response
+        ):
             result = api_connector.sync()
 
         assert "users" in result["synced"]
@@ -514,7 +525,9 @@ class TestAPIConnectorSync:
         mock_response.status_code = 200
         mock_response.json.return_value = {"data": [{"id": 1}]}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_response):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_response
+        ):
             result = api_connector.sync(endpoint_name="users")
 
         assert "users" in result["synced"]
@@ -526,7 +539,9 @@ class TestAPIConnectorSync:
         mock_response.status_code = 200
         mock_response.json.return_value = {"data": [{"id": 1}, {"id": 2}, {"id": 3}]}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_response):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_response
+        ):
             result = api_connector.sync(endpoint_name="users")
 
         assert result["rows_fetched"]["users"] == 3
@@ -534,7 +549,7 @@ class TestAPIConnectorSync:
     def test_sync_error_reported(self, api_connector):
         """Sync should report errors per endpoint without crashing."""
         with patch(
-            "db_mcp.connectors.api.requests.get",
+            "db_mcp_data.connectors.api.requests.get",
             side_effect=Exception("Connection refused"),
         ):
             result = api_connector.sync(endpoint_name="users")
@@ -597,7 +612,7 @@ class TestAPIConnectorQuery:
 class TestAPIConnectorPagination:
     def test_cursor_pagination(self, data_dir, env_file):
         """Cursor pagination should follow cursor until no more data."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -634,7 +649,9 @@ class TestAPIConnectorPagination:
             "has_more": False,
         }
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2]):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=[page1, page2]
+        ):
             result = conn.sync(endpoint_name="items")
 
         assert result["rows_fetched"]["items"] == 3
@@ -644,7 +661,7 @@ class TestAPIConnectorPagination:
 
     def test_offset_pagination(self, data_dir, env_file):
         """Offset pagination should increment offset until empty page."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -674,7 +691,9 @@ class TestAPIConnectorPagination:
         page3.status_code = 200
         page3.json.return_value = {"results": []}
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2, page3]):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=[page1, page2, page3]
+        ):
             result = conn.sync(endpoint_name="items")
 
         assert result["rows_fetched"]["items"] == 3
@@ -690,7 +709,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_returns_data(self, data_dir, env_file):
         """query_endpoint should return {data, rows_returned} shape with raw data."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -711,7 +730,9 @@ class TestAPIConnectorAdHocQuery:
             {"id": 2, "name": "Bob"},
         ]
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ):
             result = conn.query_endpoint("users")
 
         assert "data" in result
@@ -722,7 +743,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_extracts_result_wrapper(self, data_dir, env_file):
         """Superset-style `{result: [...]}` payload should be extracted as rows."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -743,7 +764,9 @@ class TestAPIConnectorAdHocQuery:
             "result": [{"id": 42, "dashboard_title": "wifi metrics"}],
         }
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ):
             result = conn.query_endpoint("dashboards")
 
         assert result["rows_returned"] == 1
@@ -751,7 +774,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_passes_user_params(self, data_dir, env_file):
         """User params should appear in the HTTP request."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -769,7 +792,9 @@ class TestAPIConnectorAdHocQuery:
         mock_resp.status_code = 200
         mock_resp.json.return_value = [{"id": 1}]
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ) as mock_get:
             conn.query_endpoint("events", params={"active": "true", "order": "startDate"})
 
         call_kwargs = mock_get.call_args
@@ -779,7 +804,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_merges_auth_params(self, data_dir, env_file):
         """Auth params should be merged alongside user params."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -797,7 +822,9 @@ class TestAPIConnectorAdHocQuery:
         mock_resp.status_code = 200
         mock_resp.json.return_value = [{"id": 1}]
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ) as mock_get:
             conn.query_endpoint("items", params={"color": "red"})
 
         passed_params = mock_get.call_args.kwargs.get("params", {})
@@ -811,7 +838,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_preserves_nested_data(self, data_dir, env_file):
         """Nested JSON should be returned as-is without flattening."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -831,7 +858,9 @@ class TestAPIConnectorAdHocQuery:
             {"id": 1, "address": {"city": "NYC", "zip": "10001"}, "tags": ["admin", "active"]},
         ]
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ):
             result = conn.query_endpoint("users")
 
         row = result["data"][0]
@@ -842,7 +871,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_fetch_by_single_id(self, data_dir, env_file):
         """Fetching by a single ID should call /{id} and return that record."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -860,7 +889,9 @@ class TestAPIConnectorAdHocQuery:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"id": "42", "title": "Event 42", "details": {"foo": 1}}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ) as mock_get:
             result = conn.query_endpoint("events", id="42")
 
         # Should call /events/42
@@ -873,7 +904,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_fetch_by_multiple_ids(self, data_dir, env_file):
         """Fetching by multiple IDs should call /{id} for each and collect results."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -894,7 +925,9 @@ class TestAPIConnectorAdHocQuery:
         resp2.status_code = 200
         resp2.json.return_value = {"id": "2", "title": "Second"}
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=[resp1, resp2]) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=[resp1, resp2]
+        ) as mock_get:
             result = conn.query_endpoint("events", id=["1", "2"])
 
         assert mock_get.call_count == 2
@@ -904,7 +937,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_single_page_default(self, data_dir, env_file):
         """With max_pages=1 (default), only one HTTP call should be made."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -928,7 +961,9 @@ class TestAPIConnectorAdHocQuery:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"data": [{"id": 1}, {"id": 2}], "has_more": True}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ) as mock_get:
             result = conn.query_endpoint("items")
 
         assert mock_get.call_count == 1
@@ -936,7 +971,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_multi_page(self, data_dir, env_file):
         """With max_pages > 1, should follow pagination up to the limit."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -965,14 +1000,16 @@ class TestAPIConnectorAdHocQuery:
         page2.status_code = 200
         page2.json.return_value = {"data": [{"id": "c"}], "has_more": False}
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2]):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=[page1, page2]
+        ):
             result = conn.query_endpoint("items", max_pages=3)
 
         assert result["rows_returned"] == 3
 
     def test_query_endpoint_respects_data_field(self, data_dir, env_file):
         """Should extract rows from data_field wrapper."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -992,7 +1029,9 @@ class TestAPIConnectorAdHocQuery:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"results": [{"id": 1}, {"id": 2}], "total": 2}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ):
             result = conn.query_endpoint("items")
 
         assert result["rows_returned"] == 2
@@ -1000,7 +1039,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_extracts_jira_issues_wrapper(self, data_dir, env_file):
         """Should extract rows from Jira's ``issues`` wrapper."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1023,7 +1062,9 @@ class TestAPIConnectorAdHocQuery:
             "total": 2,
         }
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ):
             result = conn.query_endpoint("search_issues")
 
         assert result["rows_returned"] == 2
@@ -1031,7 +1072,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_extracts_jira_values_wrapper(self, data_dir, env_file):
         """Should extract rows from Jira's ``values`` wrapper."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1054,7 +1095,9 @@ class TestAPIConnectorAdHocQuery:
             "total": 2,
         }
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ):
             result = conn.query_endpoint("projects")
 
         assert result["rows_returned"] == 2
@@ -1064,7 +1107,7 @@ class TestAPIConnectorAdHocQuery:
         self, data_dir, env_file
     ):
         """Offset pagination should support Jira-style ``startAt`` params."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1102,7 +1145,9 @@ class TestAPIConnectorAdHocQuery:
             "total": 3,
         }
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2]) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=[page1, page2]
+        ) as mock_get:
             result = conn.query_endpoint("projects", max_pages=2)
 
         first_call = mock_get.call_args_list[0]
@@ -1114,7 +1159,7 @@ class TestAPIConnectorAdHocQuery:
 
     def test_query_endpoint_cursor_pagination_supports_next_page_token(self, data_dir, env_file):
         """Cursor pagination should support Jira-style ``nextPageToken`` flows."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1150,7 +1195,9 @@ class TestAPIConnectorAdHocQuery:
             "isLast": True,
         }
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=[page1, page2]) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=[page1, page2]
+        ) as mock_get:
             result = conn.query_endpoint("search_issues", max_pages=2)
 
         first_call = mock_get.call_args_list[0]
@@ -1163,7 +1210,7 @@ class TestAPIConnectorAdHocQuery:
 class TestAPIConnectorPathParams:
     def test_query_endpoint_path_param_substitution(self, data_dir, env_file):
         """query_endpoint should substitute {param} in endpoint path."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1181,7 +1228,9 @@ class TestAPIConnectorPathParams:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"data": []}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ) as mock_get:
             conn.query_endpoint("query_results", params={"query_id": "123", "limit": "1"})
 
         called_url = mock_get.call_args.args[0]
@@ -1192,7 +1241,7 @@ class TestAPIConnectorPathParams:
 
     def test_query_endpoint_id_substitutes_templated_path_for_put(self, data_dir, env_file):
         """id argument should substitute {id} for non-GET templated endpoints."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1218,7 +1267,9 @@ class TestAPIConnectorPathParams:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"id": 4, "updated": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint(
                 "update_dashboard",
                 params={"position_json": "{\"foo\":1}"},
@@ -1232,7 +1283,7 @@ class TestAPIConnectorPathParams:
 
     def test_query_endpoint_non_get_id_without_template_errors(self, data_dir, env_file):
         """id argument on non-GET non-templated endpoints should return an error."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1256,7 +1307,7 @@ class TestAPIConnectorPathParams:
 class TestAPIConnectorPostBody:
     def test_query_endpoint_post_json_body(self, data_dir, env_file):
         """POST endpoint with body_mode=json sends params as JSON body."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1281,7 +1332,9 @@ class TestAPIConnectorPostBody:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"data": []}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint("execute_sql", params={"query": "SELECT 1", "limit": "1"})
 
         called_json = mock_req.call_args.kwargs["json"]
@@ -1293,7 +1346,7 @@ class TestAPIConnectorPostBody:
 class TestAPIConnectorResponseMode:
     def test_query_endpoint_raw_response_mode(self, data_dir, env_file):
         """response_mode=raw should return the full JSON body."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1319,7 +1372,9 @@ class TestAPIConnectorResponseMode:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"execution_id": "abc", "state": "PENDING"}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ):
             result = conn.query_endpoint("execute_sql", params={"query": "SELECT 1"})
 
         assert result["data"] == {"execution_id": "abc", "state": "PENDING"}
@@ -1335,8 +1390,8 @@ class TestAPIConnectorYAMLRoundTrip:
 
     def test_load_yaml_with_endpoint_description(self, tmp_path):
         """Loading connector.yaml should accept endpoint-level descriptions."""
-        from db_mcp.connectors import ConnectorConfig
-        from db_mcp.connectors.api import APIConnectorConfig
+        from db_mcp_data.connectors import ConnectorConfig
+        from db_mcp_data.connectors.api import APIConnectorConfig
 
         yaml_path = tmp_path / "connector.yaml"
         yaml_path.write_text(
@@ -1361,8 +1416,8 @@ class TestAPIConnectorYAMLRoundTrip:
 
     def test_save_and_load_query_params(self, tmp_path, data_dir, env_file):
         """query_params should survive save → load round-trip."""
-        from db_mcp.connectors import ConnectorConfig
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors import ConnectorConfig
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1412,8 +1467,8 @@ class TestAPIConnectorYAMLRoundTrip:
 
     def test_load_yaml_without_query_params(self, tmp_path):
         """Loading connector.yaml without query_params should default to empty list."""
-        from db_mcp.connectors import ConnectorConfig
-        from db_mcp.connectors.api import APIConnectorConfig
+        from db_mcp_data.connectors import ConnectorConfig
+        from db_mcp_data.connectors.api import APIConnectorConfig
 
         yaml_path = tmp_path / "connector.yaml"
         yaml_path.write_text(
@@ -1432,8 +1487,8 @@ class TestAPIConnectorYAMLRoundTrip:
 
     def test_load_yaml_ignores_unknown_nested_api_config_keys(self, tmp_path):
         """Unknown nested API config keys should not crash connector loading."""
-        from db_mcp.connectors import ConnectorConfig
-        from db_mcp.connectors.api import APIConnectorConfig
+        from db_mcp_data.connectors import ConnectorConfig
+        from db_mcp_data.connectors.api import APIConnectorConfig
 
         yaml_path = tmp_path / "connector.yaml"
         yaml_path.write_text(
@@ -1499,7 +1554,9 @@ class TestAPIConnectorSQLExecution:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"data": [{"id": 1, "name": "Alice"}]}
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=mock_resp
+        ):
             api_connector.sync("users")
 
         # Now execute_sql should use DuckDB on the JSONL
@@ -1509,7 +1566,7 @@ class TestAPIConnectorSQLExecution:
 
     def test_execute_sql_with_supports_sql_calls_api(self, data_dir, env_file):
         """With supports_sql=true, execute_sql POSTs to the execute_sql endpoint."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1538,7 +1595,9 @@ class TestAPIConnectorSQLExecution:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"result": {"rows": [{"token": "SOL", "volume": 1000000}]}}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=mock_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=mock_resp
+        ) as mock_post:
             result = conn.execute_sql("SELECT token, volume FROM dex_solana.trades LIMIT 1")
 
         # Verify the API was called correctly
@@ -1556,7 +1615,7 @@ class TestAPIConnectorSQLExecution:
 
     def test_execute_sql_async_polls_for_results(self, data_dir, env_file):
         """Async SQL API: polls execution_status then fetches execution_results."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1615,8 +1674,8 @@ class TestAPIConnectorSQLExecution:
             raise ValueError(f"Unexpected URL: {url}")
 
         with (
-            patch("db_mcp.connectors.api.requests.post", return_value=execute_resp),
-            patch("db_mcp.connectors.api.requests.get", side_effect=mock_get),
+            patch("db_mcp_data.connectors.api.requests.post", return_value=execute_resp),
+            patch("db_mcp_data.connectors.api.requests.get", side_effect=mock_get),
             patch("time.sleep"),  # Skip actual sleeping
         ):
             result = conn.execute_sql("SELECT * FROM test")
@@ -1627,7 +1686,7 @@ class TestAPIConnectorSQLExecution:
 
     def test_submit_and_poll_methods_for_async_sql(self, data_dir, env_file):
         """submit_sql/get_execution_status/get_execution_results should work independently."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1676,8 +1735,8 @@ class TestAPIConnectorSQLExecution:
             raise ValueError(f"Unexpected GET {url}")
 
         with (
-            patch("db_mcp.connectors.api.requests.post", return_value=execute_resp),
-            patch("db_mcp.connectors.api.requests.get", side_effect=_get),
+            patch("db_mcp_data.connectors.api.requests.post", return_value=execute_resp),
+            patch("db_mcp_data.connectors.api.requests.get", side_effect=_get),
         ):
             submission = conn.submit_sql("SELECT 1")
             assert submission["mode"] == "async"
@@ -1691,7 +1750,7 @@ class TestAPIConnectorSQLExecution:
 
     def test_execute_sql_missing_endpoint_raises(self, data_dir, env_file):
         """Missing execute_sql endpoint should raise ValueError."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1710,7 +1769,7 @@ class TestAPIConnectorSQLExecution:
 
     def test_query_endpoint_keeps_flat_execution_status_payload(self, data_dir, env_file):
         """Flat status JSON should not be dropped to an empty list."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1739,7 +1798,9 @@ class TestAPIConnectorSQLExecution:
             "state": "QUERY_STATE_PENDING",
         }
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=status_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=status_resp
+        ):
             result = conn.query_endpoint(
                 "get_execution_status",
                 params={"execution_id": "exec-123"},
@@ -1750,7 +1811,7 @@ class TestAPIConnectorSQLExecution:
 
     def test_query_endpoint_surfaces_failed_execution_errors(self, data_dir, env_file):
         """Failed execution payloads should return an explicit error."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1780,7 +1841,9 @@ class TestAPIConnectorSQLExecution:
             "error": {"message": "line 1:15: mismatched input 'FROMM'"},
         }
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=failed_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=failed_resp
+        ):
             result = conn.query_endpoint(
                 "get_execution_results",
                 params={"execution_id": "exec-123"},
@@ -1791,7 +1854,7 @@ class TestAPIConnectorSQLExecution:
 
     def test_extract_rows_handles_various_formats(self, data_dir, env_file):
         """_extract_rows_from_response handles multiple response formats."""
-        from db_mcp.connectors.api import APIConnector, APIConnectorConfig
+        from db_mcp_data.connectors.api import APIConnector, APIConnectorConfig
 
         config = APIConnectorConfig(base_url="https://api.example.com")
         conn = APIConnector(config, data_dir=str(data_dir))
@@ -1834,7 +1897,9 @@ class TestSendRequest:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"data": []}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             result = api_connector._send_request(
                 "GET",
                 "https://api.example.com/v1/users",
@@ -1855,7 +1920,9 @@ class TestSendRequest:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"id": 1, "name": "New Item"}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             api_connector._send_request(
                 "POST",
                 "https://api.example.com/v1/items",
@@ -1875,7 +1942,9 @@ class TestSendRequest:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"updated": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             api_connector._send_request(
                 "PUT",
                 "https://api.example.com/v1/items/1",
@@ -1893,7 +1962,9 @@ class TestSendRequest:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"patched": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             api_connector._send_request(
                 "PATCH",
                 "https://api.example.com/v1/items/1",
@@ -1911,7 +1982,9 @@ class TestSendRequest:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"deleted": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             result = api_connector._send_request(
                 "DELETE",
                 "https://api.example.com/v1/items/1",
@@ -1928,7 +2001,9 @@ class TestSendRequest:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"triggered": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             api_connector._send_request(
                 "POST",
                 "https://api.example.com/v1/trigger",
@@ -1951,7 +2026,7 @@ class TestQueryEndpointWriteSupport:
 
     def test_query_endpoint_with_body_post(self, data_dir, env_file):
         """query_endpoint with body= sends JSON body for POST."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1969,7 +2044,9 @@ class TestQueryEndpointWriteSupport:
         mock_resp.status_code = 201
         mock_resp.json.return_value = {"id": 99, "name": "Widget"}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint("create_item", body={"name": "Widget", "price": 9.99})
 
         call_kw = mock_req.call_args.kwargs
@@ -1978,7 +2055,7 @@ class TestQueryEndpointWriteSupport:
 
     def test_query_endpoint_post_without_query_params_uses_json_body(self, data_dir, env_file):
         """POST params default to JSON body when endpoint declares no query params."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -1996,7 +2073,9 @@ class TestQueryEndpointWriteSupport:
         mock_resp.status_code = 201
         mock_resp.json.return_value = {"id": 100}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint("create_item", params={"name": "Widget"})
 
         call_kw = mock_req.call_args.kwargs
@@ -2008,7 +2087,7 @@ class TestQueryEndpointWriteSupport:
         self, data_dir, env_file
     ):
         """POST params stay in query string when endpoint declares query params."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2034,7 +2113,9 @@ class TestQueryEndpointWriteSupport:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"ok": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint("create_item", params={"dry_run": "true"})
 
         call_kw = mock_req.call_args.kwargs
@@ -2044,7 +2125,7 @@ class TestQueryEndpointWriteSupport:
 
     def test_query_endpoint_with_method_override(self, data_dir, env_file):
         """method_override overrides the endpoint's default method."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2062,7 +2143,9 @@ class TestQueryEndpointWriteSupport:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"id": 1, "created": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint("items", body={"name": "New"}, method_override="POST")
 
         assert mock_req.call_args.kwargs["method"] == "POST"
@@ -2070,7 +2153,7 @@ class TestQueryEndpointWriteSupport:
 
     def test_query_endpoint_body_with_params(self, data_dir, env_file):
         """body and params sent separately (body=JSON, params=query string)."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2088,7 +2171,9 @@ class TestQueryEndpointWriteSupport:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"updated": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint("items", params={"version": "2"}, body={"name": "Updated"})
 
         call_kw = mock_req.call_args.kwargs
@@ -2097,7 +2182,7 @@ class TestQueryEndpointWriteSupport:
 
     def test_query_endpoint_raw_response_with_body(self, data_dir, env_file):
         """POST with response_mode=raw returns full response dict."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2122,14 +2207,16 @@ class TestQueryEndpointWriteSupport:
         mock_resp.status_code = 201
         mock_resp.json.return_value = {"id": 42, "status": "created", "meta": {"v": 1}}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ):
             result = conn.query_endpoint("create", body={"name": "test"})
 
         assert result["data"] == {"id": 42, "status": "created", "meta": {"v": 1}}
 
     def test_query_endpoint_delete_method_override(self, data_dir, env_file):
         """DELETE via method_override works."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2147,7 +2234,9 @@ class TestQueryEndpointWriteSupport:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"deleted": True}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp) as mock_req:
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ) as mock_req:
             conn.query_endpoint("items", params={"item_id": "42"}, method_override="DELETE")
 
         assert mock_req.call_args.kwargs["method"] == "DELETE"
@@ -2163,7 +2252,7 @@ class TestJWTLoginAuth:
     """Tests for jwt_login authentication type."""
 
     def _make_jwt_connector(self, data_dir, env_file):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2193,7 +2282,9 @@ class TestJWTLoginAuth:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "jwt-token-abc"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             headers = conn._resolve_auth_headers()
 
         assert headers["Authorization"] == "Bearer jwt-token-abc"
@@ -2204,7 +2295,7 @@ class TestJWTLoginAuth:
 
     def test_login_auth_custom_header_no_prefix(self, data_dir, env_file):
         """Generic login auth can emit non-Bearer headers such as session tokens."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2232,7 +2323,9 @@ class TestJWTLoginAuth:
         login_resp.status_code = 200
         login_resp.json.return_value = {"id": "sess_123"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ):
             headers = conn._resolve_auth_headers()
 
         assert headers == {"X-Metabase-Session": "sess_123"}
@@ -2245,7 +2338,9 @@ class TestJWTLoginAuth:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "jwt-token-abc"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             headers1 = conn._resolve_auth_headers()
             headers2 = conn._resolve_auth_headers()
 
@@ -2254,7 +2349,7 @@ class TestJWTLoginAuth:
 
     def test_jwt_login_custom_token_field(self, data_dir, env_file):
         """Extracts token from configured token_field."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2280,14 +2375,16 @@ class TestJWTLoginAuth:
         login_resp.status_code = 200
         login_resp.json.return_value = {"token": "my-custom-token"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ):
             headers = conn._resolve_auth_headers()
 
         assert headers["Authorization"] == "Bearer my-custom-token"
 
     def test_jwt_login_401_refresh(self, data_dir, env_file):
         """On 401, refreshes token once and retries."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2329,11 +2426,11 @@ class TestJWTLoginAuth:
 
         with (
             patch(
-                "db_mcp.connectors.api.requests.post",
+                "db_mcp_data.connectors.api.requests.post",
                 side_effect=[login_resp1, login_resp2],
             ),
             patch(
-                "db_mcp.connectors.api.requests.request",
+                "db_mcp_data.connectors.api.requests.request",
                 side_effect=[api_resp_401, api_resp_ok],
             ),
         ):
@@ -2344,7 +2441,7 @@ class TestJWTLoginAuth:
 
     def test_jwt_login_missing_env_raises(self, data_dir, env_file):
         """Missing username/password env vars raises ValueError."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2370,7 +2467,7 @@ class TestJWTLoginAuth:
 
     def test_jwt_login_alias_fields_normalized(self, data_dir, env_file):
         """login_url alias normalised; ${VAR} aliases extract var name into *_env fields."""
-        from db_mcp.connectors.api import APIAuthConfig
+        from db_mcp_data.connectors.api import APIAuthConfig
 
         # ${VAR} syntax → var name extracted into canonical *_env fields.
         auth = APIAuthConfig(
@@ -2390,7 +2487,7 @@ class TestJWTLoginAuth:
 
     def test_jwt_login_alias_literal_leaves_env_empty(self, data_dir, env_file):
         """Plain literal alias values leave *_env fields empty (no env lookup needed)."""
-        from db_mcp.connectors.api import APIAuthConfig
+        from db_mcp_data.connectors.api import APIAuthConfig
 
         auth = APIAuthConfig(
             type="jwt_login",
@@ -2408,7 +2505,7 @@ class TestJWTLoginAuth:
 
     def test_jwt_login_alias_fields_do_not_override_canonical(self, data_dir, env_file):
         """Canonical fields take precedence when both are supplied."""
-        from db_mcp.connectors.api import APIAuthConfig
+        from db_mcp_data.connectors.api import APIAuthConfig
 
         auth = APIAuthConfig(
             type="jwt_login",
@@ -2426,7 +2523,7 @@ class TestJWTLoginAuth:
 
     def test_jwt_login_via_alias_fields_fetches_token(self, data_dir, env_file):
         """Full auth flow works when connector.yaml uses ${VAR} alias field names."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2451,7 +2548,9 @@ class TestJWTLoginAuth:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "tok-xyz"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             headers = conn._resolve_auth_headers()
 
         assert headers["Authorization"] == "Bearer tok-xyz"
@@ -2462,7 +2561,7 @@ class TestJWTLoginAuth:
 
     def test_load_api_config_accepts_login_url_alias(self):
         """_load_api_config round-trips connector.yaml with ${VAR} alias fields."""
-        from db_mcp.connectors import _load_api_config
+        from db_mcp_data.connectors import _load_api_config
 
         data = {
             "type": "api",
@@ -2486,7 +2585,7 @@ class TestJWTLoginAuth:
 
     def test_load_api_config_literal_username_password(self):
         """_load_api_config: literal username/password leave *_env empty."""
-        from db_mcp.connectors import _load_api_config
+        from db_mcp_data.connectors import _load_api_config
 
         data = {
             "type": "api",
@@ -2509,7 +2608,7 @@ class TestJWTLoginAuth:
 
     def test_load_api_config_non_get_endpoint_defaults_to_json_body_mode(self):
         """POST endpoints without body_mode default to JSON body routing."""
-        from db_mcp.connectors import _load_api_config
+        from db_mcp_data.connectors import _load_api_config
 
         data = {
             "type": "api",
@@ -2538,7 +2637,7 @@ class TestJWTLoginLiteralValues:
 
     def test_literal_username_and_password(self, data_dir, env_file):
         """username: admin / password: s3cret — passed straight to login POST."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2564,7 +2663,9 @@ class TestJWTLoginLiteralValues:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "tok-lit"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             headers = conn._resolve_auth_headers()
 
         assert headers["Authorization"] == "Bearer tok-lit"
@@ -2575,7 +2676,7 @@ class TestJWTLoginLiteralValues:
 
     def test_mixed_literal_username_and_env_password(self, data_dir, env_file):
         """username: admin (literal) + password: ${SUPERSET_PASSWORD} (env var)."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2600,7 +2701,9 @@ class TestJWTLoginLiteralValues:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "tok-mixed"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             conn._resolve_auth_headers()
 
         call_kw = mock_post.call_args
@@ -2609,7 +2712,7 @@ class TestJWTLoginLiteralValues:
 
     def test_env_var_reference_resolved_correctly(self, data_dir, env_file):
         """${VAR} syntax resolves to the env var value, not the literal string."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2634,7 +2737,9 @@ class TestJWTLoginLiteralValues:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "tok-env"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             conn._resolve_auth_headers()
 
         call_kw = mock_post.call_args
@@ -2643,7 +2748,7 @@ class TestJWTLoginLiteralValues:
 
     def test_missing_env_var_in_braces_raises(self, data_dir, env_file):
         """${MISSING} that is absent from .env raises ValueError."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2669,7 +2774,7 @@ class TestJWTLoginLiteralValues:
 
     def test_bearer_token_literal(self, data_dir, env_file):
         """bearer auth supports a literal token via the ``token`` alias field."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2689,7 +2794,7 @@ class TestJWTLoginLiteralValues:
 
     def test_bearer_token_env_var_reference(self, data_dir, env_file):
         """bearer auth: ``token: ${MY_TOKEN}`` resolves from env."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2717,7 +2822,7 @@ class TestRawResponseModeGET:
 
     def test_raw_response_get_returns_full_dict(self, data_dir, env_file):
         """GET endpoint with response_mode=raw returns full response."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2737,7 +2842,9 @@ class TestRawResponseModeGET:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"version": "2.1", "healthy": True, "uptime_seconds": 86400}
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=mock_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=mock_resp
+        ):
             result = conn.query_endpoint("status")
 
         assert result["data"] == {"version": "2.1", "healthy": True, "uptime_seconds": 86400}
@@ -2753,7 +2860,7 @@ class TestAPIMutateTool:
 
     @pytest.fixture
     def mock_api_connector(self):
-        from db_mcp.connectors.api import APIConnector
+        from db_mcp_data.connectors.api import APIConnector
 
         mock = MagicMock(spec=APIConnector)
         mock.query_endpoint.return_value = {
@@ -2857,7 +2964,8 @@ class TestAPIMutateTool:
         """api_mutate should invalidate and retry once when first call returns 401."""
         from pathlib import Path
 
-        from db_mcp.connectors.api import APIConnector
+        from db_mcp_data.connectors.api import APIConnector
+
         from db_mcp.tools.api import _api_mutate
 
         stale_connector = mock_api_connector
@@ -2898,7 +3006,7 @@ class TestJWTLoginBody:
     """Tests for login_body support in jwt_login auth handler."""
 
     def _make_jwt_connector(self, data_dir, env_file, login_body=None):
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -2923,7 +3031,7 @@ class TestJWTLoginBody:
 
     def test_login_body_none_by_default(self, data_dir, env_file):
         """login_body is None by default — backward compat."""
-        from db_mcp.connectors.api import APIAuthConfig
+        from db_mcp_data.connectors.api import APIAuthConfig
 
         auth = APIAuthConfig(type="jwt_login", login_endpoint="/auth/login")
         assert auth.login_body is None
@@ -2938,7 +3046,9 @@ class TestJWTLoginBody:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "jwt-token-xyz"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             conn._resolve_auth_headers()
 
         call_kw = mock_post.call_args
@@ -2960,7 +3070,9 @@ class TestJWTLoginBody:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "jwt-token-xyz"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             conn._resolve_auth_headers()
 
         call_kw = mock_post.call_args
@@ -2979,7 +3091,9 @@ class TestJWTLoginBody:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "jwt-token-abc"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             conn._resolve_auth_headers()
 
         call_kw = mock_post.call_args
@@ -2988,7 +3102,7 @@ class TestJWTLoginBody:
 
     def test_login_body_superset_style(self, data_dir, env_file):
         """Full Superset-style login with provider and refresh fields."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -3015,7 +3129,9 @@ class TestJWTLoginBody:
         login_resp.status_code = 200
         login_resp.json.return_value = {"access_token": "superset-jwt-token"}
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=login_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=login_resp
+        ) as mock_post:
             headers = conn._resolve_auth_headers()
 
         assert headers["Authorization"] == "Bearer superset-jwt-token"
@@ -3032,7 +3148,7 @@ class TestJWTLoginBody:
 class TestGenericSQLAPIConfig:
     def test_execute_sql_body_template_supports_nested_payloads(self, data_dir, env_file):
         """execute_sql can render a structured JSON body from connector config."""
-        from db_mcp.connectors.api import (
+        from db_mcp_data.connectors.api import (
             APIAuthConfig,
             APIConnector,
             APIConnectorConfig,
@@ -3071,7 +3187,9 @@ class TestGenericSQLAPIConfig:
             "data": {"cols": [{"name": "id"}, {"name": "name"}], "rows": [[1, "A"]]}
         }
 
-        with patch("db_mcp.connectors.api.requests.post", return_value=dataset_resp) as mock_post:
+        with patch(
+            "db_mcp_data.connectors.api.requests.post", return_value=dataset_resp
+        ) as mock_post:
             rows = conn.execute_sql("SELECT 1")
 
         assert rows == [{"id": 1, "name": "A"}]
@@ -3084,7 +3202,7 @@ class TestGenericSQLAPIConfig:
 
     def test_schema_endpoint_drives_generic_metadata_methods(self, data_dir):
         """API connector can expose schemas/tables/columns from a raw schema endpoint."""
-        from db_mcp.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
+        from db_mcp_data.connectors.api import APIConnector, APIConnectorConfig, APIEndpointConfig
 
         config = APIConnectorConfig(
             base_url="https://metabase.example.com",
@@ -3119,7 +3237,9 @@ class TestGenericSQLAPIConfig:
             },
         ]
 
-        with patch("db_mcp.connectors.api.requests.request", return_value=schema_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.request", return_value=schema_resp
+        ):
             assert conn.get_schemas() == ["analytics", "public"]
             tables = conn.get_tables(schema="public")
             columns = conn.get_columns("users", schema="public")
@@ -3153,8 +3273,8 @@ class TestGenericSQLAPIConfig:
         ]
 
     def test_metabase_template_resolves_database_id_for_schema_and_sql(self, data_dir, env_file):
-        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
-        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+        from db_mcp_data.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp_data.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
 
         env_file.write_text("X_API_KEY=mb-api-key-123\n")
         config = APIConnectorConfig(
@@ -3214,12 +3334,17 @@ class TestGenericSQLAPIConfig:
                 return schema_resp
             raise AssertionError(f"Unexpected GET url: {url}")
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect) as mock_get:
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=get_side_effect
+        ) as mock_get:
             assert conn.get_schemas() == ["public"]
 
         with (
-            patch("db_mcp.connectors.api.requests.get", return_value=db_list_resp),
-            patch("db_mcp.connectors.api.requests.post", return_value=dataset_resp) as mock_post,
+            patch("db_mcp_data.connectors.api.requests.get", return_value=db_list_resp),
+            patch(
+                "db_mcp_data.connectors.api.requests.post",
+                return_value=dataset_resp,
+            ) as mock_post,
         ):
             rows = conn.execute_sql("SELECT 1")
 
@@ -3234,8 +3359,8 @@ class TestGenericSQLAPIConfig:
     def test_metabase_template_exposes_databases_as_catalogs_and_routes_sql(
         self, data_dir, env_file
     ):
-        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
-        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+        from db_mcp_data.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp_data.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
 
         env_file.write_text("X_API_KEY=mb-api-key-123\n")
         config = APIConnectorConfig(
@@ -3295,7 +3420,9 @@ class TestGenericSQLAPIConfig:
                 return schema_primary_resp
             raise AssertionError(f"Unexpected GET url: {url}")
 
-        with patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", side_effect=get_side_effect
+        ):
             assert conn.get_catalogs() == ["finance", "primary_warehouse"]
             assert conn.get_schemas(catalog="primary_warehouse") == ["public"]
             tables = conn.get_tables(schema="public", catalog="primary_warehouse")
@@ -3322,8 +3449,11 @@ class TestGenericSQLAPIConfig:
         ]
 
         with (
-            patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect),
-            patch("db_mcp.connectors.api.requests.post", return_value=dataset_resp) as mock_post,
+            patch("db_mcp_data.connectors.api.requests.get", side_effect=get_side_effect),
+            patch(
+                "db_mcp_data.connectors.api.requests.post",
+                return_value=dataset_resp,
+            ) as mock_post,
         ):
             rows = conn.execute_sql("SELECT * FROM primary_warehouse.public.users LIMIT 1")
 
@@ -3337,8 +3467,8 @@ class TestGenericSQLAPIConfig:
     def test_metabase_template_requires_catalog_selection_for_ambiguous_sql(
         self, data_dir, env_file
     ):
-        from db_mcp.connector_plugins.builtin.metabase import MetabasePluginConnector
-        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+        from db_mcp_data.connector_plugins.builtin.metabase import MetabasePluginConnector
+        from db_mcp_data.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
 
         env_file.write_text("X_API_KEY=mb-api-key-123\n")
         config = APIConnectorConfig(
@@ -3370,13 +3500,15 @@ class TestGenericSQLAPIConfig:
             {"id": 77, "name": "Finance"},
         ]
 
-        with patch("db_mcp.connectors.api.requests.get", return_value=db_list_resp):
+        with patch(
+            "db_mcp_data.connectors.api.requests.get", return_value=db_list_resp
+        ):
             with pytest.raises(ValueError, match="catalog"):
                 conn.execute_sql("SELECT * FROM public.users LIMIT 1")
 
     def test_superset_template_routes_catalog_metadata_and_sql(self, data_dir, env_file):
-        from db_mcp.connector_plugins.builtin.superset import SupersetPluginConnector
-        from db_mcp.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
+        from db_mcp_data.connector_plugins.builtin.superset import SupersetPluginConnector
+        from db_mcp_data.connectors.api import APIAuthConfig, APIConnectorConfig, APIEndpointConfig
 
         env_file.write_text("SUPERSET_PASSWORD=supersecret\n")
         config = APIConnectorConfig(
@@ -3468,8 +3600,8 @@ class TestGenericSQLAPIConfig:
             raise AssertionError(f"Unexpected GET url: {url}")
 
         with (
-            patch("db_mcp.connectors.api.requests.post", return_value=login_resp),
-            patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect),
+            patch("db_mcp_data.connectors.api.requests.post", return_value=login_resp),
+            patch("db_mcp_data.connectors.api.requests.get", side_effect=get_side_effect),
         ):
             assert conn.get_catalogs() == ["analytics__hive", "analytics__iceberg"]
             assert conn.get_schemas(catalog="analytics__hive") == ["public"]
@@ -3505,8 +3637,8 @@ class TestGenericSQLAPIConfig:
         ]
 
         with (
-            patch("db_mcp.connectors.api.requests.post", return_value=sql_resp) as post,
-            patch("db_mcp.connectors.api.requests.get", side_effect=get_side_effect),
+            patch("db_mcp_data.connectors.api.requests.post", return_value=sql_resp) as post,
+            patch("db_mcp_data.connectors.api.requests.get", side_effect=get_side_effect),
         ):
             rows = conn.execute_sql("SELECT * FROM analytics__hive.public.orders LIMIT 1")
 

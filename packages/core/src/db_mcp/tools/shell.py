@@ -13,72 +13,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Critical reminder injected into every tool response
-CRITICAL_REMINDER = """
-## CRITICAL REMINDER
-
-**0. FIRST: Read and follow the knowledge vault protocol:**
-   shell(command='cat PROTOCOL.md')
-
-**Database uses 3-level hierarchy: catalog.schema.table**
-
-Before writing SQL:
-1. Use list_catalogs() to see available catalogs
-2. Use list_schemas(catalog='...') to see schemas
-3. Use list_tables(catalog='...', schema='...') with BOTH parameters
-
----
-"""
-
-
-def inject_protocol(result: dict, session_id: str | None = None):
-    """Inject critical reminder into tool response.
-
-    For small results: includes reminder + JSON in text content
-    For large results: includes reminder + summary only (data in structuredContent)
-
-    Args:
-        result: Tool result dict
-        session_id: Unused, kept for API compatibility
-
-    Returns:
-        CallToolResult with text content and structured data
-    """
-    import json
-
-    from mcp.types import CallToolResult, TextContent
-
-    if not isinstance(result, dict):
-        return result
-
-    reminder = CRITICAL_REMINDER.strip()
-
-    # Check if result has large data (e.g., query results)
-    data = result.get("data", [])
-    is_large = isinstance(data, list) and len(data) > 20
-
-    if is_large:
-        # For large results, only show summary in text (full data in structuredContent)
-        rows = len(data)
-        status = result.get("status", "unknown")
-        summary = f"Status: {status}, Rows: {rows}"
-        if "columns" in result:
-            summary += f", Columns: {result['columns']}"
-        text_output = (
-            f"{reminder}\n\n--- RESULT SUMMARY ---\n{summary}\n\n"
-            "(Full data in structured response)"
-        )
-    else:
-        # For small results, include full JSON
-        json_data = json.dumps(result, indent=2, default=str)
-        text_output = f"{reminder}\n\n--- DATA ---\n\n{json_data}"
-
-    return CallToolResult(
-        content=[TextContent(type="text", text=text_output)],
-        structuredContent=result,
-        isError=False,
-    )
-
+# Re-export from the canonical location so existing importers keep working.
+from db_mcp.tools.protocol import CRITICAL_REMINDER, inject_protocol  # noqa: E402, F401
 
 # Commands allowed in the vault sandbox
 ALLOWED_COMMANDS = {
@@ -336,7 +272,7 @@ async def _shell(command: str, connection: str) -> dict:
     # Reading protocol via shell counts as explicit acknowledgment for policy gating.
     if result["exit_code"] == 0 and "protocol.md" in command.lower():
         try:
-            from db_mcp.execution.policy import record_protocol_ack
+            from db_mcp_data.execution.policy import record_protocol_ack
 
             record_protocol_ack(connection_path, source="shell")
         except Exception as exc:
@@ -373,7 +309,7 @@ async def _protocol(connection: str) -> str:
 
     if protocol_path.exists():
         try:
-            from db_mcp.execution.policy import record_protocol_ack
+            from db_mcp_data.execution.policy import record_protocol_ack
 
             record_protocol_ack(base_path, source="protocol_tool")
         except Exception as exc:

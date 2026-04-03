@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from db_mcp.contracts.response_contracts import (
+from db_mcp_data.contracts.response_contracts import (
     RESPONSE_CONTRACT_SCHEMA_VERSION,
     build_response_contract_schemas,
 )

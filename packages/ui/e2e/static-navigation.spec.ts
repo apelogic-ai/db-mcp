@@ -21,23 +21,18 @@ test.describe("E2E: static navigation", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "sample.csv"), "id,name\n1,alice\n2,bob\n", "utf8");
 
-    const createResponse = await request.post("/bicp", {
+    const createResponse = await request.post("/api/connections/create", {
       data: {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "connections/create",
-        params: {
-          name: fileName,
-          connectorType: "file",
-          directory: dir,
-          setActive: true,
-        },
+        name: fileName,
+        connectorType: "file",
+        directory: dir,
+        setActive: true,
       },
     });
     expect(createResponse.ok()).toBeTruthy();
     const createPayload = await createResponse.json();
     expect(createPayload.error).toBeUndefined();
-    expect(createPayload.result).toMatchObject({
+    expect(createPayload).toMatchObject({
       success: true,
       name: fileName,
     });

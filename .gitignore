@@ -40,9 +40,14 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+packages/ui/coverage/
 
 # Build artifacts
 *.spec.bak
+*.tsbuildinfo
+
+# Node / Bun (project uses Bun, not npm)
+package-lock.json
 
 # Local config
 .env

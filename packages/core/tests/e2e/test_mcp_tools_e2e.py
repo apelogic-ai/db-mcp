@@ -4,11 +4,11 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from db_mcp_server.server import _create_server
 from fastmcp.client import Client
 
 from db_mcp.config import Settings, reset_settings
 from db_mcp.registry import ConnectionRegistry
-from db_mcp.server import _create_server
 
 
 def _init_sqlite(db_path: Path) -> None:
@@ -108,16 +108,14 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         calls["mark_insights_processed"] = await _call(
             client, "mark_insights_processed", {"connection": connection}
         )
-        calls["mcp_list_improvements"] = await _call(
-            client, "mcp_list_improvements", {"connection": connection}
-        )
-        calls["mcp_suggest_improvement"] = await _call(
-            client, "mcp_suggest_improvement", {"connection": connection}
-        )
-        calls["mcp_approve_improvement"] = await _call(
+        calls["save_artifact"] = await _call(
             client,
-            "mcp_approve_improvement",
-            {"improvement_id": "nope", "connection": connection},
+            "save_artifact",
+            {
+                "connection": connection,
+                "artifact_type": "domain_model",
+                "content": "# Domain Model\n",
+            },
         )
         # dismiss_insight: use deterministic non-existent id.
         # Happy path currently returns "not_found".
@@ -161,99 +159,10 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
         )
 
         # ------------------------------------------------------------------
-        # Setup / onboarding
-        # ------------------------------------------------------------------
-        calls["mcp_setup_status"] = await _call(
-            client, "mcp_setup_status", {"connection": connection}
-        )
-        calls["mcp_setup_start"] = await _call(
-            client, "mcp_setup_start", {"connection": connection}
-        )
-        calls["mcp_setup_add_ignore_pattern"] = await _call(
-            client,
-            "mcp_setup_add_ignore_pattern",
-            {"pattern": "tmp_*", "connection": connection},
-        )
-        calls["mcp_setup_remove_ignore_pattern"] = await _call(
-            client,
-            "mcp_setup_remove_ignore_pattern",
-            {"pattern": "tmp_*", "connection": connection},
-        )
-        calls["mcp_setup_import_ignore_patterns"] = await _call(
-            client,
-            "mcp_setup_import_ignore_patterns",
-            {"patterns": ["foo*", "bar*"], "connection": connection},
-        )
-        calls["mcp_setup_discover"] = await _call(
-            client, "mcp_setup_discover", {"connection": connection}
-        )
-        # mcp_setup_discover_status requires discovery_id; use a fake one to test the tool
-        calls["mcp_setup_discover_status"] = await _call(
-            client,
-            "mcp_setup_discover_status",
-            {"discovery_id": "fake-id", "connection": connection},
-        )
-        calls["mcp_setup_next"] = await _call(client, "mcp_setup_next", {"connection": connection})
-        calls["mcp_setup_skip"] = await _call(client, "mcp_setup_skip", {"connection": connection})
-        calls["mcp_setup_bulk_approve"] = await _call(
-            client, "mcp_setup_bulk_approve", {"connection": connection}
-        )
-        calls["mcp_setup_import_descriptions"] = await _call(
-            client,
-            "mcp_setup_import_descriptions",
-            {"descriptions": "tables: {}\n", "connection": connection},
-        )
-        calls["mcp_setup_approve"] = await _call(
-            client,
-            "mcp_setup_approve",
-            {"description": "Test description", "connection": connection},
-        )
-        calls["mcp_setup_reset"] = await _call(
-            client, "mcp_setup_reset", {"connection": connection}
-        )
-
-        # ------------------------------------------------------------------
-        # Domain
-        # ------------------------------------------------------------------
-        calls["mcp_domain_status"] = await _call(
-            client, "mcp_domain_status", {"connection": connection}
-        )
-        calls["mcp_domain_generate"] = await _call(
-            client, "mcp_domain_generate", {"connection": connection}
-        )
-        calls["mcp_domain_skip"] = await _call(
-            client, "mcp_domain_skip", {"connection": connection}
-        )
-        calls["mcp_domain_approve"] = await _call(
-            client, "mcp_domain_approve", {"connection": connection}
-        )
-
-        # ------------------------------------------------------------------
-        # Import
-        # ------------------------------------------------------------------
-        calls["import_instructions"] = await _call(
-            client,
-            "import_instructions",
-            {"rules": ["Be nice", "Be accurate"], "connection": connection},
-        )
-        calls["import_examples"] = await _call(
-            client,
-            "import_examples",
-            {
-                "examples": [{"natural_language": "count rows", "sql": "select count(*) from t"}],
-                "connection": connection,
-            },
-        )
-
-        # ------------------------------------------------------------------
         # Detailed-mode tools
         # ------------------------------------------------------------------
         calls["test_connection"] = await _call(
             client, "test_connection", {"connection": connection}
-        )
-        db_path = mcp_env["db_path"]
-        calls["detect_dialect"] = await _call(
-            client, "detect_dialect", {"database_url": f"sqlite:///{db_path}"}
         )
         calls["list_catalogs"] = await _call(client, "list_catalogs", {"connection": connection})
         calls["list_schemas"] = await _call(
@@ -277,12 +186,6 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
                 "limit": 2,
                 "connection": connection,
             },
-        )
-        calls["get_dialect_rules"] = await _call(
-            client, "get_dialect_rules", {"dialect": "postgresql"}
-        )
-        calls["get_connection_dialect"] = await _call(
-            client, "get_connection_dialect", {"connection": connection}
         )
 
         calls["query_status"] = await _call(client, "query_status", {"connection": connection})
@@ -376,14 +279,23 @@ async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
             },
         )
 
+        calls["vault_write"] = await _call(
+            client,
+            "vault_write",
+            {"connection": connection, "path": "domain/model.md", "content": "# Domain\n"},
+        )
+        calls["vault_append"] = await _call(
+            client,
+            "vault_append",
+            {"connection": connection, "path": "learnings/patterns.md", "content": "# Patterns\n"},
+        )
+
         calls["get_data"] = await _call(
             client, "get_data", {"intent": "show all rows from table t", "connection": connection}
         )
         calls["answer_intent"] = await _call(
             client, "answer_intent", {"intent": "show revenue", "connection": connection}
         )
-        calls["test_elicitation"] = await _call(client, "test_elicitation", {})
-        calls["test_sampling"] = await _call(client, "test_sampling", {})
 
         # ------------------------------------------------------------------
         # Final coverage assertion

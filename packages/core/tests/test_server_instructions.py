@@ -1,6 +1,6 @@
 """Tests that server instructions adapt based on connector capabilities."""
 
-from db_mcp.server import (
+from db_mcp_server.server import (
     INSTRUCTIONS_SHELL_MODE,
     _strip_validate_sql_from_instructions,
 )

@@ -7,8 +7,7 @@ No real git operations are performed.
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from db_mcp.cli.git_ops import (
+from db_mcp_cli.git_ops import (
     git_clone,
     git_init,
     git_pull,
@@ -59,8 +58,8 @@ class TestGitInit:
         """git_init returns True on success with no remote."""
         mock_git = MagicMock()
 
-        with patch("db_mcp.cli.git_ops.console"), patch(
-            "db_mcp.git_utils.git", mock_git
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
         ):
             result = git_init(tmp_path)
 
@@ -74,8 +73,8 @@ class TestGitInit:
         """git_init sets remote when url provided."""
         mock_git = MagicMock()
 
-        with patch("db_mcp.cli.git_ops.console"), patch(
-            "db_mcp.git_utils.git", mock_git
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
         ):
             result = git_init(tmp_path, remote_url="git@github.com:org/repo.git")
 
@@ -88,7 +87,9 @@ class TestGitInit:
         """git_init writes .gitignore if not present."""
         mock_git = MagicMock()
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             git_init(tmp_path)
 
         gitignore = tmp_path / ".gitignore"
@@ -101,7 +102,9 @@ class TestGitInit:
         existing.write_text("custom content\n")
         mock_git = MagicMock()
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             git_init(tmp_path)
 
         assert existing.read_text() == "custom content\n"
@@ -111,7 +114,9 @@ class TestGitInit:
         mock_git = MagicMock()
         mock_git.init.side_effect = RuntimeError("git broke")
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_init(tmp_path)
 
         assert result is False
@@ -122,7 +127,9 @@ class TestGitClone:
         """git_clone returns True on success."""
         mock_git = MagicMock()
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_clone("git@github.com:org/repo.git", tmp_path / "dest")
 
         assert result is True
@@ -135,8 +142,8 @@ class TestGitClone:
         mock_git = MagicMock()
         mock_git.clone.side_effect = NotImplementedError("need native git")
 
-        with patch("db_mcp.cli.git_ops.console") as mock_console, patch(
-            "db_mcp.git_utils.git", mock_git
+        with patch("db_mcp_cli.git_ops.console") as mock_console, patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
         ):
             result = git_clone("git@github.com:org/repo.git", tmp_path / "dest")
 
@@ -148,7 +155,9 @@ class TestGitClone:
         mock_git = MagicMock()
         mock_git.clone.side_effect = RuntimeError("network error")
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_clone("git@github.com:org/repo.git", tmp_path / "dest")
 
         assert result is False
@@ -161,7 +170,9 @@ class TestGitSync:
         mock_git.status.return_value = ["modified: foo.yaml"]
         mock_git.has_remote.return_value = True
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_sync(tmp_path)
 
         assert result is True
@@ -176,7 +187,9 @@ class TestGitSync:
         mock_git.status.return_value = []
         mock_git.has_remote.return_value = True
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_sync(tmp_path)
 
         assert result is True
@@ -189,7 +202,9 @@ class TestGitSync:
         mock_git.status.return_value = []
         mock_git.has_remote.return_value = False
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_sync(tmp_path)
 
         assert result is True
@@ -202,7 +217,9 @@ class TestGitSync:
         mock_git.has_remote.return_value = True
         mock_git.push.side_effect = Exception("rejected: non-fast-forward")
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_sync(tmp_path)
 
         assert result is False
@@ -214,7 +231,9 @@ class TestGitPull:
         mock_git = MagicMock()
         mock_git.status.return_value = []
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_pull(tmp_path)
 
         assert result is True
@@ -225,7 +244,9 @@ class TestGitPull:
         mock_git = MagicMock()
         mock_git.status.return_value = ["modified: foo.yaml"]
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_pull(tmp_path)
 
         assert result is True
@@ -238,7 +259,9 @@ class TestGitPull:
         mock_git.status.return_value = ["modified: foo.yaml"]
         mock_git.stash.side_effect = NotImplementedError("need native git")
 
-        with patch("db_mcp.cli.git_ops.console"), patch("db_mcp.git_utils.git", mock_git):
+        with patch("db_mcp_cli.git_ops.console"), patch(
+            "db_mcp_knowledge.git_utils.git", mock_git
+        ):
             result = git_pull(tmp_path)
 
         assert result is False

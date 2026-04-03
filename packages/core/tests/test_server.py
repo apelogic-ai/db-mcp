@@ -9,12 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+from db_mcp_server.server import _create_server
 from fastmcp.client import Client
 
 from db_mcp.config import reset_settings
-from db_mcp.insights.detector import Insight, InsightStore, load_insights, save_insights
 from db_mcp.registry import ConnectionInfo, ConnectionRegistry
-from db_mcp.server import _create_server
 from db_mcp.tools import daemon_tasks
 
 
@@ -55,185 +54,29 @@ async def test_server_tools_registered():
     assert server is not None
 
 
-def test_server_exposes_improvement_tools(monkeypatch):
-    """Backward-compat improvement tools should be exposed."""
+def test_server_does_not_expose_improvement_alias_tools(monkeypatch):
+    """Backward-compat improvement alias tools should not be exposed."""
     monkeypatch.setenv("TOOL_MODE", "detailed")
     reset_settings()
     server = _create_server()
     tools = _get_tool_names(server)
-    assert "mcp_suggest_improvement" in tools
-    assert "mcp_list_improvements" in tools
-    assert "mcp_approve_improvement" in tools
+    assert "mcp_suggest_improvement" not in tools
+    assert "mcp_list_improvements" not in tools
+    assert "mcp_approve_improvement" not in tools
 
 
-@pytest.mark.asyncio
-async def test_improvement_tools_behavior_with_pending_insights(tmp_path, monkeypatch):
-    """Improvement tools should list/suggest/approve pending insights."""
-    connections_dir = tmp_path / "connections"
-    connection_name = "default"
-    connection_path = connections_dir / connection_name
-    _write_sql_connector(connection_path)
-
-    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
-    monkeypatch.setenv("CONNECTION_NAME", connection_name)
-    monkeypatch.delenv("CONNECTION_PATH", raising=False)
+def test_server_keeps_only_test_connection_from_debug_tools(monkeypatch):
+    """Debug/test MCP tools should be removed except for test_connection."""
+    monkeypatch.setenv("TOOL_MODE", "detailed")
     reset_settings()
-    ConnectionRegistry.reset()
-
-    store = InsightStore(
-        insights=[
-            Insight(
-                id="info-1",
-                category="knowledge",
-                severity="info",
-                title="Info insight",
-                summary="Low-priority insight",
-                detected_at=100.0,
-            ),
-            Insight(
-                id="action-1",
-                category="pattern",
-                severity="action",
-                title="Action insight",
-                summary="High-priority insight",
-                detected_at=200.0,
-            ),
-        ]
-    )
-    save_insights(connection_path, store)
-
     server = _create_server()
-    async with Client(server) as client:
-        listed = (
-            await client.call_tool("mcp_list_improvements", {"connection": connection_name})
-        ).data
-        listed_payload = _tool_payload(listed)
-        assert listed_payload["count"] == 2
-        assert {i["id"] for i in listed_payload["improvements"]} == {"info-1", "action-1"}
-
-        suggested = (
-            await client.call_tool("mcp_suggest_improvement", {"connection": connection_name})
-        ).data
-        suggested_payload = _tool_payload(suggested)
-        assert suggested_payload["status"] == "ok"
-        assert suggested_payload["improvement"]["id"] == "action-1"
-
-        approved = (
-            await client.call_tool(
-                "mcp_approve_improvement",
-                {"improvement_id": "action-1", "connection": connection_name},
-            )
-        ).data
-        approved_payload = _tool_payload(approved)
-        assert approved_payload["status"] == "approved"
-        assert approved_payload["remaining"] == 1
-
-    # Persisted state should reflect approval (dismissed insight no longer pending).
-    remaining_ids = {i.id for i in load_insights(connection_path).pending()}
-    assert remaining_ids == {"info-1"}
-
-
-@pytest.mark.asyncio
-async def test_mcp_suggest_improvement_returns_none_when_empty(tmp_path, monkeypatch):
-    """Suggest improvement should return status=none when no pending insights exist."""
-    connections_dir = tmp_path / "connections"
-    connection_name = "default"
-    connection_path = connections_dir / connection_name
-    _write_sql_connector(connection_path)
-
-    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
-    monkeypatch.setenv("CONNECTION_NAME", connection_name)
-    monkeypatch.delenv("CONNECTION_PATH", raising=False)
-    reset_settings()
-    ConnectionRegistry.reset()
-    save_insights(connection_path, InsightStore(insights=[]))
-
-    server = _create_server()
-    async with Client(server) as client:
-        result = (
-            await client.call_tool("mcp_suggest_improvement", {"connection": connection_name})
-        ).data
-        payload = _tool_payload(result)
-        assert payload == {"status": "none", "improvement": None}
-
-
-@pytest.mark.asyncio
-async def test_improvement_tools_accept_connection_argument(tmp_path, monkeypatch):
-    """Improvement tools should route by explicit connection when provided."""
-    connections_dir = tmp_path / "connections"
-    one_path = connections_dir / "one"
-    two_path = connections_dir / "two"
-    _write_sql_connector(one_path)
-    _write_sql_connector(two_path)
-
-    # Make directories discoverable as connections.
-    (one_path / "state.yaml").write_text("phase: schema\n")
-    (two_path / "state.yaml").write_text("phase: schema\n")
-
-    monkeypatch.setenv("CONNECTIONS_DIR", str(connections_dir))
-    monkeypatch.setenv("CONNECTION_NAME", "one")
-    monkeypatch.delenv("CONNECTION_PATH", raising=False)
-    reset_settings()
-    ConnectionRegistry.reset()
-
-    save_insights(
-        one_path,
-        InsightStore(
-            insights=[
-                Insight(
-                    id="one-1",
-                    category="pattern",
-                    severity="info",
-                    title="One",
-                    summary="One summary",
-                    detected_at=100.0,
-                )
-            ]
-        ),
-    )
-    save_insights(
-        two_path,
-        InsightStore(
-            insights=[
-                Insight(
-                    id="two-1",
-                    category="pattern",
-                    severity="action",
-                    title="Two",
-                    summary="Two summary",
-                    detected_at=200.0,
-                )
-            ]
-        ),
-    )
-
-    try:
-        server = _create_server()
-        async with Client(server) as client:
-            listed = (await client.call_tool("mcp_list_improvements", {"connection": "two"})).data
-            listed_payload = _tool_payload(listed)
-            assert listed_payload["count"] == 1
-            assert listed_payload["improvements"][0]["id"] == "two-1"
-
-            suggested = (
-                await client.call_tool("mcp_suggest_improvement", {"connection": "two"})
-            ).data
-            suggested_payload = _tool_payload(suggested)
-            assert suggested_payload["improvement"]["id"] == "two-1"
-
-            approved = (
-                await client.call_tool(
-                    "mcp_approve_improvement",
-                    {"improvement_id": "two-1", "connection": "two"},
-                )
-            ).data
-            approved_payload = _tool_payload(approved)
-            assert approved_payload["status"] == "approved"
-    finally:
-        ConnectionRegistry.reset()
-
-    assert [i.id for i in load_insights(two_path).pending()] == []
-    assert [i.id for i in load_insights(one_path).pending()] == ["one-1"]
+    tools = _get_tool_names(server)
+    assert "test_connection" in tools
+    assert "detect_dialect" not in tools
+    assert "get_dialect_rules" not in tools
+    assert "get_connection_dialect" not in tools
+    assert "test_elicitation" not in tools
+    assert "test_sampling" not in tools
 
 
 @pytest.mark.asyncio
@@ -247,7 +90,7 @@ async def test_get_config_accepts_connection_argument(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -284,7 +127,7 @@ async def test_get_config_database_configured_from_resolved_connection(tmp_path)
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -321,7 +164,7 @@ async def test_ping_database_configured_from_default_connection(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"default": conn_info}
@@ -357,7 +200,7 @@ class TestConnectorTypeToolGating:
 
         with (
             patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-            patch("db_mcp.server.get_settings") as mock_settings,
+            patch("db_mcp_server.server.get_settings") as mock_settings,
         ):
             mock_registry = MagicMock()
             mock_registry.discover.return_value = {"test": conn_info}
@@ -383,7 +226,7 @@ class TestConnectorTypeToolGating:
 
         with (
             patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-            patch("db_mcp.server.get_settings") as mock_settings,
+            patch("db_mcp_server.server.get_settings") as mock_settings,
         ):
             mock_registry = MagicMock()
             mock_registry.discover.return_value = {"test": conn_info}
@@ -408,7 +251,7 @@ class TestConnectorTypeToolGating:
 
         with (
             patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-            patch("db_mcp.server.get_settings") as mock_settings,
+            patch("db_mcp_server.server.get_settings") as mock_settings,
         ):
             mock_registry = MagicMock()
             mock_registry.discover.return_value = {"test": conn_info}
@@ -446,7 +289,7 @@ class TestConnectorTypeToolGating:
 
         with (
             patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-            patch("db_mcp.server.get_settings") as mock_settings,
+            patch("db_mcp_server.server.get_settings") as mock_settings,
         ):
             mock_registry = MagicMock()
             mock_registry.discover.return_value = {"test": conn_info}
@@ -486,7 +329,7 @@ class TestConnectorTypeToolGating:
 
         with (
             patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-            patch("db_mcp.server.get_settings") as mock_settings,
+            patch("db_mcp_server.server.get_settings") as mock_settings,
         ):
             mock_registry = MagicMock()
             mock_registry.discover.return_value = {"test": conn_info}
@@ -509,7 +352,7 @@ class TestConnectorTypeToolGating:
 
         with (
             patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-            patch("db_mcp.server.get_settings") as mock_settings,
+            patch("db_mcp_server.server.get_settings") as mock_settings,
         ):
             mock_registry = MagicMock()
             mock_registry.discover.return_value = {"test": conn_info}
@@ -525,11 +368,11 @@ class TestConnectorTypeToolGating:
         assert "api_discover" in tools
 
     def test_api_connector_keeps_common_tools(self, tmp_path):
-        """API connector should still have shell, protocol, onboarding tools."""
+        """API connector should still have shell, protocol, and artifact import."""
         connector_yaml = tmp_path / "connector.yaml"
         connector_yaml.write_text(yaml.dump({"type": "api", "base_url": "https://example.com"}))
 
-        with patch("db_mcp.server.get_settings") as mock_settings:
+        with patch("db_mcp_server.server.get_settings") as mock_settings:
             mock_settings.return_value.tool_mode = "detailed"
             mock_settings.return_value.get_effective_connection_path.return_value = tmp_path
             mock_settings.return_value.connection_name = "test"
@@ -542,8 +385,13 @@ class TestConnectorTypeToolGating:
         assert "ping" in tools
         assert "shell" in tools
         assert "protocol" in tools
-        assert "mcp_setup_status" in tools
-        assert "mcp_domain_generate" in tools
+        assert "save_artifact" in tools
+        assert "vault_write" in tools
+        assert "vault_append" in tools
+        assert "import_instructions" not in tools
+        assert "import_examples" not in tools
+        assert "mcp_setup_status" not in tools
+        assert "mcp_domain_generate" not in tools
 
 
 def test_shell_auto_profile_reduces_tool_surface(tmp_path):
@@ -556,7 +404,7 @@ def test_shell_auto_profile_reduces_tool_surface(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -592,7 +440,7 @@ def test_detailed_query_profile_reduces_tool_surface(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -626,7 +474,7 @@ def test_shell_full_profile_keeps_admin_tools(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -641,8 +489,13 @@ def test_shell_full_profile_keeps_admin_tools(tmp_path):
         server = _create_server()
 
     tools = _get_tool_names(server)
-    assert "mcp_setup_status" in tools
-    assert "mcp_suggest_improvement" in tools
+    assert "mcp_setup_status" not in tools
+    assert "mcp_suggest_improvement" not in tools
+    assert "save_artifact" in tools
+    assert "vault_write" in tools
+    assert "vault_append" in tools
+    assert "import_instructions" not in tools
+    assert "import_examples" not in tools
     assert "search_tools" in tools
     assert "export_tool_sdk" in tools
     # Detailed-only helper tools remain off in shell mode.
@@ -659,7 +512,7 @@ def test_exec_only_mode_exposes_only_exec_tool(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -686,7 +539,7 @@ def test_code_mode_exposes_only_code_tool(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -713,7 +566,7 @@ def test_daemon_mode_exposes_only_task_tools(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -1586,7 +1439,7 @@ async def test_exec_only_mode_exec_tool_routes_command(tmp_path, monkeypatch):
     ]
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.exec.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "exec-only"
@@ -1633,7 +1486,7 @@ async def test_exec_only_mode_requires_protocol_read_first(tmp_path, monkeypatch
     fake_manager = MagicMock()
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.exec.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "exec-only"
@@ -1692,7 +1545,7 @@ async def test_exec_only_mode_accepts_protocol_read_and_then_allows_commands(
     ]
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.exec.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "exec-only"
@@ -1751,7 +1604,7 @@ async def test_exec_only_mode_invalidates_protocol_ack_when_file_changes(tmp_pat
     }
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.exec.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "exec-only"
@@ -1822,7 +1675,7 @@ async def test_code_mode_routes_python_code(tmp_path, monkeypatch):
     ]
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "code"
@@ -1881,7 +1734,7 @@ async def test_code_mode_requires_protocol_read_first(tmp_path, monkeypatch):
     fake_manager = MagicMock()
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "code"
@@ -1933,7 +1786,7 @@ async def test_code_mode_invalidates_protocol_ack_when_file_changes(tmp_path, mo
     }
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "code"
@@ -2012,7 +1865,7 @@ async def test_code_mode_surfaces_confirmation_required(tmp_path, monkeypatch):
     ]
 
     with (
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
         patch("db_mcp.tools.code.get_exec_session_manager", return_value=fake_manager),
     ):
         mock_settings.return_value.tool_mode = "code"
@@ -2067,7 +1920,7 @@ async def test_search_tools_returns_relevant_matches(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}
@@ -2099,7 +1952,7 @@ async def test_export_tool_sdk_renders_python_wrappers(tmp_path):
 
     with (
         patch("db_mcp.registry.ConnectionRegistry") as mock_reg_cls,
-        patch("db_mcp.server.get_settings") as mock_settings,
+        patch("db_mcp_server.server.get_settings") as mock_settings,
     ):
         mock_registry = MagicMock()
         mock_registry.discover.return_value = {"test": conn_info}

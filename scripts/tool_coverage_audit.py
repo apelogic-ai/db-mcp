@@ -27,10 +27,12 @@ from pathlib import Path
 from typing import Any
 
 # Path to the server.py file
+_repo = Path(__file__).parent.parent
 SERVER_PY_PATH = (
-    Path(__file__).parent.parent / "packages" / "core" / "src" / "db_mcp" / "server.py"
+    _repo / "packages" / "mcp-server" / "src" / "db_mcp_server" / "server.py"
 )
-TOOLS_DIR = Path(__file__).parent.parent / "packages" / "core" / "src" / "db_mcp" / "tools"
+TOOLS_DIR = _repo / "packages" / "core" / "src" / "db_mcp" / "tools"
+MCP_TOOLS_DIR = _repo / "packages" / "mcp-server" / "src" / "db_mcp_server" / "tools"
 
 
 def extract_tool_registrations_from_server() -> set[str]:
@@ -65,39 +67,46 @@ def extract_implemented_tools_from_codebase() -> dict[str, dict[str, Any]]:
     """
     tools: dict[str, dict[str, Any]] = {}
 
-    # Parse all Python files in the tools directory
-    for py_file in TOOLS_DIR.glob("*.py"):
-        if py_file.name == "__init__.py":
+    # Parse all Python files in both core and mcp-server tools directories
+    tools_dirs = [
+        (TOOLS_DIR, "core/tools"),
+        (MCP_TOOLS_DIR, "mcp-server/tools"),
+    ]
+    for tools_dir, label in tools_dirs:
+        if not tools_dir.exists():
             continue
+        for py_file in tools_dir.glob("*.py"):
+            if py_file.name == "__init__.py":
+                continue
 
-        content = py_file.read_text()
-        tree = ast.parse(content)
+            content = py_file.read_text()
+            tree = ast.parse(content)
 
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                func_name = node.name
-                # Tool functions typically start with _
-                if func_name.startswith("_") and not func_name.startswith("__"):
-                    # Convert _tool_name to tool_name for comparison
-                    tool_name = func_name[1:]  # Remove leading underscore
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_name = node.name
+                    # Tool functions typically start with _
+                    if func_name.startswith("_") and not func_name.startswith("__"):
+                        # Convert _tool_name to tool_name for comparison
+                        tool_name = func_name[1:]  # Remove leading underscore
 
-                    # Skip private helpers
-                    if tool_name in (
-                        "get_auth_provider",
-                        "strip_validate_sql",
-                        "build_connection_instructions",
-                        "create_server",
-                        "configure_logging",
-                        "configure_observability",
-                        "server_lifespan",
-                    ):
-                        continue
+                        # Skip private helpers
+                        if tool_name in (
+                            "get_auth_provider",
+                            "strip_validate_sql",
+                            "build_connection_instructions",
+                            "create_server",
+                            "configure_logging",
+                            "configure_observability",
+                            "server_lifespan",
+                        ):
+                            continue
 
-                    tools[tool_name] = {
-                        "source_file": f"tools/{py_file.name}",
-                        "function": func_name,
-                        "line": node.lineno,
-                    }
+                        tools[tool_name] = {
+                            "source_file": f"{label}/{py_file.name}",
+                            "function": func_name,
+                            "line": node.lineno,
+                        }
 
     return tools
 
@@ -122,9 +131,6 @@ def get_expected_tools_for_config(
         [
             "dismiss_insight",
             "mark_insights_processed",
-            "mcp_list_improvements",
-            "mcp_suggest_improvement",
-            "mcp_approve_improvement",
             "ping",
             "get_config",
             "list_connections",
@@ -161,25 +167,9 @@ def get_expected_tools_for_config(
     # Admin/Setup tools - always available
     tools.update(
         [
-            "mcp_setup_status",
-            "mcp_setup_start",
-            "mcp_setup_add_ignore_pattern",
-            "mcp_setup_remove_ignore_pattern",
-            "mcp_setup_import_ignore_patterns",
-            "mcp_setup_discover",
-            "mcp_setup_discover_status",
-            "mcp_setup_reset",
-            "mcp_setup_next",
-            "mcp_setup_approve",
-            "mcp_setup_skip",
-            "mcp_setup_bulk_approve",
-            "mcp_setup_import_descriptions",
-            "mcp_domain_status",
-            "mcp_domain_generate",
-            "mcp_domain_approve",
-            "mcp_domain_skip",
-            "import_instructions",
-            "import_examples",
+            "save_artifact",
+            "vault_write",
+            "vault_append",
         ]
     )
 
@@ -188,14 +178,11 @@ def get_expected_tools_for_config(
         tools.update(
             [
                 "test_connection",
-                "detect_dialect",
                 "list_catalogs",
                 "list_schemas",
                 "list_tables",
                 "describe_table",
                 "sample_table",
-                "get_dialect_rules",
-                "get_connection_dialect",
                 "query_status",
                 "query_generate",
                 "query_approve",
@@ -214,8 +201,6 @@ def get_expected_tools_for_config(
                 "metrics_bindings_validate",
                 "metrics_bindings_set",
                 "get_data",
-                "test_elicitation",
-                "test_sampling",
             ]
         )
 
@@ -343,7 +328,7 @@ def discover_runtime_tools(config: str) -> set[str]:
         with _temp_server_env(config):
             from db_mcp.config import reset_settings
             from db_mcp.registry import ConnectionRegistry
-            from db_mcp.server import _create_server
+            from db_mcp_server.server import _create_server
 
             reset_settings()
             ConnectionRegistry.reset()

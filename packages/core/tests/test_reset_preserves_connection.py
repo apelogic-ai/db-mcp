@@ -3,9 +3,9 @@
 import tempfile
 from pathlib import Path
 
+from db_mcp_knowledge.onboarding.state import delete_state, load_state, save_state
 from db_mcp_models import OnboardingPhase, OnboardingState
 
-from db_mcp.onboarding.state import delete_state, load_state, save_state
 from db_mcp.registry import ConnectionRegistry
 
 
@@ -130,7 +130,7 @@ def test_reset_with_provider_id_override():
 
         # Load and verify it was corrupted somehow (simulate by loading None)
         # We'll patch load_state to return None to test the provider_id fallback
-        import db_mcp.onboarding.state as state_module
+        import db_mcp_knowledge.onboarding.state as state_module
         original_load = state_module.load_state
 
         def mock_load(*args, **kwargs):

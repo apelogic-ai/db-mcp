@@ -7,6 +7,14 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from db_mcp_knowledge.planner.meta_query import compile_metric_intent
+from db_mcp_knowledge.planner.resolver import resolve_metric_execution_plan
+from db_mcp_knowledge.semantic.core_loader import load_connection_semantic_core
+from db_mcp_knowledge.vault.paths import (
+    DIMENSIONS_FILE,
+    METRICS_BINDINGS_FILE,
+    METRICS_CATALOG_FILE,
+)
 from db_mcp_models import (
     AnswerIntentResponse,
     BoundaryMode,
@@ -18,10 +26,7 @@ from db_mcp_models import (
 )
 from opentelemetry import trace
 
-from db_mcp.planner.meta_query import compile_metric_intent
-from db_mcp.planner.resolver import resolve_metric_execution_plan
-from db_mcp.semantic.core_loader import load_connection_semantic_core
-from db_mcp.tools.generation import _run_sql, _validate_sql
+from db_mcp.services.query import run_sql, validate_sql
 from db_mcp.tools.utils import resolve_connection
 
 _ROLLING_WINDOW_RE = re.compile(
@@ -276,7 +281,7 @@ def _answer_summary(metric_name: str, connection: str, rows_returned: int) -> st
 
 
 def _binding_confidence(binding_source: str) -> float:
-    return 1.0 if binding_source == "metrics/bindings.yaml" else 0.7
+    return 1.0 if binding_source == METRICS_BINDINGS_FILE else 0.7
 
 
 def preview_answer_intent(
@@ -289,20 +294,22 @@ def preview_answer_intent(
 ) -> AnswerIntentResponse:
     """Resolve a metric intent into a deterministic semantic execution preview."""
     resolved_provider_id = provider_id
-    if resolved_provider_id is None:
-        _, resolved_provider_id, _ = resolve_connection(connection)
-    if connection_path is None:
-        semantic_core = load_connection_semantic_core(resolved_provider_id)
-    else:
-        semantic_core = load_connection_semantic_core(
-            resolved_provider_id,
-            connection_path=connection_path,
-        )
+    resolved_connection_path = connection_path
+    if resolved_provider_id is None or resolved_connection_path is None:
+        _, rp, rcp = resolve_connection(connection)
+        if resolved_provider_id is None:
+            resolved_provider_id = rp
+        if resolved_connection_path is None:
+            resolved_connection_path = rcp
+    semantic_core = load_connection_semantic_core(
+        resolved_provider_id,
+        connection_path=resolved_connection_path,
+    )
     _record_knowledge_files(
-        "metrics/catalog.yaml",
-        "metrics/bindings.yaml",
+        METRICS_CATALOG_FILE,
+        METRICS_BINDINGS_FILE,
         *(
-            ["metrics/dimensions.yaml"]
+            [DIMENSIONS_FILE]
             if semantic_core.dimensions
             else []
         ),
@@ -429,13 +436,17 @@ async def answer_intent(
     meta_query = preview.meta_query
     resolved_plan = preview.resolved_plan
 
-    run_payload = _structured_payload(await _run_sql(connection=connection, sql=resolved_plan.sql))
+    _, _, conn_path = resolve_connection(connection)
+    run_payload = _structured_payload(
+        await run_sql(connection=connection, sql=resolved_plan.sql, connection_path=conn_path)
+    )
     if (
         run_payload.get("status") == "error"
         and run_payload.get("error") == "Validation required. Use validate_sql first."
     ):
         validation_payload = _structured_payload(
-            await _validate_sql(connection=connection, sql=resolved_plan.sql)
+            await validate_sql(connection=connection, sql=resolved_plan.sql,
+                               connection_path=conn_path)
         )
         if not validation_payload.get("valid"):
             response = AnswerIntentResponse(
@@ -461,7 +472,7 @@ async def answer_intent(
 
         query_id = validation_payload.get("query_id")
         run_payload = _structured_payload(
-            await _run_sql(connection=connection, query_id=query_id)
+            await run_sql(connection=connection, query_id=query_id, connection_path=conn_path)
         )
 
     if run_payload.get("status") != "success":

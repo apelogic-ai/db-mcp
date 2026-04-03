@@ -21,12 +21,12 @@ from shutil import which
 from typing import Any
 from urllib.request import urlopen
 
+from db_mcp.agents import get_db_mcp_binary_path
 from db_mcp.benchmark.connection import resolve_sql_connection_access
 from db_mcp.benchmark.driver import ClaudeCliDriver, LoopBreakerConfig
 from db_mcp.benchmark.loader import load_case_pack
 from db_mcp.benchmark.models import BenchmarkAnswer
 from db_mcp.benchmark.scoring import execute_gold_sql, score_case
-from db_mcp.cli.utils import get_db_mcp_binary_path
 from db_mcp.code_runtime.native_adapter import CodeRuntimeNativeAdapter
 from db_mcp.traces import get_user_id_from_config
 

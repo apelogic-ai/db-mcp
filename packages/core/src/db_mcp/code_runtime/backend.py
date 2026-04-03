@@ -11,8 +11,20 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from db_mcp.business_rules import extract_business_rule_texts
+from db_mcp_knowledge.business_rules import extract_business_rule_texts
+from db_mcp_knowledge.vault.paths import (
+    BUSINESS_RULES_FILE,
+    CONNECTOR_FILE,
+    DESCRIPTIONS_FILE,
+    DOMAIN_MODEL_FILE,
+    EXAMPLES_DIR,
+    LEARNINGS_DIR,
+    PROTOCOL_FILE,
+    SQL_RULES_FILE,
+)
+
 from db_mcp.exec_runtime import ExecRuntimeError, ExecSandboxSpec, ExecSessionManager
+from db_mcp.services.environment import build_sandbox_environment
 from db_mcp.tools.utils import require_connection, resolve_connection
 
 _CODE_RUNTIME_MODULE = """\
@@ -633,7 +645,7 @@ class HostDbMcpRuntime:
         return _read_yaml_file(self.connection_path / relative_path)
 
     def read_protocol(self) -> str:
-        return self.read_text("PROTOCOL.md")
+        return self.read_text(PROTOCOL_FILE)
 
     def ack_protocol(self) -> str:
         return self.read_protocol()
@@ -643,12 +655,12 @@ class HostDbMcpRuntime:
 
     def connector(self) -> dict[str, object]:
         if self._connector_payload is None:
-            payload = _read_yaml_file(self.connection_path / "connector.yaml")
+            payload = _read_yaml_file(self.connection_path / CONNECTOR_FILE)
             self._connector_payload = payload if isinstance(payload, dict) else {}
         return self._connector_payload
 
     def schema_descriptions(self) -> dict[str, object]:
-        payload = self.read_yaml("schema/descriptions.yaml")
+        payload = self.read_yaml(DESCRIPTIONS_FILE)
         return payload if isinstance(payload, dict) else {}
 
     def _schema_tables(self) -> list[dict[str, Any]]:
@@ -755,7 +767,7 @@ class HostDbMcpRuntime:
         return matches[:limit]
 
     def _load_examples(self) -> list[dict[str, object]]:
-        examples_dir = self.connection_path / "examples"
+        examples_dir = self.connection_path / EXAMPLES_DIR
         if not examples_dir.exists():
             return []
         records: list[dict[str, object]] = []
@@ -789,7 +801,7 @@ class HostDbMcpRuntime:
 
     def _load_rule_entries(self) -> list[dict[str, str]]:
         entries: list[dict[str, str]] = []
-        rules_path = self.connection_path / "instructions" / "business_rules.yaml"
+        rules_path = self.connection_path / BUSINESS_RULES_FILE
         rules_payload = _read_yaml_file(rules_path)
         source = str(rules_path.relative_to(self.connection_path))
         for text_value in extract_business_rule_texts(rules_payload):
@@ -800,7 +812,7 @@ class HostDbMcpRuntime:
             )
             for text_value in candidate_texts:
                 entries.append({"source": source, "text": str(text_value)})
-        learnings_dir = self.connection_path / "learnings"
+        learnings_dir = self.connection_path / LEARNINGS_DIR
         if learnings_dir.exists():
             for path in sorted(learnings_dir.glob("*.md")):
                 for line in path.read_text().splitlines():
@@ -880,10 +892,10 @@ class HostDbMcpRuntime:
         return payload
 
     def domain_model(self) -> str:
-        return self.read_text("domain/model.md")
+        return self.read_text(DOMAIN_MODEL_FILE)
 
     def sql_rules(self) -> str:
-        return self.read_text("instructions/sql_rules.md")
+        return self.read_text(SQL_RULES_FILE)
 
     def query(self, sql: str, params: dict[str, object] | None = None) -> list[dict[str, object]]:
         if _is_write_sql(sql):
@@ -939,48 +951,6 @@ class HostDbMcpRuntime:
         }
 
 
-def _load_connection_env(connection_path: Path) -> dict[str, str]:
-    env_path = connection_path / ".env"
-    if not env_path.exists():
-        return {}
-
-    values: dict[str, str] = {}
-    for raw_line in env_path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key] = value.strip().strip("\"'")
-    return values
-
-
-def _build_environment(
-    connection_name: str,
-    connection_path: Path,
-    connector: object,
-) -> dict[str, str]:
-    config = getattr(connector, "config", None)
-    api_config = getattr(connector, "api_config", None)
-    database_url = getattr(config, "database_url", "") or ""
-    base_url = getattr(config, "base_url", "") or getattr(api_config, "base_url", "") or ""
-    capabilities = getattr(config, "capabilities", {}) or {}
-
-    env = _load_connection_env(connection_path)
-    if database_url:
-        env["DATABASE_URL"] = database_url
-    if base_url:
-        env["BASE_URL"] = base_url
-    if isinstance(capabilities.get("connect_args"), dict):
-        env["DB_MCP_CONNECT_ARGS_JSON"] = json.dumps(capabilities["connect_args"])
-
-    env["CONNECTION_NAME"] = connection_name
-    env["CONNECTION_PATH"] = "/workspace"
-    env["VAULT_PATH"] = "/workspace"
-    env["HOME"] = "/workspace"
-    env["PYTHONUNBUFFERED"] = "1"
-    return env
-
-
 def _build_spec(connection: str, *, session_id: str) -> ExecSandboxSpec:
     from db_mcp.exec_runtime import derive_allowed_endpoint
 
@@ -997,7 +967,7 @@ def _build_spec(connection: str, *, session_id: str) -> ExecSandboxSpec:
         connection=connection_name,
         connection_path=connection_path,
         allowed_endpoint=derive_allowed_endpoint(database_url, base_url=base_url),
-        environment=_build_environment(connection_name, connection_path, connector),
+        environment=build_sandbox_environment(connection_name, connection_path, connector),
     )
 
 
@@ -1008,7 +978,7 @@ def create_code_session(connection: str, session_id: str) -> CodeSession:
 
 
 def _protocol_fingerprint(connection_path: Path) -> tuple[int, int]:
-    stat = (connection_path / "PROTOCOL.md").stat()
+    stat = (connection_path / PROTOCOL_FILE).stat()
     return (stat.st_mtime_ns, stat.st_size)
 
 

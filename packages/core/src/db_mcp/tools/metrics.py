@@ -1,9 +1,8 @@
 """Metrics and dimensions MCP tools — discover, manage, and catalog business metrics."""
 
-from db_mcp_models import MetricBinding, MetricDimensionBinding
 
-from db_mcp.metrics.mining import mine_metrics_and_dimensions
-from db_mcp.metrics.store import (
+from db_mcp_knowledge.metrics.mining import mine_metrics_and_dimensions
+from db_mcp_knowledge.metrics.store import (
     add_dimension,
     add_metric,
     delete_dimension,
@@ -13,96 +12,14 @@ from db_mcp.metrics.store import (
     load_metrics,
     upsert_metric_binding,
 )
+from db_mcp_models import MetricBinding, MetricDimensionBinding
+
+from db_mcp.services.metrics import serialize_metric_binding, validate_metric_binding
 from db_mcp.tools.utils import resolve_connection
 
-
-def _serialize_metric_binding(binding: MetricBinding) -> dict:
-    """Convert a binding model to a JSON-safe payload."""
-    return {
-        "metric_name": binding.metric_name,
-        "sql": binding.sql,
-        "tables": binding.tables,
-        "dimensions": [
-            {
-                "dimension_name": dimension_binding.dimension_name,
-                "projection_sql": dimension_binding.projection_sql,
-                "filter_sql": dimension_binding.filter_sql,
-                "group_by_sql": dimension_binding.group_by_sql,
-                "tables": dimension_binding.tables,
-            }
-            for _, dimension_binding in sorted(binding.dimensions.items())
-        ],
-    }
-
-
-def _validate_metric_binding(
-    *,
-    provider_id: str,
-    metric_name: str,
-    sql: str,
-    tables: list[str] | None = None,
-    dimensions: list[dict] | None = None,
-) -> dict:
-    """Validate a metric binding against the approved logical catalogs."""
-    metrics_catalog = load_metrics(provider_id)
-    dimensions_catalog = load_dimensions(provider_id)
-
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    metric = metrics_catalog.get_metric(metric_name)
-    if metric is None:
-        errors.append(f"Metric '{metric_name}' not found in the approved catalog.")
-    if not sql.strip():
-        errors.append("Binding SQL is required.")
-
-    binding_tables = tables or []
-    binding_dimensions = dimensions or []
-    seen_dimensions: set[str] = set()
-
-    for raw_dimension in binding_dimensions:
-        dimension_name = raw_dimension.get("dimension_name")
-        if not isinstance(dimension_name, str) or not dimension_name:
-            errors.append("Each binding dimension must include a non-empty dimension_name.")
-            continue
-        if dimension_name in seen_dimensions:
-            errors.append(f"Duplicate binding dimension '{dimension_name}'.")
-            continue
-        seen_dimensions.add(dimension_name)
-
-        dimension = dimensions_catalog.get_dimension(dimension_name)
-        if dimension is None:
-            errors.append(f"Dimension '{dimension_name}' not found in the approved catalog.")
-            continue
-        if metric is not None and metric.dimensions and dimension_name not in metric.dimensions:
-            errors.append(
-                f"Metric '{metric_name}' is not approved for dimension '{dimension_name}'."
-            )
-
-        projection_sql = raw_dimension.get("projection_sql")
-        if not isinstance(projection_sql, str) or not projection_sql.strip():
-            errors.append(f"Binding dimension '{dimension_name}' requires projection_sql.")
-
-        dimension_tables = raw_dimension.get("tables") or []
-        if (
-            binding_tables
-            and dimension_tables
-            and not set(binding_tables).intersection(dimension_tables)
-        ):
-            errors.append(
-                f"Binding dimension '{dimension_name}' does not share a table with metric "
-                f"'{metric_name}'."
-            )
-
-    if metric is not None and metric.dimensions:
-        missing_dimensions = sorted(set(metric.dimensions) - seen_dimensions)
-        if missing_dimensions:
-            warnings.append(
-                "Metric binding does not define projections for approved dimensions: "
-                + ", ".join(missing_dimensions)
-            )
-
-    return {"valid": not errors, "errors": errors, "warnings": warnings}
+# Keep underscore-prefixed aliases for backwards compatibility within this module
+_serialize_metric_binding = serialize_metric_binding
+_validate_metric_binding = validate_metric_binding
 
 
 async def _metrics_discover(connection: str) -> dict:
@@ -181,8 +98,8 @@ async def _metrics_discover(connection: str) -> dict:
 
 async def _metrics_bindings_list(connection: str) -> dict:
     """List metric execution bindings configured for the connection."""
-    _, provider_id, _ = resolve_connection(connection)
-    bindings_catalog = load_metric_bindings(provider_id)
+    _, provider_id, connection_path = resolve_connection(connection)
+    bindings_catalog = load_metric_bindings(provider_id, connection_path=connection_path)
 
     return {
         "bindings": [
@@ -207,9 +124,10 @@ async def _metrics_bindings_validate(
     dimensions: list[dict] | None = None,
 ) -> dict:
     """Validate a metric binding against approved metrics and dimensions."""
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, connection_path = resolve_connection(connection)
     validation = _validate_metric_binding(
         provider_id=provider_id,
+        connection_path=connection_path,
         metric_name=metric_name,
         sql=sql,
         tables=tables,
@@ -229,9 +147,10 @@ async def _metrics_bindings_set(
     dimensions: list[dict] | None = None,
 ) -> dict:
     """Create or update a connection-bound metric binding."""
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, connection_path = resolve_connection(connection)
     validation = _validate_metric_binding(
         provider_id=provider_id,
+        connection_path=connection_path,
         metric_name=metric_name,
         sql=sql,
         tables=tables,
@@ -261,7 +180,7 @@ async def _metrics_bindings_set(
         tables=tables or [],
         dimensions=dimension_bindings,
     )
-    result = upsert_metric_binding(provider_id, binding)
+    result = upsert_metric_binding(provider_id, binding, connection_path=connection_path)
     return {
         "saved": result.get("saved", False),
         "metric_name": metric_name,
@@ -285,11 +204,11 @@ async def _metrics_list(connection: str) -> dict:
         Dict with metrics list, dimensions list, and summary.
     """
     # Resolve connection for validation and provider_id
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, connection_path = resolve_connection(connection)
 
-    metrics_catalog = load_metrics(provider_id)
-    dimensions_catalog = load_dimensions(provider_id)
-    bindings_catalog = load_metric_bindings(provider_id)
+    metrics_catalog = load_metrics(provider_id, connection_path=connection_path)
+    dimensions_catalog = load_dimensions(provider_id, connection_path=connection_path)
+    bindings_catalog = load_metric_bindings(provider_id, connection_path=connection_path)
 
     return {
         "metrics": [
@@ -374,7 +293,7 @@ async def _metrics_approve(
         Dict with approval status.
     """
     # Resolve connection for validation and provider_id
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, connection_path = resolve_connection(connection)
 
     if type == "metric":
         if not description:
@@ -387,6 +306,7 @@ async def _metrics_approve(
             name=name,
             description=description,
             sql=sql,
+            connection_path=connection_path,
             display_name=display_name,
             tables=tables,
             tags=tags,
@@ -422,6 +342,7 @@ async def _metrics_approve(
             provider_id=provider_id,
             name=name,
             column=column,
+            connection_path=connection_path,
             description=description,
             display_name=display_name,
             dim_type=dim_type,
@@ -517,10 +438,10 @@ async def _metrics_remove(type: str, name: str, connection: str) -> dict:
         Dict with removal status.
     """
     # Resolve connection for validation and provider_id
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, connection_path = resolve_connection(connection)
 
     if type == "metric":
-        result = delete_metric(provider_id, name)
+        result = delete_metric(provider_id, name, connection_path=connection_path)
         return {
             "removed": result.get("deleted", False),
             "type": "metric",
@@ -528,7 +449,7 @@ async def _metrics_remove(type: str, name: str, connection: str) -> dict:
             "error": result.get("error"),
         }
     elif type == "dimension":
-        result = delete_dimension(provider_id, name)
+        result = delete_dimension(provider_id, name, connection_path=connection_path)
         return {
             "removed": result.get("deleted", False),
             "type": "dimension",

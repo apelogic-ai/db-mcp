@@ -1,9 +1,17 @@
 """Database MCP tools."""
 
-from db_mcp.connectors import get_connector
-from db_mcp.db.connection import detect_dialect_from_url
+from db_mcp_data.connectors import get_connector
+from db_mcp_data.db.connection import detect_dialect_from_url
+
 from db_mcp.registry import ConnectionRegistry
-from db_mcp.tools.shell import inject_protocol
+from db_mcp.services.schema import (
+    describe_table,
+    list_catalogs,
+    list_schemas,
+    list_tables,
+    sample_table,
+)
+from db_mcp.tools.protocol import inject_protocol
 from db_mcp.tools.utils import _resolve_connection_path
 
 
@@ -36,7 +44,7 @@ async def _test_connection(connection: str, database_url: str | None = None) -> 
     """
     if database_url:
         # Direct URL provided — use legacy path for one-off testing
-        from db_mcp.db.connection import test_connection
+        from db_mcp_data.db.connection import test_connection
 
         return test_connection(database_url)
     connector = get_connector(connection_path=_resolve_connection_path(connection))
@@ -70,18 +78,8 @@ async def _list_catalogs(connection: str, database_url: str | None = None) -> di
         List of catalog names
     """
     try:
-        connector = get_connector(connection_path=_resolve_connection_path(connection))
-        catalogs = connector.get_catalogs()
-        # Filter out None values for display
-        catalogs_list = [c for c in catalogs if c is not None]
-        return inject_protocol(
-            {
-                "catalogs": catalogs_list,
-                "count": len(catalogs_list),
-                "has_catalogs": len(catalogs_list) > 0,
-                "error": None,
-            }
-        )
+        result = list_catalogs(connection_path=_resolve_connection_path(connection))
+        return inject_protocol(result)
     except Exception as e:
         return inject_protocol(
             {
@@ -109,18 +107,11 @@ async def _list_schemas(
         List of schema names
     """
     try:
-        connector = get_connector(connection_path=_resolve_connection_path(connection))
-        schemas = connector.get_schemas(catalog=catalog)
-        # Filter out None values for display
-        schemas_list = [s for s in schemas if s is not None]
-        return inject_protocol(
-            {
-                "schemas": schemas_list,
-                "count": len(schemas_list),
-                "catalog": catalog,
-                "error": None,
-            }
+        result = list_schemas(
+            connection_path=_resolve_connection_path(connection),
+            catalog=catalog,
         )
+        return inject_protocol(result)
     except Exception as e:
         return inject_protocol(
             {
@@ -156,17 +147,12 @@ async def _list_tables(
         List of table info with fully qualified names
     """
     try:
-        connector = get_connector(connection_path=_resolve_connection_path(connection))
-        tables = connector.get_tables(schema=schema, catalog=catalog)
-        return inject_protocol(
-            {
-                "tables": tables,
-                "count": len(tables),
-                "schema": schema,
-                "catalog": catalog,
-                "error": None,
-            }
+        result = list_tables(
+            connection_path=_resolve_connection_path(connection),
+            schema=schema,
+            catalog=catalog,
         )
+        return inject_protocol(result)
     except Exception as e:
         return inject_protocol(
             {
@@ -212,22 +198,16 @@ async def _describe_table(
     Returns:
         Table info including columns
     """
-    full_name = _make_full_name(table_name, schema, catalog)
     try:
-        connector = get_connector(connection_path=_resolve_connection_path(connection))
-        columns = connector.get_columns(table_name, schema=schema, catalog=catalog)
-        return inject_protocol(
-            {
-                "table_name": table_name,
-                "schema": schema,
-                "catalog": catalog,
-                "full_name": full_name,
-                "columns": columns,
-                "column_count": len(columns),
-                "error": None,
-            }
+        result = describe_table(
+            table_name=table_name,
+            connection_path=_resolve_connection_path(connection),
+            schema=schema,
+            catalog=catalog,
         )
+        return inject_protocol(result)
     except Exception as e:
+        full_name = _make_full_name(table_name, schema, catalog)
         return inject_protocol(
             {
                 "table_name": table_name,
@@ -264,29 +244,18 @@ async def _sample_table(
     """
     # Enforce limit bounds
     limit = max(1, min(limit, 100))
-    full_name = _make_full_name(table_name, schema, catalog)
 
     try:
-        connector = get_connector(connection_path=_resolve_connection_path(connection))
-        rows = connector.get_table_sample(
-            table_name,
+        result = sample_table(
+            table_name=table_name,
+            connection_path=_resolve_connection_path(connection),
             schema=schema,
             catalog=catalog,
             limit=limit,
         )
-        return inject_protocol(
-            {
-                "table_name": table_name,
-                "schema": schema,
-                "catalog": catalog,
-                "full_name": full_name,
-                "rows": rows,
-                "row_count": len(rows),
-                "limit": limit,
-                "error": None,
-            }
-        )
+        return inject_protocol(result)
     except Exception as e:
+        full_name = _make_full_name(table_name, schema, catalog)
         return inject_protocol(
             {
                 "table_name": table_name,

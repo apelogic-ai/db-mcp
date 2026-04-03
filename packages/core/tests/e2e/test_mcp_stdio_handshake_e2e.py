@@ -60,7 +60,7 @@ async def test_stdio_initialize_list_tools_and_call_ping(tmp_path):
 
     transport = StdioTransport(
         command=sys.executable,
-        args=["-m", "db_mcp.server"],
+        args=["-m", "db_mcp_server.server"],
         env=env,
         cwd=str(Path(__file__).resolve().parents[2]),
     )

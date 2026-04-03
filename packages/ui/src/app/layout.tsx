@@ -59,7 +59,7 @@ export default function RootLayout({
           "font-sans bg-[#121212] text-gray-100 min-h-screen dark",
         )}
       >
-        <BICPProvider baseUrl="/bicp" autoConnect>
+        <BICPProvider>
           <ConnectionProvider>
             <ViewModeProvider>
               <header className="border-b border-gray-800">

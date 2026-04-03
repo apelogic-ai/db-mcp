@@ -1,6 +1,6 @@
 """Tests for context file usage tracking functionality."""
 
-from db_mcp.bicp.traces import extract_context_paths
+from db_mcp.traces_reader import extract_context_paths
 
 
 def test_extract_context_paths_grep_with_path():

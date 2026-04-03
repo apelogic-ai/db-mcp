@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from db_mcp.connector_plugins import ConnectorPlugin
+from db_mcp_data.connector_plugins import ConnectorPlugin
 
 from .runtime import build_connector
 

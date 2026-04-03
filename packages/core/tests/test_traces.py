@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 import db_mcp.traces as trace_capture
-from db_mcp.bicp.traces import (
+from db_mcp.traces_reader import (
     _extract_sql,
     analyze_traces,
     list_trace_dates,
@@ -303,7 +303,7 @@ class TestTraceCaptureDefaults:
     def test_is_traces_enabled_defaults_true_when_config_missing(self, tmp_path):
         config_file = tmp_path / "config.yaml"
 
-        with patch("db_mcp.cli.CONFIG_FILE", config_file):
+        with patch("db_mcp.config.CONFIG_FILE", config_file):
             assert trace_capture.is_traces_enabled() is True
 
     def test_is_traces_enabled_defaults_true_when_key_missing(self, tmp_path):
@@ -311,8 +311,8 @@ class TestTraceCaptureDefaults:
         config_file.write_text("user_id: abcd1234\n")
 
         with (
-            patch("db_mcp.cli.CONFIG_FILE", config_file),
-            patch("db_mcp.cli.load_config", return_value={"user_id": "abcd1234"}),
+            patch("db_mcp.config.CONFIG_FILE", config_file),
+            patch("db_mcp.config.load_config", return_value={"user_id": "abcd1234"}),
         ):
             assert trace_capture.is_traces_enabled() is True
 
@@ -321,8 +321,8 @@ class TestTraceCaptureDefaults:
         config_file.write_text("traces_enabled: false\n")
 
         with (
-            patch("db_mcp.cli.CONFIG_FILE", config_file),
-            patch("db_mcp.cli.load_config", return_value={"traces_enabled": False}),
+            patch("db_mcp.config.CONFIG_FILE", config_file),
+            patch("db_mcp.config.load_config", return_value={"traces_enabled": False}),
         ):
             assert trace_capture.is_traces_enabled() is False
 
@@ -472,7 +472,7 @@ class TestAnalyzeTracesIsSaved:
             ),
         ]
 
-        with patch("db_mcp.training.store.load_examples", mock_loader):
+        with patch("db_mcp_knowledge.training.store.load_examples", mock_loader):
             result = analyze_traces(traces, connection_path=conn_path)
 
         errors = result["errors"]
@@ -501,7 +501,7 @@ class TestAnalyzeTracesIsSaved:
             ),
         ]
 
-        with patch("db_mcp.training.store.load_examples", mock_loader):
+        with patch("db_mcp_knowledge.training.store.load_examples", mock_loader):
             result = analyze_traces(traces, connection_path=conn_path)
 
         errors = result["errors"]

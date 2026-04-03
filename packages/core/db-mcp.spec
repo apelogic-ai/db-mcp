@@ -16,7 +16,14 @@ from PyInstaller.utils.hooks import copy_metadata, collect_data_files
 # Get the app directory
 app_dir = Path(SPECPATH)
 src_dir = app_dir / "src"
-resources_dir = app_dir.parent.parent / "packages" / "resources"
+repo_root = app_dir.parent.parent
+resources_dir = repo_root / "packages" / "resources"
+
+# All workspace package source directories (for pathex)
+workspace_src_dirs = [
+    str(repo_root / "packages" / pkg / "src")
+    for pkg in ("core", "cli", "data", "knowledge", "mcp-server", "models")
+]
 
 block_cipher = None
 
@@ -70,28 +77,39 @@ if static_dir.exists():
     datas.append((str(static_dir), "db_mcp/static"))
 
 a = Analysis(
-    [str(src_dir / "db_mcp" / "cli" / "__main__.py")],
-    pathex=[str(src_dir)],
+    [str(repo_root / "packages" / "cli" / "src" / "db_mcp_cli" / "__main__.py")],
+    pathex=workspace_src_dirs,
     binaries=binaries,
     datas=datas,
     hiddenimports=[
-        # CLI package and submodules
+        # CLI package
         "db_mcp.cli",
-        "db_mcp.cli.main",
-        "db_mcp.cli.connection",
-        "db_mcp.cli.git_ops",
-        "db_mcp.cli.agent_config",
-        "db_mcp.cli.discovery",
-        "db_mcp.cli.init_flow",
-        "db_mcp.cli.utils",
-        "db_mcp.cli.commands",
-        "db_mcp.cli.commands.core",
-        "db_mcp.cli.commands.collab",
-        "db_mcp.cli.commands.traces",
-        "db_mcp.cli.commands.git_cmds",
-        "db_mcp.cli.commands.agents_cmd",
-        "db_mcp.cli.commands.discover_cmd",
-        "db_mcp.cli.commands.services",
+        "db_mcp_cli",
+        "db_mcp_cli.main",
+        "db_mcp_cli.connection",
+        "db_mcp_cli.git_ops",
+        "db_mcp_cli.agent_config",
+        "db_mcp_cli.discovery",
+        "db_mcp_cli.init_flow",
+        "db_mcp_cli.utils",
+        "db_mcp_cli.commands",
+        "db_mcp_cli.commands.core",
+        "db_mcp_cli.commands.collab",
+        "db_mcp_cli.commands.traces",
+        "db_mcp_cli.commands.git_cmds",
+        "db_mcp_cli.commands.agents_cmd",
+        "db_mcp_cli.commands.discover_cmd",
+        "db_mcp_cli.commands.services",
+        "db_mcp_cli.commands.connector_cmd",
+        "db_mcp_cli.commands.domain_cmd",
+        "db_mcp_cli.commands.examples_cmd",
+        "db_mcp_cli.commands.gaps_cmd",
+        "db_mcp_cli.commands.metrics_cmd",
+        "db_mcp_cli.commands.query_cmd",
+        "db_mcp_cli.commands.rules_cmd",
+        "db_mcp_cli.commands.runtime_cmd",
+        "db_mcp_cli.commands.schema_cmd",
+        "db_mcp_cli.commands.insider",
         # SQLAlchemy dialects
         "sqlalchemy.dialects.postgresql",
         "sqlalchemy.dialects.mysql",
@@ -157,7 +175,28 @@ a = Analysis(
         "db_mcp.console.ui",
         "db_mcp.console.exporter",
         "db_mcp.console.http_exporter",
-        "db_mcp.console.instrument",
+        # API router handlers (Phase 8 — split from router.py)
+        "db_mcp.api.helpers",
+        "db_mcp.api.handlers",
+        "db_mcp.api.handlers.connections",
+        "db_mcp.api.handlers.context",
+        "db_mcp.api.handlers.git",
+        "db_mcp.api.handlers.traces",
+        "db_mcp.api.handlers.insights",
+        "db_mcp.api.handlers.metrics",
+        "db_mcp.api.handlers.schema",
+        "db_mcp.api.handlers.agents",
+        "db_mcp.api.handlers.playground",
+        # Services (Phase 8 — new/refactored)
+        "db_mcp.services.environment",
+        # MCP server (Phase 8 — tool registration extracted)
+        "db_mcp_server.tool_registration",
+        # Data connectors (Phase 8 — split from api.py)
+        "db_mcp_data.connectors.api_auth",
+        "db_mcp_data.connectors.api_pagination",
+        "db_mcp_data.connectors.api_schema",
+        # Knowledge vault paths (Phase 8)
+        "db_mcp_knowledge.vault.paths",
         # Other
         "email.mime.text",
         "email.mime.multipart",

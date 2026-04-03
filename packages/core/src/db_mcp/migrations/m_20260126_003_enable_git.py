@@ -38,7 +38,7 @@ def enable_git(connection_path: Path) -> bool:
     Returns:
         True if migration succeeded, False on error
     """
-    from db_mcp.git_utils import git
+    from db_mcp_knowledge.git_utils import git
 
     # Already has git - nothing to do
     if git.is_repo(connection_path):

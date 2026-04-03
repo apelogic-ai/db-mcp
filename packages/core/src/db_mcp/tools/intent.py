@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from db_mcp.orchestrator.engine import answer_intent
-from db_mcp.tools.shell import inject_protocol
+from db_mcp.tools.protocol import inject_protocol
 
 
 async def _answer_intent(

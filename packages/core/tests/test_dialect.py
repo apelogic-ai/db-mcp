@@ -5,9 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from db_mcp.dialect import get_dialect_file_path, load_dialect_rules
-from db_mcp.tools.dialect import _get_dialect_rules
+from db_mcp_data.dialect import get_dialect_file_path, load_dialect_rules
 
 
 @pytest.fixture
@@ -42,18 +40,12 @@ def temp_resources_dir(monkeypatch):
         with open(dialects_dir / "postgresql.yaml", "w") as f:
             yaml.dump(pg_data, f)
 
-        monkeypatch.setenv("RESOURCES_DIR", tmpdir)
-
-        import db_mcp.config
-
-        db_mcp.config._settings = None
-
-        yield tmpdir
+        yield Path(tmpdir)
 
 
 def test_get_dialect_file_path_trino(temp_resources_dir):
     """Test finding Trino dialect file."""
-    path = get_dialect_file_path("trino")
+    path = get_dialect_file_path("trino", resources_dir=temp_resources_dir)
     assert path is not None
     assert path.exists()
     assert "trino.yaml" in str(path)
@@ -61,7 +53,7 @@ def test_get_dialect_file_path_trino(temp_resources_dir):
 
 def test_load_dialect_rules_trino(temp_resources_dir):
     """Test loading Trino dialect rules."""
-    result = load_dialect_rules("trino")
+    result = load_dialect_rules("trino", resources_dir=temp_resources_dir)
     assert result["found"] is True
     assert result["dialect"] == "trino"
     assert len(result["rules"]) > 0
@@ -70,7 +62,7 @@ def test_load_dialect_rules_trino(temp_resources_dir):
 
 def test_load_dialect_rules_postgresql(temp_resources_dir):
     """Test loading PostgreSQL dialect rules."""
-    result = load_dialect_rules("postgresql")
+    result = load_dialect_rules("postgresql", resources_dir=temp_resources_dir)
     assert result["found"] is True
     assert result["dialect"] == "postgresql"
     assert len(result["rules"]) > 0
@@ -78,16 +70,9 @@ def test_load_dialect_rules_postgresql(temp_resources_dir):
 
 def test_load_dialect_rules_unknown(temp_resources_dir):
     """Test loading unknown dialect."""
-    result = load_dialect_rules("unknowndb")
+    result = load_dialect_rules("unknowndb", resources_dir=temp_resources_dir)
     assert result["found"] is False
     assert result["dialect"] == "unknowndb"
     assert "No dialect file found" in result["error"]
 
 
-@pytest.mark.asyncio
-async def test_get_dialect_rules_tool(temp_resources_dir):
-    """Test get_dialect_rules MCP tool."""
-    result = await _get_dialect_rules("trino")
-    assert result["found"] is True
-    assert "rules" in result
-    assert len(result["rules"]) > 0

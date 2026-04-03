@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from typing import (
+    Any as Context,  # noqa: UP006 — Context was fastmcp.Context; moved to mcp-server in Phase 3
+)
 
-from fastmcp import Context
+from db_mcp_knowledge.vault.paths import PROTOCOL_FILE
 
 from db_mcp.exec_runtime import (
     ExecRuntimeError,
@@ -16,6 +18,7 @@ from db_mcp.exec_runtime import (
     derive_allowed_endpoint,
     get_exec_session_manager,
 )
+from db_mcp.services.environment import build_sandbox_environment
 from db_mcp.tools.utils import require_connection, resolve_connection
 
 
@@ -26,49 +29,6 @@ class _ProtocolAck:
 
 
 _protocol_acks: dict[tuple[str, str], _ProtocolAck] = {}
-
-
-def _load_connection_env(connection_path: Path) -> dict[str, str]:
-    env_path = connection_path / ".env"
-    if not env_path.exists():
-        return {}
-
-    values: dict[str, str] = {}
-    for raw_line in env_path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key] = value.strip().strip("\"'")
-    return values
-
-
-def _build_exec_environment(
-    connection_name: str,
-    connection_path: Path,
-    connector: object,
-) -> dict[str, str]:
-    config = getattr(connector, "config", None)
-    api_config = getattr(connector, "api_config", None)
-
-    database_url = getattr(config, "database_url", "") or ""
-    base_url = getattr(config, "base_url", "") or getattr(api_config, "base_url", "") or ""
-    capabilities = getattr(config, "capabilities", {}) or {}
-
-    env = _load_connection_env(connection_path)
-    if database_url:
-        env["DATABASE_URL"] = database_url
-    if base_url:
-        env["BASE_URL"] = base_url
-    if isinstance(capabilities.get("connect_args"), dict):
-        env["DB_MCP_CONNECT_ARGS_JSON"] = json.dumps(capabilities["connect_args"])
-
-    env["CONNECTION_NAME"] = connection_name
-    env["CONNECTION_PATH"] = "/workspace"
-    env["VAULT_PATH"] = "/workspace"
-    env["HOME"] = "/workspace"
-    env["PYTHONUNBUFFERED"] = "1"
-    return env
 
 
 def _build_exec_spec(connection: str, *, session_id: str) -> ExecSandboxSpec:
@@ -86,12 +46,12 @@ def _build_exec_spec(connection: str, *, session_id: str) -> ExecSandboxSpec:
         connection=connection_name,
         connection_path=Path(connection_path),
         allowed_endpoint=derive_allowed_endpoint(database_url, base_url=base_url),
-        environment=_build_exec_environment(connection_name, Path(connection_path), connector),
+        environment=build_sandbox_environment(connection_name, Path(connection_path), connector),
     )
 
 
 def _protocol_fingerprint(connection_path: Path) -> tuple[int, int]:
-    protocol_path = connection_path / "PROTOCOL.md"
+    protocol_path = connection_path / PROTOCOL_FILE
     stat = protocol_path.stat()
     return (stat.st_mtime_ns, stat.st_size)
 
@@ -104,7 +64,7 @@ def _is_protocol_read_command(command: str) -> bool:
 
     if len(parts) != 2:
         return False
-    return parts[0] in {"cat", "head"} and parts[1] == "PROTOCOL.md"
+    return parts[0] in {"cat", "head"} and parts[1] == PROTOCOL_FILE
 
 
 def _protocol_gate_result() -> dict[str, object]:

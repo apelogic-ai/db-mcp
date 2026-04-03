@@ -1,9 +1,8 @@
 """Tests for deterministic semantic planning."""
 
+from db_mcp_knowledge.planner.meta_query import compile_metric_intent, resolve_metric
+from db_mcp_knowledge.semantic.core_loader import ConnectionSemanticCore
 from db_mcp_models import Dimension, DimensionType, ExpectedCardinality, Metric
-
-from db_mcp.planner.meta_query import compile_metric_intent, resolve_metric
-from db_mcp.semantic.core_loader import ConnectionSemanticCore
 
 
 def _semantic_core() -> ConnectionSemanticCore:

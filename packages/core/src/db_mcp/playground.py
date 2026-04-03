@@ -10,8 +10,8 @@ import shutil
 from pathlib import Path
 
 import yaml
-
-from db_mcp.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
+from db_mcp_data.contracts.connector_contracts import CONNECTOR_SPEC_VERSION
+from db_mcp_knowledge.vault.paths import connector_path as _connector_path
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def _get_data_dir() -> Path:
 def is_playground_installed() -> bool:
     """Check if the playground connection exists."""
     playground_dir = _get_connections_dir() / PLAYGROUND_CONNECTION_NAME
-    return playground_dir.exists() and (playground_dir / "connector.yaml").exists()
+    return playground_dir.exists() and _connector_path(playground_dir).exists()
 
 
 def install_playground() -> dict:
@@ -52,10 +52,10 @@ def install_playground() -> dict:
     if is_playground_installed():
         # Already installed — return existing info
         playground_dir = _get_connections_dir() / PLAYGROUND_CONNECTION_NAME
-        connector_path = playground_dir / "connector.yaml"
+        connector_file = _connector_path(playground_dir)
         db_url = ""
-        if connector_path.exists():
-            with open(connector_path) as f:
+        if connector_file.exists():
+            with open(connector_file) as f:
                 config = yaml.safe_load(f) or {}
                 db_url = config.get("database_url", "")
         return {
@@ -92,7 +92,7 @@ def install_playground() -> dict:
     database_url = f"sqlite:///{chinook_dest}"
 
     # Create connector.yaml with just the connection info
-    connector_path = playground_dir / "connector.yaml"
+    connector_file = _connector_path(playground_dir)
     config = {
         "spec_version": CONNECTOR_SPEC_VERSION,
         "type": "sql",
@@ -100,7 +100,7 @@ def install_playground() -> dict:
         "database_url": database_url,
         "capabilities": {"supports_validate_sql": False},
     }
-    with open(connector_path, "w") as f:
+    with open(connector_file, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
     # Create .env file with DATABASE_URL

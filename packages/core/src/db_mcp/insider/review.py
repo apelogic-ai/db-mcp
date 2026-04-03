@@ -11,9 +11,9 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 import yaml
+from db_mcp_knowledge.onboarding.schema_store import load_schema_descriptions
 
 from db_mcp.insider.models import InsiderProposalBundle
-from db_mcp.onboarding.schema_store import load_schema_descriptions
 
 
 def _sha256_text(text: str) -> str:

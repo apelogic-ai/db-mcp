@@ -2,11 +2,15 @@
 
 from pathlib import Path
 
+from db_mcp_knowledge.onboarding.schema_store import (
+    create_initial_schema,
+    save_schema_descriptions,
+)
+
 from db_mcp.insider.config import InsiderConfig
 from db_mcp.insider.review import ReviewApplier
 from db_mcp.insider.services import InsiderService
 from db_mcp.insider.store import InsiderStore
-from db_mcp.onboarding.schema_store import create_initial_schema, save_schema_descriptions
 
 
 def _enabled_config() -> InsiderConfig:

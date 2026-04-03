@@ -40,10 +40,10 @@ export default defineConfig({
       `cd ../..; ` +
       `./scripts/stage_ui_static.sh --build --label playwright-real; ` +
       // Ensure python can import workspace packages when running from source (CI uv workspace).
-      `export PYTHONPATH="$PWD/packages/core/src:$PWD/packages/models/src${process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : ""}"; ` +
+      `export PYTHONPATH="$PWD/packages/core/src:$PWD/packages/models/src:$PWD/packages/cli/src${process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : ""}"; ` +
       // Prefer local venv if present, otherwise fall back to python on PATH.
       `PY=./.venv/bin/python; if [ ! -x "$PY" ]; then PY=python3; fi; ` +
-      `$PY -m db_mcp.cli ui --host 127.0.0.1 --port ${port}'`,
+      `$PY -m db_mcp_cli ui --host 127.0.0.1 --port ${port}'`,
     url: `http://127.0.0.1:${port}/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

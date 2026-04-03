@@ -8,8 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import yaml
-
-from db_mcp.cli.utils import (
+from db_mcp_cli.utils import (
     _get_cli_version,
     get_claude_desktop_config_path,
     is_claude_desktop_installed,
@@ -22,14 +21,14 @@ from db_mcp.cli.utils import (
 
 class TestGetCliVersion:
     def test_returns_version_string_when_installed(self):
-        with patch("db_mcp.cli.utils.version", return_value="1.2.3"):
+        with patch("db_mcp_cli.utils.version", return_value="1.2.3"):
             result = _get_cli_version()
         assert result == "1.2.3"
 
     def test_returns_unknown_when_not_installed(self):
         from importlib.metadata import PackageNotFoundError
 
-        with patch("db_mcp.cli.utils.version", side_effect=PackageNotFoundError("db-mcp")):
+        with patch("db_mcp_cli.utils.version", side_effect=PackageNotFoundError("db-mcp")):
             result = _get_cli_version()
         assert result == "unknown"
 
@@ -37,14 +36,14 @@ class TestGetCliVersion:
 class TestLoadConfig:
     def test_returns_empty_dict_when_no_file(self, tmp_path):
         fake_config = tmp_path / "config.yaml"
-        with patch("db_mcp.cli.utils.CONFIG_FILE", fake_config):
+        with patch("db_mcp_cli.utils.CONFIG_FILE", fake_config):
             result = load_config()
         assert result == {}
 
     def test_loads_yaml_from_file(self, tmp_path):
         fake_config = tmp_path / "config.yaml"
         fake_config.write_text(yaml.dump({"active_connection": "mydb", "tool_mode": "shell"}))
-        with patch("db_mcp.cli.utils.CONFIG_FILE", fake_config):
+        with patch("db_mcp_cli.utils.CONFIG_FILE", fake_config):
             result = load_config()
         assert result["active_connection"] == "mydb"
         assert result["tool_mode"] == "shell"
@@ -52,7 +51,7 @@ class TestLoadConfig:
     def test_returns_empty_dict_for_empty_file(self, tmp_path):
         fake_config = tmp_path / "config.yaml"
         fake_config.write_text("")
-        with patch("db_mcp.cli.utils.CONFIG_FILE", fake_config):
+        with patch("db_mcp_cli.utils.CONFIG_FILE", fake_config):
             result = load_config()
         assert result == {}
 
@@ -63,8 +62,8 @@ class TestSaveConfig:
         fake_config_file = fake_config_dir / "config.yaml"
 
         with (
-            patch("db_mcp.cli.utils.CONFIG_DIR", fake_config_dir),
-            patch("db_mcp.cli.utils.CONFIG_FILE", fake_config_file),
+            patch("db_mcp_cli.utils.CONFIG_DIR", fake_config_dir),
+            patch("db_mcp_cli.utils.CONFIG_FILE", fake_config_file),
         ):
             save_config({"active_connection": "prod", "tool_mode": "shell"})
 
@@ -80,8 +79,8 @@ class TestSaveConfig:
         fake_config_file.write_text(yaml.dump({"old_key": "old_val"}))
 
         with (
-            patch("db_mcp.cli.utils.CONFIG_DIR", fake_config_dir),
-            patch("db_mcp.cli.utils.CONFIG_FILE", fake_config_file),
+            patch("db_mcp_cli.utils.CONFIG_DIR", fake_config_dir),
+            patch("db_mcp_cli.utils.CONFIG_FILE", fake_config_file),
         ):
             save_config({"new_key": "new_val"})
 
@@ -92,7 +91,7 @@ class TestSaveConfig:
 
 class TestGetClaudeDesktopConfigPath:
     def test_macos_path(self):
-        with patch("db_mcp.cli.utils.platform.system", return_value="Darwin"):
+        with patch("db_mcp_cli.utils.platform.system", return_value="Darwin"):
             result = get_claude_desktop_config_path()
         assert "Library" in str(result)
         assert "Claude" in str(result)
@@ -100,7 +99,7 @@ class TestGetClaudeDesktopConfigPath:
 
     def test_windows_path(self):
         with (
-            patch("db_mcp.cli.utils.platform.system", return_value="Windows"),
+            patch("db_mcp_cli.utils.platform.system", return_value="Windows"),
             patch.dict("os.environ", {"APPDATA": "C:\\Users\\user\\AppData\\Roaming"}),
         ):
             result = get_claude_desktop_config_path()
@@ -109,14 +108,14 @@ class TestGetClaudeDesktopConfigPath:
 
     def test_windows_path_fallback_without_appdata(self):
         with (
-            patch("db_mcp.cli.utils.platform.system", return_value="Windows"),
+            patch("db_mcp_cli.utils.platform.system", return_value="Windows"),
             patch.dict("os.environ", {"USERPROFILE": "C:\\Users\\user"}, clear=True),
         ):
             result = get_claude_desktop_config_path()
         assert str(result) == "C:\\Users\\user/AppData/Roaming/Claude/claude_desktop_config.json"
 
     def test_linux_path(self):
-        with patch("db_mcp.cli.utils.platform.system", return_value="Linux"):
+        with patch("db_mcp_cli.utils.platform.system", return_value="Linux"):
             result = get_claude_desktop_config_path()
         assert ".config" in str(result)
         assert "Claude" in str(result)
@@ -125,7 +124,7 @@ class TestGetClaudeDesktopConfigPath:
 class TestLoadClaudeDesktopConfig:
     def test_returns_empty_when_file_missing(self, tmp_path):
         fake_path = tmp_path / "claude_desktop_config.json"
-        with patch("db_mcp.cli.utils.get_claude_desktop_config_path", return_value=fake_path):
+        with patch("db_mcp_cli.utils.get_claude_desktop_config_path", return_value=fake_path):
             config, path = load_claude_desktop_config()
         assert config == {}
         assert path == fake_path
@@ -135,7 +134,7 @@ class TestLoadClaudeDesktopConfig:
         fake_path.write_text(
             json.dumps({"mcpServers": {"db-mcp": {"command": "/usr/bin/db-mcp"}}})
         )
-        with patch("db_mcp.cli.utils.get_claude_desktop_config_path", return_value=fake_path):
+        with patch("db_mcp_cli.utils.get_claude_desktop_config_path", return_value=fake_path):
             config, path = load_claude_desktop_config()
         assert "mcpServers" in config
         assert "db-mcp" in config["mcpServers"]
@@ -144,8 +143,8 @@ class TestLoadClaudeDesktopConfig:
         fake_path = tmp_path / "claude_desktop_config.json"
         fake_path.write_text("{ invalid json }")
         with (
-            patch("db_mcp.cli.utils.get_claude_desktop_config_path", return_value=fake_path),
-            patch("db_mcp.cli.utils.console"),
+            patch("db_mcp_cli.utils.get_claude_desktop_config_path", return_value=fake_path),
+            patch("db_mcp_cli.utils.console"),
         ):
             config, path = load_claude_desktop_config()
         assert config == {}
@@ -173,8 +172,8 @@ class TestIsClaudeDesktopInstalled:
         fake_app = tmp_path / "Claude.app"
         fake_app.mkdir()
         with (
-            patch("db_mcp.cli.utils.platform.system", return_value="Darwin"),
-            patch("db_mcp.cli.utils.Path", side_effect=lambda *a: Path(*a)),
+            patch("db_mcp_cli.utils.platform.system", return_value="Darwin"),
+            patch("db_mcp_cli.utils.Path", side_effect=lambda *a: Path(*a)),
             patch("pathlib.Path.__new__", return_value=fake_app),
         ):
             # Simpler approach: just check the logic works on Darwin
@@ -183,7 +182,7 @@ class TestIsClaudeDesktopInstalled:
 
     def test_linux_not_installed(self):
         with (
-            patch("db_mcp.cli.utils.platform.system", return_value="Linux"),
+            patch("db_mcp_cli.utils.platform.system", return_value="Linux"),
             patch("pathlib.Path.exists", return_value=False),
         ):
             result = is_claude_desktop_installed()

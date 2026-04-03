@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+from db_mcp_data.connectors import _load_api_config, _load_file_config, _load_sql_config
+from db_mcp_data.connectors.api import APIConnectorConfig
+from db_mcp_data.connectors.file import FileConnectorConfig
+from db_mcp_data.connectors.sql import SQLConnectorConfig
 
 from db_mcp.config import Settings
-from db_mcp.connectors import _load_api_config, _load_file_config, _load_sql_config
-from db_mcp.connectors.api import APIConnectorConfig
-from db_mcp.connectors.file import FileConnectorConfig
-from db_mcp.connectors.sql import SQLConnectorConfig
 from db_mcp.registry import ConnectionRegistry
 from db_mcp.tools.utils import resolve_connection
 

@@ -20,7 +20,7 @@ function formatDuration(ms: number): string {
 }
 
 export default function HomePage() {
-  const { isInitialized, call } = useBICP();
+  const { call } = useBICP();
   const { activeConnection, connections, isLoading: connectionsLoading } =
     useConnections();
 
@@ -29,7 +29,7 @@ export default function HomePage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
 
   const load = useCallback(async () => {
-    if (!isInitialized || connectionsLoading) {
+    if (connectionsLoading) {
       return;
     }
 
@@ -59,7 +59,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [activeConnection, call, connectionsLoading, isInitialized]);
+  }, [activeConnection, call, connectionsLoading]);
 
   useEffect(() => {
     load();

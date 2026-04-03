@@ -1,6 +1,7 @@
 """MCP tools for knowledge gaps inspection, resolution, and dismissal."""
 
-from db_mcp.gaps.store import auto_resolve_gaps, dismiss_gap, load_gaps
+from db_mcp_knowledge.gaps.store import auto_resolve_gaps, dismiss_gap, load_gaps
+
 from db_mcp.tools.utils import resolve_connection
 
 

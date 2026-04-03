@@ -1,6 +1,6 @@
 """Tests for tool catalog discovery and SDK rendering."""
 
-from db_mcp.tool_catalog import render_python_sdk, search_tool_catalog
+from db_mcp_server.tool_catalog import render_python_sdk, search_tool_catalog
 
 
 def test_search_tool_catalog_ranks_name_matches_first():
