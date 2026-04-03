@@ -1,15 +1,16 @@
 """Query training MCP tools - examples, feedback, and rule distillation."""
 
+import uuid
+
 from db_mcp_knowledge.onboarding.schema_store import load_schema_descriptions
 from db_mcp_knowledge.onboarding.state import load_state
 from db_mcp_knowledge.training.store import (
     add_example,
-    add_feedback,
-    add_rule,
     load_examples,
     load_feedback,
     load_instructions,
 )
+from db_mcp_knowledge.vault.schema_registry import vault_write_typed
 from db_mcp_models import FeedbackType
 from opentelemetry import trace
 
@@ -182,38 +183,36 @@ async def _query_approve(
         Dict with approval status
     """
     # Resolve connection for validation and provider_id
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, conn_path = resolve_connection(connection)
 
-    result = add_example(
-        provider_id=provider_id,
-        natural_language=natural_language,
-        sql=sql,
-        tables_used=tables_used,
-        tags=tags,
-        notes=notes,
+    example_id = str(uuid.uuid4())[:8]
+    result = vault_write_typed(
+        "approved_example",
+        {
+            "id": example_id,
+            "natural_language": natural_language,
+            "sql": sql,
+            "tables_used": tables_used or [],
+            "tags": tags or [],
+            "notes": notes,
+        },
+        provider_id,
+        conn_path,
     )
 
-    if result.get("added"):
-        # Also log as approved feedback for tracking
-        add_feedback(
-            provider_id=provider_id,
-            natural_language=natural_language,
-            generated_sql=sql,
-            feedback_type=FeedbackType.APPROVED,
-            tables_involved=tables_used,
-        )
-
-        total = result["total_examples"]
+    if result.get("saved"):
+        examples = load_examples(provider_id)
+        total = examples.count()
 
         # Record knowledge capture in trace
         span = trace.get_current_span()
         span.set_attribute("knowledge.capture", "example_approved")
-        span.set_attribute("knowledge.example_id", result["example_id"])
+        span.set_attribute("knowledge.example_id", example_id)
         span.set_attribute("knowledge.total_examples", total)
 
         return {
             "status": "approved",
-            "example_id": result["example_id"],
+            "example_id": example_id,
             "total_examples": total,
             "file_path": result["file_path"],
             "message": f"Example added successfully. Total examples: {total}",
@@ -267,7 +266,7 @@ async def _query_feedback(
         Dict with feedback status
     """
     # Resolve connection for validation and provider_id
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, conn_path = resolve_connection(connection)
 
     # Validate feedback type
     try:
@@ -285,29 +284,23 @@ async def _query_feedback(
             "error": "corrected_sql is required when feedback_type is 'corrected'",
         }
 
-    result = add_feedback(
-        provider_id=provider_id,
-        natural_language=natural_language,
-        generated_sql=generated_sql,
-        feedback_type=fb_type,
-        corrected_sql=corrected_sql,
-        feedback_text=feedback_text,
-        tables_involved=tables_involved,
+    result = vault_write_typed(
+        "corrected_feedback",
+        {
+            "id": str(uuid.uuid4())[:8],
+            "natural_language": natural_language,
+            "generated_sql": generated_sql,
+            "feedback_type": fb_type.value,
+            "corrected_sql": corrected_sql,
+            "feedback_text": feedback_text,
+            "tables_involved": tables_involved or [],
+        },
+        provider_id,
+        conn_path,
     )
 
     if result.get("added"):
-        # If corrected, also add as an example
-        example_added = None
-        if fb_type == FeedbackType.CORRECTED and corrected_sql:
-            example_result = add_example(
-                provider_id=provider_id,
-                natural_language=natural_language,
-                sql=corrected_sql,
-                tables_used=tables_involved,
-                notes=f"Corrected from: {generated_sql[:100]}...",
-            )
-            if example_result.get("added"):
-                example_added = example_result["example_id"]
+        example_added = bool(fb_type == FeedbackType.CORRECTED and corrected_sql)
 
         # Record knowledge capture in trace
         span = trace.get_current_span()
@@ -355,9 +348,12 @@ async def _query_add_rule(
         Dict with rule addition status
     """
     # Resolve connection for validation and provider_id
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, conn_path = resolve_connection(connection)
 
-    result = add_rule(provider_id, rule)
+    try:
+        result = vault_write_typed("business_rule", {"rule": rule}, provider_id, conn_path)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
 
     if result.get("added"):
         total = result["total_rules"]

@@ -3,16 +3,12 @@
 
 from db_mcp_knowledge.metrics.mining import mine_metrics_and_dimensions
 from db_mcp_knowledge.metrics.store import (
-    add_dimension,
-    add_metric,
-    delete_dimension,
-    delete_metric,
     load_dimensions,
     load_metric_bindings,
     load_metrics,
-    upsert_metric_binding,
 )
-from db_mcp_models import MetricBinding, MetricDimensionBinding
+from db_mcp_knowledge.vault.schema_registry import vault_delete_typed, vault_write_typed
+from db_mcp_models import MetricDimensionBinding
 
 from db_mcp.services.metrics import serialize_metric_binding, validate_metric_binding
 from db_mcp.tools.utils import resolve_connection
@@ -174,13 +170,34 @@ async def _metrics_bindings_set(
         )
         dimension_bindings[dimension_binding.dimension_name] = dimension_binding
 
+    result = vault_write_typed(
+        "metric_binding",
+        {
+            "metric_name": metric_name,
+            "sql": sql,
+            "tables": tables or [],
+            "dimensions": {
+                name: {
+                    "dimension_name": db.dimension_name,
+                    "projection_sql": db.projection_sql,
+                    "filter_sql": db.filter_sql,
+                    "group_by_sql": db.group_by_sql,
+                    "tables": db.tables,
+                }
+                for name, db in dimension_bindings.items()
+            },
+        },
+        provider_id,
+        connection_path,
+    )
+    from db_mcp_models import MetricBinding
+
     binding = MetricBinding(
         metric_name=metric_name,
         sql=sql,
         tables=tables or [],
         dimensions=dimension_bindings,
     )
-    result = upsert_metric_binding(provider_id, binding, connection_path=connection_path)
     return {
         "saved": result.get("saved", False),
         "metric_name": metric_name,
@@ -301,21 +318,24 @@ async def _metrics_approve(
                 "error": "description is required for metrics",
                 "approved": False,
             }
-        result = add_metric(
-            provider_id=provider_id,
-            name=name,
-            description=description,
-            sql=sql,
-            connection_path=connection_path,
-            display_name=display_name,
-            tables=tables,
-            tags=tags,
-            dimensions=dimensions,
-            notes=notes,
-            status="approved",
+        result = vault_write_typed(
+            "metric",
+            {
+                "name": name,
+                "description": description,
+                "sql": sql,
+                "display_name": display_name,
+                "tables": tables or [],
+                "tags": tags or [],
+                "dimensions": dimensions or [],
+                "notes": notes,
+                "status": "approved",
+            },
+            provider_id,
+            connection_path,
         )
         return {
-            "approved": result.get("added", False),
+            "approved": result.get("saved", False),
             "type": "metric",
             "name": name,
             "warnings": (
@@ -338,20 +358,23 @@ async def _metrics_approve(
                 "error": "column is required for dimensions",
                 "approved": False,
             }
-        result = add_dimension(
-            provider_id=provider_id,
-            name=name,
-            column=column,
-            connection_path=connection_path,
-            description=description,
-            display_name=display_name,
-            dim_type=dim_type,
-            tables=tables,
-            values=values,
-            status="approved",
+        result = vault_write_typed(
+            "dimension",
+            {
+                "name": name,
+                "description": description,
+                "column": column,
+                "display_name": display_name,
+                "type": dim_type,
+                "tables": tables or [],
+                "values": values or [],
+                "status": "approved",
+            },
+            provider_id,
+            connection_path,
         )
         return {
-            "approved": result.get("added", False),
+            "approved": result.get("saved", False),
             "type": "dimension",
             "name": name,
             "guidance": {
@@ -441,20 +464,19 @@ async def _metrics_remove(type: str, name: str, connection: str) -> dict:
     _, provider_id, connection_path = resolve_connection(connection)
 
     if type == "metric":
-        result = delete_metric(provider_id, name, connection_path=connection_path)
-        return {
-            "removed": result.get("deleted", False),
-            "type": "metric",
-            "name": name,
-            "error": result.get("error"),
-        }
-    elif type == "dimension":
-        result = delete_dimension(provider_id, name, connection_path=connection_path)
-        return {
-            "removed": result.get("deleted", False),
-            "type": "dimension",
-            "name": name,
-            "error": result.get("error"),
-        }
+        try:
+            result = vault_delete_typed("metric_deletion", name, provider_id, connection_path)
+        except ValueError as e:
+            return {"removed": False, "type": "metric", "name": name, "error": str(e)}
+        return {"removed": result.get("deleted", False), "type": "metric", "name": name,
+                "error": result.get("error")}
+
+    if type == "dimension":
+        try:
+            result = vault_delete_typed("dimension_deletion", name, provider_id, connection_path)
+        except ValueError as e:
+            return {"removed": False, "type": "dimension", "name": name, "error": str(e)}
+        return {"removed": result.get("deleted", False), "type": "dimension", "name": name,
+                "error": result.get("error")}
 
     return {"error": f"Invalid type '{type}'. Use 'metric' or 'dimension'.", "removed": False}

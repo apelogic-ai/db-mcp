@@ -1,6 +1,7 @@
 """MCP tools for knowledge gaps inspection, resolution, and dismissal."""
 
-from db_mcp_knowledge.gaps.store import auto_resolve_gaps, dismiss_gap, load_gaps
+from db_mcp_knowledge.gaps.store import auto_resolve_gaps, load_gaps
+from db_mcp_knowledge.vault.schema_registry import vault_write_typed
 
 from db_mcp.tools.utils import resolve_connection
 
@@ -95,9 +96,21 @@ async def _dismiss_knowledge_gap(gap_id: str, connection: str, reason: str = "")
     Returns:
         Status dict with count of dismissed gaps.
     """
-    _, provider_id, _ = resolve_connection(connection)
+    _, provider_id, conn_path = resolve_connection(connection)
 
-    result = dismiss_gap(provider_id, gap_id, reason or None)
+    try:
+        result = vault_write_typed(
+            "gap_dismissal",
+            {"gap_id": gap_id, "reason": reason or None},
+            provider_id,
+            conn_path,
+        )
+    except ValueError as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "gap_id": gap_id,
+        }
 
     if result.get("dismissed"):
         return {
