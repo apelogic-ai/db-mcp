@@ -9,6 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.1] - 2026-04-03
+
+## Overview
+
+This release delivers a significant structural cleanup across the monorepo: contracts and connector capabilities are consolidated into `db_mcp_models`, the execution engine gains a generalized payload model, DuckDB state is extracted into a dedicated `DuckDBExecutor`, and the `APIConnector` gains native JSON-RPC 2.0 support. CLI connection resolution is now unified — both the CLI and MCP server resolve connections through `ConnectionRegistry`, eliminating divergent resolution paths. The `/release` skill and supporting TUI design documents are also included.
+
+## Highlights
+
+- **Unified connection resolution**: CLI and MCP server now share a single `ConnectionRegistry` path; `CONNECTION_NAME` env var is respected everywhere
+- **Generalized execution payloads**: `ExecutionRequest` now carries a typed `query_type + payload` dict, making the store extensible beyond SQL
+- **DuckDB extraction**: `DuckDBExecutor` is a standalone class; `FileConnector` and `APIConnector` compose it, fixing a silent cache-invalidation bug in `APIConnector.sync()`
+- **JSON-RPC 2.0 endpoints**: `body_mode: jsonrpc` in connector YAML routes POST requests through proper JSON-RPC envelopes
+- **Contracts to models**: `response_contracts` and `connector_contracts` moved to `db_mcp_models`; old paths are backward-compat shims
+- **`/release` skill**: new skill for cutting releases from the Claude Code CLI
+
+## New Features
+
+- `DuckDBExecutor` class (`packages/data/src/db_mcp_data/db/duckdb.py`) — isolated DuckDB state with `invalidate()`, `execute_sql()`, `get_columns()`, `get_table_sample()`
+- `body_mode: jsonrpc` support in `APIConnector` — wraps requests in JSON-RPC 2.0 envelope; unwraps `result`; raises on `error`
+- `db_mcp_models.connector`, `db_mcp_models.connector_capabilities`, `db_mcp_models.execution_contracts` — canonical locations for shared contract types
+- `db_mcp_cli.connection.resolve_connection()` — deduplicated from 8 command modules; test patch paths updated
+- `ExecutionRequest.query_type` / `.payload` / `.payload_hash` fields; `sql=` kwarg kept as backward-compat shim
+- TUI design documents: `docs/tui-design.md`, `docs/tui-implementation.md`
+
+## Bug Fixes
+
+- `APIConnector.sync()` now calls `_file_connector.invalidate_cache()` — previously was a no-op after the inheritance-to-composition refactor
+- `file_adapter.py`: `can_handle()` no longer excludes `APIConnector` via `isinstance` check
+
+## Files Changed
+
+| File / Directory | Change |
+|---|---|
+| `packages/models/src/db_mcp_models/connector.py` | New — connector protocol and capabilities models |
+| `packages/models/src/db_mcp_models/connector_capabilities.py` | New — `ConnectorCapabilities` moved from data package |
+| `packages/models/src/db_mcp_models/execution_contracts.py` | New — execution request/response contracts |
+| `packages/data/src/db_mcp_data/db/duckdb.py` | New — `DuckDBExecutor` extracted from file.py |
+| `packages/data/src/db_mcp_data/connectors/dialect.py` | New — `dialect.py` relocated from top-level |
+| `packages/data/src/db_mcp_data/connectors/templates.py` | New — `connector_templates.py` relocated |
+| `packages/data/src/db_mcp_data/connector_plugins/compat.py` | New — `connector_compat.py` relocated |
+| `packages/data/src/db_mcp_data/connectors/api.py` | `body_mode: jsonrpc` support; `_file_connector.invalidate_cache()` fix |
+| `packages/data/src/db_mcp_data/connectors/file.py` | Composes `DuckDBExecutor`; exposes `invalidate_cache()` |
+| `packages/data/src/db_mcp_data/execution/models.py` | `ExecutionRequest` generalized to typed payload |
+| `packages/data/src/db_mcp_data/execution/query_store.py` | `Query` converted to Pydantic; status renames; result storage removed |
+| `packages/core/src/db_mcp/registry.py` | `get_active_connection_name()` reads env var first |
+| `packages/cli/src/db_mcp_cli/connection.py` | `resolve_connection()` extracted; routes through registry |
+| `packages/data/tests/test_b1_duckdb_executor.py` | New — 10 TDD tests for `DuckDBExecutor` |
+| `packages/data/tests/test_b2d_payload_model.py` | New — 10 TDD tests for generalized `ExecutionRequest` |
+| `packages/data/tests/test_c1_jsonrpc_endpoint.py` | New — 7 TDD tests for JSON-RPC endpoint support |
+| `packages/core/tests/test_tools_api_query_engine.py` | New — 5 TDD tests for REST query via `ExecutionEngine` |
+| `.claude/skills/release/SKILL.md` | New — `/release` skill for cutting releases |
+| `docs/tui-design.md`, `docs/tui-implementation.md` | New — TUI design and implementation documents |
+
+## Testing
+
+- Core: 1135 tests
+- Knowledge: 214 tests
+- Data: 295 tests (up from 268 — 32 new TDD tests added this release)
+- CLI: 35 tests
+- UI: 25 tests
+- **Total: 1704 tests**
+- Lint: `ruff check` clean
+
+
 ## [0.9.0] - 2026-04-03
 
 ## Overview
