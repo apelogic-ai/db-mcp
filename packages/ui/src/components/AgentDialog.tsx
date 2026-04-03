@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { bicpCall } from "@/lib/bicp";
+import { apiCall } from "@/lib/bicp";
 
 interface Agent {
   id: string;
@@ -80,7 +80,7 @@ export function AgentDialog({
   const loadAgents = useCallback(async () => {
     setAgentsLoading(true);
     try {
-      const result = await bicpCall<AgentsListResult>("agents/list", {});
+      const result = await apiCall<AgentsListResult>("agents/list", {});
       setAgents(result.agents);
     } catch {
       setAgents([]);

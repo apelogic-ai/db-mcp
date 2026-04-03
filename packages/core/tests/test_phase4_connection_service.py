@@ -301,7 +301,7 @@ def test_test_database_url_success() -> None:
     mock_engine.connect.return_value.__enter__ = lambda s: mock_conn
     mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
 
-    with patch("db_mcp.services.connection.get_engine", return_value=mock_engine):
+    with patch("db_mcp.services.connection_test.get_engine", return_value=mock_engine):
         result = test_database_url("postgresql://user:pass@host/db")
 
     assert result["success"] is True
@@ -313,7 +313,7 @@ def test_test_database_url_failure() -> None:
     from db_mcp.services.connection import test_database_url
 
     with patch(
-        "db_mcp.services.connection.get_engine",
+        "db_mcp.services.connection_test.get_engine",
         side_effect=Exception("connection refused"),
     ):
         result = test_database_url("postgresql://user:pass@host/db")
@@ -335,7 +335,7 @@ def test_create_sql_connection_creates_directory_and_env_file(tmp_path: Path) ->
     config_file = tmp_path / "config.yaml"
 
     with patch(
-        "db_mcp.services.connection.test_database_url",
+        "db_mcp.services.connection_test.test_database_url",
         return_value={"success": True},
     ):
         result = create_sql_connection(
@@ -487,7 +487,7 @@ def test_build_api_template_descriptor_returns_none_for_unknown() -> None:
     from db_mcp.services.connection import build_api_template_descriptor
 
     with patch(
-        "db_mcp.services.connection.get_connector_template", return_value=None
+        "db_mcp.services.connection_crud.get_connector_template", return_value=None
     ):
         result = build_api_template_descriptor("nonexistent-template")
 
@@ -511,7 +511,7 @@ def test_build_api_template_descriptor_returns_descriptor_dict() -> None:
     mock_template.env = []
 
     with patch(
-        "db_mcp.services.connection.get_connector_template", return_value=mock_template
+        "db_mcp.services.connection_crud.get_connector_template", return_value=mock_template
     ):
         result = build_api_template_descriptor("shopify")
 

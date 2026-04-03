@@ -41,13 +41,13 @@ def _get_traces_dir(connection_path: Path, user_id: str) -> Path:
 
 
 def _read_traces_from_jsonl(file_path: Path, limit: int | None = 500) -> list[dict]:
-    from db_mcp.bicp.traces import read_traces_from_jsonl
+    from db_mcp.traces_reader import read_traces_from_jsonl
 
     return read_traces_from_jsonl(file_path, limit=limit)
 
 
 def _list_trace_dates_from_dir(connection_path: Path, user_id: str) -> list[str]:
-    from db_mcp.bicp.traces import list_trace_dates
+    from db_mcp.traces_reader import list_trace_dates
 
     return list_trace_dates(connection_path, user_id)
 

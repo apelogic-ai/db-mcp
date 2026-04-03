@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import requests
 
 if TYPE_CHECKING:
-    from db_mcp_data.connectors.api import APIAuthConfig, APIConnectorConfig
+    from db_mcp_data.connectors.api_config import APIAuthConfig, APIConnectorConfig
 
 
 def load_env(env_path: str | None, data_dir: Path) -> dict[str, str]:

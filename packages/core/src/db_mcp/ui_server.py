@@ -1,8 +1,7 @@
 """FastAPI server for db-mcp UI.
 
 This module provides a FastAPI server that:
-- Serves the BICP JSON-RPC endpoint for UI communication
-- Provides WebSocket streaming for notifications
+- Serves the REST API for UI communication (/api/*)
 - Serves static files for the UI build
 - Provides health checks
 """
@@ -14,18 +13,13 @@ import subprocess
 from contextlib import asynccontextmanager
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
 
-# Import the JSON-RPC request type from bicp_agent
-from bicp_agent.types import JsonRpcRequest
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from db_mcp.api.router import router as api_router
-from db_mcp.bicp import DBMCPAgent
 from db_mcp.code_runtime.http import runtime_router
 
 logger = logging.getLogger(__name__)
@@ -134,63 +128,13 @@ def validate_static_bundle_provenance() -> None:
 STATIC_DIR = get_static_dir()
 
 
-class JSONRPCRequest(BaseModel):
-    """JSON-RPC 2.0 request."""
-
-    jsonrpc: str = "2.0"
-    method: str
-    params: dict[str, Any] | list[Any] | None = None
-    id: str | int | None = None
-
-
-class JSONRPCError(BaseModel):
-    """JSON-RPC 2.0 error."""
-
-    code: int
-    message: str
-    data: Any | None = None
-
-
-class JSONRPCResponse(BaseModel):
-    """JSON-RPC 2.0 response."""
-
-    jsonrpc: str = "2.0"
-    result: Any | None = None
-    error: JSONRPCError | None = None
-    id: str | int | None = None
-
-
-# Global agent instance (initialized on startup)
-_agent: DBMCPAgent | None = None
-
-# Connected WebSocket clients for streaming notifications
-_ws_clients: set[WebSocket] = set()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global _agent
-
-    # Startup
     logger.info("Starting db-mcp UI server")
     validate_static_bundle_provenance()
-    _agent = DBMCPAgent()
-    logger.info("BICP agent initialized")
-
     yield
-
-    # Shutdown
     logger.info("Shutting down db-mcp UI server")
-    _agent = None
-
-    # Close all WebSocket connections
-    for ws in list(_ws_clients):
-        try:
-            await ws.close()
-        except Exception:
-            pass
-    _ws_clients.clear()
 
 
 def create_app() -> FastAPI:
@@ -277,98 +221,6 @@ def create_app() -> FastAPI:
                 status_code=400,
             )
 
-    @app.post("/bicp")
-    async def bicp_handler(request: JSONRPCRequest) -> JSONResponse:
-        """Handle BICP JSON-RPC requests.
-
-        Routes requests to the DBMCPAgent handler.
-        """
-        if _agent is None:
-            return JSONResponse(
-                content=JSONRPCResponse(
-                    error=JSONRPCError(
-                        code=-32603,
-                        message="Agent not initialized",
-                    ),
-                    id=request.id,
-                ).model_dump(),
-                status_code=500,
-            )
-
-        try:
-            # Convert params to dict if it's a list
-            params = request.params
-            if isinstance(params, list):
-                params = {"args": params}
-
-            # Build the JSON-RPC request for the agent
-            rpc_request = JsonRpcRequest(
-                jsonrpc="2.0",
-                id=request.id or 0,
-                method=request.method,
-                params=params,
-            )
-
-            # Route to agent handler
-            response = await _agent.handle_request(rpc_request)
-
-            # Return the response from the agent
-            return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
-
-        except ValueError as e:
-            # Invalid request
-            return JSONResponse(
-                content=JSONRPCResponse(
-                    error=JSONRPCError(
-                        code=-32602,
-                        message=str(e),
-                    ),
-                    id=request.id,
-                ).model_dump(),
-                status_code=400,
-            )
-
-        except Exception as e:
-            # Internal error
-            logger.exception(f"BICP handler error: {e}")
-            return JSONResponse(
-                content=JSONRPCResponse(
-                    error=JSONRPCError(
-                        code=-32603,
-                        message=f"Internal error: {e}",
-                    ),
-                    id=request.id,
-                ).model_dump(),
-                status_code=500,
-            )
-
-    @app.websocket("/bicp/stream")
-    async def bicp_stream(websocket: WebSocket):
-        """WebSocket endpoint for streaming BICP notifications.
-
-        Clients connect here to receive:
-        - query/progress: Query execution progress updates
-        - query/result: Query result notifications
-        """
-        await websocket.accept()
-        _ws_clients.add(websocket)
-        logger.info(f"WebSocket client connected. Total clients: {len(_ws_clients)}")
-
-        try:
-            while True:
-                # Keep connection alive, wait for messages from client
-                # For v0.1, we mainly use this for server->client notifications
-                data = await websocket.receive_text()
-                logger.debug(f"WebSocket received: {data}")
-
-        except WebSocketDisconnect:
-            logger.info("WebSocket client disconnected")
-        except Exception as e:
-            logger.warning(f"WebSocket error: {e}")
-        finally:
-            _ws_clients.discard(websocket)
-            logger.info(f"WebSocket client removed. Total clients: {len(_ws_clients)}")
-
     # Serve index.html for root
     @app.get("/")
     async def serve_root():
@@ -407,34 +259,6 @@ def create_app() -> FastAPI:
         app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
     return app
-
-
-async def broadcast_notification(notification_type: str, data: dict[str, Any]) -> None:
-    """Broadcast a notification to all connected WebSocket clients.
-
-    Args:
-        notification_type: Type of notification (e.g., "query/progress", "query/result")
-        data: Notification payload
-    """
-    if not _ws_clients:
-        return
-
-    message = {
-        "jsonrpc": "2.0",
-        "method": notification_type,
-        "params": data,
-    }
-
-    disconnected = set()
-    for ws in _ws_clients:
-        try:
-            await ws.send_json(message)
-        except Exception as e:
-            logger.warning(f"Failed to send notification: {e}")
-            disconnected.add(ws)
-
-    # Clean up disconnected clients
-    _ws_clients.difference_update(disconnected)
 
 
 def start_ui_server(host: str = "0.0.0.0", port: int = 8080, log_file: Path | None = None) -> None:

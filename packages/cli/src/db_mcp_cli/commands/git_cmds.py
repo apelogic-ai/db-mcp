@@ -6,7 +6,7 @@ import click
 from rich.panel import Panel
 from rich.prompt import Prompt
 
-from db_mcp_cli.commands.core import _get_git_remote_url
+from db_mcp_cli.commands.connection_cmd import _get_git_remote_url
 from db_mcp_cli.connection import (
     connection_exists,
     get_active_connection,

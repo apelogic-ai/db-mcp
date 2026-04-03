@@ -324,3 +324,29 @@ def reset_settings() -> None:
     """Reset cached settings (useful for testing)."""
     global _settings
     _settings = None
+
+
+# ---------------------------------------------------------------------------
+# Global CLI config file helpers (used by traces.py and other core modules)
+# ---------------------------------------------------------------------------
+
+import yaml  # noqa: E402  (imported here to avoid heavy dep at module load)
+
+CONFIG_DIR: Path = Path.home() / ".db-mcp"
+CONFIG_FILE: Path = CONFIG_DIR / "config.yaml"
+CONNECTIONS_DIR: Path = CONFIG_DIR / "connections"
+
+
+def load_config() -> dict:
+    """Load global db-mcp config from CONFIG_FILE."""
+    if not CONFIG_FILE.exists():
+        return {}
+    with open(CONFIG_FILE) as f:
+        return yaml.safe_load(f) or {}
+
+
+def save_config(config: dict) -> None:
+    """Persist global db-mcp config to CONFIG_FILE."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        yaml.dump(config, f, default_flow_style=False)

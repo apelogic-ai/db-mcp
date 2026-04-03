@@ -29,7 +29,7 @@ def generate_user_id() -> str:
 
 def get_user_id_from_config() -> str | None:
     """Get user_id from global config."""
-    from db_mcp.cli import CONFIG_FILE, load_config
+    from db_mcp.config import CONFIG_FILE, load_config
 
     if not CONFIG_FILE.exists():
         return None
@@ -39,7 +39,7 @@ def get_user_id_from_config() -> str | None:
 
 def set_user_id_in_config(user_id: str) -> None:
     """Set user_id in global config."""
-    from db_mcp.cli import load_config, save_config
+    from db_mcp.config import load_config, save_config
 
     config = load_config()
     config["user_id"] = user_id
@@ -48,7 +48,7 @@ def set_user_id_in_config(user_id: str) -> None:
 
 def is_traces_enabled() -> bool:
     """Check if traces are enabled in config."""
-    from db_mcp.cli import CONFIG_FILE, load_config
+    from db_mcp.config import CONFIG_FILE, load_config
 
     if not CONFIG_FILE.exists():
         return True

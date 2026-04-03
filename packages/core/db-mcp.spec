@@ -175,7 +175,6 @@ a = Analysis(
         "db_mcp.console.ui",
         "db_mcp.console.exporter",
         "db_mcp.console.http_exporter",
-        "db_mcp.console.instrument",
         # API router handlers (Phase 8 — split from router.py)
         "db_mcp.api.helpers",
         "db_mcp.api.handlers",

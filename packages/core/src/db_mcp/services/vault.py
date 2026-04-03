@@ -875,7 +875,7 @@ def get_context_usage(connection_path: Path, days: int = 7) -> dict:
     import time
     import urllib.parse
 
-    from db_mcp.bicp.traces import list_trace_dates, read_traces_from_jsonl
+    from db_mcp.traces_reader import list_trace_dates, read_traces_from_jsonl
 
     cutoff_time = time.time() - (days * 86400)
     traces_dir = connection_path / "traces"

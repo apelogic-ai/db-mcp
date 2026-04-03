@@ -8,7 +8,7 @@ from db_mcp_knowledge.training.store import load_instructions
 from db_mcp_models import BoundaryMode, SemanticPolicy
 from db_mcp_models.policy import TimeWindowPolicy, UnitConversionPolicy
 
-from db_mcp.bicp.traces import _check_knowledge_status
+from db_mcp.traces_reader import _check_knowledge_status
 
 
 def test_extract_business_rule_texts_supports_top_level_rule_list() -> None:

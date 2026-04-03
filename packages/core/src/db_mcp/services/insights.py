@@ -1,7 +1,10 @@
 """Insights and gaps services."""
 
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def dismiss_gap(connection: str, gap_id: str, reason: str | None = None) -> dict:
@@ -46,16 +49,16 @@ def save_example(connection: str, sql: str, intent: str) -> dict:
 
 def analyze_insights(connection_path: Path | None, days: int = 7) -> dict:
     """Analyze live and historical traces and refresh derived insights."""
-    from db_mcp.bicp.traces import analyze_traces, read_traces_from_jsonl
     from db_mcp.console.collector import get_collector
+    from db_mcp.traces_reader import analyze_traces, read_traces_from_jsonl
 
     all_traces: list[dict] = []
 
     try:
         live = get_collector().get_traces(limit=500)
         all_traces.extend(live)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("insights: failed to read live traces: %s", e)
 
     if connection_path:
         try:
@@ -73,8 +76,8 @@ def analyze_insights(connection_path: Path | None, days: int = 7) -> dict:
                         if file_path.exists():
                             day_traces = read_traces_from_jsonl(file_path, limit=500)
                             all_traces.extend(day_traces)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("insights: failed to read historical traces: %s", e)
 
     seen_ids: set[str] = set()
     unique_traces: list[dict] = []
@@ -91,8 +94,8 @@ def analyze_insights(connection_path: Path | None, days: int = 7) -> dict:
             from db_mcp_knowledge.insights.detector import scan_and_update
 
             scan_and_update(connection_path, analysis)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("insights: gap detector scan_and_update failed: %s", e)
 
         try:
             from db_mcp_knowledge.gaps.store import auto_resolve_gaps, load_gaps_from_path
@@ -161,7 +164,7 @@ def analyze_insights(connection_path: Path | None, days: int = 7) -> dict:
                 persisted_gaps = [_gap_to_entry(gaps) for gaps in groups.values()]
                 persisted_gaps.extend(_gap_to_entry([gap]) for gap in ungrouped)
                 analysis["vocabularyGaps"] = persisted_gaps
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("insights: failed to refresh vocabulary gaps: %s", e)
 
     return analysis

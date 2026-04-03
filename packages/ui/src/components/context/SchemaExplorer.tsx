@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { bicpCall } from "@/lib/bicp";
+import { apiCall } from "@/lib/bicp";
 import { cn } from "@/lib/utils";
 
 // Icons
@@ -226,7 +226,7 @@ export function SchemaExplorer({
     setIsLoading(true);
     setError(null);
     try {
-      const result = await bicpCall<{
+      const result = await apiCall<{
         success: boolean;
         catalogs: Array<string | null>;
         error?: string;
@@ -251,7 +251,7 @@ export function SchemaExplorer({
 
   const loadSchemas = useCallback(async (catalog: string | null) => {
     try {
-      const result = await bicpCall<{
+      const result = await apiCall<{
         success: boolean;
         schemas: SchemaInfo[];
         error?: string;
@@ -268,7 +268,7 @@ export function SchemaExplorer({
   const loadTables = useCallback(async (catalog: string | null, schema: string) => {
     const key = `${normalizeCatalogKey(catalog)}/${schema}`;
     try {
-      const result = await bicpCall<{
+      const result = await apiCall<{
         success: boolean;
         tables: TableInfo[];
         error?: string;
@@ -289,7 +289,7 @@ export function SchemaExplorer({
   ) => {
     const key = `${normalizeCatalogKey(catalog)}/${schema}/${table}`;
     try {
-      const result = await bicpCall<{
+      const result = await apiCall<{
         success: boolean;
         columns: ColumnInfo[];
         error?: string;

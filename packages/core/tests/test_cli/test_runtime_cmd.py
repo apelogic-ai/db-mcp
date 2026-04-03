@@ -472,7 +472,7 @@ def test_runtime_without_subcommand_starts_mcp_runtime_mode(tmp_path, monkeypatc
         lambda state: False,
     )
     monkeypatch.setattr(
-        "db_mcp_cli.commands.core.load_config",
+        "db_mcp_cli.commands.server_cmd.load_config",
         lambda: {"active_connection": connection_name, "tool_mode": "shell"},
     )
 

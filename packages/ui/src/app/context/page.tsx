@@ -41,7 +41,7 @@ interface DeleteResult {
 }
 
 export default function ContextPage() {
-  const { isInitialized, call } = useBICP();
+  const { call } = useBICP();
   const { activeConnection } = useConnections();
   const {
     connections,
@@ -101,8 +101,6 @@ export default function ContextPage() {
 
   // Fetch tree
   const fetchTree = useCallback(async () => {
-    if (!isInitialized) return;
-
     setTreeLoading(true);
     setTreeError(null);
     try {
@@ -118,11 +116,11 @@ export default function ContextPage() {
     } finally {
       setTreeLoading(false);
     }
-  }, [isInitialized, call, setConnections]);
+  }, [call, setConnections]);
 
   // Fetch usage data
   const fetchUsage = useCallback(async () => {
-    if (!isInitialized || connections.length === 0) {
+    if (connections.length === 0) {
       setUsage(null);
       return;
     }
@@ -169,7 +167,7 @@ export default function ContextPage() {
     } finally {
       setUsageLoading(false);
     }
-  }, [isInitialized, call, connections]);
+  }, [call, connections]);
 
   // Fetch file content
   const fetchFile = useCallback(

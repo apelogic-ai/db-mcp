@@ -229,15 +229,6 @@ wheels = [
 ]
 
 [[package]]
-name = "bicp-agent"
-version = "0.1.0"
-source = { git = "https://github.com/apelogic-ai/bicp.git?subdirectory=packages%2Fagent-python&rev=743ecc5#743ecc5af9e94487e2b38e0b296382dc98852270" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "pydantic" },
-]
-
-[[package]]
 name = "boto3"
 version = "1.42.32"
 source = { registry = "https://pypi.org/simple" }
@@ -627,7 +618,6 @@ name = "db-mcp"
 version = "0.8.12"
 source = { editable = "packages/core" }
 dependencies = [
-    { name = "bicp-agent" },
     { name = "clickhouse-sqlalchemy" },
     { name = "db-mcp-data" },
     { name = "db-mcp-knowledge" },
@@ -669,7 +659,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bicp-agent", git = "https://github.com/apelogic-ai/bicp.git?subdirectory=packages%2Fagent-python&rev=743ecc5" },
     { name = "clickhouse-sqlalchemy", specifier = ">=0.3.0" },
     { name = "db-mcp-cli", marker = "extra == 'dev'", editable = "packages/cli" },
     { name = "db-mcp-data", editable = "packages/data" },

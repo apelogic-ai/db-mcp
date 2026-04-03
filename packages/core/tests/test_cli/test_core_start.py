@@ -19,13 +19,13 @@ def test_start_honors_preconfigured_connection_environment(monkeypatch, tmp_path
         monkeypatch.setenv("CONNECTIONS_DIR", str(bench_connections_dir))
         monkeypatch.setenv("CONNECTION_PATH", str(bench_connection_path))
 
-        monkeypatch.setattr("db_mcp_cli.commands.core.CONFIG_FILE", config_file)
+        monkeypatch.setattr("db_mcp_cli.commands.server_cmd.CONFIG_FILE", config_file)
         monkeypatch.setattr(
-            "db_mcp_cli.commands.core.load_config",
+            "db_mcp_cli.commands.server_cmd.load_config",
             lambda: {"active_connection": "playground", "tool_mode": "shell", "log_level": "INFO"},
         )
         monkeypatch.setattr(
-            "db_mcp_cli.commands.core.get_connection_path",
+            "db_mcp_cli.commands.server_cmd.get_connection_path",
             lambda name: tmp_path / "wrong-from-cli" / name,
         )
         monkeypatch.setattr("db_mcp.migrations.run_migrations", lambda name: {"applied": []})

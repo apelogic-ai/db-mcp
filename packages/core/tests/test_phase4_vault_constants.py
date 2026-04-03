@@ -98,36 +98,3 @@ def test_read_context_file_uses_module_defaults_when_not_supplied(tmp_path: Path
     assert result.get("content")  # stock README for "schema" folder
 
 
-# ---------------------------------------------------------------------------
-# Agent class must not carry these as class attributes
-# ---------------------------------------------------------------------------
-
-
-def test_agent_class_has_no_folder_importance_attribute() -> None:
-    """DBMCPAgent must not define _FOLDER_IMPORTANCE as a class attribute."""
-    from db_mcp.bicp.agent import DBMCPAgent
-
-    assert not hasattr(DBMCPAgent, "_FOLDER_IMPORTANCE"), (
-        "DBMCPAgent._FOLDER_IMPORTANCE should be removed; "
-        "it now lives in db_mcp.services.vault.FOLDER_IMPORTANCE"
-    )
-
-
-def test_agent_class_has_no_expected_folders_attribute() -> None:
-    """DBMCPAgent must not define _EXPECTED_FOLDERS as a class attribute."""
-    from db_mcp.bicp.agent import DBMCPAgent
-
-    assert not hasattr(DBMCPAgent, "_EXPECTED_FOLDERS"), (
-        "DBMCPAgent._EXPECTED_FOLDERS should be removed; "
-        "it now lives in db_mcp.services.vault.EXPECTED_FOLDERS"
-    )
-
-
-def test_agent_class_has_no_stock_readmes_attribute() -> None:
-    """DBMCPAgent must not define _STOCK_READMES as a class attribute."""
-    from db_mcp.bicp.agent import DBMCPAgent
-
-    assert not hasattr(DBMCPAgent, "_STOCK_READMES"), (
-        "DBMCPAgent._STOCK_READMES should be removed; "
-        "it now lives in db_mcp.services.vault.STOCK_READMES"
-    )
