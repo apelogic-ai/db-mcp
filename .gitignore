@@ -57,7 +57,10 @@ demo.db
 
 node_modules/
 
-.claude/
+.claude/memory/
+.claude/plans/
+.claude/projects/
+.claude/todos/
 
 # Local benchmark artifacts
 packages/core/benchmark_runs/
