@@ -68,13 +68,20 @@ class CommandInput(Vertical):
         max-height: 16;
     }
     CommandInput > Input {
+        min-height: 1;
         height: 1;
-        border: none;
+        border-top: solid $accent-muted;
+        border-bottom: none;
+        border-left: none;
+        border-right: none;
         background: $surface;
         padding: 0 1;
     }
     CommandInput > Input:focus {
-        border: none;
+        border-top: solid $accent;
+        border-bottom: none;
+        border-left: none;
+        border-right: none;
     }
     """
 
