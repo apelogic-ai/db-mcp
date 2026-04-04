@@ -322,13 +322,59 @@ def up_cmd(
 
 
 @click.command("tui")
-@click.option("--host", default="127.0.0.1", show_default=True, help="Daemon host to connect to")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Daemon host")
 @click.option("--port", default=8080, show_default=True, type=int, help="Daemon port")
 @click.option("--agent", default=None, help="ACP agent command (default: claude-agent-acp)")
-def tui_cmd(host: str, port: int, agent: str | None) -> None:
-    """Open the terminal UI (connects to a running db-mcp daemon)."""
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> None:
+    """Open the terminal UI. Auto-starts the daemon if not running."""
     import shutil
     import subprocess
+    import time
+    import urllib.request
+
+    url = f"http://{host}:{port}"
+
+    # Check if daemon is already running
+    daemon_thread = None
+    try:
+        urllib.request.urlopen(f"{url}/health", timeout=1)
+    except Exception:
+        # Daemon not running — start it in background
+        console.print(f"[dim]Starting daemon on {url}...[/dim]")
+        _configure_service_environment(
+            connection,
+            tool_mode_override="daemon",
+            runtime_interface_override="native",
+        )
+        state = build_local_service_state(
+            connection=connection,
+            ui_host=host,
+            ui_port=port,
+            mcp_host=host,
+            mcp_port=port,
+            mcp_path="/mcp",
+            pid=os.getpid(),
+        )
+        write_local_service_state(state)
+        daemon_thread = threading.Thread(
+            target=_run_unified_server,
+            kwargs={"host": host, "port": port, "verbose": False},
+            daemon=True,
+            name="db-mcp-daemon",
+        )
+        daemon_thread.start()
+
+        # Wait for daemon to be ready
+        for _ in range(20):
+            try:
+                urllib.request.urlopen(f"{url}/health", timeout=0.5)
+                break
+            except Exception:
+                time.sleep(0.5)
+        else:
+            console.print("[red]Daemon failed to start[/red]")
+            raise SystemExit(1)
 
     # Find the TS TUI entry point
     tui_src = Path(__file__).resolve().parents[5] / "terminal" / "src" / "index.ts"
@@ -349,7 +395,7 @@ def tui_cmd(host: str, port: int, agent: str | None) -> None:
 
     env = {
         **os.environ,
-        "DB_MCP_URL": f"http://{host}:{port}",
+        "DB_MCP_URL": url,
     }
     if agent:
         env["DB_MCP_AGENT"] = agent
@@ -358,6 +404,9 @@ def tui_cmd(host: str, port: int, agent: str | None) -> None:
         subprocess.run(cmd, env=env, cwd=str(tui_src.parent.parent))
     except KeyboardInterrupt:
         pass
+    finally:
+        if daemon_thread:
+            clear_local_service_state()
 
 
 @click.group("serve")
