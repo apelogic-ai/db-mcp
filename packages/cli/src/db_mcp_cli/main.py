@@ -6,6 +6,7 @@ All command logic lives in db_mcp.cli.commands.* submodules.
 import click
 
 from db_mcp_cli.commands.agents_cmd import register_commands as register_agents
+from db_mcp_cli.commands.api_cmd import register_commands as register_api
 from db_mcp_cli.commands.collab import register_commands as register_collab
 from db_mcp_cli.commands.connector_cmd import register_commands as register_connector
 from db_mcp_cli.commands.core import register_commands as register_core
@@ -34,6 +35,7 @@ def main():
 
 register_core(main)
 register_agents(main)
+register_api(main)
 register_collab(main)
 register_traces(main)
 register_git(main)
