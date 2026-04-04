@@ -52,8 +52,36 @@ export class Agent {
     }
 
     // Spawn the agent process
-    this.process = spawnAgent(this.config.command, {
-      timeout: 60_000,
+    try {
+      this.process = spawnAgent(this.config.command, {
+        timeout: 60_000,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Could not start agent "${this.config.command.join(" ")}": ${msg}\n` +
+        `Install with: npm i -g @agentclientprotocol/claude-agent-acp`
+      );
+    }
+
+    // Handle spawn errors (e.g. ENOENT after async start)
+    await new Promise<void>((resolve, reject) => {
+      const proc = this.process!.process;
+      const onError = (err: Error) => {
+        cleanup();
+        this.process = null;
+        reject(new Error(
+          `Could not start agent "${this.config.command.join(" ")}": ${err.message}\n` +
+          `Install with: npm i -g @agentclientprotocol/claude-agent-acp`
+        ));
+      };
+      const onSpawn = () => { cleanup(); resolve(); };
+      const cleanup = () => {
+        proc.removeListener("error", onError);
+        proc.removeListener("spawn", onSpawn);
+      };
+      proc.once("error", onError);
+      proc.once("spawn", onSpawn);
     });
 
     this.process.onExit((code) => {
