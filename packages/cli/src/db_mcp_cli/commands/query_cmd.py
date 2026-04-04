@@ -30,8 +30,16 @@ def query_run(connection: str | None, sql: str, confirmed: bool, export_fmt: str
     if result.get("error"):
         raise click.ClickException(result["error"])
 
-    rows = result.get("rows", [])
+    data = result.get("data", result.get("rows", []))
     columns = result.get("columns", [])
+
+    # run_sql returns data as list[dict]; normalize to list[list] for uniform rendering
+    if data and isinstance(data[0], dict):
+        if not columns:
+            columns = list(data[0].keys())
+        rows = [list(row.values()) for row in data]
+    else:
+        rows = data
 
     if export_fmt == "csv":
         import csv
@@ -79,33 +87,46 @@ def query_validate(connection: str | None, sql: str):
         console.print(f"Query ID: {result['query_id']}")
 
 
+_SQL_KEYWORD_RE = __import__("re").compile(
+    r"^\s*(select|with|show|describe|explain)\b", __import__("re").IGNORECASE
+)
+
+
 @click.command("ask")
 @click.option("-c", "--connection", default=None, help="Connection name")
 @click.argument("intent")
 def ask_command(connection: str | None, intent: str):
     """Answer a natural language question about your data."""
+    if _SQL_KEYWORD_RE.match(intent):
+        raise click.UsageError(
+            "Intent looks like SQL. Use `db-mcp query run` to execute SQL directly."
+        )
+
     from db_mcp.orchestrator.engine import answer_intent
 
     name, _ = _resolve_connection(connection)
     result = asyncio.run(answer_intent(intent=intent, connection=name))
     if result.get("error"):
-        raise click.ClickException(result["error"])
+        error_msg = result["error"]
+        warnings = result.get("warnings", [])
+        if warnings:
+            error_msg += "\n  " + "\n  ".join(warnings)
+        raise click.ClickException(error_msg)
 
-    if result.get("sql"):
-        console.print(f"[bold]SQL:[/bold] {result['sql']}")
-    rows = result.get("rows", [])
-    columns = result.get("columns", [])
-    if rows:
+    if result.get("answer"):
+        console.print(result["answer"])
+
+    records = result.get("records", [])
+    if records:
         from rich.table import Table
 
+        columns = list(records[0].keys())
         table = Table()
         for col in columns:
             table.add_column(str(col))
-        for row in rows:
-            table.add_row(*[str(v) for v in row])
+        for record in records:
+            table.add_row(*[str(v) for v in record.values()])
         console.print(table)
-    elif result.get("answer"):
-        console.print(result["answer"])
 
 
 def register_commands(cli):
