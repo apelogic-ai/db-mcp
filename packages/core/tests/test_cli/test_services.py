@@ -43,19 +43,12 @@ def test_up_starts_local_service_and_writes_state(tmp_path, monkeypatch):
 
     captured: dict[str, object] = {}
 
-    def fake_start_ui_background_service(*, host: str, port: int, verbose: bool) -> None:
-        captured["ui"] = {"host": host, "port": port, "verbose": verbose}
-
-    def fake_run_http_mcp_service(*, host: str, port: int, path: str) -> None:
-        captured["mcp"] = {"host": host, "port": port, "path": path}
+    def fake_run_unified_server(*, host: str, port: int, verbose: bool) -> None:
+        captured["server"] = {"host": host, "port": port, "verbose": verbose}
 
     monkeypatch.setattr(
-        "db_mcp_cli.commands.services._start_ui_background_service",
-        fake_start_ui_background_service,
-    )
-    monkeypatch.setattr(
-        "db_mcp_cli.commands.services._run_http_mcp_service",
-        fake_run_http_mcp_service,
+        "db_mcp_cli.commands.services._run_unified_server",
+        fake_run_unified_server,
     )
 
     runner = CliRunner()
@@ -63,28 +56,21 @@ def test_up_starts_local_service_and_writes_state(tmp_path, monkeypatch):
         main,
         [
             "up",
-            "--ui-host",
+            "--host",
             "127.0.0.1",
-            "--ui-port",
-            "8088",
-            "--mcp-host",
-            "127.0.0.1",
-            "--mcp-port",
-            "8099",
-            "--mcp-path",
-            "/mcp",
+            "--port",
+            "9090",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["ui"] == {"host": "127.0.0.1", "port": 8088, "verbose": False}
-    assert captured["mcp"] == {"host": "127.0.0.1", "port": 8099, "path": "/mcp"}
+    assert captured["server"] == {"host": "127.0.0.1", "port": 9090, "verbose": False}
 
     state_path = config_dir / "local-service.json"
     payload = json.loads(state_path.read_text())
     assert payload["connection"] == connection_name
-    assert payload["ui_url"] == "http://127.0.0.1:8088"
-    assert payload["mcp_url"] == "http://127.0.0.1:8099/mcp"
+    assert payload["ui_url"] == "http://127.0.0.1:9090"
+    assert payload["mcp_url"] == "http://127.0.0.1:9090/mcp"
 
 
 def test_configure_service_environment_can_force_runtime_surface(tmp_path, monkeypatch):

@@ -173,8 +173,13 @@ def _resolve_tool_profile(settings: object, is_shell_mode: bool) -> str:
     return profile
 
 
-def _create_server() -> FastMCP:
-    """Create and configure the MCP server based on tool_mode setting."""
+def create_mcp_server() -> FastMCP:
+    """Create and configure the MCP server based on tool_mode setting.
+
+    Public factory — returns a FastMCP instance with all tools registered.
+    Does not call ``mcp.run()``. Use ``server.http_app()`` to get an ASGI app
+    for mounting into FastAPI, or call ``server.run()`` for standalone mode.
+    """
     import yaml as _yaml
     from db_mcp_data.connectors import normalize_capabilities
 
@@ -724,7 +729,7 @@ def _create_server() -> FastMCP:
 
 
 # Create the server instance
-mcp = _create_server()
+mcp = create_mcp_server()
 
 
 def _configure_logging():

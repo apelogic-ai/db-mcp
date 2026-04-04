@@ -122,7 +122,7 @@ def get_expected_tools_for_config(
     """
     Calculate the expected set of tools based on configuration.
 
-    This mirrors the logic in server.py _create_server() function.
+    This mirrors the logic in server.py create_mcp_server() function.
     """
     tools: set[str] = set()
 
@@ -328,12 +328,12 @@ def discover_runtime_tools(config: str) -> set[str]:
         with _temp_server_env(config):
             from db_mcp.config import reset_settings
             from db_mcp.registry import ConnectionRegistry
-            from db_mcp_server.server import _create_server
+            from db_mcp_server.server import create_mcp_server
 
             reset_settings()
             ConnectionRegistry.reset()
 
-            server = _create_server()
+            server = create_mcp_server()
             tools = server._tool_manager._tools
             return set(tools.keys())
     except Exception as e:

@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from db_mcp_server.server import _create_server
+from db_mcp_server.server import create_mcp_server
 from fastmcp.client import Client
 
 from db_mcp.config import Settings, reset_settings
@@ -75,7 +75,7 @@ async def _call(client: Client, name: str, args: dict) -> object:
 
 @pytest.mark.asyncio
 async def test_all_tools_exposed_and_happy_path_invoked(mcp_env):
-    server = _create_server()
+    server = create_mcp_server()
 
     async with Client(server) as client:
         exposed = await client.list_tools()

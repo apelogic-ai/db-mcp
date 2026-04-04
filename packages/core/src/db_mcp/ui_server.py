@@ -137,8 +137,13 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down db-mcp UI server")
 
 
-def create_app() -> FastAPI:
-    """Create and configure the FastAPI application."""
+def create_app(mount_mcp: bool = False) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Args:
+        mount_mcp: If True, mount the MCP server as an ASGI sub-app at ``/mcp``.
+            Used by ``db-mcp up`` to serve everything on a single port.
+    """
     app = FastAPI(
         title="db-mcp UI Server",
         description="FastAPI server for db-mcp UI with BICP support",
@@ -161,6 +166,12 @@ def create_app() -> FastAPI:
     )
     app.include_router(runtime_router)
     app.include_router(api_router, prefix="/api")
+
+    if mount_mcp:
+        from db_mcp_server.server import create_mcp_server
+
+        mcp = create_mcp_server()
+        app.mount("/mcp", mcp.http_app(path="/mcp"))
 
     def _serve_exported_page(*segments: str):
         page_path = STATIC_DIR.joinpath(*segments, "index.html")
@@ -259,6 +270,11 @@ def create_app() -> FastAPI:
         app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
     return app
+
+
+def create_unified_app() -> FastAPI:
+    """Factory for ``db-mcp up``: FastAPI + MCP on a single port."""
+    return create_app(mount_mcp=True)
 
 
 def start_ui_server(host: str = "0.0.0.0", port: int = 8080, log_file: Path | None = None) -> None:
