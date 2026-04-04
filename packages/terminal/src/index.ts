@@ -269,11 +269,10 @@ async function handleCommand(raw: string): Promise<void> {
       break;
 
     default:
-      feed.addMessage({
-        id: `err-${Date.now()}`,
-        role: "error",
-        text: `Unknown command: ${cmd}`,
-      });
+      // Route unrecognized slash commands to the agent as NL prompts
+      // e.g. /connections → "list connections", /use foo → "switch to foo connection"
+      await handlePrompt(raw.slice(1));  // strip leading /
+      return;
   }
 }
 
