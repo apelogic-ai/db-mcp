@@ -30,13 +30,16 @@ export class Feed implements Component {
     this.rebuildMarkdown();
   }
 
-  /** Append a delta to the last assistant message (for streaming). */
+  /** Append a delta to the latest assistant message (for streaming). */
   appendDelta(text: string): void {
-    const last = this.messages[this.messages.length - 1];
-    if (last?.role === "assistant") {
-      last.text += text;
-      this.dirty = true;
-      this.rebuildMarkdown();
+    // Find the last assistant message — tool messages may have been inserted after it
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      if (this.messages[i]!.role === "assistant") {
+        this.messages[i]!.text += text;
+        this.dirty = true;
+        this.rebuildMarkdown();
+        return;
+      }
     }
   }
 

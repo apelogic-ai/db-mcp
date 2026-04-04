@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "mcp__db-mcp__list_connections"
+      "mcp__db-mcp__list_connections",
+      "mcp__db-mcp__shell",
+      "mcp__db-mcp__api_query"
     ]
   }
 }
