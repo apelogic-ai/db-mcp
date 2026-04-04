@@ -28,8 +28,7 @@ const editor = new Editor(tui, editorTheme, { paddingX: 1 });
 const statusBar = new StatusBar();
 
 // Wire slash commands into the editor's autocomplete
-const slashProvider = new CombinedAutocompleteProvider();
-// SlashCommands are auto-detected by the editor when they start with /
+const slashProvider = new CombinedAutocompleteProvider(SLASH_COMMANDS);
 editor.setAutocompleteProvider(slashProvider);
 
 // Layout: feed takes all space, editor + status docked at bottom
