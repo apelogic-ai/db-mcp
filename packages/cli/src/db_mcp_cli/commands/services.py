@@ -321,6 +321,25 @@ def up_cmd(
         clear_local_service_state()
 
 
+@click.command("tui")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Daemon host to connect to")
+@click.option("--port", default=8080, show_default=True, type=int, help="Daemon port")
+def tui_cmd(host: str, port: int) -> None:
+    """Open the terminal UI (connects to a running db-mcp daemon)."""
+    try:
+        from db_mcp_cli.tui.app import DBMcpTUI
+    except ImportError:
+        console.print(
+            "[red]Textual is not installed.[/red] "
+            "Install with: [cyan]uv pip install 'db-mcp-cli[tui]'[/cyan]"
+        )
+        raise SystemExit(1)
+
+    url = f"http://{host}:{port}"
+    app = DBMcpTUI(base_url=url)
+    app.run()
+
+
 @click.group("serve")
 def serve_group() -> None:
     """Serve db-mcp over mirrored MCP and UI entry points."""
@@ -438,4 +457,5 @@ def register_commands(main_group: click.Group) -> None:
     main_group.add_command(serve_group)
     main_group.add_command(ui_cmd)
     main_group.add_command(up_cmd)
+    main_group.add_command(tui_cmd)
     main_group.add_command(playground)
