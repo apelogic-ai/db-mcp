@@ -3,9 +3,18 @@
  * db-mcp TUI — terminal interface for database queries via ACP agent.
  */
 
-// Debug mode: set DB_MCP_DEBUG=1 to see RPC traffic
-if (!process.env.DB_MCP_DEBUG) {
-  console.log = () => {};  // eslint-disable-line
+// Redirect console.log to file — acp-bridge uses it for RPC debug
+// Suppressing it entirely (= () => {}) may break timing-dependent RPC flows
+import { appendFileSync } from "node:fs";
+const _origLog = console.log;
+if (process.env.DB_MCP_DEBUG) {
+  // Keep console.log visible in debug mode
+} else {
+  console.log = (...args: unknown[]) => {
+    try {
+      appendFileSync("/tmp/db-mcp-rpc.log", args.map(String).join(" ") + "\n");
+    } catch {}
+  };
 }
 
 // Catch unhandled rejections — show in feed, don't crash

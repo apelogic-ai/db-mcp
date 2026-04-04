@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__db-mcp__list_connections"
+    ]
+  }
+}

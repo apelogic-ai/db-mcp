@@ -55,7 +55,7 @@ export class Agent {
     // Spawn the agent process
     try {
       this.process = spawnAgent(this.config.command, {
-        timeout: 60_000,
+        timeout: 300_000,  // 5min — prompts can take a while
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
