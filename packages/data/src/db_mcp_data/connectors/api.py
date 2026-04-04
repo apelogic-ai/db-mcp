@@ -601,8 +601,11 @@ class APIConnector:
                 rows = self._fetch_with_pagination(base_url, headers, merged_params, max_pages)
             if method in ("POST", "PUT", "PATCH", "DELETE"):
                 if endpoint.body_mode == "jsonrpc":
-                    # JSON-RPC: wrap params in envelope, unwrap result field
-                    raw = self._send_non_get(base_url, headers, merged_params, endpoint)
+                    # JSON-RPC: auth params go in the URL; RPC params go in the envelope body.
+                    rpc_params = {k: v for k, v in merged_params.items() if k not in base_params}
+                    raw = self._send_non_get(
+                        base_url, headers, rpc_params, endpoint, url_params=base_params
+                    )
                     if endpoint.response_mode == "raw":
                         return {"data": raw, "rows_returned": 1}
                     rows = raw if isinstance(raw, list) else (
@@ -1171,18 +1174,32 @@ class APIConnector:
         headers: dict[str, str],
         params: dict[str, str],
         endpoint: APIEndpointConfig,
+        *,
+        url_params: dict[str, str] | None = None,
     ) -> Any:
         """Send a non-GET request and return the raw JSON body."""
         if endpoint.body_mode == "jsonrpc":
             import uuid
 
+            # If the caller passes a single "params" key whose value is a list or dict,
+            # unwrap it directly as the JSON-RPC params value.  This lets users pass
+            # {"params": ["<address>"]} and have it forwarded as the Solana-style list.
+            if set(params.keys()) == {"params"}:
+                rpc_params = params["params"]
+            else:
+                rpc_params = params
+
             envelope = {
                 "jsonrpc": "2.0",
                 "method": endpoint.rpc_method,
-                "params": params,
+                "params": rpc_params,
                 "id": str(uuid.uuid4()),
             }
-            resp = requests.post(url, headers=headers, json=envelope, params={}, timeout=30)
+            # url_params carries auth query params (e.g. api-key) — must be in the URL,
+            # not the JSON body.
+            resp = requests.post(
+                url, headers=headers, json=envelope, params=url_params or {}, timeout=30
+            )
             resp.raise_for_status()
             body = resp.json()
             if "error" in body and body["error"] is not None:

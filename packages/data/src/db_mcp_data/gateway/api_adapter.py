@@ -69,7 +69,14 @@ class APIAdapter:
             return DataResponse(status="error", data=[], columns=[], rows_returned=0,
                                 error=response["error"])
 
-        rows = response.get("data", [])
+        data = response.get("data", [])
+        # response_mode=raw returns a single dict or scalar; normalize to list[dict]
+        if isinstance(data, dict):
+            rows: list[dict] = [data]
+        elif not isinstance(data, list):
+            rows = [{"value": data}]
+        else:
+            rows = data
         columns = [ColumnMeta(name=k) for k in (rows[0].keys() if rows else [])]
         return DataResponse(status="success", data=rows, columns=columns, rows_returned=len(rows))
 
