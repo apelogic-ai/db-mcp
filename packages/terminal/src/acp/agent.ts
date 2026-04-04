@@ -42,7 +42,8 @@ export class Agent {
   }
 
   get commandName(): string {
-    return this.config.command[0] ?? "unknown";
+    const cmd = this.config.command[0] ?? "unknown";
+    return cmd.split("/").pop() ?? cmd;
   }
 
   /** Connect to the agent — spawn process, initialize, create session. */
@@ -63,6 +64,9 @@ export class Agent {
         `Install with: npm i -g @agentclientprotocol/claude-agent-acp`
       );
     }
+
+    // Suppress agent stderr debug logs from polluting the TUI
+    this.process.process.stderr?.removeAllListeners("data");
 
     // Handle spawn errors (e.g. ENOENT after async start)
     await new Promise<void>((resolve, reject) => {

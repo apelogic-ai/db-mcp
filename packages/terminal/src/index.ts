@@ -2,6 +2,10 @@
 /**
  * db-mcp TUI — terminal interface for database queries via ACP agent.
  */
+
+// Suppress console.log from acp-bridge debug output — TUI uses the feed, not console
+const _origLog = console.log;
+console.log = () => {};  // eslint-disable-line
 import {
   TUI,
   ProcessTerminal,
@@ -92,7 +96,7 @@ feed.addMessage({
     "",
     "Type a question to query your database. Type `/` for commands.",
     "",
-    `Agent: \`${AGENT_CMD.join(" ")}\` · Server: \`${BASE_URL}\``,
+    `Agent: \`${AGENT_CMD[0]?.split("/").pop()}\` · Server: \`${BASE_URL}\``,
     "",
     "_Press Ctrl+C to exit._",
   ].join("\n"),
