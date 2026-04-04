@@ -2,6 +2,7 @@
  * Feed component — scrolling message log rendered as Markdown.
  */
 import { Markdown, type Component, type MarkdownTheme } from "@mariozechner/pi-tui";
+import chalk from "chalk";
 
 export interface FeedMessage {
   id: string;
@@ -29,7 +30,6 @@ export class Feed implements Component {
   addMessage(msg: FeedMessage): void {
     if (this.seenIds.has(msg.id)) return;
     this.seenIds.add(msg.id);
-    // Tool messages use shortened names
     if (msg.role === "tool") {
       msg = { ...msg, text: shortToolName(msg.text) };
     }
@@ -38,7 +38,6 @@ export class Feed implements Component {
     this.rebuildMarkdown();
   }
 
-  /** Append a delta to the latest assistant message (for streaming). */
   appendDelta(text: string): void {
     for (let i = this.messages.length - 1; i >= 0; i--) {
       if (this.messages[i]!.role === "assistant") {
@@ -50,7 +49,6 @@ export class Feed implements Component {
     }
   }
 
-  /** Start a new streaming assistant message. */
   startAssistant(id: string): void {
     this.addMessage({ id, role: "assistant", text: "" });
   }
@@ -75,8 +73,40 @@ export class Feed implements Component {
   }
 
   private rebuildMarkdown(): void {
+    // Group messages into turns: user → tools → assistant response
+    // Tool calls should appear between the question and the answer
     const parts: string[] = [];
-    for (const msg of this.messages) {
+    let i = 0;
+
+    while (i < this.messages.length) {
+      const msg = this.messages[i]!;
+
+      if (msg.role === "assistant") {
+        // Collect all tool messages that follow this assistant message
+        const tools: string[] = [];
+        let j = i + 1;
+        while (j < this.messages.length && this.messages[j]!.role === "tool") {
+          tools.push(this.messages[j]!.text);
+          j++;
+        }
+
+        // Render tools FIRST (above the response)
+        if (tools.length > 0) {
+          const toolLine = tools.map(t => `\`${t}\``).join(" → ");
+          parts.push(`  ├ ${toolLine}`);
+        }
+
+        // Then render assistant text
+        if (msg.text) {
+          parts.push(msg.text);
+        } else {
+          parts.push("_thinking..._");
+        }
+
+        i = j;  // skip past the tool messages we consumed
+        continue;
+      }
+
       switch (msg.role) {
         case "system":
           parts.push(msg.text);
@@ -84,23 +114,17 @@ export class Feed implements Component {
         case "user":
           parts.push(`**> ${msg.text}**`);
           break;
-        case "assistant":
-          // Render assistant text — preserve line breaks from streaming
-          if (msg.text) {
-            parts.push(msg.text);
-          } else {
-            parts.push("_thinking..._");
-          }
-          break;
         case "tool":
-          // Compact tool indicator — indented, dimmed
-          parts.push(`    ⎿ _${msg.text}_`);
+          // Stray tool message (not after an assistant) — render inline
+          parts.push(`  ├ \`${msg.text}\``);
           break;
         case "error":
           parts.push(`**Error:** ${msg.text}`);
           break;
       }
+      i++;
     }
+
     this.markdown.setText(parts.join("\n\n"));
   }
 }
