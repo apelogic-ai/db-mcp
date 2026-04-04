@@ -78,7 +78,7 @@ export class Feed implements Component {
           parts.push(msg.text || "_thinking..._");
           break;
         case "tool":
-          parts.push(`\`${msg.text}\``);
+          parts.push(`  ⎿ \`${msg.text}\``);
           break;
         case "error":
           parts.push(`**Error:** ${msg.text}`);

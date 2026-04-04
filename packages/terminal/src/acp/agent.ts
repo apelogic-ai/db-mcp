@@ -11,7 +11,7 @@ import { createAcpSession, type AcpSession } from "@nexus/acp-bridge";
 export type AgentEvent =
   | { type: "text_delta"; delta: string }
   | { type: "thinking_delta"; delta: string }
-  | { type: "tool_start"; tool: string }
+  | { type: "tool_start"; tool: string; params?: unknown }
   | { type: "tool_end"; tool: string; result?: string }
   | { type: "error"; message: string }
   | { type: "done" };
@@ -153,9 +153,11 @@ export class Agent {
         case "thinking_delta":
           onEvent({ type: "thinking_delta", delta: (gatewayEvent as { delta: string }).delta });
           break;
-        case "tool_start":
-          onEvent({ type: "tool_start", tool: (gatewayEvent as { tool: string }).tool });
+        case "tool_start": {
+          const ev = gatewayEvent as { tool: string; params?: unknown };
+          onEvent({ type: "tool_start", tool: ev.tool, params: ev.params });
           break;
+        }
         case "tool_end":
           onEvent({
             type: "tool_end",

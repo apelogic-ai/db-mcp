@@ -118,13 +118,24 @@ function handleAgentEvent(event: AgentEvent): void {
     case "thinking_delta":
       // Could render thinking separately, for now skip
       break;
-    case "tool_start":
+    case "tool_start": {
+      let detail = event.tool;
+      if (event.params) {
+        const p = event.params as Record<string, unknown>;
+        // Show the most useful param as a compact detail
+        const hint = p.command ?? p.query ?? p.sql ?? p.pattern ?? p.path ?? p.intent ?? p.connection;
+        if (hint) {
+          const s = String(hint).replace(/\n/g, " ").slice(0, 80);
+          detail = `${event.tool}: ${s}`;
+        }
+      }
       feed.addMessage({
         id: `tool-${Date.now()}-${Math.random()}`,
         role: "tool",
-        text: `⚙ ${event.tool}`,
+        text: detail,
       });
       break;
+    }
     case "tool_end":
       // Tool completed — agent will summarize the result
       break;
