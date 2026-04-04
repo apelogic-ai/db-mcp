@@ -128,16 +128,26 @@ def validate_static_bundle_provenance() -> None:
 STATIC_DIR = get_static_dir()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan handler."""
-    logger.info("Starting db-mcp UI server")
-    try:
-        validate_static_bundle_provenance()
-    except RuntimeError as e:
-        logger.warning("Static bundle validation skipped: %s", e)
-    yield
-    logger.info("Shutting down db-mcp UI server")
+def _make_lifespan(mcp_asgi_app=None):
+    """Build a lifespan that optionally manages the MCP server's lifecycle."""
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        logger.info("Starting db-mcp UI server")
+        try:
+            validate_static_bundle_provenance()
+        except RuntimeError as e:
+            logger.warning("Static bundle validation skipped: %s", e)
+
+        if mcp_asgi_app and hasattr(mcp_asgi_app, "lifespan"):
+            async with mcp_asgi_app.lifespan(app):
+                yield
+        else:
+            yield
+
+        logger.info("Shutting down db-mcp UI server")
+
+    return lifespan
 
 
 def create_app(mount_mcp: bool = False) -> FastAPI:
@@ -147,11 +157,18 @@ def create_app(mount_mcp: bool = False) -> FastAPI:
         mount_mcp: If True, mount the MCP server as an ASGI sub-app at ``/mcp``.
             Used by ``db-mcp up`` to serve everything on a single port.
     """
+    mcp_asgi_app = None
+    if mount_mcp:
+        from db_mcp_server.server import create_mcp_server
+
+        mcp = create_mcp_server()
+        mcp_asgi_app = mcp.http_app(path="/")
+
     app = FastAPI(
         title="db-mcp UI Server",
         description="FastAPI server for db-mcp UI with BICP support",
         version="0.1.0",
-        lifespan=lifespan,
+        lifespan=_make_lifespan(mcp_asgi_app),
     )
 
     # CORS middleware for development (localhost:3000)
@@ -170,11 +187,8 @@ def create_app(mount_mcp: bool = False) -> FastAPI:
     app.include_router(runtime_router)
     app.include_router(api_router, prefix="/api")
 
-    if mount_mcp:
-        from db_mcp_server.server import create_mcp_server
-
-        mcp = create_mcp_server()
-        app.mount("/mcp", mcp.http_app(path="/"))
+    if mcp_asgi_app:
+        app.mount("/mcp", mcp_asgi_app)
 
     def _serve_exported_page(*segments: str):
         page_path = STATIC_DIR.joinpath(*segments, "index.html")
