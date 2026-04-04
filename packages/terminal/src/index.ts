@@ -122,11 +122,11 @@ function handleAgentEvent(event: AgentEvent): void {
       feed.addMessage({
         id: `tool-${Date.now()}-${Math.random()}`,
         role: "tool",
-        text: `${event.tool}`,
+        text: `⚙ ${event.tool}`,
       });
       break;
     case "tool_end":
-      // Tool result — skip rendering for now (agent will summarize)
+      // Tool completed — agent will summarize the result
       break;
     case "error":
       feed.addMessage({

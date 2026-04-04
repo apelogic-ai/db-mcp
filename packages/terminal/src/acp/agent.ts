@@ -114,11 +114,27 @@ export class Agent {
 
     this._sessionId = sessionResult.sessionId;
 
+    // Handle terminal and file requests from the agent (reject gracefully)
+    this.process.rpc.onRequest(async (method: string, _params: unknown) => {
+      if (method === "create_terminal" || method === "kill_terminal" ||
+          method === "wait_for_terminal_exit" || method === "release_terminal") {
+        throw new Error("Terminal not available in TUI mode. Use MCP tools instead.");
+      }
+      if (method === "read_text_file" || method === "write_text_file") {
+        throw new Error("File operations not available in TUI mode. Use MCP tools instead.");
+      }
+      throw new Error(`Unsupported method: ${method}`);
+    });
+
     // Create the ACP session wrapper that translates notifications → events
+    // Policy: auto-allow all tool calls (the daemon handles authorization)
     this.session = createAcpSession(
       this.process.rpc,
       this._sessionId,
       this._sessionId,
+      {
+        policyEvaluator: () => "allow",
+      },
     );
 
     this.session.onEvent((gatewayEvent) => {
