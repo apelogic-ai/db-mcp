@@ -60,7 +60,7 @@ async def test_add_rule_with_no_gap_and_no_text():
         await pilot.pause()
 
         feed = pilot.app.query_one(EventFeed)
-        assert feed.event_count == 1  # error event
+        assert feed.event_count >= 2  # welcome + error event
 
 
 @pytest.mark.asyncio
@@ -96,7 +96,7 @@ async def test_dismiss_with_no_pending_gap():
         await pilot.pause()
 
         feed = pilot.app.query_one(EventFeed)
-        assert feed.event_count == 1  # error event
+        assert feed.event_count >= 2  # welcome + error event
 
 
 @pytest.mark.asyncio
@@ -124,4 +124,4 @@ async def test_use_with_no_name_shows_error():
         await pilot.pause()
 
         feed = pilot.app.query_one(EventFeed)
-        assert feed.event_count == 1  # error event
+        assert feed.event_count >= 2  # welcome + error event

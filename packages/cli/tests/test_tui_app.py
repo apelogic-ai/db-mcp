@@ -44,9 +44,10 @@ async def test_tui_app_feed_can_add_event():
             timestamp=datetime.now(timezone.utc),
             done=True,
         )
+        before = feed.event_count  # welcome event already present
         feed.add_event(evt)
         await pilot.pause()
-        assert feed.event_count == 1
+        assert feed.event_count == before + 1
 
 
 @pytest.mark.asyncio
@@ -60,6 +61,7 @@ async def test_tui_app_feed_deduplicates():
 
     async with DBMcpTUI().run_test() as pilot:
         feed = pilot.app.query_one(EventFeed)
+        before = feed.event_count
         evt = FeedEvent(
             id="test-dup",
             type="query",
@@ -70,4 +72,4 @@ async def test_tui_app_feed_deduplicates():
         feed.add_event(evt)
         feed.add_event(evt)
         await pilot.pause()
-        assert feed.event_count == 1
+        assert feed.event_count == before + 1

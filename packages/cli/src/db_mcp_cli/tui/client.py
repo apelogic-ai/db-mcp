@@ -146,3 +146,94 @@ class APIClient:
         except (URLError, OSError) as e:
             logger.debug("switch_connection failed: %s", e)
             return False
+
+    def _post_api(self, method: str, params: dict | None = None) -> dict:
+        """POST to /api/{method} and return the JSON response."""
+        body = json.dumps(params or {}).encode()
+        req = Request(
+            f"{self.base_url}/api/{method}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        resp = urlopen(req, timeout=5)
+        return json.loads(resp.read())
+
+    def list_connections(self) -> list[dict]:
+        """List all connections."""
+        try:
+            data = self._post_api("connections/list")
+            return data.get("connections", [])
+        except (URLError, OSError, json.JSONDecodeError) as e:
+            logger.debug("list_connections failed: %s", e)
+            return []
+
+    def list_tables(self) -> list[str]:
+        """List tables in the current connection."""
+        try:
+            data = self._post_api("schema/tables")
+            tables = data.get("tables", [])
+            return [t.get("name", str(t)) if isinstance(t, dict) else str(t) for t in tables]
+        except (URLError, OSError, json.JSONDecodeError) as e:
+            logger.debug("list_tables failed: %s", e)
+            return []
+
+    def list_rules(self) -> list[str]:
+        """List business rules."""
+        try:
+            data = self._post_api("context/read", {"path": "instructions/business_rules.yaml"})
+            content = data.get("content", "")
+            if not content:
+                return []
+            rules = []
+            for line in content.split("\n"):
+                line = line.strip().lstrip("- ")
+                if line:
+                    rules.append(line)
+            return rules
+        except (URLError, OSError, json.JSONDecodeError) as e:
+            logger.debug("list_rules failed: %s", e)
+            return []
+
+    def list_examples(self) -> list[dict]:
+        """List training examples."""
+        try:
+            data = self._post_api("context/tree")
+            items = data.get("tree", [])
+            examples = []
+            for item in items:
+                name = item.get("name", "") if isinstance(item, dict) else str(item)
+                if "examples" in name.lower() or "training" in name.lower():
+                    examples.append(item)
+            return examples
+        except (URLError, OSError, json.JSONDecodeError) as e:
+            logger.debug("list_examples failed: %s", e)
+            return []
+
+    def list_metrics(self) -> list[dict]:
+        """List metrics catalog."""
+        try:
+            data = self._post_api("metrics/list")
+            return data.get("metrics", [])
+        except (URLError, OSError, json.JSONDecodeError) as e:
+            logger.debug("list_metrics failed: %s", e)
+            return []
+
+    def list_gaps(self) -> list[dict]:
+        """List knowledge gaps."""
+        try:
+            data = self._post_api("insights/analyze")
+            analysis = data.get("analysis", {})
+            return analysis.get("gaps", [])
+        except (URLError, OSError, json.JSONDecodeError) as e:
+            logger.debug("list_gaps failed: %s", e)
+            return []
+
+    def sync_vault(self) -> bool:
+        """Sync knowledge vault with git."""
+        try:
+            self._post_api("context/git/history")
+            return True
+        except (URLError, OSError, json.JSONDecodeError) as e:
+            logger.debug("sync_vault failed: %s", e)
+            return False

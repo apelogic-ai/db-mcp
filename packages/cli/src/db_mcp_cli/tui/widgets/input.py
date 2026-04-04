@@ -10,6 +10,7 @@ from textual.widgets.option_list import Option
 
 # Command definitions: (name, description)
 COMMANDS = [
+    # TUI
     ("/add-rule", "add a business rule"),
     ("/cancel", "cancel pending execution"),
     ("/clear", "clear the feed"),
@@ -17,8 +18,20 @@ COMMANDS = [
     ("/dismiss", "dismiss pending knowledge gap"),
     ("/help", "show help"),
     ("/quit", "exit"),
+    # CLI
+    ("/connections", "list all connections"),
+    ("/examples", "list training examples"),
+    ("/gaps", "list knowledge gaps"),
+    ("/metrics", "list metrics catalog"),
+    ("/rules", "list business rules"),
+    ("/schema", "show tables in current connection"),
     ("/status", "show server status"),
+    ("/sync", "sync knowledge vault with git"),
     ("/use", "switch connection"),
+    # ACP
+    ("/agent", "show agent status"),
+    ("/model", "set agent model"),
+    ("/session", "show agent session info"),
 ]
 
 
@@ -122,7 +135,7 @@ class CommandInput(Vertical):
         cmd = event.option.id
         inp = self.query_one(Input)
         self.query_one(CommandPalette).remove_class("visible")
-        needs_arg = cmd in ("/add-rule", "/use")
+        needs_arg = cmd in ("/add-rule", "/use", "/model")
         if needs_arg:
             inp.value = cmd + " "
             inp.cursor_position = len(inp.value)

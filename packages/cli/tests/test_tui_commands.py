@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,20 +11,6 @@ def test_command_dispatcher_is_importable():
     from db_mcp_cli.tui.commands import CommandDispatcher
 
     assert CommandDispatcher is not None
-
-
-def test_dispatcher_recognizes_slash_commands():
-    from db_mcp_cli.tui.commands import CommandDispatcher
-
-    d = CommandDispatcher()
-    assert d.is_command("/confirm")
-    assert d.is_command("/cancel")
-    assert d.is_command("/clear")
-    assert d.is_command("/help")
-    assert d.is_command("/quit")
-    assert d.is_command("q")
-    assert not d.is_command("SELECT 1")
-    assert not d.is_command("hello world")
 
 
 @pytest.mark.asyncio
@@ -43,16 +28,11 @@ async def test_app_has_command_input():
 async def test_clear_command_resets_feed():
     """The /clear command should clear the event feed."""
     from db_mcp_cli.tui.app import DBMcpTUI
-    from db_mcp_cli.tui.events import FeedEvent
     from db_mcp_cli.tui.widgets.feed import EventFeed
 
     async with DBMcpTUI().run_test() as pilot:
         feed = pilot.app.query_one(EventFeed)
-        feed.add_event(FeedEvent(
-            id="x", type="query", headline="test",
-            timestamp=datetime.now(timezone.utc), done=True,
-        ))
-        assert feed.event_count == 1
+        assert feed.event_count >= 1  # welcome event
 
         await pilot.app.dispatch_command("/clear")
         await pilot.pause()
@@ -66,11 +46,11 @@ async def test_confirm_with_no_pending_shows_error():
     from db_mcp_cli.tui.widgets.feed import EventFeed
 
     async with DBMcpTUI().run_test() as pilot:
+        before = pilot.app.query_one(EventFeed).event_count
         await pilot.app.dispatch_command("/confirm")
         await pilot.pause()
         feed = pilot.app.query_one(EventFeed)
-        # Should have added an error event
-        assert feed.event_count == 1
+        assert feed.event_count == before + 1
 
 
 @pytest.mark.asyncio

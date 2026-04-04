@@ -50,8 +50,25 @@ class DBMcpTUI(App):
         yield StatusBar()
 
     def on_mount(self) -> None:
-        """Start polling on mount."""
+        """Show welcome and start polling."""
+        self._show_welcome()
         self.set_interval(1.5, self._poll)
+
+    def _show_welcome(self) -> None:
+        from datetime import datetime, timezone
+
+        feed = self.query_one(EventFeed)
+        feed.add_event(FeedEvent(
+            id="welcome",
+            type="system",
+            headline="db-mcp TUI",
+            sub_lines=[
+                "Type a question to query your database using natural language.",
+                "Type [bold]/[/] for commands.  Press [bold]Ctrl+C[/] to exit.",
+            ],
+            timestamp=datetime.now(timezone.utc),
+            done=True,
+        ))
 
     async def dispatch_command(self, raw: str) -> None:
         """Dispatch a command from the input widget."""

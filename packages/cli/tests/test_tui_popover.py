@@ -33,12 +33,12 @@ async def test_palette_shows_on_slash():
 
 @pytest.mark.asyncio
 async def test_palette_filters_on_typing():
-    """Typing '/co' should filter to /confirm only."""
+    """Typing '/conf' should filter to /confirm only."""
     from db_mcp_cli.tui.app import DBMcpTUI
     from db_mcp_cli.tui.widgets.input import CommandPalette
 
     async with DBMcpTUI().run_test() as pilot:
-        await pilot.press("/", "c", "o")
+        await pilot.press("/", "c", "o", "n", "f")
         await pilot.pause()
 
         palette = pilot.app.query_one(CommandPalette)
