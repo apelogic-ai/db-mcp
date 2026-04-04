@@ -50,17 +50,14 @@ async def test_acp_client_prompt_starts_agent_if_needed():
 
 
 @pytest.mark.asyncio
-async def test_app_routes_plain_text_to_acp():
-    """Plain text input (no /) should be routed to ACP prompt."""
+async def test_app_routes_plain_text_to_query_nl():
+    """Plain text input (no /) should be routed to query_nl via REST client."""
     from db_mcp_cli.tui.app import DBMcpTUI
 
     async with DBMcpTUI().run_test() as pilot:
-        pilot.app.acp = MagicMock()
-        pilot.app.acp.prompt = AsyncMock()
+        pilot.app.client.query_nl = MagicMock(return_value={"answer": "hello"})
 
         await pilot.app.dispatch_command("what tables do we have?")
         await pilot.pause()
 
-        pilot.app.acp.prompt.assert_called_once()
-        call_args = pilot.app.acp.prompt.call_args
-        assert "what tables do we have?" in call_args[0][0]
+        pilot.app.client.query_nl.assert_called_once_with("what tables do we have?")

@@ -58,14 +58,33 @@ class DBMcpTUI(App):
         from datetime import datetime, timezone
 
         feed = self.query_one(EventFeed)
+
+        # Check daemon and connection status
+        healthy = self.client.check_health()
+        status = self.client.fetch_status() if healthy else None
+        conn = status.connection if status else None
+
+        sub_lines = [
+            "Type a question to query your database using natural language.",
+            "Type [bold]/[/] for commands.  Press [bold]Ctrl+C[/] to exit.",
+        ]
+        if not healthy:
+            sub_lines.append("")
+            sub_lines.append(
+                "[yellow]daemon not running[/] — start with: [bold]db-mcp up[/]"
+            )
+        elif not conn:
+            sub_lines.append("")
+            sub_lines.append(
+                "[yellow]no active connection[/] — use [bold]/connections[/] "
+                "to list, [bold]/use NAME[/] to connect"
+            )
+
         feed.add_event(FeedEvent(
             id="welcome",
             type="system",
             headline="db-mcp TUI",
-            sub_lines=[
-                "Type a question to query your database using natural language.",
-                "Type [bold]/[/] for commands.  Press [bold]Ctrl+C[/] to exit.",
-            ],
+            sub_lines=sub_lines,
             timestamp=datetime.now(timezone.utc),
             done=True,
         ))

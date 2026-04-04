@@ -455,12 +455,33 @@ class CommandDispatcher:
     # -----------------------------------------------------------------------
 
     async def _handle_acp_prompt(self, text: str, app: DBMcpTUI, feed) -> None:
+
+
         feed.write(f"[bold]\u25cf[/] {text}")
+        feed.write("[dim]  \u23bf  thinking...[/]")
 
-        def on_update(update_text: str) -> None:
-            app.call_from_thread(feed.write, f"  [dim]\u23bf[/]  {update_text}")
+        result = app.client.query_nl(text)
 
-        try:
-            await app.acp.prompt(text, on_update=on_update)
-        except Exception as e:
-            feed.write(f"[red]agent error:[/] {e}")
+        if "error" in result:
+            feed.write(f"[red]  \u23bf  {result['error']}[/]")
+            return
+
+        # Show the response
+        sql = result.get("sql", "")
+        answer = result.get("answer", "")
+        rows = result.get("rows", [])
+        row_count = result.get("row_count", len(rows) if rows else 0)
+
+        lines = []
+        if sql:
+            lines.append(f"[cyan]{sql}[/]")
+        if answer:
+            lines.append(answer)
+        if row_count:
+            lines.append(f"[dim]{row_count} row(s)[/]")
+
+        if lines:
+            for line in lines:
+                feed.write(f"  [dim]\u23bf[/]  {line}")
+        else:
+            feed.write(f"  [dim]\u23bf[/]  {result}")

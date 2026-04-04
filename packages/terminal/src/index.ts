@@ -7,14 +7,15 @@ import {
   ProcessTerminal,
   Editor,
   CombinedAutocompleteProvider,
-  type SlashCommand,
 } from "@mariozechner/pi-tui";
-import { Feed, type FeedMessage } from "./feed.js";
+import { Agent, type AgentEvent } from "./acp/index.js";
+import { Feed } from "./feed.js";
 import { StatusBar } from "./status-bar.js";
 import { SLASH_COMMANDS } from "./commands.js";
 import { editorTheme, markdownTheme } from "./theme.js";
 
 const BASE_URL = process.env.DB_MCP_URL ?? "http://localhost:8080";
+const AGENT_CMD = (process.env.DB_MCP_AGENT ?? "claude-agent-acp").split(" ");
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -26,6 +27,11 @@ const tui = new TUI(terminal, true);
 const feed = new Feed(markdownTheme);
 const editor = new Editor(tui, editorTheme, { paddingX: 1 });
 const statusBar = new StatusBar();
+
+const agent = new Agent({
+  command: AGENT_CMD,
+  mcpUrl: `${BASE_URL}/mcp`,
+});
 
 // Wire slash commands into the editor's autocomplete
 const slashProvider = new CombinedAutocompleteProvider(SLASH_COMMANDS);
@@ -58,9 +64,51 @@ feed.addMessage({
     "",
     "Type a question to query your database. Type `/` for commands.",
     "",
+    `Agent: \`${AGENT_CMD.join(" ")}\` · Server: \`${BASE_URL}\``,
+    "",
     "_Press Ctrl+C to exit._",
   ].join("\n"),
 });
+
+// ---------------------------------------------------------------------------
+// Agent event handler
+// ---------------------------------------------------------------------------
+
+let currentAssistantId: string | null = null;
+
+function handleAgentEvent(event: AgentEvent): void {
+  switch (event.type) {
+    case "text_delta":
+      if (currentAssistantId) {
+        feed.appendDelta(event.delta);
+      }
+      break;
+    case "thinking_delta":
+      // Could render thinking separately, for now skip
+      break;
+    case "tool_start":
+      feed.addMessage({
+        id: `tool-${Date.now()}-${Math.random()}`,
+        role: "tool",
+        text: `${event.tool}`,
+      });
+      break;
+    case "tool_end":
+      // Tool result — skip rendering for now (agent will summarize)
+      break;
+    case "error":
+      feed.addMessage({
+        id: `agent-err-${Date.now()}`,
+        role: "error",
+        text: event.message,
+      });
+      break;
+    case "done":
+      currentAssistantId = null;
+      break;
+  }
+  tui.requestRender();
+}
 
 // ---------------------------------------------------------------------------
 // Input handling
@@ -114,8 +162,34 @@ async function handleCommand(raw: string): Promise<void> {
       feed.addMessage({
         id: `status-${Date.now()}`,
         role: "system",
-        text: `Server: ${statusBar["state"].healthy ? "healthy" : "disconnected"} · Connection: ${statusBar["state"].connection || "none"}`,
+        text: [
+          `Server: ${statusBar["state"].healthy ? "✓ healthy" : "✗ disconnected"}`,
+          `Connection: ${statusBar["state"].connection || "none"}`,
+          `Agent: ${agent.connected ? "✓ connected" : "○ not connected"} (${agent.commandName})`,
+          agent.sessionId ? `Session: ${agent.sessionId}` : "",
+        ].filter(Boolean).join(" · "),
       });
+      break;
+
+    case "/agent":
+      if (agent.connected) {
+        feed.addMessage({
+          id: `agent-${Date.now()}`,
+          role: "system",
+          text: `Agent connected: \`${agent.commandName}\` · Session: ${agent.sessionId}`,
+        });
+      } else {
+        feed.addMessage({
+          id: `agent-${Date.now()}`,
+          role: "system",
+          text: [
+            `Agent: \`${agent.commandName}\` — not connected.`,
+            "",
+            "Type any question to auto-connect, or set agent with:",
+            "`DB_MCP_AGENT=claude-agent-acp db-mcp tui`",
+          ].join("\n"),
+        });
+      }
       break;
 
     case "/quit":
@@ -138,12 +212,62 @@ async function handlePrompt(text: string): Promise<void> {
     text,
   });
 
-  // TODO: Route through ACP agent session
-  feed.addMessage({
-    id: `placeholder-${Date.now()}`,
-    role: "system",
-    text: "_Agent not connected. Configure with `/agent`._",
-  });
+  // Auto-connect agent on first prompt
+  if (!agent.connected) {
+    feed.addMessage({
+      id: `connecting-${Date.now()}`,
+      role: "system",
+      text: `_Connecting to agent \`${agent.commandName}\`..._`,
+    });
+    tui.requestRender();
+
+    try {
+      await agent.connect(handleAgentEvent);
+      statusBar.update({ agent: agent.commandName, agentConnected: true });
+      feed.addMessage({
+        id: `connected-${Date.now()}`,
+        role: "system",
+        text: `Agent connected. Session: ${agent.sessionId}`,
+      });
+      tui.requestRender();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      feed.addMessage({
+        id: `agent-fail-${Date.now()}`,
+        role: "error",
+        text: [
+          `Failed to connect to agent: ${msg}`,
+          "",
+          "Make sure the ACP adapter is installed:",
+          "```",
+          "npm i -g @agentclientprotocol/claude-agent-acp",
+          "```",
+          "Then set: `DB_MCP_AGENT=claude-agent-acp`",
+        ].join("\n"),
+      });
+      tui.requestRender();
+      return;
+    }
+  }
+
+  // Start streaming response
+  currentAssistantId = `assistant-${Date.now()}`;
+  feed.startAssistant(currentAssistantId);
+  tui.requestRender();
+
+  try {
+    await agent.prompt(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    feed.addMessage({
+      id: `prompt-err-${Date.now()}`,
+      role: "error",
+      text: `Agent error: ${msg}`,
+    });
+  }
+
+  currentAssistantId = null;
+  tui.requestRender();
 }
 
 // ---------------------------------------------------------------------------
@@ -172,15 +296,17 @@ const pollInterval = setInterval(() => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-function shutdown(): void {
+async function shutdown(): Promise<void> {
   clearInterval(pollInterval);
+  await agent.disconnect();
   tui.stop();
   terminal.showCursor();
-  terminal.drainInput(500, 50).finally(() => process.exit(0));
+  await terminal.drainInput(500, 50);
+  process.exit(0);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => shutdown());
+process.on("SIGTERM", () => shutdown());
 
 // Initial status check, then start
 refreshStatus().then(() => {

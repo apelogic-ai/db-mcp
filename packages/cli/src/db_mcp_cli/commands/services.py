@@ -324,20 +324,40 @@ def up_cmd(
 @click.command("tui")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Daemon host to connect to")
 @click.option("--port", default=8080, show_default=True, type=int, help="Daemon port")
-def tui_cmd(host: str, port: int) -> None:
+@click.option("--agent", default=None, help="ACP agent command (default: claude-agent-acp)")
+def tui_cmd(host: str, port: int, agent: str | None) -> None:
     """Open the terminal UI (connects to a running db-mcp daemon)."""
-    try:
-        from db_mcp_cli.tui.app import DBMcpTUI
-    except ImportError:
-        console.print(
-            "[red]Textual is not installed.[/red] "
-            "Install with: [cyan]uv pip install 'db-mcp-cli[tui]'[/cyan]"
-        )
+    import shutil
+    import subprocess
+
+    # Find the TS TUI entry point
+    tui_src = Path(__file__).resolve().parents[5] / "terminal" / "src" / "index.ts"
+    if not tui_src.exists():
+        console.print(f"[red]TUI not found at {tui_src}[/red]")
         raise SystemExit(1)
 
-    url = f"http://{host}:{port}"
-    app = DBMcpTUI(base_url=url)
-    app.run()
+    # Prefer bun, fall back to npx tsx
+    runner = shutil.which("bun")
+    if runner:
+        cmd = [runner, str(tui_src)]
+    else:
+        runner = shutil.which("npx")
+        if not runner:
+            console.print("[red]bun or npx required to run the TUI[/red]")
+            raise SystemExit(1)
+        cmd = [runner, "tsx", str(tui_src)]
+
+    env = {
+        **os.environ,
+        "DB_MCP_URL": f"http://{host}:{port}",
+    }
+    if agent:
+        env["DB_MCP_AGENT"] = agent
+
+    try:
+        subprocess.run(cmd, env=env, cwd=str(tui_src.parent.parent))
+    except KeyboardInterrupt:
+        pass
 
 
 @click.group("serve")

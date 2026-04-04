@@ -237,3 +237,39 @@ class APIClient:
         except (URLError, OSError, json.JSONDecodeError) as e:
             logger.debug("sync_vault failed: %s", e)
             return False
+
+    def query_nl(self, intent: str, connection: str | None = None) -> dict:
+        """Send a natural language query through the daemon's orchestrator.
+
+        Uses the MCP answer_intent tool via REST. Requires:
+        - A running daemon with a configured connection
+        - An LLM model configured (ANTHROPIC_API_KEY or equivalent)
+        """
+        try:
+            # First resolve the active connection if not provided
+            if not connection:
+                status = self.fetch_status()
+                connection = status.connection
+            if not connection:
+                return {"error": "no active connection — use /connections then /use NAME"}
+
+            # Call answer_intent through the MCP endpoint
+            body = json.dumps({
+                "intent": intent,
+                "connection": connection,
+            }).encode()
+            req = Request(
+                f"{self.base_url}/api/query/intent",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urlopen(req, timeout=30)
+            return json.loads(resp.read())
+        except (URLError, OSError) as e:
+            error_msg = str(e)
+            if "Connection refused" in error_msg:
+                return {"error": "daemon not running — start with: db-mcp up"}
+            return {"error": f"query failed: {error_msg}"}
+        except json.JSONDecodeError:
+            return {"error": "invalid response from daemon"}
