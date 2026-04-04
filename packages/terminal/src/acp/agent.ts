@@ -110,6 +110,14 @@ export class Agent {
         url: this.config.mcpUrl,
         headers: [],
       }],
+      _meta: {
+        systemPrompt: [
+          "You are a database assistant connected to db-mcp.",
+          "Use the db-mcp MCP tools (shell, run_sql, validate_sql, list_connections, etc.) for ALL database operations.",
+          "Do NOT use Terminal or Bash tools — they are not available in this environment.",
+          "Start by calling the db-mcp shell tool with command='cat PROTOCOL.md' to learn the available operations.",
+        ].join("\n"),
+      },
     }) as { sessionId: string };
 
     this._sessionId = sessionResult.sessionId;
