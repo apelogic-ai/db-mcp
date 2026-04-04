@@ -15,7 +15,35 @@ import { SLASH_COMMANDS } from "./commands.js";
 import { editorTheme, markdownTheme } from "./theme.js";
 
 const BASE_URL = process.env.DB_MCP_URL ?? "http://localhost:8080";
-const AGENT_CMD = (process.env.DB_MCP_AGENT ?? "claude-agent-acp").split(" ");
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Bundled ACP adapters — checked in order. */
+const BUNDLED_AGENTS = [
+  "claude-agent-acp",  // @agentclientprotocol/claude-agent-acp (npm)
+  "codex-acp",         // codex-acp (cargo install codex-acp)
+];
+
+function resolveAgentCommand(): string[] {
+  if (process.env.DB_MCP_AGENT) {
+    return process.env.DB_MCP_AGENT.split(" ");
+  }
+  // Look for bundled binary in node_modules/.bin/
+  const binDir = resolve(__dirname, "..", "node_modules", ".bin");
+  for (const name of BUNDLED_AGENTS) {
+    const localBin = resolve(binDir, name);
+    if (existsSync(localBin)) {
+      return [localBin];
+    }
+  }
+  // Fall back to PATH lookup
+  return ["claude-agent-acp"];
+}
+
+const AGENT_CMD = resolveAgentCommand();
 
 // ---------------------------------------------------------------------------
 // Bootstrap
