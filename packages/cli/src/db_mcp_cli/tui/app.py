@@ -8,6 +8,7 @@ from textual.binding import Binding
 
 from db_mcp_cli.tui.client import APIClient
 from db_mcp_cli.tui.commands import CommandDispatcher
+from db_mcp_cli.tui.events import FeedEvent
 from db_mcp_cli.tui.widgets.feed import EventFeed
 from db_mcp_cli.tui.widgets.input import CommandInput
 from db_mcp_cli.tui.widgets.status import StatusBar
@@ -32,6 +33,7 @@ class DBMcpTUI(App):
         self.client = APIClient(base_url=base_url)
         self.dispatcher = CommandDispatcher()
         self.pending_confirm_id: str | None = None
+        self.pending_gap: FeedEvent | None = None
 
     def compose(self) -> ComposeResult:
         yield EventFeed()
@@ -64,4 +66,6 @@ class DBMcpTUI(App):
             feed.add_event(event)
             if event.pending_action == "confirm" and not event.done:
                 self.pending_confirm_id = event.id
+            elif event.pending_action == "gap" and not event.done:
+                self.pending_gap = event
         self.query_one(StatusBar).update_status(status)

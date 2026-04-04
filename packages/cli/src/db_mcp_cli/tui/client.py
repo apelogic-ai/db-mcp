@@ -98,3 +98,51 @@ class APIClient:
         except (URLError, OSError) as e:
             logger.debug("confirm_execution failed: %s", e)
             return False
+
+    def add_rule(self, rule_text: str) -> bool:
+        """Add a business rule via the REST API."""
+        try:
+            body = json.dumps({"rule": rule_text}).encode()
+            req = Request(
+                f"{self.base_url}/api/context/add-rule",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urlopen(req, timeout=5)
+            return resp.status == 200
+        except (URLError, OSError) as e:
+            logger.debug("add_rule failed: %s", e)
+            return False
+
+    def dismiss_gap(self, gap_id: str) -> bool:
+        """Dismiss a knowledge gap."""
+        try:
+            body = json.dumps({"gapId": gap_id}).encode()
+            req = Request(
+                f"{self.base_url}/api/gaps/dismiss",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urlopen(req, timeout=5)
+            return resp.status == 200
+        except (URLError, OSError) as e:
+            logger.debug("dismiss_gap failed: %s", e)
+            return False
+
+    def switch_connection(self, name: str) -> bool:
+        """Switch the active connection."""
+        try:
+            body = json.dumps({"connection": name}).encode()
+            req = Request(
+                f"{self.base_url}/api/connections/switch",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urlopen(req, timeout=5)
+            return resp.status == 200
+        except (URLError, OSError) as e:
+            logger.debug("switch_connection failed: %s", e)
+            return False
