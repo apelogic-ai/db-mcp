@@ -64,23 +64,17 @@ class CommandInput(Vertical):
     DEFAULT_CSS = """
     CommandInput {
         dock: bottom;
-        min-height: 1;
         height: auto;
         max-height: 16;
     }
     CommandInput > Input {
-        height: 1;
-        border: none;
-        padding: 0 1;
+        border: tall $surface;
         background: $surface;
-        color: $text-muted;
+        padding: 0 1;
+        color: $text;
     }
     CommandInput > Input:focus {
-        border: none;
-    }
-    CommandInput > Input > .input--cursor {
-        color: $text;
-        text-style: none;
+        border: tall $surface;
     }
     """
 
