@@ -64,17 +64,29 @@ class CommandInput(Vertical):
     DEFAULT_CSS = """
     CommandInput {
         dock: bottom;
+        min-height: 1;
         height: auto;
         max-height: 16;
     }
     CommandInput > Input {
-        height: 3;
+        height: 1;
+        border: none;
+        padding: 0 1;
+        background: $surface;
+        color: $text-muted;
+    }
+    CommandInput > Input:focus {
+        border: none;
+    }
+    CommandInput > Input > .input--cursor {
+        color: $text;
+        text-style: none;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield CommandPalette()
-        yield Input(placeholder="> ")
+        yield Input(placeholder="")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
