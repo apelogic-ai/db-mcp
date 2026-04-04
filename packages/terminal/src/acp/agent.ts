@@ -100,7 +100,11 @@ export class Agent {
     // Create a session with our MCP server
     const sessionResult = await this.process.rpc.sendRequest("session/new", {
       cwd: process.cwd(),
-      mcpServers: [{ url: this.config.mcpUrl }],
+      mcpServers: [{
+        name: "db-mcp",
+        type: "http",
+        url: this.config.mcpUrl,
+      }],
     }) as { sessionId: string };
 
     this._sessionId = sessionResult.sessionId;
