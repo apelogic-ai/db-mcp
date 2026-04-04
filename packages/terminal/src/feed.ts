@@ -2,7 +2,6 @@
  * Feed component — scrolling message log rendered as Markdown.
  */
 import { Markdown, type Component, type MarkdownTheme } from "@mariozechner/pi-tui";
-import chalk from "chalk";
 
 export interface FeedMessage {
   id: string;
@@ -10,21 +9,30 @@ export interface FeedMessage {
   text: string;
 }
 
+/** Strip mcp__db-mcp__ prefix from tool names for display. */
+function shortToolName(name: string): string {
+  return name
+    .replace(/^mcp__db-mcp__/, "")
+    .replace(/^mcp__.*?__/, "");
+}
+
 export class Feed implements Component {
   private messages: FeedMessage[] = [];
   private seenIds = new Set<string>();
   private markdown: Markdown;
-  private theme: MarkdownTheme;
   private dirty = true;
 
   constructor(theme: MarkdownTheme) {
-    this.theme = theme;
     this.markdown = new Markdown("", 1, 0, theme);
   }
 
   addMessage(msg: FeedMessage): void {
     if (this.seenIds.has(msg.id)) return;
     this.seenIds.add(msg.id);
+    // Tool messages use shortened names
+    if (msg.role === "tool") {
+      msg = { ...msg, text: shortToolName(msg.text) };
+    }
     this.messages.push(msg);
     this.dirty = true;
     this.rebuildMarkdown();
@@ -32,7 +40,6 @@ export class Feed implements Component {
 
   /** Append a delta to the latest assistant message (for streaming). */
   appendDelta(text: string): void {
-    // Find the last assistant message — tool messages may have been inserted after it
     for (let i = this.messages.length - 1; i >= 0; i--) {
       if (this.messages[i]!.role === "assistant") {
         this.messages[i]!.text += text;
@@ -78,10 +85,16 @@ export class Feed implements Component {
           parts.push(`**> ${msg.text}**`);
           break;
         case "assistant":
-          parts.push(msg.text || "_thinking..._");
+          // Render assistant text — preserve line breaks from streaming
+          if (msg.text) {
+            parts.push(msg.text);
+          } else {
+            parts.push("_thinking..._");
+          }
           break;
         case "tool":
-          parts.push(`  ⎿ \`${msg.text}\``);
+          // Compact tool indicator — indented, dimmed
+          parts.push(`    ⎿ _${msg.text}_`);
           break;
         case "error":
           parts.push(`**Error:** ${msg.text}`);

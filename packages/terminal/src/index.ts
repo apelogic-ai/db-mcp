@@ -149,11 +149,10 @@ function handleAgentEvent(event: AgentEvent): void {
       let detail = event.tool;
       if (event.params) {
         const p = event.params as Record<string, unknown>;
-        // Show the most useful param as a compact detail
         const hint = p.command ?? p.query ?? p.sql ?? p.pattern ?? p.path ?? p.intent ?? p.connection;
         if (hint) {
-          const s = String(hint).replace(/\n/g, " ").slice(0, 80);
-          detail = `${event.tool}: ${s}`;
+          const s = String(hint).replace(/\n/g, " ").slice(0, 60);
+          detail = `${event.tool}(${s})`;
         }
       }
       feed.addMessage({
