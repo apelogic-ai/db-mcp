@@ -333,7 +333,10 @@ async function shutdown(): Promise<void> {
   await agent.disconnect();
   tui.stop();
   terminal.showCursor();
-  await terminal.drainInput(500, 50);
+  // Disable Kitty keyboard protocol and reset terminal state
+  process.stdout.write("\x1b[?1u");   // pop Kitty keyboard flags
+  process.stdout.write("\x1b[?25h");  // show cursor
+  await terminal.drainInput(1000, 100);
   process.exit(0);
 }
 

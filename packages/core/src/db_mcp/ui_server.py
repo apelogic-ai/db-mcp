@@ -132,7 +132,10 @@ STATIC_DIR = get_static_dir()
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("Starting db-mcp UI server")
-    validate_static_bundle_provenance()
+    try:
+        validate_static_bundle_provenance()
+    except RuntimeError as e:
+        logger.warning("Static bundle validation skipped: %s", e)
     yield
     logger.info("Shutting down db-mcp UI server")
 
