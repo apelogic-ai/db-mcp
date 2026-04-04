@@ -20,8 +20,12 @@ class DBMcpTUI(App):
 
     TITLE = "db-mcp"
     CSS = """
+    Screen {
+        layout: vertical;
+    }
     EventFeed {
         height: 1fr;
+        scrollbar-size: 1 1;
     }
     """
 

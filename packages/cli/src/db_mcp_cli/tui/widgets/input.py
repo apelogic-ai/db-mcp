@@ -11,9 +11,8 @@ class CommandInput(Input):
     DEFAULT_CSS = """
     CommandInput {
         dock: bottom;
-        height: 1;
-        margin: 0;
-        padding: 0 1;
+        height: 3;
+        border-top: solid $accent;
     }
     """
 
