@@ -72,6 +72,7 @@ class CommandInput(Vertical):
         background: $surface;
         padding: 0 1;
         color: $text;
+        content-align: left middle;
     }
     CommandInput > Input:focus {
         border: tall $surface;
@@ -109,16 +110,22 @@ class CommandInput(Vertical):
         await self.app.dispatch_command(raw)
 
     @on(OptionList.OptionSelected)
-    def _on_option_selected(self, event: OptionList.OptionSelected) -> None:
-        """Insert the selected command into the input."""
-        if event.option.id:
-            inp = self.query_one(Input)
-            # Commands that take args get a trailing space
-            needs_arg = event.option.id in ("/add-rule", "/use")
-            inp.value = event.option.id + (" " if needs_arg else "")
+    async def _on_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Select a command: execute immediately if no args needed, else insert."""
+        if not event.option.id:
+            return
+        cmd = event.option.id
+        inp = self.query_one(Input)
+        self.query_one(CommandPalette).remove_class("visible")
+        needs_arg = cmd in ("/add-rule", "/use")
+        if needs_arg:
+            inp.value = cmd + " "
             inp.cursor_position = len(inp.value)
             inp.focus()
-            self.query_one(CommandPalette).remove_class("visible")
+        else:
+            inp.clear()
+            inp.focus()
+            await self.app.dispatch_command(cmd)
 
     def on_key(self, event) -> None:
         """Route arrow keys to palette when visible."""
