@@ -29,6 +29,11 @@ from opentelemetry import trace
 from db_mcp.services.query import run_sql, validate_sql
 from db_mcp.tools.utils import resolve_connection
 
+_DESTRUCTIVE_INTENT_RE = re.compile(
+    r"\b(drop|delete|truncate|update|insert|alter|create|grant|revoke|replace)\b",
+    re.IGNORECASE,
+)
+
 _ROLLING_WINDOW_RE = re.compile(
     r"(?P<days>\d+)-day period ending on (?P<anchor>\d{4}-\d{2}-\d{2})",
     re.IGNORECASE,
@@ -327,6 +332,15 @@ def preview_answer_intent(
             warnings=[
                 "Add or approve metrics before using answer_intent on this connection.",
             ],
+        )
+
+    if _DESTRUCTIVE_INTENT_RE.search(intent):
+        return AnswerIntentResponse(
+            status="error",
+            error=(
+                "Destructive operations are not supported via answer_intent. "
+                "Use run_sql with explicit confirmation for write operations."
+            ),
         )
 
     try:

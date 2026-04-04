@@ -13,9 +13,10 @@ from db_mcp_cli.main import main
 def test_query_run_table_output(mock_run, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
     (tmp_path / "dummy").write_text("")
+    # run_sql returns list[dict] under "data" key
     mock_run.return_value = {
+        "data": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
         "columns": ["id", "name"],
-        "rows": [[1, "Alice"], [2, "Bob"]],
     }
 
     runner = CliRunner()
@@ -31,8 +32,8 @@ def test_query_run_csv_export(mock_run, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
     (tmp_path / "dummy").write_text("")
     mock_run.return_value = {
+        "data": [{"id": 1, "name": "Alice"}],
         "columns": ["id", "name"],
-        "rows": [[1, "Alice"]],
     }
 
     runner = CliRunner()
@@ -51,8 +52,8 @@ def test_query_run_json_export(mock_run, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
     (tmp_path / "dummy").write_text("")
     mock_run.return_value = {
+        "data": [{"id": 1, "name": "Alice"}],
         "columns": ["id", "name"],
-        "rows": [[1, "Alice"]],
     }
 
     runner = CliRunner()
@@ -98,10 +99,11 @@ def test_query_validate_success(mock_validate, mock_path, mock_active, tmp_path)
 def test_ask_success(mock_answer, mock_path, mock_active, tmp_path):
     mock_path.return_value = tmp_path
     (tmp_path / "dummy").write_text("")
+    # answer_intent returns AnswerIntentResponse.model_dump() with "records" (list[dict])
     mock_answer.return_value = {
-        "sql": "SELECT COUNT(*) FROM users",
-        "columns": ["count"],
-        "rows": [[42]],
+        "status": "success",
+        "answer": "Executed metric 'user_count' on connection 'test' and returned 1 row.",
+        "records": [{"count": 42}],
     }
 
     runner = CliRunner()
@@ -121,3 +123,34 @@ def test_ask_error(mock_answer, mock_path, mock_active, tmp_path):
     runner = CliRunner()
     result = runner.invoke(main, ["ask", "unknown metric"])
     assert result.exit_code != 0
+
+
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
+def test_ask_sql_input_rejected(mock_path, mock_active, tmp_path):
+    """SQL-looking input should be redirected to query run instead."""
+    mock_path.return_value = tmp_path
+    (tmp_path / "dummy").write_text("")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["ask", "SELECT 1"])
+    assert result.exit_code != 0
+    assert "query run" in result.output.lower()
+
+
+@patch("db_mcp_cli.connection.get_active_connection", return_value="test")
+@patch("db_mcp_cli.connection.get_connection_path")
+@patch("db_mcp.orchestrator.engine.answer_intent", new_callable=AsyncMock)
+def test_ask_error_with_warnings(mock_answer, mock_path, mock_active, tmp_path):
+    """Warnings from answer_intent should appear alongside the error."""
+    mock_path.return_value = tmp_path
+    (tmp_path / "dummy").write_text("")
+    mock_answer.return_value = {
+        "error": "No approved metric matched the intent.",
+        "warnings": ["Available metrics: dau, revenue"],
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["ask", "how many widgets"])
+    assert result.exit_code != 0
+    assert "dau" in result.output

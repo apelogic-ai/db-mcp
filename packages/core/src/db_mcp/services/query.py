@@ -777,6 +777,18 @@ async def validate_sql(
         should_explain = should_explain_statement
     if explain is None:
         explain = explain_sql
+    # Permission check runs regardless of whether EXPLAIN-based validation is supported.
+    is_allowed, error, statement_type, is_write = validate_permissions(sql, capabilities=caps)
+    if not is_allowed:
+        return {
+            "valid": False,
+            "error": error,
+            "sql": sql,
+            "query_id": None,
+            "statement_type": statement_type,
+            "is_write": is_write,
+        }
+
     if not caps.get("supports_validate_sql", True):
         return {
             "valid": False,
@@ -789,17 +801,6 @@ async def validate_sql(
                     "Or use api_query for connector-specific endpoints",
                 ]
             },
-        }
-
-    is_allowed, error, statement_type, is_write = validate_permissions(sql, capabilities=caps)
-    if not is_allowed:
-        return {
-            "valid": False,
-            "error": error,
-            "sql": sql,
-            "query_id": None,
-            "statement_type": statement_type,
-            "is_write": is_write,
         }
 
     _, _, require_write_confirmation = write_policy_getter(caps)
