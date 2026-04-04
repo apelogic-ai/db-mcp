@@ -9,8 +9,18 @@ console.log = () => {};  // eslint-disable-line
 // Catch unhandled rejections — show in feed, don't crash
 process.on("unhandledRejection", (err) => {
   const msg = err instanceof Error ? err.message : String(err);
-  feed.addMessage({ id: `unhandled-${Date.now()}`, role: "error", text: msg });
-  tui.requestRender();
+  try {
+    feed.addMessage({ id: `unhandled-${Date.now()}`, role: "error", text: msg });
+    tui.requestRender();
+  } catch {
+    // Feed might not be ready yet
+  }
+});
+
+// Log uncaught exceptions to file
+process.on("uncaughtException", (err) => {
+  require("node:fs").appendFileSync("/tmp/db-mcp-tui-crash.log",
+    `${new Date().toISOString()} UNCAUGHT: ${err.stack ?? err.message}\n`);
 });
 import {
   TUI,
