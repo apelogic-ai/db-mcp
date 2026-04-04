@@ -104,6 +104,7 @@ export class Agent {
         name: "db-mcp",
         type: "http",
         url: this.config.mcpUrl,
+        headers: [],
       }],
     }) as { sessionId: string };
 
