@@ -65,8 +65,13 @@ export class Agent {
       );
     }
 
-    // Suppress agent stderr debug logs from polluting the TUI
+    // Route agent stderr to a file for debugging (not to terminal)
+    const { createWriteStream } = await import("node:fs");
+    const logStream = createWriteStream("/tmp/db-mcp-agent.log", { flags: "a" });
     this.process.process.stderr?.removeAllListeners("data");
+    this.process.process.stderr?.on("data", (chunk: Buffer) => {
+      logStream.write(chunk);
+    });
 
     // Handle spawn errors (e.g. ENOENT after async start)
     await new Promise<void>((resolve, reject) => {

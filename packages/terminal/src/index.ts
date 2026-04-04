@@ -4,8 +4,14 @@
  */
 
 // Suppress console.log from acp-bridge debug output — TUI uses the feed, not console
-const _origLog = console.log;
 console.log = () => {};  // eslint-disable-line
+
+// Catch unhandled rejections — show in feed, don't crash
+process.on("unhandledRejection", (err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  feed.addMessage({ id: `unhandled-${Date.now()}`, role: "error", text: msg });
+  tui.requestRender();
+});
 import {
   TUI,
   ProcessTerminal,
