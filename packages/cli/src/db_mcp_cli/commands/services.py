@@ -377,7 +377,7 @@ def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> 
             raise SystemExit(1)
 
     # Find the TS TUI entry point
-    tui_src = Path(__file__).resolve().parents[5] / "terminal" / "src" / "index.ts"
+    tui_src = Path(__file__).resolve().parents[4] / "terminal" / "src" / "index.ts"
     if not tui_src.exists():
         console.print(f"[red]TUI not found at {tui_src}[/red]")
         raise SystemExit(1)
