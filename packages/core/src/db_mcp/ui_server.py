@@ -174,7 +174,7 @@ def create_app(mount_mcp: bool = False) -> FastAPI:
         from db_mcp_server.server import create_mcp_server
 
         mcp = create_mcp_server()
-        app.mount("/mcp", mcp.http_app(path="/mcp"))
+        app.mount("/mcp", mcp.http_app(path="/"))
 
     def _serve_exported_page(*segments: str):
         page_path = STATIC_DIR.joinpath(*segments, "index.html")
