@@ -177,7 +177,9 @@ function handleAgentEvent(event: AgentEvent): void {
       currentAssistantId = null;
       break;
   }
-  tui.requestRender();
+  // Force immediate render — stream events arrive from child process I/O,
+  // the TUI render loop may not tick otherwise while stdin is idle
+  tui.requestRender(true);
 }
 
 // ---------------------------------------------------------------------------
