@@ -139,8 +139,10 @@ def _make_lifespan(mcp_asgi_app=None):
         except RuntimeError as e:
             logger.warning("Static bundle validation skipped: %s", e)
 
-        if mcp_asgi_app and hasattr(mcp_asgi_app, "lifespan"):
-            async with mcp_asgi_app.lifespan(app):
+        if mcp_asgi_app is not None:
+            # Run the MCP ASGI app's lifespan (initializes the task group)
+            mcp_lifespan = mcp_asgi_app.router.lifespan_context
+            async with mcp_lifespan(mcp_asgi_app):
                 yield
         else:
             yield

@@ -107,7 +107,7 @@ export class Agent {
       mcpServers: [{
         name: "db-mcp",
         type: "http",
-        url: this.config.mcpUrl,
+        url: this.config.mcpUrl.endsWith("/") ? this.config.mcpUrl : this.config.mcpUrl + "/",
         headers: [],
       }],
       _meta: {
