@@ -82,3 +82,19 @@ class APIClient:
             connection=connection,
             server_healthy=healthy,
         )
+
+    def confirm_execution(self, execution_id: str, action: str) -> bool:
+        """Confirm or cancel a pending execution."""
+        try:
+            body = json.dumps({"action": action}).encode()
+            req = Request(
+                f"{self.base_url}/api/executions/{execution_id}/confirm",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urlopen(req, timeout=5)
+            return resp.status == 200
+        except (URLError, OSError) as e:
+            logger.debug("confirm_execution failed: %s", e)
+            return False

@@ -24,3 +24,8 @@ class EventFeed(RichLog):
             return
         self._seen_ids.add(event.id)
         self.write(event.render())
+
+    def clear_events(self) -> None:
+        """Clear all events from the feed."""
+        self._seen_ids.clear()
+        self.clear()
