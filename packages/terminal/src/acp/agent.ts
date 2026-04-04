@@ -179,7 +179,14 @@ export class Agent {
     if (!this.session) {
       throw new Error("Not connected — call connect() first");
     }
+    if (!this.process?.isAlive()) {
+      throw new Error("Agent process is no longer running");
+    }
     await this.session.prompt(text);
+  }
+
+  get alive(): boolean {
+    return this.process?.isAlive() ?? false;
   }
 
   /** Disconnect and kill the agent process. */

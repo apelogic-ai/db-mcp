@@ -3,8 +3,10 @@
  * db-mcp TUI — terminal interface for database queries via ACP agent.
  */
 
-// Suppress console.log from acp-bridge debug output — TUI uses the feed, not console
-console.log = () => {};  // eslint-disable-line
+// Debug mode: set DB_MCP_DEBUG=1 to see RPC traffic
+if (!process.env.DB_MCP_DEBUG) {
+  console.log = () => {};  // eslint-disable-line
+}
 
 // Catch unhandled rejections — show in feed, don't crash
 process.on("unhandledRejection", (err) => {
