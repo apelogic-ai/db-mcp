@@ -88,7 +88,7 @@ async function handleCommand(raw: string): Promise<void> {
           "| Command | Description |",
           "|---------|-------------|",
           ...SLASH_COMMANDS.map(
-            (c) => `| \`${c.name}\` | ${c.description} |`
+            (c) => `| \`/${c.name}\` | ${c.description} |`
           ),
           "",
           "Or type any question in natural language.",
