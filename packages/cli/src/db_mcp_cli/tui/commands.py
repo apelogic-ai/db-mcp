@@ -56,8 +56,11 @@ class CommandDispatcher:
             health = "\u2714 healthy" if status.server_healthy else "\u2718 disconnected"
             conn = status.connection or "none"
             feed.write(f"[dim]status:[/] {health}  |  connection: {conn}")
-        else:
+        elif raw.startswith("/"):
             feed.write(f"[red]unknown command:[/] {raw}")
+        else:
+            # Plain text → ACP insider agent
+            await self._handle_acp_prompt(raw, app, feed)
 
     async def _handle_confirm(self, action: str, app: DBMcpTUI, feed) -> None:
         from datetime import datetime, timezone
@@ -159,3 +162,14 @@ class CommandDispatcher:
             feed.write(f"[bold]\u25cf[/] \u2192 connection: {name}")
         else:
             feed.write(f"[red]failed to switch to {name}[/]")
+
+    async def _handle_acp_prompt(self, text: str, app: DBMcpTUI, feed) -> None:
+        feed.write(f"[bold]\u25cf[/] {text}")
+
+        def on_update(update_text: str) -> None:
+            app.call_from_thread(feed.write, f"  [dim]\u23bf[/]  {update_text}")
+
+        try:
+            await app.acp.prompt(text, on_update=on_update)
+        except Exception as e:
+            feed.write(f"[red]agent error:[/] {e}")

@@ -6,6 +6,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 
+from db_mcp_cli.tui.acp_client import ACPClient
 from db_mcp_cli.tui.client import APIClient
 from db_mcp_cli.tui.commands import CommandDispatcher
 from db_mcp_cli.tui.events import FeedEvent
@@ -34,6 +35,10 @@ class DBMcpTUI(App):
         self.dispatcher = CommandDispatcher()
         self.pending_confirm_id: str | None = None
         self.pending_gap: FeedEvent | None = None
+        self.acp = ACPClient(
+            agent_command="claude",
+            mcp_url=f"{base_url}/mcp",
+        )
 
     def compose(self) -> ComposeResult:
         yield EventFeed()
