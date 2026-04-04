@@ -31,6 +31,15 @@ const statusBar = new StatusBar();
 const slashProvider = new CombinedAutocompleteProvider(SLASH_COMMANDS);
 editor.setAutocompleteProvider(slashProvider);
 
+// Catch Ctrl+C in raw mode (stdin sends \x03, not SIGINT)
+tui.addInputListener((data: string) => {
+  if (data === "\x03") {
+    shutdown();
+    return { consume: true };
+  }
+  return undefined;
+});
+
 // Layout: feed takes all space, editor + status docked at bottom
 tui.addChild(feed);
 tui.addChild(editor);
@@ -167,7 +176,7 @@ function shutdown(): void {
   clearInterval(pollInterval);
   tui.stop();
   terminal.showCursor();
-  process.exit(0);
+  terminal.drainInput(500, 50).finally(() => process.exit(0));
 }
 
 process.on("SIGINT", shutdown);
