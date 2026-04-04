@@ -344,7 +344,7 @@ def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> 
         console.print(f"[dim]Starting daemon on {url}...[/dim]")
         _configure_service_environment(
             connection,
-            tool_mode_override="daemon",
+            tool_mode_override="shell",
             runtime_interface_override="native",
         )
         state = build_local_service_state(
