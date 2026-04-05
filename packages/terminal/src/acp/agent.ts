@@ -115,15 +115,10 @@ export class Agent {
       clientInfo: { name: "db-mcp-tui", version: "0.1.0" },
     }) as { protocolVersion: number };
 
-    // Create a session with our MCP server
+    // Create a session — agent uses db-mcp CLI (no MCP server needed)
     const sessionResult = await this.process.rpc.sendRequest("session/new", {
       cwd: process.cwd(),
-      mcpServers: [{
-        name: "db-mcp",
-        type: "http",
-        url: this.config.mcpUrl.endsWith("/") ? this.config.mcpUrl : this.config.mcpUrl + "/",
-        headers: [],
-      }],
+      mcpServers: [],
       _meta: {
         systemPrompt: [
           "You are a database assistant powered by db-mcp CLI.",
