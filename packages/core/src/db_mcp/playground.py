@@ -98,7 +98,7 @@ def install_playground() -> dict:
         "type": "sql",
         "profile": "sql_db",
         "database_url": database_url,
-        "capabilities": {"supports_validate_sql": False},
+        "capabilities": {"supports_validate_sql": True},
     }
     with open(connector_file, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
