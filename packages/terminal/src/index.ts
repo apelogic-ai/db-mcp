@@ -179,6 +179,9 @@ function handleAgentEvent(event: AgentEvent): void {
         text: event.message,
       });
       break;
+    case "usage":
+      statusBar.addUsage(event.usage);
+      break;
     case "done":
       currentAssistantId = null;
       break;
@@ -355,11 +358,18 @@ async function handlePrompt(text: string): Promise<void> {
 async function refreshStatus(): Promise<void> {
   try {
     const resp = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(2000) });
-    const data = (await resp.json()) as Record<string, string>;
-    statusBar.update({
-      healthy: resp.ok,
-      connection: data.connection ?? "",
+    statusBar.update({ healthy: resp.ok });
+
+    // Get active connection
+    const connResp = await fetch(`${BASE_URL}/api/connections/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(2000),
     });
+    const connData = (await connResp.json()) as { connections?: Array<{ name: string; isActive: boolean }> };
+    const active = connData.connections?.find(c => c.isActive);
+    statusBar.update({ connection: active?.name ?? "none" });
   } catch {
     statusBar.update({ healthy: false });
   }

@@ -19,6 +19,7 @@ export type AgentEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "tool_start"; tool: string; params?: unknown }
   | { type: "tool_end"; tool: string; result?: string }
+  | { type: "usage"; usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -193,6 +194,17 @@ export class Agent {
       this._sessionId,
       this._sessionId,
     );
+
+    // Capture usage_update notifications (dropped by the bridge)
+    this.process.rpc.onNotification((notification) => {
+      if (notification.method !== "session/update") return;
+      const p = notification.params as { update?: { sessionUpdate?: string; usage?: unknown } } | undefined;
+      if (p?.update?.sessionUpdate === "usage_update" && p.update.usage) {
+        const { appendFileSync } = require("node:fs");
+        appendFileSync("/tmp/db-mcp-usage.log", JSON.stringify(p.update.usage) + "\n");
+        onEvent({ type: "usage" as any, usage: p.update.usage } as any);
+      }
+    });
 
     this.session.onEvent((gatewayEvent) => {
       switch (gatewayEvent.type) {

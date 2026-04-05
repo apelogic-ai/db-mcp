@@ -5,7 +5,11 @@
       "mcp__db-mcp__shell",
       "mcp__db-mcp__api_query",
       "mcp__db-mcp__validate_sql",
-      "mcp__db-mcp__run_sql"
+      "mcp__db-mcp__run_sql",
+      "Bash(db-mcp gaps:*)",
+      "Bash(db-mcp --help)",
+      "Bash(db-mcp playground:*)",
+      "Bash(db-mcp discover:*)"
     ]
   }
 }
