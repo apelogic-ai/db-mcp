@@ -153,19 +153,7 @@ export class Agent {
       // Auto-approve ALL tool calls with allow_always
       // Also extract tool call details for display
       if (method === "session/request_permission") {
-        const p = params as {
-          toolCall?: { title?: string; rawInput?: unknown };
-        } | undefined;
-        if (p?.toolCall?.rawInput && this._onEvent) {
-          // Emit a richer tool_start with actual params
-          const input = p.toolCall.rawInput as Record<string, unknown>;
-          const toolName = p.toolCall.title ?? "unknown";
-          this._onEvent({
-            type: "tool_start",
-            tool: toolName,
-            params: input,
-          });
-        }
+        // Auto-approve — tool_start already emitted from notification
         return { outcome: { outcome: "selected", optionId: "allow_always" } };
       }
       // Terminal operations — execute CLI commands
@@ -225,10 +213,12 @@ export class Agent {
         case "thinking_delta":
           onEvent({ type: "thinking_delta", delta: (gatewayEvent as { delta: string }).delta });
           break;
-        case "tool_start":
-          // Skip — tool_call notifications have empty params.
-          // We emit tool_start from request_permission instead (has rawInput).
+        case "tool_start": {
+          // Emit with whatever info we have (params may be empty)
+          const ev = gatewayEvent as { tool: string; params?: unknown; toolCallId?: string };
+          onEvent({ type: "tool_start", tool: ev.tool, params: ev.params });
           break;
+        }
         case "tool_end":
           onEvent({
             type: "tool_end",

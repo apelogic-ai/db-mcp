@@ -163,9 +163,14 @@ export class Feed implements Component {
           }
 
           // Render response text
-          // Single \n in markdown = space; convert to \n\n for paragraph breaks
           if (text) {
-            const normalized = text.replace(/(?<!\n)\n(?!\n)/g, "\n\n");
+            // Agent streams without line breaks — insert paragraph breaks at
+            // natural sentence boundaries (.:A or :A patterns)
+            let normalized = text;
+            // Convert existing single \n to \n\n for markdown paragraph breaks
+            normalized = normalized.replace(/(?<!\n)\n(?!\n)/g, "\n\n");
+            // Insert breaks where sentences end with : or . followed by capital letter
+            normalized = normalized.replace(/([.:])([A-Z])/g, "$1\n\n$2");
             parts.push(normalized);
           } else if (!completed) {
             parts.push("_thinking..._");
