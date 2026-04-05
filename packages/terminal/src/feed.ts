@@ -81,10 +81,14 @@ export class Feed implements Component {
   /** Mark the current turn as completed — compacts tool calls. */
   completeTurn(): void {
     if (this.currentTurn) {
-      // Bake the turn's text into the assistant message
+      // Find the assistant message for THIS turn (the last non-completed one)
       let assistantMsg: FeedMessage | undefined;
       for (let i = this.messages.length - 1; i >= 0; i--) {
-        if (this.messages[i]!.role === "assistant") { assistantMsg = this.messages[i]; break; }
+        const m = this.messages[i]!;
+        if (m.role === "assistant" && !(m as any)._completed) {
+          assistantMsg = m;
+          break;
+        }
       }
       if (assistantMsg) {
         assistantMsg.text = this.currentTurn.text;
@@ -158,10 +162,11 @@ export class Feed implements Component {
             }
           }
 
-          // Render response text — split on tool-call boundaries
-          // so text before/after tool calls gets line breaks
+          // Render response text
+          // Single \n in markdown = space; convert to \n\n for paragraph breaks
           if (text) {
-            parts.push(text);
+            const normalized = text.replace(/(?<!\n)\n(?!\n)/g, "\n\n");
+            parts.push(normalized);
           } else if (!completed) {
             parts.push("_thinking..._");
           }
