@@ -2,6 +2,7 @@
  * Feed component — scrolling message log rendered as Markdown.
  */
 import { Markdown, type Component, type MarkdownTheme } from "@mariozechner/pi-tui";
+import chalk from "chalk";
 
 export interface FeedMessage {
   id: string;
@@ -42,6 +43,11 @@ export class Feed implements Component {
     if (msg.role === "tool") {
       // Accumulate tool calls into the current turn
       if (this.currentTurn) {
+        // If there's text before this tool call, add a line break
+        // so text doesn't cram into the next chunk
+        if (this.currentTurn.text && !this.currentTurn.text.endsWith("\n")) {
+          this.currentTurn.text += "\n\n";
+        }
         this.currentTurn.tools.push(shortToolName(msg.text));
       }
       // Don't add to messages — tools are rendered from the turn
@@ -109,7 +115,14 @@ export class Feed implements Component {
   }
 
   private formatToolLine(tool: string): string {
-    return `├ \`${tool}\``;
+    // Use chalk for dimmed yellow — markdown italic/code don't render well
+    return chalk.dim.yellow(`├ ${tool}`);
+  }
+
+  private formatToolSummary(tools: string[]): string {
+    const preview = tools.slice(0, 3).join(", ");
+    const suffix = tools.length > 3 ? "…" : "";
+    return chalk.dim.yellow(`├ ${tools.length} tools: ${preview}${suffix}`);
   }
 
   private rebuildMarkdown(): void {
@@ -135,16 +148,15 @@ export class Feed implements Component {
           // Render tool calls
           if (tools.length > 0) {
             if (completed && tools.length > 3) {
-              // Compacted: show summary
-              parts.push(`├ _${tools.length} tool calls: ${tools.slice(0, 3).join(", ")}..._`);
+              parts.push(this.formatToolSummary(tools));
             } else {
-              // Show each tool on its own line (single block, no empty lines)
-              const toolBlock = tools.map(t => this.formatToolLine(t)).join("\n");
-              parts.push(toolBlock);
+              // Each tool on its own line, no empty lines between
+              parts.push(tools.map(t => this.formatToolLine(t)).join("\n"));
             }
           }
 
-          // Render response text
+          // Render response text — split on tool-call boundaries
+          // so text before/after tool calls gets line breaks
           if (text) {
             parts.push(text);
           } else if (!completed) {
