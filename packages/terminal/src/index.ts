@@ -228,15 +228,27 @@ editor.onSubmit = async (text: string) => {
 
 async function runPrompt(text: string): Promise<void> {
   promptRunning = true;
-  await handlePrompt(text);
-  promptRunning = false;
+  try {
+    await handlePrompt(text);
+  } finally {
+    promptRunning = false;
+    feed.completeTurn();
+    currentAssistantId = null;
+    setTimeout(() => tui.requestRender(), 0);
+  }
 
   // Process queued follow-up messages
   while (pendingMessages.length > 0) {
     const next = pendingMessages.shift()!;
     promptRunning = true;
-    await handlePrompt(next);
-    promptRunning = false;
+    try {
+      await handlePrompt(next);
+    } finally {
+      promptRunning = false;
+      feed.completeTurn();
+      currentAssistantId = null;
+      setTimeout(() => tui.requestRender(), 0);
+    }
   }
 }
 
@@ -374,10 +386,7 @@ async function handlePrompt(text: string): Promise<void> {
       text: `Agent error: ${msg}`,
     });
   }
-
-  feed.completeTurn();
-  currentAssistantId = null;
-  setTimeout(() => tui.requestRender(), 0);
+  // completeTurn + cleanup handled by runPrompt's finally block
 }
 
 // ---------------------------------------------------------------------------

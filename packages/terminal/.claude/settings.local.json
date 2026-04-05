@@ -9,7 +9,8 @@
       "Bash(db-mcp gaps:*)",
       "Bash(db-mcp --help)",
       "Bash(db-mcp playground:*)",
-      "Bash(db-mcp discover:*)"
+      "Bash(db-mcp discover:*)",
+      "mcp__db-mcp__search_tools"
     ]
   }
 }
