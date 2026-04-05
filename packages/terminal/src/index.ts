@@ -195,6 +195,9 @@ function handleAgentEvent(event: AgentEvent): void {
 // Input handling
 // ---------------------------------------------------------------------------
 
+let promptRunning = false;
+const pendingMessages: string[] = [];
+
 editor.onSubmit = async (text: string) => {
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -204,12 +207,38 @@ editor.onSubmit = async (text: string) => {
 
   if (trimmed.startsWith("/")) {
     await handleCommand(trimmed);
-  } else {
-    await handlePrompt(trimmed);
+    tui.requestRender();
+    return;
   }
 
-  tui.requestRender();
+  if (promptRunning) {
+    // Queue as follow-up — will be sent after current turn completes
+    pendingMessages.push(trimmed);
+    feed.addMessage({
+      id: `queued-${Date.now()}`,
+      role: "user",
+      text: `${trimmed}  _(queued)_`,
+    });
+    setTimeout(() => tui.requestRender(), 0);
+    return;
+  }
+
+  await runPrompt(trimmed);
 };
+
+async function runPrompt(text: string): Promise<void> {
+  promptRunning = true;
+  await handlePrompt(text);
+  promptRunning = false;
+
+  // Process queued follow-up messages
+  while (pendingMessages.length > 0) {
+    const next = pendingMessages.shift()!;
+    promptRunning = true;
+    await handlePrompt(next);
+    promptRunning = false;
+  }
+}
 
 async function handleCommand(raw: string): Promise<void> {
   const [cmd, ...rest] = raw.split(" ");
