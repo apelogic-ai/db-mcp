@@ -376,10 +376,22 @@ def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> 
             console.print("[red]Daemon failed to start[/red]")
             raise SystemExit(1)
 
-    # Find the TS TUI entry point
-    tui_src = Path(__file__).resolve().parents[4] / "terminal" / "src" / "index.ts"
-    if not tui_src.exists():
-        console.print(f"[red]TUI not found at {tui_src}[/red]")
+    # Find the TS TUI entry point — check PyInstaller bundle first, then repo layout
+    tui_src = None
+    # 1. PyInstaller bundle: sys._MEIPASS / terminal / src / index.ts
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidate = Path(meipass) / "terminal" / "src" / "index.ts"
+        if candidate.exists():
+            tui_src = candidate
+    # 2. Repo layout: packages/terminal/src/index.ts
+    if tui_src is None:
+        candidate = Path(__file__).resolve().parents[4] / "terminal" / "src" / "index.ts"
+        if candidate.exists():
+            tui_src = candidate
+    if tui_src is None:
+        console.print("[red]TUI not found. Install bun and run from the repo, "
+                      "or use a binary that bundles the terminal package.[/red]")
         raise SystemExit(1)
 
     # Prefer bun, fall back to npx tsx

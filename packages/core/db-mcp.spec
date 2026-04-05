@@ -76,6 +76,19 @@ static_dir = src_dir / "db_mcp" / "static"
 if static_dir.exists():
     datas.append((str(static_dir), "db_mcp/static"))
 
+# Include TypeScript TUI source (for `db-mcp tui`)
+terminal_src = repo_root / "packages" / "terminal" / "src"
+if terminal_src.exists():
+    datas.append((str(terminal_src), "terminal/src"))
+# Include terminal package.json (needed for bun/npx resolution)
+terminal_pkg = repo_root / "packages" / "terminal" / "package.json"
+if terminal_pkg.exists():
+    datas.append((str(terminal_pkg), "terminal"))
+# Include terminal node_modules if present (bundled deps)
+terminal_nm = repo_root / "packages" / "terminal" / "node_modules"
+if terminal_nm.exists():
+    datas.append((str(terminal_nm), "terminal/node_modules"))
+
 a = Analysis(
     [str(repo_root / "packages" / "cli" / "src" / "db_mcp_cli" / "__main__.py")],
     pathex=workspace_src_dirs,
