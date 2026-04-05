@@ -130,30 +130,27 @@ tui.setFocus(editor);
 // ---------------------------------------------------------------------------
 
 // Render logo with color directly (not through markdown)
+// Render logo directly — bypass markdown (ANSI + spaces don't survive code blocks)
 const o = chalk.hex("#E87A1E");  // ApeLogic orange (eyes only)
 const w = chalk.white;           // white (nose, mouth)
 const d = chalk.dim;             // dark outline
-const logo = [
+const logoLines = [
   d("       ▄▄████████▄▄"),
   d("     ▄██▀▀      ▀▀██▄"),
   d("    ██              ██"),
-  d("   ██  ") + o("▄██▄") + "  " + o("▄██▄") + "   " + d("██"),
-  d("   ██  ") + o("█▀▀█") + "  " + o("█▀▀█") + "   " + d("██"),
-  d("   ██  ") + o("▀██▀") + "  " + o("▀██▀") + "   " + d("██"),
-  d("   ██") + "               " + d("██"),
-  d("   ██    ") + w("▄██████▄") + "    " + d("██"),
-  d("   ██    ") + w("█ ▀▀▀▀ █") + "    " + d("██"),
-  d("   ██    ") + w("▀██████▀") + "    " + d("██"),
+  d("    ██ ") + o("▄██▄") + d("  ") + o("▄██▄") + d(" ██"),
+  d("    ██ ") + o("█▀▀█") + d("  ") + o("█▀▀█") + d(" ██"),
+  d("    ██ ") + o("▀██▀") + d("  ") + o("▀██▀") + d(" ██"),
+  d("    ██              ██"),
+  d("    ██   ") + w("▄██████▄") + d("   ██"),
+  d("    ██   ") + w("█ ▀▀▀▀ █") + d("   ██"),
+  d("    ██   ") + w("▀██████▀") + d("   ██"),
   d("    ██              ██"),
   d("     ▀██▄        ▄██▀"),
   d("       ▀▀████████▀▀"),
-].join("\n");
+];
 
-feed.addMessage({
-  id: "logo",
-  role: "system",
-  text: "```\n" + logo + "\n```",
-});
+feed.setPrefixLines([...logoLines, ""]);
 
 feed.addMessage({
   id: "welcome",

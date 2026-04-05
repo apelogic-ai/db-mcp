@@ -31,6 +31,7 @@ export class Feed implements Component {
   private markdown: Markdown;
   private dirty = true;
   private currentTurn: Turn | null = null;
+  private _prefixLines: string[] = [];
 
   constructor(theme: MarkdownTheme) {
     this.markdown = new Markdown("", 1, 0, theme);
@@ -126,8 +127,13 @@ export class Feed implements Component {
     this.dirty = true;
   }
 
+  /** Set pre-rendered lines that appear before markdown content (e.g. logo). */
+  setPrefixLines(lines: string[]): void {
+    this._prefixLines = lines;
+  }
+
   render(width: number): string[] {
-    return this.markdown.render(width);
+    return [...this._prefixLines, ...this.markdown.render(width)];
   }
 
   private formatToolLine(tool: string): string {
