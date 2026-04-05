@@ -198,11 +198,20 @@ export class Agent {
     // Capture usage_update notifications (dropped by the bridge)
     this.process.rpc.onNotification((notification) => {
       if (notification.method !== "session/update") return;
-      const p = notification.params as { update?: { sessionUpdate?: string; usage?: unknown } } | undefined;
-      if (p?.update?.sessionUpdate === "usage_update" && p.update.usage) {
+      const p = notification.params as { update?: Record<string, unknown> } | undefined;
+      if (p?.update?.sessionUpdate === "usage_update") {
         const { appendFileSync } = require("node:fs");
-        appendFileSync("/tmp/db-mcp-usage.log", JSON.stringify(p.update.usage) + "\n");
-        onEvent({ type: "usage" as any, usage: p.update.usage } as any);
+        appendFileSync("/tmp/db-mcp-usage.log", JSON.stringify(p.update) + "\n");
+        // Extract usage from whichever field contains it
+        const u = (p.update.usage ?? p.update) as Record<string, unknown>;
+        const usage = {
+          input_tokens: Number(u.input_tokens ?? u.inputTokens ?? 0),
+          output_tokens: Number(u.output_tokens ?? u.outputTokens ?? 0),
+          cache_read_input_tokens: Number(u.cache_read_input_tokens ?? u.cacheReadInputTokens ?? 0),
+        };
+        if (usage.input_tokens || usage.output_tokens) {
+          onEvent({ type: "usage", usage });
+        }
       }
     });
 
