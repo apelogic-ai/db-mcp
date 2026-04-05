@@ -413,13 +413,21 @@ async function runCli(command: string): Promise<void> {
   const result = await handleTerminalOutput({ terminalId });
   handleReleaseTerminal({ terminalId });
 
-  const output = result.output.trim();
+  let output = result.output.trim();
   if (output) {
-    feed.addMessage({
-      id: `cli-${Date.now()}`,
-      role: "system",
-      text: "```\n" + output + "\n```",
-    });
+    // Clean up CLI output for TUI context
+    output = output
+      .replace(/Restart Claude Desktop to apply changes\.?\n?/g, "")
+      .replace(/^[✓✗●] /gm, "")         // strip status bullets
+      .replace(/'/g, "")                  // strip quotes around names
+      .trim();
+    if (output) {
+      feed.addMessage({
+        id: `cli-${Date.now()}`,
+        role: "system",
+        text: output,
+      });
+    }
   }
   if (result.exitStatus && result.exitStatus.exitCode !== 0) {
     feed.addMessage({

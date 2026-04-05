@@ -159,13 +159,20 @@ export class Agent {
           if (cmd) {
             const s = String(cmd).replace(/\n/g, " ").trim();
             const detail = s.length > 80 ? `${s.slice(0, 80)}…` : s;
-            this._onEvent({ type: "tool_update" as any, detail } as any);
+            this._onEvent({ type: "tool_update", detail });
           }
         }
         return { outcome: { outcome: "selected", optionId: "allow_always" } };
       }
       // Terminal operations — execute CLI commands
       if (method === "create_terminal") {
+        // Update the last tool entry with the actual command
+        const tp = params as { command?: string; args?: string[] } | undefined;
+        if (tp?.command && this._onEvent) {
+          const fullCmd = [tp.command, ...(tp.args ?? [])].join(" ");
+          const s = fullCmd.length > 80 ? `${fullCmd.slice(0, 80)}…` : fullCmd;
+          this._onEvent({ type: "tool_update", detail: s });
+        }
         return handleCreateTerminal(params as any);
       }
       if (method === "terminal_output") {
