@@ -6,6 +6,12 @@
  */
 import { spawnAgent, type AgentProcess } from "@nexus/acp-bridge";
 import { createAcpSession, type AcpSession } from "@nexus/acp-bridge";
+import {
+  handleCreateTerminal,
+  handleTerminalOutput,
+  handleWaitForTerminalExit,
+  handleReleaseTerminal,
+} from "./terminal.js";
 
 /** Events emitted to the TUI during a prompt. */
 export type AgentEvent =
@@ -119,15 +125,22 @@ export class Agent {
       }],
       _meta: {
         systemPrompt: [
-          "You are a database assistant connected to db-mcp.",
-          "Use the db-mcp MCP tools (shell, run_sql, validate_sql, list_connections, etc.) for ALL database operations.",
-          "Do NOT use Terminal or Bash tools — they are not available in this environment.",
+          "You are a database assistant powered by db-mcp CLI.",
           "",
-          "IMPORTANT: Most tools require a `connection` parameter. When the user mentions a connection name",
-          "(e.g. 'playground', 'mydb'), pass it as `connection=<name>` to every tool call.",
-          "If unsure which connection, call `list_connections` first, then ask the user or infer from context.",
+          "Use the `db-mcp` CLI for ALL database operations. Key commands:",
+          "  db-mcp list                    — list connections",
+          "  db-mcp use <name>              — switch active connection",
+          "  db-mcp status                  — show current config",
+          "  db-mcp query '<question>'      — query in natural language",
+          "  db-mcp schema                  — show tables and columns",
+          "  db-mcp examples                — list training examples",
+          "  db-mcp rules                   — list business rules",
+          "  db-mcp metrics                 — list metrics catalog",
+          "  db-mcp gaps                    — list knowledge gaps",
           "",
-          "Start by calling the db-mcp shell tool with command='cat PROTOCOL.md' and the appropriate connection parameter.",
+          "When the user mentions a connection name, run `db-mcp use <name>` first.",
+          "For SQL queries, use `db-mcp query` which handles schema lookup, SQL generation, and execution.",
+          "Run `db-mcp --help` to see all available commands.",
         ].join("\n"),
       },
     }) as { sessionId: string };
@@ -154,13 +167,22 @@ export class Agent {
         }
         return { outcome: { outcome: "selected", optionId: "allow_always" } };
       }
-      // Reject terminal/file operations — agent should use MCP tools
-      if (method === "create_terminal" || method === "kill_terminal" ||
-          method === "wait_for_terminal_exit" || method === "release_terminal") {
-        throw new Error("Terminal not available in TUI mode. Use MCP tools instead.");
+      // Terminal operations — execute CLI commands
+      if (method === "create_terminal") {
+        return handleCreateTerminal(params as any);
       }
+      if (method === "terminal_output") {
+        return await handleTerminalOutput(params as any);
+      }
+      if (method === "wait_for_terminal_exit") {
+        return await handleWaitForTerminalExit(params as any);
+      }
+      if (method === "release_terminal" || method === "kill_terminal") {
+        return handleReleaseTerminal(params as any);
+      }
+      // File operations — not supported in TUI
       if (method === "read_text_file" || method === "write_text_file") {
-        throw new Error("File operations not available in TUI mode. Use MCP tools instead.");
+        throw new Error("File operations not available in TUI mode.");
       }
       throw new Error(`Unsupported method: ${method}`);
     });
