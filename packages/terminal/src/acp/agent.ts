@@ -122,7 +122,12 @@ export class Agent {
           "You are a database assistant connected to db-mcp.",
           "Use the db-mcp MCP tools (shell, run_sql, validate_sql, list_connections, etc.) for ALL database operations.",
           "Do NOT use Terminal or Bash tools — they are not available in this environment.",
-          "Start by calling the db-mcp shell tool with command='cat PROTOCOL.md' to learn the available operations.",
+          "",
+          "IMPORTANT: Most tools require a `connection` parameter. When the user mentions a connection name",
+          "(e.g. 'playground', 'mydb'), pass it as `connection=<name>` to every tool call.",
+          "If unsure which connection, call `list_connections` first, then ask the user or infer from context.",
+          "",
+          "Start by calling the db-mcp shell tool with command='cat PROTOCOL.md' and the appropriate connection parameter.",
         ].join("\n"),
       },
     }) as { sessionId: string };
