@@ -19,7 +19,7 @@ export type AgentEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "tool_start"; tool: string; params?: unknown }
   | { type: "tool_end"; tool: string; result?: string }
-  | { type: "usage"; usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }
+  | { type: "usage"; usage: { used: number; size: number; cost: number; currency: string } }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -202,16 +202,18 @@ export class Agent {
       if (p?.update?.sessionUpdate === "usage_update") {
         const { appendFileSync } = require("node:fs");
         appendFileSync("/tmp/db-mcp-usage.log", JSON.stringify(p.update) + "\n");
-        // Extract usage from whichever field contains it
-        const u = (p.update.usage ?? p.update) as Record<string, unknown>;
-        const usage = {
-          input_tokens: Number(u.input_tokens ?? u.inputTokens ?? 0),
-          output_tokens: Number(u.output_tokens ?? u.outputTokens ?? 0),
-          cache_read_input_tokens: Number(u.cache_read_input_tokens ?? u.cacheReadInputTokens ?? 0),
-        };
-        if (usage.input_tokens || usage.output_tokens) {
-          onEvent({ type: "usage", usage });
-        }
+        // Format: { sessionUpdate, used: 41939, size: 1000000, cost: { amount, currency } }
+        const u = p.update as Record<string, unknown>;
+        const cost = u.cost as { amount?: number; currency?: string } | undefined;
+        onEvent({
+          type: "usage",
+          usage: {
+            used: Number(u.used ?? 0),
+            size: Number(u.size ?? 0),
+            cost: cost?.amount ?? 0,
+            currency: (cost?.currency as string) ?? "USD",
+          },
+        });
       }
     });
 

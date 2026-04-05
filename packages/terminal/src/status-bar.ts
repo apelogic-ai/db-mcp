@@ -1,5 +1,5 @@
 /**
- * StatusBar component — single line at the bottom showing connection, health, tokens.
+ * StatusBar component — single line: connection, agent, context usage, cost.
  */
 import type { Component } from "@mariozechner/pi-tui";
 import chalk from "chalk";
@@ -9,9 +9,10 @@ export interface StatusState {
   healthy: boolean;
   agent: string;
   agentConnected: boolean;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
+  contextUsed: number;
+  contextSize: number;
+  cost: number;
+  currency: string;
 }
 
 function formatTokens(n: number): string {
@@ -26,29 +27,28 @@ export class StatusBar implements Component {
     healthy: false,
     agent: "",
     agentConnected: false,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
+    contextUsed: 0,
+    contextSize: 0,
+    cost: 0,
+    currency: "USD",
   };
 
   update(partial: Partial<StatusState>): void {
     Object.assign(this.state, partial);
   }
 
-  addUsage(usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number }): void {
-    this.state.inputTokens += usage.input_tokens ?? 0;
-    this.state.outputTokens += usage.output_tokens ?? 0;
-    this.state.cacheReadTokens += usage.cache_read_input_tokens ?? 0;
+  updateUsage(usage: { used: number; size: number; cost: number; currency: string }): void {
+    this.state.contextUsed = usage.used;
+    this.state.contextSize = usage.size;
+    this.state.cost += usage.cost;
+    this.state.currency = usage.currency;
   }
 
   invalidate(): void {}
 
   render(width: number): string[] {
-    const health = this.state.healthy
-      ? chalk.green("●")
-      : chalk.red("●");
+    const health = this.state.healthy ? chalk.green("●") : chalk.red("●");
     const conn = this.state.connection || "none";
-
     const parts = [`${health} ${conn}`];
 
     if (this.state.agent) {
@@ -56,14 +56,13 @@ export class StatusBar implements Component {
       parts.push(`${dot} ${this.state.agent}`);
     }
 
-    const totalTokens = this.state.inputTokens + this.state.outputTokens;
-    if (totalTokens > 0) {
-      const tokStr = `↑${formatTokens(this.state.inputTokens)} ↓${formatTokens(this.state.outputTokens)}`;
-      if (this.state.cacheReadTokens > 0) {
-        parts.push(`${tokStr} (${formatTokens(this.state.cacheReadTokens)} cached)`);
-      } else {
-        parts.push(tokStr);
-      }
+    if (this.state.contextUsed > 0) {
+      const pct = Math.round((this.state.contextUsed / this.state.contextSize) * 100);
+      parts.push(`ctx ${formatTokens(this.state.contextUsed)}/${formatTokens(this.state.contextSize)} (${pct}%)`);
+    }
+
+    if (this.state.cost > 0) {
+      parts.push(`$${this.state.cost.toFixed(2)}`);
     }
 
     const line = parts.join("  │  ");

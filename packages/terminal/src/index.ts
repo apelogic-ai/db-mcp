@@ -180,7 +180,7 @@ function handleAgentEvent(event: AgentEvent): void {
       });
       break;
     case "usage":
-      statusBar.addUsage(event.usage);
+      statusBar.updateUsage(event.usage);
       break;
     case "done":
       currentAssistantId = null;
