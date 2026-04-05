@@ -59,6 +59,15 @@ export class Feed implements Component {
     this.rebuildMarkdown();
   }
 
+  /** Update the last tool entry with command details (from permission request). */
+  updateLastTool(detail: string): void {
+    if (this.currentTurn && this.currentTurn.tools.length > 0) {
+      this.currentTurn.tools[this.currentTurn.tools.length - 1] = detail;
+      this.dirty = true;
+      this.rebuildMarkdown();
+    }
+  }
+
   appendDelta(text: string): void {
     if (this.currentTurn) {
       this.currentTurn.text += text;

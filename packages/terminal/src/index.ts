@@ -102,6 +102,17 @@ tui.addInputListener((data: string) => {
     shutdown();
     return { consume: true };
   }
+  // ESC cancels the current agent turn
+  if (data === "\x1b" && promptRunning) {
+    agent.cancel();
+    feed.addMessage({
+      id: `cancel-${Date.now()}`,
+      role: "system",
+      text: "_Cancelled._",
+    });
+    setTimeout(() => tui.requestRender(), 0);
+    return { consume: true };
+  }
   return undefined;
 });
 
@@ -169,6 +180,10 @@ function handleAgentEvent(event: AgentEvent): void {
       });
       break;
     }
+    case "tool_update":
+      // Update the last tool entry with command details from permission request
+      feed.updateLastTool(event.detail);
+      break;
     case "tool_end":
       // Tool completed — agent will summarize the result
       break;

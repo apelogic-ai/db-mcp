@@ -12,7 +12,12 @@
       "Bash(db-mcp discover:*)",
       "mcp__db-mcp__search_tools",
       "Read(//Users/lbelyaev/dev/db-mcp/**)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "Bash(db-mcp list:*)",
+      "Bash(db-mcp use:*)",
+      "Bash(db-mcp query:*)",
+      "Bash(db-mcp schema:*)",
+      "Bash(db-mcp ask:*)"
     ]
   }
 }

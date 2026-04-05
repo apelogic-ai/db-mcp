@@ -19,6 +19,7 @@ export type AgentEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "tool_start"; tool: string; params?: unknown }
   | { type: "tool_end"; tool: string; result?: string }
+  | { type: "tool_update"; detail: string }
   | { type: "usage"; usage: { used: number; size: number; cost: number; currency: string } }
   | { type: "error"; message: string }
   | { type: "done" };
@@ -148,7 +149,19 @@ export class Agent {
       // Auto-approve ALL tool calls with allow_always
       // Also extract tool call details for display
       if (method === "session/request_permission") {
-        // Auto-approve — tool_start already emitted from notification
+        // Extract command details and update the last tool entry
+        const p = params as {
+          toolCall?: { title?: string; rawInput?: unknown; kind?: string };
+        } | undefined;
+        if (p?.toolCall?.rawInput && this._onEvent) {
+          const input = p.toolCall.rawInput as Record<string, unknown>;
+          const cmd = input.command ?? input.query ?? input.sql ?? input.pattern ?? input.file_path;
+          if (cmd) {
+            const s = String(cmd).replace(/\n/g, " ").trim();
+            const detail = s.length > 80 ? `${s.slice(0, 80)}…` : s;
+            this._onEvent({ type: "tool_update" as any, detail } as any);
+          }
+        }
         return { outcome: { outcome: "selected", optionId: "allow_always" } };
       }
       // Terminal operations — execute CLI commands
@@ -238,6 +251,13 @@ export class Agent {
 
   get alive(): boolean {
     return this.process?.isAlive() ?? false;
+  }
+
+  /** Cancel the current prompt. */
+  cancel(): void {
+    if (this.session) {
+      this.session.cancel();
+    }
   }
 
   /** Disconnect and kill the agent process. */
