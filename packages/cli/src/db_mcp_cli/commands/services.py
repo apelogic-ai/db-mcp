@@ -131,6 +131,47 @@ def _run_http_mcp_service(*, host: str, port: int, path: str) -> None:
     server_main()
 
 
+def _run_unified_server(*, host: str, port: int, verbose: bool) -> None:
+    """Run the unified server (MCP + REST API + UI) on a single port."""
+    _patch_fakeredis_for_frozen()
+    import uvicorn
+
+    log_file = CONFIG_DIR / "server.log" if not verbose else None
+    log_config: dict | None = None
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_config = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+                },
+            },
+            "handlers": {
+                "file": {
+                    "class": "logging.FileHandler",
+                    "filename": str(log_file),
+                    "formatter": "default",
+                },
+            },
+            "root": {
+                "level": "INFO",
+                "handlers": ["file"],
+            },
+        }
+
+    uvicorn.run(
+        "db_mcp.ui_server:create_unified_app",
+        host=host,
+        port=port,
+        factory=True,
+        reload=False,
+        workers=1,
+        log_config=log_config,
+    )
+
+
 @click.command("console")
 @click.option("--port", "-p", default=8384, help="Port for console UI")
 @click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
@@ -231,57 +272,141 @@ def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
 
 
 @click.command("up")
-@click.option("--ui-host", default="127.0.0.1", show_default=True, help="UI/runtime host")
-@click.option("--ui-port", default=8789, show_default=True, type=int, help="UI/runtime port")
-@click.option("--mcp-host", default="127.0.0.1", show_default=True, help="HTTP MCP host")
-@click.option("--mcp-port", default=8788, show_default=True, type=int, help="HTTP MCP port")
-@click.option("--mcp-path", default="/mcp", show_default=True, help="HTTP MCP path")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Bind host")
+@click.option("--port", default=8080, show_default=True, type=int, help="Port (all services)")
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
-@click.option("-v", "--verbose", is_flag=True, help="Show UI server logs in terminal")
+@click.option("-v", "--verbose", is_flag=True, help="Show server logs in terminal")
 def up_cmd(
-    ui_host: str,
-    ui_port: int,
-    mcp_host: str,
-    mcp_port: int,
-    mcp_path: str,
+    host: str,
+    port: int,
     connection: str | None,
     verbose: bool,
 ) -> None:
-    """Start the local db-mcp control plane for Claude/Desktop and the web UI."""
+    """Start the local db-mcp control plane (unified: MCP + REST API + UI)."""
     conn_name = _configure_service_environment(
         connection,
         tool_mode_override="daemon",
         runtime_interface_override="native",
     )
+    url = f"http://{host}:{port}"
     state = build_local_service_state(
         connection=conn_name,
-        ui_host=ui_host,
-        ui_port=ui_port,
-        mcp_host=mcp_host,
-        mcp_port=mcp_port,
-        mcp_path=mcp_path,
+        ui_host=host,
+        ui_port=port,
+        mcp_host=host,
+        mcp_port=port,
+        mcp_path="/mcp",
         pid=os.getpid(),
     )
     write_local_service_state(state)
 
     console.print(
         Panel.fit(
-            f"[bold blue]db-mcp local service[/bold blue]\n\n"
+            f"[bold blue]db-mcp[/bold blue]\n\n"
             f"Connection: [cyan]{conn_name or 'none'}[/cyan]\n"
-            f"UI/runtime: [cyan]{state['ui_url']}[/cyan]\n"
-            f"MCP: [cyan]{state['mcp_url']}[/cyan]\n\n"
-            f"Claude/Desktop entrypoint: [cyan]db-mcp runtime[/cyan]\n"
+            f"Server:     [cyan]{url}[/cyan]\n"
+            f"  REST API: [cyan]{url}/api[/cyan]\n"
+            f"  MCP:      [cyan]{url}/mcp[/cyan]\n"
+            f"  Web UI:   [cyan]{url}[/cyan]\n\n"
             f"Press Ctrl+C to stop.",
             border_style="blue",
         )
     )
 
-    _start_ui_background_service(host=ui_host, port=ui_port, verbose=verbose)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
 
     try:
-        _run_http_mcp_service(host=mcp_host, port=mcp_port, path=mcp_path)
+        _run_unified_server(host=host, port=port, verbose=verbose)
     finally:
         clear_local_service_state()
+
+
+@click.command("tui")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Daemon host")
+@click.option("--port", default=8080, show_default=True, type=int, help="Daemon port")
+@click.option("--agent", default=None, help="ACP agent command (default: claude-agent-acp)")
+@click.option("-c", "--connection", default=None, help="Connection name (default: active)")
+def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> None:
+    """Open the terminal UI. Auto-starts the daemon if not running."""
+    import shutil
+    import subprocess
+    import time
+    import urllib.request
+
+    url = f"http://{host}:{port}"
+
+    # Check if daemon is already running
+    daemon_thread = None
+    try:
+        urllib.request.urlopen(f"{url}/health", timeout=1)
+    except Exception:
+        # Daemon not running — start it in background
+        console.print(f"[dim]Starting daemon on {url}...[/dim]")
+        _configure_service_environment(
+            connection,
+            tool_mode_override="shell",
+            runtime_interface_override="native",
+        )
+        state = build_local_service_state(
+            connection=connection,
+            ui_host=host,
+            ui_port=port,
+            mcp_host=host,
+            mcp_port=port,
+            mcp_path="/mcp",
+            pid=os.getpid(),
+        )
+        write_local_service_state(state)
+        daemon_thread = threading.Thread(
+            target=_run_unified_server,
+            kwargs={"host": host, "port": port, "verbose": False},
+            daemon=True,
+            name="db-mcp-daemon",
+        )
+        daemon_thread.start()
+
+        # Wait for daemon to be ready
+        for _ in range(20):
+            try:
+                urllib.request.urlopen(f"{url}/health", timeout=0.5)
+                break
+            except Exception:
+                time.sleep(0.5)
+        else:
+            console.print("[red]Daemon failed to start[/red]")
+            raise SystemExit(1)
+
+    # Find the TS TUI entry point
+    tui_src = Path(__file__).resolve().parents[4] / "terminal" / "src" / "index.ts"
+    if not tui_src.exists():
+        console.print(f"[red]TUI not found at {tui_src}[/red]")
+        raise SystemExit(1)
+
+    # Prefer bun, fall back to npx tsx
+    runner = shutil.which("bun")
+    if runner:
+        cmd = [runner, str(tui_src)]
+    else:
+        runner = shutil.which("npx")
+        if not runner:
+            console.print("[red]bun or npx required to run the TUI[/red]")
+            raise SystemExit(1)
+        cmd = [runner, "tsx", str(tui_src)]
+
+    env = {
+        **os.environ,
+        "DB_MCP_URL": url,
+    }
+    if agent:
+        env["DB_MCP_AGENT"] = agent
+
+    try:
+        subprocess.run(cmd, env=env, cwd=str(tui_src.parent.parent))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if daemon_thread:
+            clear_local_service_state()
 
 
 @click.group("serve")
@@ -401,4 +526,5 @@ def register_commands(main_group: click.Group) -> None:
     main_group.add_command(serve_group)
     main_group.add_command(ui_cmd)
     main_group.add_command(up_cmd)
+    main_group.add_command(tui_cmd)
     main_group.add_command(playground)

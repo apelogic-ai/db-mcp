@@ -7,26 +7,93 @@ module layout, and the phased build plan.
 
 ## Architecture Overview
 
+### Single-daemon design
+
+All server functionality runs in one process on one port. Previously the design
+called for two separate servers (MCP on :7421, UI/API on :8080). This is
+unnecessary — FastMCP exposes `mcp.http_app()` which returns a Starlette ASGI
+app that can be mounted directly into the existing FastAPI application:
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  db-mcp up                                                  │
-│  ├── MCP server  (FastMCP streamable-http, port 7421)       │
-│  └── UI server   (FastAPI, port 8080)                       │
-└───────────────────────────┬─────────────────────────────────┘
-                            │  REST API  (existing /api/*)
-                            │  + POST /api/executions/{id}/confirm  (new)
-              ┌─────────────▼────────────┐
-              │   db-mcp tui             │
-              │   Textual app            │
-              │   ├── EventFeed          │
-              │   ├── CommandInput       │
-              │   └── StatusBar          │
-              └──────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  db-mcp up            (single uvicorn, :8080)    │
+│  ├── /api/*           REST API (FastAPI router)  │
+│  ├── /mcp             MCP streamable-http        │
+│  ├── /health          Health check               │
+│  └── /*               Next.js static UI          │
+└──────────────────────────┬───────────────────────┘
+                           │
+             ┌─────────────▼────────────┐
+             │   db-mcp tui             │
+             │   Textual app (client)   │
+             │   ├── EventFeed          │
+             │   ├── CommandInput       │
+             │   └── StatusBar          │
+             └──────────────────────────┘
 ```
 
-The TUI is a Textual application that polls the existing FastAPI server for events.
-No new transport. No WebSocket. No direct MCP protocol involvement. It is a REST
-client with a terminal UI.
+**Key decisions:**
+
+- **One port, one process.** `create_app()` in `ui_server.py` mounts the MCP
+  ASGI app at `/mcp` alongside the existing `/api/*` routes and static files.
+  No threading, no second port.
+- **TUI is a pure client.** It polls `GET /api/executions?since=` and renders.
+  No server component.
+- **Auto-start.** `db-mcp tui` checks `GET /health` on startup. If the daemon
+  isn't running, it starts one in the background before connecting.
+- **Claude Desktop compatible.** Point Claude Desktop to
+  `http://localhost:8080/mcp` instead of stdio for multi-client use.
+
+### MCP mount implementation
+
+The mount is a small change to `create_app()` in `ui_server.py`:
+
+```python
+from db_mcp_server.server import create_mcp_server
+
+def create_app() -> FastAPI:
+    app = FastAPI(...)
+    app.include_router(api_router, prefix="/api")
+
+    # Mount MCP as ASGI sub-application
+    mcp = create_mcp_server()
+    mcp_asgi = mcp.http_app(path="/mcp")
+    app.mount("/mcp", mcp_asgi)
+
+    ...
+    return app
+```
+
+This requires extracting a `create_mcp_server()` factory from
+`packages/mcp-server/src/db_mcp_server/server.py` that builds and returns the
+`FastMCP` instance without calling `mcp.run()`. The existing `main()` function
+continues to work for stdio mode.
+
+### User experience
+
+```bash
+# Terminal 1 — start the daemon (one process, one port)
+db-mcp up
+
+# Terminal 2 — TUI connects as a client
+db-mcp tui
+
+# Or: TUI auto-starts the daemon if not running
+db-mcp tui   # checks /health, starts daemon if needed, then connects
+```
+
+### Dev workflow (hot-reload)
+
+```bash
+# Terminal 1 — daemon
+db-mcp up
+
+# Terminal 2 — hot-reload TUI (Textual DevTools)
+textual run --dev packages/cli/src/db_mcp_cli/tui/app.py
+
+# Terminal 3 (optional) — Textual CSS inspector
+textual console
+```
 
 ---
 
@@ -76,40 +143,74 @@ covering the fields above, validated against the actual handler code.
 
 ---
 
-## Phase 1 — HTTP Transport
+## Phase 1 — Unified HTTP Daemon
 
-### 1a. FastMCP HTTP server launch
+### 1a. Extract MCP server factory
 
-Add a new launch mode to `packages/mcp-server/src/db_mcp_server/server.py`:
+Refactor `packages/mcp-server/src/db_mcp_server/server.py` to separate server
+construction from server execution:
 
 ```python
-def run_http(host: str = "127.0.0.1", port: int = 7421) -> None:
-    """Launch MCP server in streamable-http mode."""
-    mcp.run(transport="streamable-http", host=host, port=port)
+def create_mcp_server() -> FastMCP:
+    """Build the FastMCP instance with all tools registered. Does not call run()."""
+    settings = Settings()
+    mcp = FastMCP(name="db-mcp", ...)
+    register_shell_tools(mcp, ...)
+    register_query_tools(mcp, ...)
+    # ... all existing registration
+    return mcp
+
+def main():
+    """Entry point — stdio or standalone HTTP."""
+    mcp = create_mcp_server()
+    if settings.mcp_transport == "http":
+        mcp.run(transport="http", ...)
+    else:
+        mcp.run()  # stdio for Claude Desktop
 ```
 
-Wire via a new CLI flag or sub-command. The simplest starting point is
-`db-mcp start --http` rather than a full daemon system.
+The existing `main()` and stdio mode are unchanged. `create_mcp_server()` is
+the new public API for embedding.
 
-Config keys added to `~/.db-mcp/config.yaml`:
+### 1b. Mount MCP in FastAPI
+
+In `packages/core/src/db_mcp/ui_server.py`, mount the MCP ASGI app:
+
+```python
+from db_mcp_server.server import create_mcp_server
+
+def create_app() -> FastAPI:
+    app = FastAPI(...)
+    app.include_router(api_router, prefix="/api")
+
+    mcp = create_mcp_server()
+    app.mount("/mcp", mcp.http_app(path="/mcp"))
+
+    return app
+```
+
+Config keys in `~/.db-mcp/config.yaml`:
 ```yaml
 daemon:
-  mcp_port: 7421
-  ui_port: 8080
+  port: 8080          # single port for everything
 ```
 
+### 1c. Validation
+
+Verify that:
+1. An MCP client connects to `http://localhost:8080/mcp` and all tools work
+2. The existing REST API (`/api/*`) still works on the same port
+3. The web UI static files still serve correctly
+4. `db-mcp start` (stdio mode) is unaffected
+
+This is the gate. If the mount has rough edges, fix them here before writing
+any TUI code.
+
 **Files:**
-- Modified: `packages/mcp-server/src/db_mcp_server/server.py`
-- Modified: `packages/cli/src/db_mcp_cli/commands/server_cmd.py` — add `--http` flag
-- Modified: `packages/core/src/db_mcp/config.py` — add daemon config keys
-
-### 1b. Validation
-
-Verify that an MCP client connects over streamable-http and all existing tools
-work end-to-end. Test with a real query session before writing any TUI code.
-
-This is the gate. If HTTP mode has rough edges, fix them here rather than
-discovering them through the TUI.
+- Modified: `packages/mcp-server/src/db_mcp_server/server.py` — extract `create_mcp_server()`
+- Modified: `packages/core/src/db_mcp/ui_server.py` — mount MCP ASGI app
+- Modified: `packages/core/src/db_mcp/config.py` — simplify daemon config (single port)
+- Modified: `packages/cli/src/db_mcp_cli/commands/services.py` — `up_cmd()` starts one server
 
 ---
 
@@ -332,7 +433,8 @@ The agent binary is configurable; db-mcp does not hardcode one.
 ```yaml
 # ~/.db-mcp/config.yaml
 daemon:
-  agent_command: claude   # any ACP-compatible agent binary or adapter
+  port: 8080              # single port for MCP + REST + UI
+  agent_command: claude    # any ACP-compatible agent binary or adapter
 ```
 
 **Architecture:**
@@ -343,8 +445,8 @@ User types plain text
          ▼ session/prompt  (JSON-RPC over stdio — ACP)
   ACP-compatible agent  (configured subprocess)
          │
-         ▼ MCP tool calls  (HTTP, port 7421)
-  db-mcp MCP server
+         ▼ MCP tool calls  (HTTP, localhost:8080/mcp)
+  db-mcp daemon
          │
          ▼ execution events → REST polling
   TUI feed  (unified with all other events)
@@ -379,7 +481,7 @@ async with spawn_agent_process(TUIAgentClient(), agent_cmd) as (conn, _proc):
     await conn.initialize(protocol_version=1)
     session = await conn.new_session(
         cwd=".",
-        mcp_servers=[{"url": "http://localhost:7421/mcp"}]
+        mcp_servers=[{"url": "http://localhost:8080/mcp"}]
     )
     await conn.prompt(session_id=session.session_id,
                       prompt=[text_block(intent)])
@@ -416,9 +518,10 @@ packages/
 │           ├── input.py           # CommandInput                (new)
 │           └── status.py         # StatusBar                   (new)
 ├── mcp-server/src/db_mcp_server/
-│   └── server.py                  # + run_http()               (modified)
+│   └── server.py                  # + create_mcp_server()      (modified)
 └── core/src/db_mcp/
-    ├── config.py                  # + daemon config keys        (modified)
+    ├── config.py                  # + daemon config (single port) (modified)
+    ├── ui_server.py               # + MCP ASGI mount            (modified)
     └── api/handlers/
         └── executions.py          # + confirm endpoint          (modified)
 ```
@@ -432,8 +535,8 @@ daemon orchestration and `db-mcp ask` efforts respectively.
 
 **Phase 0:** No code — validate event API contract manually or with `curl`.
 
-**Phase 1:** Connect an MCP client over HTTP, run a query end-to-end. All existing
-tools must work before proceeding.
+**Phase 1:** Connect an MCP client to `localhost:8080/mcp`, verify REST API and
+static files still work on the same port. All existing tools must work.
 
 **Phase 2:** Textual `pilot` tests:
 - `APIClient` response parsing → `FeedEvent` conversion

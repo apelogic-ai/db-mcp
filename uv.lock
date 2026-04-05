@@ -710,6 +710,12 @@ dependencies = [
     { name = "rich" },
 ]
 
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
@@ -719,8 +725,11 @@ requires-dist = [
     { name = "db-mcp-models", editable = "packages/models" },
     { name = "db-mcp-server", editable = "packages/mcp-server" },
     { name = "fastmcp", specifier = ">=2.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "rich", specifier = ">=13.0.0" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "db-mcp-data"

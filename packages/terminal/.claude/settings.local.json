@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__db-mcp__list_connections",
+      "mcp__db-mcp__shell",
+      "mcp__db-mcp__api_query",
+      "mcp__db-mcp__validate_sql",
+      "mcp__db-mcp__run_sql",
+      "Bash(db-mcp gaps:*)",
+      "Bash(db-mcp --help)",
+      "Bash(db-mcp playground:*)",
+      "Bash(db-mcp discover:*)",
+      "mcp__db-mcp__search_tools",
+      "Read(//Users/lbelyaev/dev/db-mcp/**)",
+      "Bash(uv run:*)",
+      "Bash(db-mcp list:*)",
+      "Bash(db-mcp use:*)",
+      "Bash(db-mcp query:*)",
+      "Bash(db-mcp schema:*)",
+      "Bash(db-mcp ask:*)",
+      "Bash(grep -A30 'dwh.public.daily_stats_cdrs$')"
+    ]
+  }
+}

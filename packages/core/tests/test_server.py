@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
-from db_mcp_server.server import _create_server
+from db_mcp_server.server import create_mcp_server
 from fastmcp.client import Client
 
 from db_mcp.config import reset_settings
@@ -42,14 +42,14 @@ def _write_sql_connector(connection_dir: Path) -> None:
 
 def test_mcp_server_created():
     """Test MCP server is properly configured."""
-    server = _create_server()
+    server = create_mcp_server()
     assert server.name == "db-mcp"
 
 
 @pytest.mark.asyncio
 async def test_server_tools_registered():
     """Test that expected tools are registered on the server."""
-    server = _create_server()
+    server = create_mcp_server()
     # Basic sanity check - server should have tools registered
     assert server is not None
 
@@ -58,7 +58,7 @@ def test_server_does_not_expose_improvement_alias_tools(monkeypatch):
     """Backward-compat improvement alias tools should not be exposed."""
     monkeypatch.setenv("TOOL_MODE", "detailed")
     reset_settings()
-    server = _create_server()
+    server = create_mcp_server()
     tools = _get_tool_names(server)
     assert "mcp_suggest_improvement" not in tools
     assert "mcp_list_improvements" not in tools
@@ -69,7 +69,7 @@ def test_server_keeps_only_test_connection_from_debug_tools(monkeypatch):
     """Debug/test MCP tools should be removed except for test_connection."""
     monkeypatch.setenv("TOOL_MODE", "detailed")
     reset_settings()
-    server = _create_server()
+    server = create_mcp_server()
     tools = _get_tool_names(server)
     assert "test_connection" in tools
     assert "detect_dialect" not in tools
@@ -103,7 +103,7 @@ async def test_get_config_accepts_connection_argument(tmp_path):
         mock_settings.return_value.connection_name = "default"
         mock_settings.return_value.database_url = ""
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             result = (await client.call_tool("get_config", {"connection": "test"})).data
             payload = _tool_payload(result)
@@ -141,7 +141,7 @@ async def test_get_config_database_configured_from_resolved_connection(tmp_path)
         mock_settings.return_value.connection_name = "default"
         mock_settings.return_value.database_url = ""
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             result = (await client.call_tool("get_config", {"connection": "test"})).data
             payload = _tool_payload(result)
@@ -178,7 +178,7 @@ async def test_ping_database_configured_from_default_connection(tmp_path):
         mock_settings.return_value.connection_name = "default"
         mock_settings.return_value.database_url = ""
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             result = (await client.call_tool("ping", {})).data
             payload = _tool_payload(result)
@@ -208,7 +208,7 @@ class TestConnectorTypeToolGating:
             mock_settings.return_value.tool_mode = "detailed"
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
-            server = _create_server()
+            server = create_mcp_server()
 
         tools = _get_tool_names(server)
         assert "run_sql" in tools
@@ -234,7 +234,7 @@ class TestConnectorTypeToolGating:
             mock_settings.return_value.tool_mode = "detailed"
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
-            server = _create_server()
+            server = create_mcp_server()
 
         tools = _get_tool_names(server)
         assert "api_query" not in tools
@@ -259,7 +259,7 @@ class TestConnectorTypeToolGating:
             mock_settings.return_value.tool_mode = "detailed"
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
-            server = _create_server()
+            server = create_mcp_server()
 
         tools = _get_tool_names(server)
         # SQL-specific execution tools are hidden for pure API connectors
@@ -297,7 +297,7 @@ class TestConnectorTypeToolGating:
             mock_settings.return_value.tool_mode = "detailed"
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
-            server = _create_server()
+            server = create_mcp_server()
 
         tools = _get_tool_names(server)
         # API+SQL connectors expose api_execute_sql (not run_sql) and hide validate_sql
@@ -337,7 +337,7 @@ class TestConnectorTypeToolGating:
             mock_settings.return_value.tool_mode = "detailed"
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
-            server = _create_server()
+            server = create_mcp_server()
 
         tools = _get_tool_names(server)
         assert "api_execute_sql" in tools
@@ -360,7 +360,7 @@ class TestConnectorTypeToolGating:
             mock_settings.return_value.tool_mode = "detailed"
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
-            server = _create_server()
+            server = create_mcp_server()
 
         tools = _get_tool_names(server)
         assert "api_query" in tools
@@ -379,7 +379,7 @@ class TestConnectorTypeToolGating:
             mock_settings.return_value.database_url = ""
             mock_settings.return_value.auth0_enabled = False
             mock_settings.return_value.auth0_domain = ""
-            server = _create_server()
+            server = create_mcp_server()
 
         tools = _get_tool_names(server)
         assert "ping" in tools
@@ -416,7 +416,7 @@ def test_shell_auto_profile_reduces_tool_surface(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
 
     tools = _get_tool_names(server)
     assert "shell" in tools
@@ -452,7 +452,7 @@ def test_detailed_query_profile_reduces_tool_surface(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
 
     tools = _get_tool_names(server)
     assert "run_sql" in tools
@@ -486,7 +486,7 @@ def test_shell_full_profile_keeps_admin_tools(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
 
     tools = _get_tool_names(server)
     assert "mcp_setup_status" not in tools
@@ -524,7 +524,7 @@ def test_exec_only_mode_exposes_only_exec_tool(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
 
     assert _get_tool_names(server) == {"exec"}
 
@@ -551,7 +551,7 @@ def test_code_mode_exposes_only_code_tool(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
 
     assert _get_tool_names(server) == {"code"}
 
@@ -578,7 +578,7 @@ def test_daemon_mode_exposes_only_task_tools(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
 
     assert _get_tool_names(server) == {"prepare_task", "execute_task"}
 
@@ -641,7 +641,7 @@ async def test_daemon_mode_prepare_and_execute_task(tmp_path, monkeypatch):
     reset_settings()
     ConnectionRegistry.reset()
 
-    server = _create_server()
+    server = create_mcp_server()
     async with Client(server) as client:
         prepared = (
             await client.call_tool(
@@ -834,7 +834,7 @@ async def test_daemon_prepare_task_expands_ambiguous_context_and_supports_refine
     reset_settings()
     ConnectionRegistry.reset()
 
-    server = _create_server()
+    server = create_mcp_server()
     async with Client(server) as client:
         prepared = (
             await client.call_tool(
@@ -967,7 +967,7 @@ async def test_daemon_prepare_task_uses_decision_hints_and_lean_context_in_compa
     reset_settings()
     ConnectionRegistry.reset()
 
-    server = _create_server()
+    server = create_mcp_server()
     async with Client(server) as client:
         prepared = (
             await client.call_tool(
@@ -1055,7 +1055,7 @@ async def test_daemon_prepare_task_orders_semantic_guidance_before_schema_contex
     reset_settings()
     ConnectionRegistry.reset()
 
-    server = _create_server()
+    server = create_mcp_server()
     async with Client(server) as client:
         prepared = (
             await client.call_tool(
@@ -1156,7 +1156,7 @@ async def test_daemon_prepare_task_includes_semantic_intent_preview_when_metric_
     reset_settings()
     ConnectionRegistry.reset()
 
-    server = _create_server()
+    server = create_mcp_server()
     async with Client(server) as client:
         prepared = (
             await client.call_tool(
@@ -1254,7 +1254,7 @@ async def test_daemon_prepare_task_includes_full_context_only_for_expanded_refin
     reset_settings()
     ConnectionRegistry.reset()
 
-    server = _create_server()
+    server = create_mcp_server()
     async with Client(server) as client:
         prepared = (
             await client.call_tool(
@@ -1392,7 +1392,7 @@ async def test_daemon_mode_prepare_task_serializes_date_values(tmp_path, monkeyp
     reset_settings()
     ConnectionRegistry.reset()
 
-    server = _create_server()
+    server = create_mcp_server()
     async with Client(server) as client:
         prepared = (
             await client.call_tool(
@@ -1448,7 +1448,7 @@ async def test_exec_only_mode_exec_tool_routes_command(tmp_path, monkeypatch):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             await client.call_tool(
                 "exec",
@@ -1495,7 +1495,7 @@ async def test_exec_only_mode_requires_protocol_read_first(tmp_path, monkeypatch
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             result = (
                 await client.call_tool(
@@ -1554,7 +1554,7 @@ async def test_exec_only_mode_accepts_protocol_read_and_then_allows_commands(
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             protocol_result = (
                 await client.call_tool(
@@ -1613,7 +1613,7 @@ async def test_exec_only_mode_invalidates_protocol_ack_when_file_changes(tmp_pat
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             await client.call_tool(
                 "exec",
@@ -1684,7 +1684,7 @@ async def test_code_mode_routes_python_code(tmp_path, monkeypatch):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             await client.call_tool(
                 "code",
@@ -1743,7 +1743,7 @@ async def test_code_mode_requires_protocol_read_first(tmp_path, monkeypatch):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             result = (
                 await client.call_tool(
@@ -1795,7 +1795,7 @@ async def test_code_mode_invalidates_protocol_ack_when_file_changes(tmp_path, mo
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             await client.call_tool(
                 "code",
@@ -1874,7 +1874,7 @@ async def test_code_mode_surfaces_confirmation_required(tmp_path, monkeypatch):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = connection_name
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             await client.call_tool(
                 "code",
@@ -1931,7 +1931,7 @@ async def test_search_tools_returns_relevant_matches(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             result = (await client.call_tool("search_tools", {"query": "sql", "limit": 5})).data
             payload = _tool_payload(result)
@@ -1963,7 +1963,7 @@ async def test_export_tool_sdk_renders_python_wrappers(tmp_path):
         mock_settings.return_value.auth0_domain = ""
         mock_settings.return_value.connection_name = "test"
 
-        server = _create_server()
+        server = create_mcp_server()
         async with Client(server) as client:
             result = (
                 await client.call_tool("export_tool_sdk", {"language": "python", "query": "sql"})

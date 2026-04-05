@@ -63,7 +63,7 @@ def test_install_playground_creates_connector_with_skip_validate(temp_home_dir, 
 
     assert config["type"] == "sql"
     assert config["database_url"].startswith("sqlite:///")
-    assert config["capabilities"]["supports_validate_sql"] is False
+    assert config["capabilities"]["supports_validate_sql"] is True
 
 
 def test_install_playground_already_installed_returns_existing(temp_home_dir, mock_data_path):

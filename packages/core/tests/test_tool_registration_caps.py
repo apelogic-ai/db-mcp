@@ -14,7 +14,7 @@ def _server_caps_for_type(
 ):
     """Simulate the server.py capability resolution for a given connector type.
 
-    Mirrors the logic in _create_server() without actually creating the server.
+    Mirrors the logic in create_mcp_server() without actually creating the server.
     """
     from db_mcp_data.capabilities import normalize_capabilities
 
