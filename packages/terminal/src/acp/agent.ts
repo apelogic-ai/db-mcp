@@ -28,6 +28,7 @@ export class Agent {
   private process: AgentProcess | null = null;
   private session: AcpSession | null = null;
   private _sessionId: string | null = null;
+  private _onEvent: ((event: AgentEvent) => void) | null = null;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -51,6 +52,7 @@ export class Agent {
     if (this.process) {
       throw new Error("Already connected");
     }
+    this._onEvent = onEvent;
 
     // Spawn the agent process
     try {
@@ -130,7 +132,21 @@ export class Agent {
     // Handle all incoming RPC requests from the agent
     this.process.rpc.onRequest(async (method: string, params: unknown) => {
       // Auto-approve ALL tool calls with allow_always
+      // Also extract tool call details for display
       if (method === "session/request_permission") {
+        const p = params as {
+          toolCall?: { title?: string; rawInput?: unknown };
+        } | undefined;
+        if (p?.toolCall?.rawInput && this._onEvent) {
+          // Emit a richer tool_start with actual params
+          const input = p.toolCall.rawInput as Record<string, unknown>;
+          const toolName = p.toolCall.title ?? "unknown";
+          this._onEvent({
+            type: "tool_start",
+            tool: toolName,
+            params: input,
+          });
+        }
         return { outcome: { outcome: "selected", optionId: "allow_always" } };
       }
       // Reject terminal/file operations — agent should use MCP tools
@@ -159,11 +175,10 @@ export class Agent {
         case "thinking_delta":
           onEvent({ type: "thinking_delta", delta: (gatewayEvent as { delta: string }).delta });
           break;
-        case "tool_start": {
-          const ev = gatewayEvent as { tool: string; params?: unknown };
-          onEvent({ type: "tool_start", tool: ev.tool, params: ev.params });
+        case "tool_start":
+          // Skip — tool_call notifications have empty params.
+          // We emit tool_start from request_permission instead (has rawInput).
           break;
-        }
         case "tool_end":
           onEvent({
             type: "tool_end",
