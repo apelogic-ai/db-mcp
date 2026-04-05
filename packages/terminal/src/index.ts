@@ -377,12 +377,14 @@ const pollInterval = setInterval(() => {
 async function shutdown(): Promise<void> {
   clearInterval(pollInterval);
   await agent.disconnect();
-  tui.stop();
-  terminal.showCursor();
-  // Disable Kitty keyboard protocol and reset terminal state
-  process.stdout.write("\x1b[?1u");   // pop Kitty keyboard flags
+  // Disable Kitty keyboard protocol BEFORE stopping TUI (while still in raw mode)
+  process.stdout.write("\x1b[<u");    // pop Kitty keyboard flags
   process.stdout.write("\x1b[?25h");  // show cursor
-  await terminal.drainInput(1000, 100);
+  // Drain any pending Kitty responses before exiting raw mode
+  await terminal.drainInput(300, 50);
+  tui.stop();
+  // Final drain after raw mode is off
+  await new Promise(resolve => setTimeout(resolve, 100));
   process.exit(0);
 }
 
