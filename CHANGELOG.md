@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.4] - 2026-04-05
+
+## Overview
+
+This release introduces the TypeScript terminal UI with ACP agent integration, replacing the old Python Textual TUI. It also fixes critical issues with query execution (`--confirmed` flag), ACP permission handling, and adds CLI commands for API connectors.
+
+## Highlights
+
+- TypeScript TUI (`packages/terminal/`) with ACP agent integration via `claude-agent-acp`
+- Agent uses `db-mcp` CLI commands to query data: reads business rules, searches examples, writes SQL, executes via `query run --confirmed`
+- Tool call details displayed in the feed (extracted from ACP notifications)
+- Old Python Textual TUI removed
+- New `db-mcp api` CLI commands for REST/RPC API connectors
+- Fixed `db-mcp query run --confirmed` which was always blocked by validate-first policy
+
+## New Features
+
+- **TypeScript TUI**: Full terminal interface with pi-tui, ACP agent session management, tool call streaming, status bar with context/cost tracking
+- **API CLI commands**: `db-mcp api query`, `db-mcp api describe`, `db-mcp api sql` for API connectors
+- **Active connection injection**: Agent system prompt includes the active connection name so it runs `db-mcp use <name>` automatically
+
+## Bug Fixes
+
+- **ACP permission handling**: Use `allow` optionId instead of `allow_once` which was not in the agent's option set, causing intermittent permission rejections
+- **Query execution**: `--confirmed` flag now bypasses the validate-first policy gate that was blocking all direct SQL execution via CLI
+- **CLI query fixes**: UNION queries allowed, JSON-RPC auth support, correct data/records keys in responses
+- **Playground test**: Updated stale assertion for `supports_validate_sql`
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/terminal/` | New TypeScript TUI package (8 source files, 4 test files) |
+| `packages/cli/src/db_mcp_cli/tui/` | Removed old Python Textual TUI (11 files) |
+| `packages/cli/pyproject.toml` | Removed textual dependency |
+| `packages/core/src/db_mcp/services/query.py` | `--confirmed` bypasses validate-first |
+| `packages/cli/src/db_mcp_cli/commands/services.py` | TUI launcher + API CLI commands |
+| `packages/core/src/db_mcp/ui_server.py` | Unified server MCP mount fixes |
+
+## Testing
+
+- Terminal: 51 tests (vitest)
+- CLI: 45 tests
+- Core: 1157 tests
+- Data: 299 tests
+- Lint: clean (ruff)
+
+
 ## [0.9.3] - 2026-04-03
 
 ## Overview
