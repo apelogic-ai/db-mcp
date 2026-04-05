@@ -146,13 +146,14 @@ function handleAgentEvent(event: AgentEvent): void {
       // Could render thinking separately, for now skip
       break;
     case "tool_start": {
-      let detail = event.tool;
+      const name = event.tool;
+      let detail = name;
       if (event.params) {
         const p = event.params as Record<string, unknown>;
-        const hint = p.command ?? p.query ?? p.sql ?? p.pattern ?? p.path ?? p.intent ?? p.connection;
+        const hint = p.command ?? p.query ?? p.sql ?? p.pattern ?? p.file_path ?? p.intent ?? p.connection;
         if (hint) {
-          const s = String(hint).replace(/\n/g, " ").slice(0, 60);
-          detail = `${event.tool}(${s})`;
+          const s = String(hint).replace(/\n/g, " ").trim();
+          detail = s.length > 50 ? `${name}: ${s.slice(0, 50)}...` : `${name}: ${s}`;
         }
       }
       feed.addMessage({
@@ -336,8 +337,9 @@ async function handlePrompt(text: string): Promise<void> {
     });
   }
 
+  feed.completeTurn();
   currentAssistantId = null;
-  tui.requestRender();
+  setTimeout(() => tui.requestRender(), 0);
 }
 
 // ---------------------------------------------------------------------------
