@@ -356,12 +356,79 @@ async function handleCommand(raw: string): Promise<void> {
       shutdown();
       break;
 
+    // CLI commands — run db-mcp directly
+    case "/connections":
+      await runCli("db-mcp list");
+      break;
+    case "/use":
+      if (!arg) { feed.addMessage({ id: `e-${Date.now()}`, role: "error", text: "Usage: /use CONNECTION_NAME" }); break; }
+      await runCli(`db-mcp use ${arg}`);
+      await refreshStatus();
+      break;
+    case "/schema":
+      await runCli("db-mcp schema");
+      break;
+    case "/rules":
+      await runCli("db-mcp rules");
+      break;
+    case "/examples":
+      await runCli("db-mcp examples");
+      break;
+    case "/metrics":
+      await runCli("db-mcp metrics");
+      break;
+    case "/gaps":
+      await runCli("db-mcp gaps");
+      break;
+    case "/sync":
+      await runCli("db-mcp sync");
+      break;
+    case "/model":
+      feed.addMessage({ id: `m-${Date.now()}`, role: "system", text: "Model selection requires an active agent session." });
+      break;
+    case "/session":
+      feed.addMessage({
+        id: `s-${Date.now()}`,
+        role: "system",
+        text: agent.sessionId
+          ? `Session: ${agent.sessionId} · Agent: ${agent.commandName}`
+          : "No active session. Type a question to start.",
+      });
+      break;
+
     default:
-      // Route unrecognized slash commands to the agent as NL prompts
-      // e.g. /connections → "list connections", /use foo → "switch to foo connection"
-      await handlePrompt(raw.slice(1));  // strip leading /
-      return;
+      feed.addMessage({
+        id: `err-${Date.now()}`,
+        role: "error",
+        text: `Unknown command: ${cmd}`,
+      });
   }
+}
+
+/** Run a db-mcp CLI command and show output in the feed. */
+async function runCli(command: string): Promise<void> {
+  const { handleCreateTerminal, handleTerminalOutput, handleReleaseTerminal } = await import("./acp/terminal.js");
+  const [cmd, ...args] = command.split(" ");
+  const { terminalId } = handleCreateTerminal({ command: cmd!, args });
+  const result = await handleTerminalOutput({ terminalId });
+  handleReleaseTerminal({ terminalId });
+
+  const output = result.output.trim();
+  if (output) {
+    feed.addMessage({
+      id: `cli-${Date.now()}`,
+      role: "system",
+      text: "```\n" + output + "\n```",
+    });
+  }
+  if (result.exitStatus && result.exitStatus.exitCode !== 0) {
+    feed.addMessage({
+      id: `cli-err-${Date.now()}`,
+      role: "error",
+      text: `Exit code: ${result.exitStatus.exitCode}`,
+    });
+  }
+  setTimeout(() => tui.requestRender(), 0);
 }
 
 async function handlePrompt(text: string): Promise<void> {
