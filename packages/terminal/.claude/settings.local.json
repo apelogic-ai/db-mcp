@@ -17,7 +17,8 @@
       "Bash(db-mcp use:*)",
       "Bash(db-mcp query:*)",
       "Bash(db-mcp schema:*)",
-      "Bash(db-mcp ask:*)"
+      "Bash(db-mcp ask:*)",
+      "Bash(grep -A30 'dwh.public.daily_stats_cdrs$')"
     ]
   }
 }

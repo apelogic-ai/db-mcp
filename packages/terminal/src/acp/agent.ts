@@ -146,10 +146,10 @@ export class Agent {
 
     // Handle all incoming RPC requests from the agent
     this.process.rpc.onRequest(async (method: string, params: unknown) => {
-      // Auto-approve ALL tool calls with allow_always
-      // Also extract tool call details for display
+      // Auto-approve tool calls with allow_once (not allow_always!)
+      // allow_once ensures we get a permission request for EVERY tool call,
+      // which lets us extract the command details for display.
       if (method === "session/request_permission") {
-        // Extract command details and update the last tool entry
         const p = params as {
           toolCall?: { title?: string; rawInput?: unknown; kind?: string };
         } | undefined;
@@ -162,17 +162,10 @@ export class Agent {
             this._onEvent({ type: "tool_update", detail });
           }
         }
-        return { outcome: { outcome: "selected", optionId: "allow_always" } };
+        return { outcome: { outcome: "selected", optionId: "allow_once" } };
       }
       // Terminal operations — execute CLI commands
       if (method === "create_terminal") {
-        // Update the last tool entry with the actual command
-        const tp = params as { command?: string; args?: string[] } | undefined;
-        if (tp?.command && this._onEvent) {
-          const fullCmd = [tp.command, ...(tp.args ?? [])].join(" ");
-          const s = fullCmd.length > 80 ? `${fullCmd.slice(0, 80)}…` : fullCmd;
-          this._onEvent({ type: "tool_update", detail: s });
-        }
         return handleCreateTerminal(params as any);
       }
       if (method === "terminal_output") {
