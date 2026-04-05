@@ -180,14 +180,8 @@ function handleAgentEvent(event: AgentEvent): void {
       // Could render thinking separately, for now skip
       break;
     case "tool_start": {
-      const { appendFileSync: afs } = require("node:fs");
-      afs("/tmp/db-mcp-tools.log", `tool_start: ${event.tool}, hasTurn=${!!feed["currentTurn"]}\n`);
       const name = event.tool;
       let detail = name;
-      // Log params to debug file so we can see what's actually there
-      const { appendFileSync } = require("node:fs");
-      appendFileSync("/tmp/db-mcp-tools.log",
-        `${name} params=${JSON.stringify(event.params)}\n`);
       // Try to extract a meaningful description from params (rawInput)
       if (event.params != null && typeof event.params === "object") {
         const p = event.params as Record<string, unknown>;
@@ -206,10 +200,6 @@ function handleAgentEvent(event: AgentEvent): void {
       break;
     }
     case "tool_update": {
-      // Update the last tool entry with command details
-      const { appendFileSync } = require("node:fs");
-      appendFileSync("/tmp/db-mcp-tools.log",
-        `tool_update: detail=${event.detail}, hasTurn=${!!feed["currentTurn"]}, tools=${feed["currentTurn"]?.tools?.length ?? 0}\n`);
       feed.updateLastTool(event.detail);
       break;
     }
@@ -462,7 +452,7 @@ async function handlePrompt(text: string): Promise<void> {
     tui.requestRender();
 
     try {
-      await agent.connect(handleAgentEvent);
+      await agent.connect(handleAgentEvent, statusBar.state.connection !== "none" ? statusBar.state.connection : undefined);
       statusBar.update({ agent: agent.commandName, agentConnected: true });
       feed.addMessage({
         id: `connected-${Date.now()}`,

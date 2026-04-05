@@ -346,7 +346,7 @@ async def run_sql(
             sql=sql,
             capabilities=caps,
             confirmed=confirmed,
-            require_validate_first=True,
+            require_validate_first=not confirmed,
         )
         if policy_error is not None:
             return policy_error
