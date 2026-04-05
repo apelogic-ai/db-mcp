@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.5] - 2026-04-05
+
+## Overview
+
+Fixes `db-mcp tui` failing when run from the installed binary. The TUI source path was resolved relative to the Python source file, which only works in the repo. Now resolves from the PyInstaller bundle first.
+
+## Highlights
+
+- `db-mcp tui` works from both the installed binary and the development repo
+
+## Bug Fixes
+
+- **TUI path resolution**: Check `sys._MEIPASS` (PyInstaller bundle) before falling back to repo-relative path
+- **PyInstaller spec**: Bundle `terminal/src/`, `package.json`, and `node_modules/` into the binary
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/cli/src/db_mcp_cli/commands/services.py` | TUI path resolution: bundle → repo fallback |
+| `packages/core/db-mcp.spec` | Bundle terminal package into PyInstaller binary |
+
+## Testing
+
+- CLI: 45 tests passing
+- Core: 1157 tests passing
+- Lint: clean
+
+
 ## [0.9.4] - 2026-04-05
 
 ## Overview
