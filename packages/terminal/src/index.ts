@@ -38,7 +38,9 @@ import {
   ProcessTerminal,
   Editor,
   CombinedAutocompleteProvider,
+  matchesKey,
 } from "@mariozechner/pi-tui";
+import chalk from "chalk";
 import { Agent, type AgentEvent } from "./acp/index.js";
 import { Feed } from "./feed.js";
 import { StatusBar } from "./status-bar.js";
@@ -98,12 +100,13 @@ editor.setAutocompleteProvider(slashProvider);
 
 // Catch Ctrl+C in raw mode (stdin sends \x03, not SIGINT)
 tui.addInputListener((data: string) => {
-  if (data === "\x03") {
+  // Ctrl+C exits
+  if (matchesKey(data, "ctrl+c") || data === "\x03") {
     shutdown();
     return { consume: true };
   }
   // ESC cancels the current agent turn
-  if (data === "\x1b" && promptRunning) {
+  if (matchesKey(data, "escape") && promptRunning) {
     agent.cancel();
     feed.addMessage({
       id: `cancel-${Date.now()}`,
@@ -126,26 +129,35 @@ tui.setFocus(editor);
 // Welcome
 // ---------------------------------------------------------------------------
 
+// Render logo with color directly (not through markdown)
+const o = chalk.hex("#E87A1E");  // ApeLogic orange
+const d = chalk.dim;             // dark outline
+const logo = [
+  d("       ▄▄████████▄▄"),
+  d("     ▄██▀▀") + "      " + d("▀▀██▄"),
+  d("    ██") + "              " + d("██"),
+  d("   ██  ") + o("▄██▄") + "  " + o("▄██▄") + "  " + d("██"),
+  d("   ██  ") + o("█▀▀█") + "  " + o("█▀▀█") + "  " + d("██"),
+  d("   ██  ") + o("▀██▀") + "  " + o("▀██▀") + "  " + d("██"),
+  d("   ██") + "              " + d("██"),
+  d("   ██    ") + o("▄██████▄") + "   " + d("██"),
+  d("   ██    ") + o("█ ▀▀▀▀ █") + "   " + d("██"),
+  d("   ██    ") + o("▀██████▀") + "   " + d("██"),
+  d("    ██") + "              " + d("██"),
+  d("     ▀██▄") + "        " + d("▄██▀"),
+  d("       ▀▀████████▀▀"),
+].join("\n");
+
+feed.addMessage({
+  id: "logo",
+  role: "system",
+  text: "```\n" + logo + "\n```",
+});
+
 feed.addMessage({
   id: "welcome",
   role: "system",
   text: [
-    "```",
-    "        ██████████",
-    "     ██          ██",
-    "    █            █",
-    "   █ ████  ████ █",
-    "   █ ████  ████ █",
-    "   █ ████  ████ █",
-    "   █            █",
-    "   █  ▄▀▀▀▀▄  █",
-    "   █  █▀▀▀▀█  █",
-    "   █  ▀▀▀▀▀▀  █",
-    "    █          ██",
-    "     ██        ██",
-    "       ██████████",
-    "```",
-    "",
     "**db-mcp** by ApeLogic",
     "",
     "Type a question to query your database. Type `/` for commands.",
