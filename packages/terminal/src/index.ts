@@ -148,8 +148,12 @@ function handleAgentEvent(event: AgentEvent): void {
     case "tool_start": {
       const name = event.tool;
       let detail = name;
+      // Log params to debug file so we can see what's actually there
+      const { appendFileSync } = require("node:fs");
+      appendFileSync("/tmp/db-mcp-tools.log",
+        `${name} params=${JSON.stringify(event.params)}\n`);
       // Try to extract a meaningful description from params (rawInput)
-      if (event.params && typeof event.params === "object") {
+      if (event.params != null && typeof event.params === "object") {
         const p = event.params as Record<string, unknown>;
         const hint = p.command ?? p.query ?? p.sql ?? p.pattern ??
                      p.file_path ?? p.intent ?? p.connection ?? p.name;
@@ -157,10 +161,6 @@ function handleAgentEvent(event: AgentEvent): void {
           const s = String(hint).replace(/\n/g, " ").trim();
           detail = s.length > 60 ? `${name}: ${s.slice(0, 60)}…` : `${name}: ${s}`;
         }
-      }
-      // If the tool name already has enrichment (from extractToolName), use it
-      if (name.includes(": ") && detail === name) {
-        // Already has detail from the bridge
       }
       feed.addMessage({
         id: `tool-${Date.now()}-${Math.random()}`,
