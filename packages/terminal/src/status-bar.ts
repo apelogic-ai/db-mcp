@@ -49,7 +49,7 @@ export class StatusBar implements Component {
   render(width: number): string[] {
     const health = this.state.healthy ? chalk.green("●") : chalk.red("●");
     const conn = this.state.connection || "none";
-    const parts = [`${health} ${conn}`];
+    const parts = [` ${health} ${conn}`];
 
     if (this.state.agent) {
       const dot = this.state.agentConnected ? chalk.green("●") : chalk.dim("○");
