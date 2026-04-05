@@ -68,8 +68,11 @@ export class Feed implements Component {
   }
 
   startAssistant(id: string): void {
+    // Complete any previous turn first
+    if (this.currentTurn) {
+      this.completeTurn();
+    }
     this.currentTurn = { tools: [], text: "", completed: false };
-    // Add a placeholder message that the turn renderer will replace
     this.messages.push({ id, role: "assistant", text: "" });
     this.dirty = true;
     this.rebuildMarkdown();

@@ -10,7 +10,9 @@
       "Bash(db-mcp --help)",
       "Bash(db-mcp playground:*)",
       "Bash(db-mcp discover:*)",
-      "mcp__db-mcp__search_tools"
+      "mcp__db-mcp__search_tools",
+      "Read(//Users/lbelyaev/dev/db-mcp/**)",
+      "Bash(uv run:*)"
     ]
   }
 }
