@@ -8,6 +8,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "clear", description: "clear the feed" },
   { name: "status", description: "server status" },
   { name: "doctor", description: "run connection health checks" },
+  { name: "env", description: "securely store a secret (not shared with agent)" },
   { name: "connections", description: "list connections" },
   { name: "use", description: "switch connection" },
   { name: "playground", description: "install sample database" },

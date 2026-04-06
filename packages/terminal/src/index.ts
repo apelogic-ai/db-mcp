@@ -396,6 +396,45 @@ async function handleCommand(raw: string): Promise<void> {
     case "/doctor":
       await runCli("db-mcp doctor");
       break;
+    case "/env": {
+      // Secure local secret storage — never sent to agent
+      // Usage: /env <connection> <KEY> <value>
+      const parts = arg.split(" ");
+      if (parts.length < 3) {
+        feed.addMessage({
+          id: `env-err-${Date.now()}`, role: "error",
+          text: "Usage: `/env <connection> <KEY> <value>`\nExample: `/env nova DATABASE_URL postgres://user:pass@host/db`",
+        });
+        break;
+      }
+      const [connName, key, ...valueParts] = parts;
+      const value = valueParts.join(" ");
+      try {
+        const { mkdirSync, writeFileSync, readFileSync, existsSync } = await import("node:fs");
+        const { homedir } = await import("node:os");
+        const { join } = await import("node:path");
+        const connDir = join(homedir(), ".db-mcp", "connections", connName!);
+        mkdirSync(connDir, { recursive: true });
+        const envFile = join(connDir, ".env");
+        // Read existing .env, update or append the key
+        let lines: string[] = [];
+        if (existsSync(envFile)) {
+          lines = readFileSync(envFile, "utf8").split("\n").filter(l => !l.startsWith(`${key}=`));
+        }
+        lines.push(`${key}=${value}`);
+        writeFileSync(envFile, lines.filter(Boolean).join("\n") + "\n");
+        feed.addMessage({
+          id: `env-ok-${Date.now()}`, role: "system",
+          text: `Secret \`${key}\` written to \`~/.db-mcp/connections/${connName}/.env\``,
+        });
+      } catch (err) {
+        feed.addMessage({
+          id: `env-fail-${Date.now()}`, role: "error",
+          text: `Failed to write secret: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+      break;
+    }
     case "/playground":
       feed.addMessage({ id: `pg-${Date.now()}`, role: "system", text: "_Installing playground database..._" });
       tui.requestRender();

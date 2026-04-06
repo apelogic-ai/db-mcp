@@ -9729,14 +9729,16 @@ Install with: npm i -g @agentclientprotocol/claude-agent-acp`));
           "## ALL COMMANDS",
           "## SETTING UP A NEW CONNECTION",
           "When the user wants to connect a database, do NOT run `db-mcp init` (it is interactive).",
-          "Instead, create the connection manually:",
-          "1. Ask the user for: connection name, database type (postgres/mysql/clickhouse/trino), and DATABASE_URL",
-          "2. mkdir -p ~/.db-mcp/connections/<name>",
-          "3. echo 'DATABASE_URL=<url>' > ~/.db-mcp/connections/<name>/.env",
+          "Instead, guide them step by step:",
+          "1. Ask for a connection name",
+          "2. Create the directory: mkdir -p ~/.db-mcp/connections/<name>",
+          "3. Tell the user to type: /env <name> DATABASE_URL <their url>",
+          "   IMPORTANT: The /env command stores secrets locally \u2014 they are NOT shared with you.",
+          "   Do NOT ask the user to paste their DATABASE_URL in the chat.",
           "4. db-mcp use <name>",
           "5. db-mcp doctor \u2014 verify the connection works",
           "6. db-mcp discover \u2014 introspect the schema",
-          "If doctor fails, help the user fix the URL.",
+          "If doctor fails, help the user fix the URL (tell them to run /env again with the corrected URL).",
           "",
           "Connection management:",
           "  db-mcp list                          \u2014 list connections",
@@ -10115,6 +10117,7 @@ var SLASH_COMMANDS = [
   { name: "clear", description: "clear the feed" },
   { name: "status", description: "server status" },
   { name: "doctor", description: "run connection health checks" },
+  { name: "env", description: "securely store a secret (not shared with agent)" },
   { name: "connections", description: "list connections" },
   { name: "use", description: "switch connection" },
   { name: "playground", description: "install sample database" },
@@ -10464,6 +10467,48 @@ async function handleCommand(raw) {
     case "/doctor":
       await runCli("db-mcp doctor");
       break;
+    case "/env": {
+      const parts = arg.split(" ");
+      if (parts.length < 3) {
+        feed.addMessage({
+          id: `env-err-${Date.now()}`,
+          role: "error",
+          text: "Usage: `/env <connection> <KEY> <value>`\nExample: `/env nova DATABASE_URL postgres://user:pass@host/db`"
+        });
+        break;
+      }
+      const [connName, key, ...valueParts] = parts;
+      const value = valueParts.join(" ");
+      try {
+        const { mkdirSync: mkdirSync2, writeFileSync: writeFileSync2, readFileSync, existsSync: existsSync2 } = await import("fs");
+        const { homedir: homedir3 } = await import("os");
+        const { join: join4 } = await import("path");
+        const connDir = join4(homedir3(), ".db-mcp", "connections", connName);
+        mkdirSync2(connDir, { recursive: true });
+        const envFile = join4(connDir, ".env");
+        let lines = [];
+        if (existsSync2(envFile)) {
+          lines = readFileSync(envFile, "utf8").split(`
+`).filter((l) => !l.startsWith(`${key}=`));
+        }
+        lines.push(`${key}=${value}`);
+        writeFileSync2(envFile, lines.filter(Boolean).join(`
+`) + `
+`);
+        feed.addMessage({
+          id: `env-ok-${Date.now()}`,
+          role: "system",
+          text: `Secret \`${key}\` written to \`~/.db-mcp/connections/${connName}/.env\``
+        });
+      } catch (err) {
+        feed.addMessage({
+          id: `env-fail-${Date.now()}`,
+          role: "error",
+          text: `Failed to write secret: ${err instanceof Error ? err.message : String(err)}`
+        });
+      }
+      break;
+    }
     case "/playground":
       feed.addMessage({ id: `pg-${Date.now()}`, role: "system", text: "_Installing playground database..._" });
       tui.requestRender();
