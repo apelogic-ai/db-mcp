@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.7] - 2026-04-05
+
+## Overview
+
+Fixes `db-mcp tui` failing to connect to the ACP agent when run from the installed binary. The `claude-agent-acp` Node.js binary and its dependencies are now bundled in the PyInstaller build.
+
+## Highlights
+
+- `db-mcp tui` connects to the ACP agent out of the box from the installed binary
+- No manual `npm install` required for the agent adapter
+
+## Bug Fixes
+
+- **Agent binary bundling**: Include `claude-agent-acp` binary + `@anthropic-ai/claude-agent-sdk` + `@agentclientprotocol/sdk` in PyInstaller bundle
+- **Agent path resolution**: Search for agent binary relative to the running script (works in both bundle and repo layouts)
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/core/db-mcp.spec` | Bundle agent binary + dependencies from node_modules |
+| `packages/terminal/src/index.ts` | Search additional paths for agent binary |
+| `packages/terminal/dist/tui.js` | Rebuilt bundle |
+
+## Testing
+
+- Core: 1157 tests passing
+- CLI: 45 tests passing
+- Terminal: 51 tests passing
+- Lint: clean
+- Local PyInstaller binary: verified agent binary found in extracted bundle
+
+
 ## [0.9.6] - 2026-04-05
 
 ## Overview
