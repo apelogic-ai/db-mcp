@@ -716,22 +716,30 @@ const pollInterval = setInterval(() => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+/** Reset terminal to normal state — must run even on crash. */
+function resetTerminal(): void {
+  try {
+    process.stdout.write("\x1b[=0u");   // disable Kitty keyboard protocol
+    process.stdout.write("\x1b[<u");    // pop Kitty stack
+    process.stdout.write("\x1b[>0m");   // disable modifyOtherKeys
+    process.stdout.write("\x1b[?25h");  // show cursor
+    process.stdout.write("\x1b[?2004l"); // disable bracketed paste
+  } catch {}
+}
+
 async function shutdown(): Promise<void> {
   clearInterval(pollInterval);
-  await agent.disconnect();
-  // Fully disable Kitty keyboard protocol BEFORE exiting raw mode
-  process.stdout.write("\x1b[=0u");   // set Kitty flags to 0 (disable all)
-  process.stdout.write("\x1b[<u");    // pop Kitty stack
-  process.stdout.write("\x1b[>0m");   // disable modifyOtherKeys
-  process.stdout.write("\x1b[?25h");  // show cursor
-  // Drain any pending Kitty responses before exiting raw mode
-  await terminal.drainInput(500, 100);
-  tui.stop();
-  // Final drain after raw mode is off
-  await new Promise(resolve => setTimeout(resolve, 150));
+  // Reset terminal FIRST — before anything that could hang
+  resetTerminal();
+  try { tui.stop(); } catch {}
+  try { await agent.disconnect(); } catch {}
+  await terminal.drainInput(500, 100).catch(() => {});
+  await new Promise(resolve => setTimeout(resolve, 100));
   process.exit(0);
 }
 
+// Ensure terminal is always reset, even on crash
+process.on("exit", resetTerminal);
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
 

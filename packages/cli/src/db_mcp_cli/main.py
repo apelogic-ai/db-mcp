@@ -25,50 +25,79 @@ from db_mcp_cli.commands.services import register_commands as register_services
 from db_mcp_cli.commands.traces import register_commands as register_traces
 from db_mcp_cli.utils import _get_cli_version
 
-# Command sections for grouped help output
-COMMAND_SECTIONS = {
-    "Getting started": ["tui", "ui", "up", "init", "playground", "status", "doctor"],
-    "Connections": ["list", "use", "edit", "env", "rename", "remove", "all"],
-    "Query & explore": ["query", "ask", "schema", "discover", "domain"],
-    "Knowledge vault": ["rules", "examples", "metrics", "gaps"],
-    "Collaboration": ["collab", "sync", "pull", "git-init"],
-    "Server & runtime": ["start", "serve", "runtime", "console", "traces"],
-    "Advanced": ["agents", "api", "connector", "insider", "config", "migrate"],
+# Help layout: two top-level sections, each with subsections
+HELP_SECTIONS = [
+    ("General", [
+        ("", [
+            "tui", "ui", "up", "status", "config",
+            "agents", "playground",
+        ]),
+    ]),
+    ("Connection", [
+        ("Setup & manage", [
+            "init", "list", "use", "env", "edit",
+            "doctor", "rename", "remove",
+        ]),
+        ("Query & explore", [
+            "query", "ask", "schema", "discover", "domain",
+        ]),
+        ("Knowledge vault", [
+            "rules", "examples", "metrics", "gaps",
+        ]),
+        ("Collaboration", [
+            "collab", "sync", "pull", "git-init",
+        ]),
+    ]),
+]
+
+# Commands not listed above are hidden from --help
+HIDDEN_COMMANDS = {
+    "start", "serve", "runtime", "console", "traces",
+    "all", "api", "connector", "insider", "migrate",
 }
 
 
 class SectionedGroup(click.Group):
-    """Click group that renders commands in sections."""
+    """Click group that renders commands in bold sections with subsections."""
 
-    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        commands = {name: cmd for name, cmd in self.commands.items() if not cmd.hidden}
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        commands = {
+            name: cmd for name, cmd in self.commands.items() if not cmd.hidden
+        }
+        limit = max(formatter.width - 20, 40)
 
-        shown = set()
-        for section, names in COMMAND_SECTIONS.items():
-            section_cmds = [(n, commands[n]) for n in names if n in commands]
-            if not section_cmds:
-                continue
-            with formatter.section(section):
-                rows = []
-                for name, cmd in section_cmds:
-                    help_text = cmd.get_short_help_str(limit=formatter.width - 20)
-                    rows.append((name, help_text))
-                    shown.add(name)
-                formatter.write_dl(rows)
+        for section_title, subsections in HELP_SECTIONS:
+            formatter.write("\n")
+            formatter.write(click.style(f"  {section_title}\n", bold=True))
 
-        # Any commands not in a section go to "Other"
-        remaining = [(n, commands[n]) for n in sorted(commands) if n not in shown]
-        if remaining:
-            with formatter.section("Other"):
-                limit = formatter.width - 20
-                rows = [(n, c.get_short_help_str(limit=limit)) for n, c in remaining]
-                formatter.write_dl(rows)
+            for sub_title, cmd_names in subsections:
+                cmds = [(n, commands[n]) for n in cmd_names if n in commands]
+                if not cmds:
+                    continue
+                if sub_title:
+                    formatter.write(
+                        click.style(f"    {sub_title}:\n", dim=True)
+                    )
+                for name, cmd in cmds:
+                    help_text = cmd.get_short_help_str(limit=limit)
+                    padded = name.ljust(14)
+                    formatter.write(f"    {padded}{help_text}\n")
 
 
 @click.group(cls=SectionedGroup, context_settings={"max_content_width": 120})
 @click.version_option(version=_get_cli_version())
 def main():
-    """db-mcp — query databases, APIs, and files using natural language."""
+    """db-mcp — query databases, APIs, and files using natural language.
+
+    \b
+    Quick start:
+      db-mcp playground install          Install sample Chinook SQLite database
+      db-mcp tui                         Open the terminal UI
+      db-mcp query run --confirmed \\
+        'SELECT * FROM Artist LIMIT 5'   Run a SQL query
+    """
     pass
 
 

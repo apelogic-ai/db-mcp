@@ -10728,18 +10728,29 @@ async function refreshStatus() {
 var pollInterval = setInterval(() => {
   refreshStatus().then(() => tui.requestRender());
 }, 3000);
+function resetTerminal() {
+  try {
+    process.stdout.write("\x1B[=0u");
+    process.stdout.write("\x1B[<u");
+    process.stdout.write("\x1B[>0m");
+    process.stdout.write("\x1B[?25h");
+    process.stdout.write("\x1B[?2004l");
+  } catch {}
+}
 async function shutdown() {
   clearInterval(pollInterval);
-  await agent.disconnect();
-  process.stdout.write("\x1B[=0u");
-  process.stdout.write("\x1B[<u");
-  process.stdout.write("\x1B[>0m");
-  process.stdout.write("\x1B[?25h");
-  await terminal.drainInput(500, 100);
-  tui.stop();
-  await new Promise((resolve3) => setTimeout(resolve3, 150));
+  resetTerminal();
+  try {
+    tui.stop();
+  } catch {}
+  try {
+    await agent.disconnect();
+  } catch {}
+  await terminal.drainInput(500, 100).catch(() => {});
+  await new Promise((resolve3) => setTimeout(resolve3, 100));
   process.exit(0);
 }
+process.on("exit", resetTerminal);
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
 refreshStatus().then(() => {
