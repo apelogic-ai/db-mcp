@@ -48,6 +48,7 @@ import { SLASH_COMMANDS } from "./commands.js";
 import { editorTheme, markdownTheme } from "./theme.js";
 
 const BASE_URL = process.env.DB_MCP_URL ?? "http://localhost:8080";
+const FORCE_FTE = process.env.DB_MCP_FTE === "1";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -173,15 +174,16 @@ const hasConnections = await (async () => {
   }
 })();
 
-if (hasConnections) {
+const shouldRunFte = FORCE_FTE || !hasConnections;
+
+if (shouldRunFte) {
   feed.addMessage({
     id: "welcome",
     role: "system",
     text: [
       "**db-mcp** by ApeLogic",
       "",
-      "Type a question to query your database. Type `/` for commands.",
-      "_Press Ctrl+C to exit. ESC to cancel._",
+      "_Welcome! Let me help you get started..._",
     ].join("\n"),
   });
 } else {
@@ -191,14 +193,8 @@ if (hasConnections) {
     text: [
       "**db-mcp** by ApeLogic",
       "",
-      "No connections configured yet. Get started:",
-      "",
-      "| Command | Description |",
-      "|---------|-------------|",
-      "| `/playground` | Install a sample SQLite database — query in seconds |",
-      "| `/init` | Connect your own PostgreSQL, MySQL, ClickHouse, or Trino |",
-      "",
-      "_Press Ctrl+C to exit._",
+      "Type a question to query your data. Type `/` for commands.",
+      "_Press Ctrl+C to exit. ESC to cancel._",
     ].join("\n"),
   });
 }
@@ -658,4 +654,11 @@ process.on("SIGTERM", () => shutdown());
 refreshStatus().then(() => {
   tui.start();
   tui.requestRender();
+
+  // Auto-trigger first-time experience
+  if (shouldRunFte) {
+    setTimeout(() => {
+      runPrompt("This is my first time using db-mcp. Help me get started.");
+    }, 500);
+  }
 });

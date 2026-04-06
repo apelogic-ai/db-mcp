@@ -4,6 +4,9 @@
  * Spawns an ACP-compatible agent (e.g. claude-agent-acp), creates a session
  * with the db-mcp MCP server, and streams responses back to the feed.
  */
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnAgent, type AgentProcess } from "../vendor/acp-bridge/index.js";
 import { createAcpSession, type AcpSession } from "../vendor/acp-bridge/index.js";
 import {
@@ -12,6 +15,43 @@ import {
   handleWaitForTerminalExit,
   handleReleaseTerminal,
 } from "./terminal.js";
+
+const __agentDir = dirname(fileURLToPath(import.meta.url));
+
+/** Load a prompt file from the prompts/ directory. */
+function loadPrompt(name: string): string {
+  // Check multiple locations: repo layout, then bundled
+  const candidates = [
+    resolve(__agentDir, "..", "..", "prompts", name),   // repo: src/acp/../../prompts/
+    resolve(__agentDir, "..", "prompts", name),          // bundle: acp/../prompts/
+  ];
+  for (const p of candidates) {
+    try {
+      return readFileSync(p, "utf8").trim();
+    } catch {}
+  }
+  return "";
+}
+
+function buildSystemPrompt(activeConnection?: string): string {
+  const isFte = process.env.DB_MCP_FTE === "1";
+  const parts = [
+    loadPrompt("system.md"),
+    isFte ? loadPrompt("fte.md") : "",
+    loadPrompt("query-workflow.md"),
+    loadPrompt("init-flow.md"),
+    loadPrompt("commands.md"),
+    loadPrompt("rules.md"),
+  ].filter(Boolean);
+
+  if (activeConnection) {
+    parts.push(
+      `## ACTIVE CONNECTION\nThe active connection is "${activeConnection}". Run \`db-mcp use ${activeConnection}\` as your first command.`
+    );
+  }
+
+  return parts.join("\n\n");
+}
 
 /** Events emitted to the TUI during a prompt. */
 export type AgentEvent =
@@ -121,80 +161,7 @@ export class Agent {
       cwd: process.cwd(),
       mcpServers: [],
       _meta: {
-        systemPrompt: [
-          "You are a database operations assistant powered by the db-mcp CLI.",
-          "You help users query data, onboard connections, troubleshoot, and manage their knowledge vault.",
-          "",
-          "## ANSWERING DATA QUESTIONS (SQL queries)",
-          "When the user asks a question about data, YOU write the SQL:",
-          "1. db-mcp rules list                   — check business rules FIRST",
-          "2. db-mcp examples search --grep '<keyword>' — find similar query patterns",
-          "3. db-mcp schema show | grep -A20 '<table>' — check columns for relevant tables",
-          "4. Write SQL yourself based on rules, examples, and schema.",
-          "5. db-mcp query run --confirmed '<SQL>' — execute your SQL",
-          "Do NOT delegate SQL generation. YOU are the analyst.",
-          "",
-          "## ALL COMMANDS",
-          "## SETTING UP A NEW CONNECTION",
-          "When the user wants to connect a database, do NOT run `db-mcp init` (it is interactive).",
-          "Instead, guide them step by step:",
-          "1. Ask for a connection name",
-          "2. Create the directory: mkdir -p ~/.db-mcp/connections/<name>",
-          "3. Tell the user to type: /env <name> DATABASE_URL <their url>",
-          "   IMPORTANT: The /env command stores secrets locally — they are NOT shared with you.",
-          "   Do NOT ask the user to paste their DATABASE_URL in the chat.",
-          "4. WAIT for the user to confirm they ran /env. Do NOT proceed until they confirm.",
-          "5. db-mcp use <name>  — MUST switch to the new connection before verifying",
-          "6. db-mcp doctor     — verify the connection works (will now target the new connection)",
-          "7. db-mcp discover   — introspect the schema",
-          "If doctor fails, help the user fix the URL (tell them to run /env again with the corrected URL).",
-          "",
-          "Connection management:",
-          "  db-mcp list                          — list connections",
-          "  db-mcp status                        — show active connection + config",
-          "  db-mcp use <name>                    — switch connection",
-          "  db-mcp doctor                        — preflight checks for a connection",
-          "  db-mcp edit                          — edit connection credentials",
-          "",
-          "Schema & discovery:",
-          "  db-mcp schema show                   — table/column descriptions from vault",
-          "  db-mcp schema show | grep -A20 '<table>' — columns for one table",
-          "  db-mcp schema tables                 — list tables in database",
-          "  db-mcp schema sample <table>         — sample rows",
-          "  db-mcp discover                      — introspect database schema",
-          "  db-mcp domain show                   — view semantic domain model",
-          "",
-          "Querying:",
-          "  db-mcp query run --confirmed '<SQL>' — execute SQL",
-          "  db-mcp query validate '<SQL>'        — validate SQL without executing",
-          "",
-          "Knowledge vault:",
-          "  db-mcp rules list                    — list business rules",
-          "  db-mcp rules add '<rule>'            — add a business rule",
-          "  db-mcp examples list                 — list query examples",
-          "  db-mcp examples search --grep '<keyword>' — search examples by intent/SQL",
-          "  db-mcp examples add                  — add a query example",
-          "  db-mcp gaps list                     — list knowledge gaps",
-          "  db-mcp gaps dismiss '<term>'         — dismiss a gap",
-          "  db-mcp metrics list                  — list business metrics",
-          "  db-mcp metrics add                   — add a metric",
-          "  db-mcp metrics discover              — discover metric candidates",
-          "",
-          "Collaboration:",
-          "  db-mcp sync                          — sync vault with git",
-          "  db-mcp pull                          — pull vault from git",
-          "  db-mcp git-init                      — enable git sync",
-          "",
-          "## RULES",
-          "- Do NOT use mcp__* tools or ToolSearch. Use the db-mcp CLI commands above.",
-          "- Do NOT run --help. Everything you need is above.",
-          "- If a command fails, check `db-mcp status` then `db-mcp use <name>`.",
-          "- When the user mentions a connection name, run `db-mcp use <name>` first.",
-          "- Be CONCISE. Present results directly. No narration or 'Let me...' preamble.",
-          ...(activeConnection
-            ? [``, `## ACTIVE CONNECTION`, `The active connection is "${activeConnection}". Run \`db-mcp use ${activeConnection}\` as your first command.`]
-            : []),
-        ].join("\n"),
+        systemPrompt: buildSystemPrompt(activeConnection),
       },
     }) as { sessionId: string };
 

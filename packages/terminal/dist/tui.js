@@ -8949,6 +8949,11 @@ var chalk = createChalk();
 var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
 var source_default = chalk;
 
+// src/acp/agent.ts
+import { readFileSync } from "fs";
+import { resolve, dirname as dirname3 } from "path";
+import { fileURLToPath } from "url";
+
 // src/vendor/acp-bridge/stream.ts
 var parseNdjsonStream = (input, onMessage, onError) => {
   let buffer = "";
@@ -9640,6 +9645,37 @@ var spawnAgent = (command, options2) => {
 };
 // src/acp/agent.ts
 init_terminal();
+var __agentDir = dirname3(fileURLToPath(import.meta.url));
+function loadPrompt(name) {
+  const candidates = [
+    resolve(__agentDir, "..", "..", "prompts", name),
+    resolve(__agentDir, "..", "prompts", name)
+  ];
+  for (const p of candidates) {
+    try {
+      return readFileSync(p, "utf8").trim();
+    } catch {}
+  }
+  return "";
+}
+function buildSystemPrompt(activeConnection) {
+  const isFte = process.env.DB_MCP_FTE === "1";
+  const parts = [
+    loadPrompt("system.md"),
+    isFte ? loadPrompt("fte.md") : "",
+    loadPrompt("query-workflow.md"),
+    loadPrompt("init-flow.md"),
+    loadPrompt("commands.md"),
+    loadPrompt("rules.md")
+  ].filter(Boolean);
+  if (activeConnection) {
+    parts.push(`## ACTIVE CONNECTION
+The active connection is "${activeConnection}". Run \`db-mcp use ${activeConnection}\` as your first command.`);
+  }
+  return parts.join(`
+
+`);
+}
 
 class Agent {
   config;
@@ -9680,7 +9716,7 @@ class Agent {
     this.process.process.stderr?.on("data", (chunk) => {
       logStream.write(chunk);
     });
-    await new Promise((resolve, reject) => {
+    await new Promise((resolve2, reject) => {
       const proc = this.process.process;
       const onError = (err) => {
         cleanup();
@@ -9690,7 +9726,7 @@ Install with: npm i -g @agentclientprotocol/claude-agent-acp`));
       };
       const onSpawn = () => {
         cleanup();
-        resolve();
+        resolve2();
       };
       const cleanup = () => {
         proc.removeListener("error", onError);
@@ -9713,79 +9749,7 @@ Install with: npm i -g @agentclientprotocol/claude-agent-acp`));
       cwd: process.cwd(),
       mcpServers: [],
       _meta: {
-        systemPrompt: [
-          "You are a database operations assistant powered by the db-mcp CLI.",
-          "You help users query data, onboard connections, troubleshoot, and manage their knowledge vault.",
-          "",
-          "## ANSWERING DATA QUESTIONS (SQL queries)",
-          "When the user asks a question about data, YOU write the SQL:",
-          "1. db-mcp rules list                   \u2014 check business rules FIRST",
-          "2. db-mcp examples search --grep '<keyword>' \u2014 find similar query patterns",
-          "3. db-mcp schema show | grep -A20 '<table>' \u2014 check columns for relevant tables",
-          "4. Write SQL yourself based on rules, examples, and schema.",
-          "5. db-mcp query run --confirmed '<SQL>' \u2014 execute your SQL",
-          "Do NOT delegate SQL generation. YOU are the analyst.",
-          "",
-          "## ALL COMMANDS",
-          "## SETTING UP A NEW CONNECTION",
-          "When the user wants to connect a database, do NOT run `db-mcp init` (it is interactive).",
-          "Instead, guide them step by step:",
-          "1. Ask for a connection name",
-          "2. Create the directory: mkdir -p ~/.db-mcp/connections/<name>",
-          "3. Tell the user to type: /env <name> DATABASE_URL <their url>",
-          "   IMPORTANT: The /env command stores secrets locally \u2014 they are NOT shared with you.",
-          "   Do NOT ask the user to paste their DATABASE_URL in the chat.",
-          "4. WAIT for the user to confirm they ran /env. Do NOT proceed until they confirm.",
-          "5. db-mcp use <name>  \u2014 MUST switch to the new connection before verifying",
-          "6. db-mcp doctor     \u2014 verify the connection works (will now target the new connection)",
-          "7. db-mcp discover   \u2014 introspect the schema",
-          "If doctor fails, help the user fix the URL (tell them to run /env again with the corrected URL).",
-          "",
-          "Connection management:",
-          "  db-mcp list                          \u2014 list connections",
-          "  db-mcp status                        \u2014 show active connection + config",
-          "  db-mcp use <name>                    \u2014 switch connection",
-          "  db-mcp doctor                        \u2014 preflight checks for a connection",
-          "  db-mcp edit                          \u2014 edit connection credentials",
-          "",
-          "Schema & discovery:",
-          "  db-mcp schema show                   \u2014 table/column descriptions from vault",
-          "  db-mcp schema show | grep -A20 '<table>' \u2014 columns for one table",
-          "  db-mcp schema tables                 \u2014 list tables in database",
-          "  db-mcp schema sample <table>         \u2014 sample rows",
-          "  db-mcp discover                      \u2014 introspect database schema",
-          "  db-mcp domain show                   \u2014 view semantic domain model",
-          "",
-          "Querying:",
-          "  db-mcp query run --confirmed '<SQL>' \u2014 execute SQL",
-          "  db-mcp query validate '<SQL>'        \u2014 validate SQL without executing",
-          "",
-          "Knowledge vault:",
-          "  db-mcp rules list                    \u2014 list business rules",
-          "  db-mcp rules add '<rule>'            \u2014 add a business rule",
-          "  db-mcp examples list                 \u2014 list query examples",
-          "  db-mcp examples search --grep '<keyword>' \u2014 search examples by intent/SQL",
-          "  db-mcp examples add                  \u2014 add a query example",
-          "  db-mcp gaps list                     \u2014 list knowledge gaps",
-          "  db-mcp gaps dismiss '<term>'         \u2014 dismiss a gap",
-          "  db-mcp metrics list                  \u2014 list business metrics",
-          "  db-mcp metrics add                   \u2014 add a metric",
-          "  db-mcp metrics discover              \u2014 discover metric candidates",
-          "",
-          "Collaboration:",
-          "  db-mcp sync                          \u2014 sync vault with git",
-          "  db-mcp pull                          \u2014 pull vault from git",
-          "  db-mcp git-init                      \u2014 enable git sync",
-          "",
-          "## RULES",
-          "- Do NOT use mcp__* tools or ToolSearch. Use the db-mcp CLI commands above.",
-          "- Do NOT run --help. Everything you need is above.",
-          "- If a command fails, check `db-mcp status` then `db-mcp use <name>`.",
-          "- When the user mentions a connection name, run `db-mcp use <name>` first.",
-          "- Be CONCISE. Present results directly. No narration or 'Let me...' preamble.",
-          ...activeConnection ? [``, `## ACTIVE CONNECTION`, `The active connection is "${activeConnection}". Run \`db-mcp use ${activeConnection}\` as your first command.`] : []
-        ].join(`
-`)
+        systemPrompt: buildSystemPrompt(activeConnection)
       }
     });
     this._sessionId = sessionResult.sessionId;
@@ -10164,8 +10128,8 @@ var markdownTheme = {
 };
 
 // src/index.ts
-import { resolve, dirname as dirname3 } from "path";
-import { fileURLToPath } from "url";
+import { resolve as resolve2, dirname as dirname4 } from "path";
+import { fileURLToPath as fileURLToPath2 } from "url";
 import { existsSync } from "fs";
 if (process.env.DB_MCP_DEBUG) {} else {
   console.log = (...args) => {
@@ -10187,7 +10151,8 @@ process.on("uncaughtException", (err) => {
 `);
 });
 var BASE_URL = process.env.DB_MCP_URL ?? "http://localhost:8080";
-var __dirname2 = dirname3(fileURLToPath(import.meta.url));
+var FORCE_FTE = process.env.DB_MCP_FTE === "1";
+var __dirname2 = dirname4(fileURLToPath2(import.meta.url));
 var BUNDLED_AGENTS = [
   "claude-agent-acp",
   "codex-acp"
@@ -10197,12 +10162,12 @@ function resolveAgentCommand() {
     return process.env.DB_MCP_AGENT.split(" ");
   }
   const searchDirs = [
-    resolve(__dirname2, "..", "node_modules", ".bin"),
-    resolve(__dirname2, "node_modules", ".bin")
+    resolve2(__dirname2, "..", "node_modules", ".bin"),
+    resolve2(__dirname2, "node_modules", ".bin")
   ];
   for (const binDir of searchDirs) {
     for (const name of BUNDLED_AGENTS) {
-      const localBin = resolve(binDir, name);
+      const localBin = resolve2(binDir, name);
       if (existsSync(localBin)) {
         return [localBin];
       }
@@ -10276,15 +10241,15 @@ var hasConnections = await (async () => {
     return false;
   }
 })();
-if (hasConnections) {
+var shouldRunFte = FORCE_FTE || !hasConnections;
+if (shouldRunFte) {
   feed.addMessage({
     id: "welcome",
     role: "system",
     text: [
       "**db-mcp** by ApeLogic",
       "",
-      "Type a question to query your database. Type `/` for commands.",
-      "_Press Ctrl+C to exit. ESC to cancel._"
+      "_Welcome! Let me help you get started..._"
     ].join(`
 `)
   });
@@ -10295,14 +10260,8 @@ if (hasConnections) {
     text: [
       "**db-mcp** by ApeLogic",
       "",
-      "No connections configured yet. Get started:",
-      "",
-      "| Command | Description |",
-      "|---------|-------------|",
-      "| `/playground` | Install a sample SQLite database \u2014 query in seconds |",
-      "| `/init` | Connect your own PostgreSQL, MySQL, ClickHouse, or Trino |",
-      "",
-      "_Press Ctrl+C to exit._"
+      "Type a question to query your data. Type `/` for commands.",
+      "_Press Ctrl+C to exit. ESC to cancel._"
     ].join(`
 `)
   });
@@ -10481,7 +10440,7 @@ async function handleCommand(raw) {
       const [connName, key, ...valueParts] = parts;
       const value = valueParts.join(" ");
       try {
-        const { mkdirSync: mkdirSync2, writeFileSync: writeFileSync2, readFileSync, existsSync: existsSync2 } = await import("fs");
+        const { mkdirSync: mkdirSync2, writeFileSync: writeFileSync2, readFileSync: readFileSync2, existsSync: existsSync2 } = await import("fs");
         const { homedir: homedir3 } = await import("os");
         const { join: join4 } = await import("path");
         const connDir = join4(homedir3(), ".db-mcp", "connections", connName);
@@ -10489,7 +10448,7 @@ async function handleCommand(raw) {
         const envFile = join4(connDir, ".env");
         let lines = [];
         if (existsSync2(envFile)) {
-          lines = readFileSync(envFile, "utf8").split(`
+          lines = readFileSync2(envFile, "utf8").split(`
 `).filter((l) => !l.startsWith(`${key}=`));
         }
         lines.push(`${key}=${value}`);
@@ -10683,7 +10642,7 @@ async function shutdown() {
   process.stdout.write("\x1B[?25h");
   await terminal.drainInput(500, 100);
   tui.stop();
-  await new Promise((resolve2) => setTimeout(resolve2, 150));
+  await new Promise((resolve3) => setTimeout(resolve3, 150));
   process.exit(0);
 }
 process.on("SIGINT", () => shutdown());
@@ -10691,4 +10650,9 @@ process.on("SIGTERM", () => shutdown());
 refreshStatus().then(() => {
   tui.start();
   tui.requestRender();
+  if (shouldRunFte) {
+    setTimeout(() => {
+      runPrompt("This is my first time using db-mcp. Help me get started.");
+    }, 500);
+  }
 });
