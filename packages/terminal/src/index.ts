@@ -59,7 +59,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /** Bundled ACP adapters — checked in order. */
 const BUNDLED_AGENTS = [
   "claude-agent-acp",  // @agentclientprotocol/claude-agent-acp (npm)
-  "codex-acp",         // codex-acp (cargo install codex-acp)
+  "codex-acp",         // @zed-industries/codex-acp (npm)
 ];
 
 function resolveAgentCommand(): string[] {
@@ -85,62 +85,95 @@ function resolveAgentCommand(): string[] {
 
 const AGENT_CMD = resolveAgentCommand();
 
-/** Pre-flight check: verify agent adapter and Claude Code are available. */
+/** Detect which agent runtime we're using based on the resolved command. */
+function detectRuntime(cmd: string[]): "claude" | "codex" | "unknown" {
+  const joined = cmd.join(" ");
+  if (joined.includes("claude-agent-acp")) return "claude";
+  if (joined.includes("codex-acp")) return "codex";
+  return "unknown";
+}
+
+/** Pre-flight check: verify agent adapter and underlying CLI are available. */
 async function checkAgentPrerequisites(): Promise<string | null> {
   const { execFileSync } = await import("node:child_process");
   const { which } = await import("./preflight.js");
 
-  // 1. Check claude-agent-acp (or whatever AGENT_CMD resolves to)
+  const runtime = detectRuntime(AGENT_CMD);
   const agentBin = AGENT_CMD[0]!;
-  if (!agentBin.includes("/") && !which(agentBin)) {
+
+  // 1. Check ACP adapter binary
+  const agentFound = agentBin.includes("/") ? existsSync(agentBin) : !!which(agentBin);
+  if (!agentFound) {
+    const installHint = runtime === "codex"
+      ? "npm i -g @zed-industries/codex-acp"
+      : "npm i -g @agentclientprotocol/claude-agent-acp";
     return [
       `**ACP adapter not found:** \`${agentBin}\``,
       "",
-      "The TUI needs an ACP adapter to connect to an AI agent.",
       "Install it with:",
       "```",
-      "npm i -g @agentclientprotocol/claude-agent-acp",
+      installHint,
       "```",
     ].join("\n");
   }
 
-  // 2. Check claude CLI
-  if (!which("claude")) {
-    return [
-      "**Claude Code not found.**",
-      "",
-      "The TUI uses Claude Code as its AI agent. Install it:",
-      "```",
-      "npm i -g @anthropic-ai/claude-code",
-      "```",
-      "Then run `claude` once to authenticate.",
-    ].join("\n");
-  }
-
-  // 3. Check authentication
-  try {
-    const out = execFileSync("claude", ["auth", "status"], {
-      timeout: 5000,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const status = JSON.parse(out);
-    if (!status.loggedIn) {
+  // 2. Check underlying CLI
+  if (runtime === "claude") {
+    if (!which("claude")) {
       return [
-        "**Claude Code is not authenticated.**",
+        "**Claude Code not found.**",
         "",
-        "Run this in your terminal to log in:",
+        "Install it with:",
         "```",
-        "claude auth login",
+        "npm i -g @anthropic-ai/claude-code",
         "```",
-        "Then restart the TUI.",
+        "Then run `claude` once to authenticate.",
       ].join("\n");
     }
-  } catch {
-    // auth status failed — could be old version, ignore
+    // 3. Check Claude auth
+    try {
+      const out = execFileSync("claude", ["auth", "status"], {
+        timeout: 5000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      });
+      const status = JSON.parse(out);
+      if (!status.loggedIn) {
+        return [
+          "**Claude Code is not authenticated.**",
+          "",
+          "Run: `claude auth login`",
+          "Then restart the TUI.",
+        ].join("\n");
+      }
+    } catch {}
+  } else if (runtime === "codex") {
+    if (!which("codex")) {
+      return [
+        "**Codex CLI not found.**",
+        "",
+        "Install it with:",
+        "```",
+        "npm i -g @openai/codex",
+        "```",
+        "Then run `codex login` to authenticate.",
+      ].join("\n");
+    }
+    // 3. Check Codex auth
+    try {
+      const out = execFileSync("codex", ["login", "status"], {
+        timeout: 5000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (out.toLowerCase().includes("not logged in") || out.toLowerCase().includes("no api key")) {
+        return [
+          "**Codex is not authenticated.**",
+          "",
+          "Run: `codex login`",
+          "Then restart the TUI.",
+        ].join("\n");
+      }
+    } catch {}
   }
 
-  return null;  // all good
+  return null;
 }
 
 // ---------------------------------------------------------------------------

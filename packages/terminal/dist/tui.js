@@ -10197,54 +10197,92 @@ function resolveAgentCommand() {
   return ["claude-agent-acp"];
 }
 var AGENT_CMD = resolveAgentCommand();
+function detectRuntime(cmd) {
+  const joined = cmd.join(" ");
+  if (joined.includes("claude-agent-acp"))
+    return "claude";
+  if (joined.includes("codex-acp"))
+    return "codex";
+  return "unknown";
+}
 async function checkAgentPrerequisites() {
   const { execFileSync } = await import("child_process");
   const { which: which2 } = await Promise.resolve().then(() => (init_preflight(), exports_preflight));
+  const runtime = detectRuntime(AGENT_CMD);
   const agentBin = AGENT_CMD[0];
-  if (!agentBin.includes("/") && !which2(agentBin)) {
+  const agentFound = agentBin.includes("/") ? existsSync2(agentBin) : !!which2(agentBin);
+  if (!agentFound) {
+    const installHint = runtime === "codex" ? "npm i -g @zed-industries/codex-acp" : "npm i -g @agentclientprotocol/claude-agent-acp";
     return [
       `**ACP adapter not found:** \`${agentBin}\``,
       "",
-      "The TUI needs an ACP adapter to connect to an AI agent.",
       "Install it with:",
       "```",
-      "npm i -g @agentclientprotocol/claude-agent-acp",
+      installHint,
       "```"
     ].join(`
 `);
   }
-  if (!which2("claude")) {
-    return [
-      "**Claude Code not found.**",
-      "",
-      "The TUI uses Claude Code as its AI agent. Install it:",
-      "```",
-      "npm i -g @anthropic-ai/claude-code",
-      "```",
-      "Then run `claude` once to authenticate."
-    ].join(`
-`);
-  }
-  try {
-    const out = execFileSync("claude", ["auth", "status"], {
-      timeout: 5000,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    const status = JSON.parse(out);
-    if (!status.loggedIn) {
+  if (runtime === "claude") {
+    if (!which2("claude")) {
       return [
-        "**Claude Code is not authenticated.**",
+        "**Claude Code not found.**",
         "",
-        "Run this in your terminal to log in:",
+        "Install it with:",
         "```",
-        "claude auth login",
+        "npm i -g @anthropic-ai/claude-code",
         "```",
-        "Then restart the TUI."
+        "Then run `claude` once to authenticate."
       ].join(`
 `);
     }
-  } catch {}
+    try {
+      const out = execFileSync("claude", ["auth", "status"], {
+        timeout: 5000,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+      const status = JSON.parse(out);
+      if (!status.loggedIn) {
+        return [
+          "**Claude Code is not authenticated.**",
+          "",
+          "Run: `claude auth login`",
+          "Then restart the TUI."
+        ].join(`
+`);
+      }
+    } catch {}
+  } else if (runtime === "codex") {
+    if (!which2("codex")) {
+      return [
+        "**Codex CLI not found.**",
+        "",
+        "Install it with:",
+        "```",
+        "npm i -g @openai/codex",
+        "```",
+        "Then run `codex login` to authenticate."
+      ].join(`
+`);
+    }
+    try {
+      const out = execFileSync("codex", ["login", "status"], {
+        timeout: 5000,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      if (out.toLowerCase().includes("not logged in") || out.toLowerCase().includes("no api key")) {
+        return [
+          "**Codex is not authenticated.**",
+          "",
+          "Run: `codex login`",
+          "Then restart the TUI."
+        ].join(`
+`);
+      }
+    } catch {}
+  }
   return null;
 }
 var terminal = new ProcessTerminal;
