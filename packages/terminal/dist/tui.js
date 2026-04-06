@@ -8949,7 +8949,7 @@ var chalk = createChalk();
 var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
 var source_default = chalk;
 
-// ../../../nexus/packages/acp-bridge/dist/stream.js
+// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/stream.ts
 var parseNdjsonStream = (input, onMessage, onError) => {
   let buffer = "";
   input.on("data", (chunk) => {
@@ -9164,7 +9164,7 @@ var CHANNEL_STEERING_MODES = new Set(["off", "on"]);
 var POLICY_ACTIONS = new Set(["allow", "deny", "ask"]);
 var PRINCIPAL_TYPES2 = new Set(["user", "service_account"]);
 var PROMPT_SOURCES2 = new Set(["interactive", "schedule", "hook", "api"]);
-// ../../../nexus/packages/acp-bridge/dist/rpc.js
+// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/rpc.ts
 var createRpcClient = (input, output, options2) => {
   const timeout = options2?.timeout ?? 30000;
   let nextId = 1;
@@ -9340,7 +9340,7 @@ var createRpcClient = (input, output, options2) => {
   };
   return { sendRequest, sendNotification, sendResponse, sendErrorResponse, onNotification, onRequest, destroy };
 };
-// ../../../nexus/packages/acp-bridge/dist/session.js
+// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/session.ts
 import { Buffer as Buffer2 } from "buffer";
 var extractText = (content) => {
   if (!content)
@@ -9605,7 +9605,7 @@ var createAcpSession = (rpc, acpSessionId, gatewaySessionId, options2) => {
     onEvent
   };
 };
-// ../../../nexus/packages/acp-bridge/dist/manager.js
+// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/manager.ts
 import { spawn as spawn2 } from "child_process";
 var spawnAgent = (command, options2) => {
   const [cmd, ...args] = command;

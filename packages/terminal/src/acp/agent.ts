@@ -4,8 +4,8 @@
  * Spawns an ACP-compatible agent (e.g. claude-agent-acp), creates a session
  * with the db-mcp MCP server, and streams responses back to the feed.
  */
-import { spawnAgent, type AgentProcess } from "@nexus/acp-bridge";
-import { createAcpSession, type AcpSession } from "@nexus/acp-bridge";
+import { spawnAgent, type AgentProcess } from "@lbelyaev/nexus/packages/acp-bridge/src/index.js";
+import { createAcpSession, type AcpSession } from "@lbelyaev/nexus/packages/acp-bridge/src/index.js";
 import {
   handleCreateTerminal,
   handleTerminalOutput,
