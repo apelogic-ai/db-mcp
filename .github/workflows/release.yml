@@ -150,6 +150,12 @@ jobs:
         working-directory: packages/core
         run: uv sync --all-extras
 
+      - name: Install terminal dependencies and build TUI bundle
+        working-directory: packages/terminal
+        run: |
+          bun install
+          bun build --target=bun --bundle src/index.ts --outfile dist/tui.js
+
       - name: Build binary
         working-directory: packages/core
         run: uv run pyinstaller --clean --noconfirm db-mcp.spec
