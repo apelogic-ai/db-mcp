@@ -254,6 +254,10 @@ Each connection directory forms a "knowledge vault" with semantic layer componen
 
 Run `uv run ruff check . --fix` before committing.
 
+## Feature Parity
+
+Maintain feature parity across **MCP tools, CLI, TUI, and Web UI** where it makes sense. When adding a new feature, consider which interfaces it belongs in — not everything fits everywhere (e.g., managing local secrets doesn't belong in MCP). But core workflows (querying, schema inspection, connection management) should be accessible from all applicable surfaces. If parity isn't implemented in the same PR, create a tracking issue.
+
 ## Key Architectural Patterns
 
 ### MCP Tools Structure

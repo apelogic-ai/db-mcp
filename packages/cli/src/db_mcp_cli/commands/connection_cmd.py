@@ -34,6 +34,7 @@ from db_mcp_cli.connection import (
 )
 from db_mcp_cli.git_ops import is_git_repo
 from db_mcp_cli.utils import (
+    CONFIG_DIR,
     CONFIG_FILE,
     console,
     load_claude_desktop_config,
@@ -713,3 +714,32 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
 
     if overall_status != "pass":
         sys.exit(1)
+
+
+@click.command("env")
+@click.argument("name")
+@click.argument("key")
+@click.argument("value")
+def env_cmd(name: str, key: str, value: str) -> None:
+    """Set an environment variable for a connection.
+
+    Writes KEY=VALUE to the connection's .env file. Overwrites the key if it
+    already exists; other keys are preserved.
+
+    Examples:
+        db-mcp env mydb DATABASE_URL postgres://user:pass@host/db
+        db-mcp env myapi API_KEY sk-abc123
+    """
+    conn_dir = CONFIG_DIR / "connections" / name
+    conn_dir.mkdir(parents=True, exist_ok=True)
+    env_file = conn_dir / ".env"
+
+    lines: list[str] = []
+    if env_file.exists():
+        lines = [
+            line for line in env_file.read_text().splitlines()
+            if not line.startswith(f"{key}=")
+        ]
+    lines.append(f"{key}={value}")
+    env_file.write_text("\n".join(lines) + "\n")
+    console.print(f"[dim]Secret [bold]{key}[/bold] written to [bold]{env_file}[/bold][/dim]")
