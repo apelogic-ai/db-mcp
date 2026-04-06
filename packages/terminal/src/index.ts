@@ -157,16 +157,51 @@ const logoLines = [
 
 feed.setPrefixLines([...logoLines, ""]);
 
-feed.addMessage({
-  id: "welcome",
-  role: "system",
-  text: [
-    "**db-mcp** by ApeLogic",
-    "",
-    "Type a question to query your database. Type `/` for commands.",
-    "_Press Ctrl+C to exit. ESC to cancel._",
-  ].join("\n"),
-});
+// Detect first-run: check if any connections exist
+const hasConnections = await (async () => {
+  try {
+    const resp = await fetch(`${BASE_URL}/api/connections/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(2000),
+    });
+    const data = (await resp.json()) as { connections?: unknown[] };
+    return (data.connections?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+})();
+
+if (hasConnections) {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "Type a question to query your database. Type `/` for commands.",
+      "_Press Ctrl+C to exit. ESC to cancel._",
+    ].join("\n"),
+  });
+} else {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "No connections configured yet. Get started:",
+      "",
+      "| Command | Description |",
+      "|---------|-------------|",
+      "| `/playground` | Install a sample SQLite database — query in seconds |",
+      "| `/init` | Connect your own PostgreSQL, MySQL, ClickHouse, or Trino |",
+      "",
+      "_Press Ctrl+C to exit._",
+    ].join("\n"),
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Agent event handler
@@ -355,6 +390,31 @@ async function handleCommand(raw: string): Promise<void> {
 
     case "/quit":
       shutdown();
+      break;
+
+    // Onboarding commands
+    case "/doctor":
+      await runCli("db-mcp doctor");
+      break;
+    case "/playground":
+      feed.addMessage({ id: `pg-${Date.now()}`, role: "system", text: "_Installing playground database..._" });
+      tui.requestRender();
+      await runCli("db-mcp playground install");
+      await runCli("db-mcp use playground");
+      await refreshStatus();
+      feed.addMessage({
+        id: `pg-done-${Date.now()}`,
+        role: "system",
+        text: "Playground ready! Try asking: _How many albums does each artist have?_",
+      });
+      break;
+    case "/init":
+      // Route to agent as a conversational onboarding flow
+      await runPrompt(
+        arg
+          ? `I want to set up a new db-mcp connection called "${arg}". Guide me through it.`
+          : "I want to set up a new db-mcp database connection. Ask me what database I use and help me configure it step by step."
+      );
       break;
 
     // CLI commands — run db-mcp directly

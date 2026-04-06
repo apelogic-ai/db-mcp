@@ -133,22 +133,30 @@ main() {
                 ;;
         esac
 
-        printf '\n'
-        printf 'Would you like to open the configuration dashboard? [Y/n] '
-        read -r response </dev/tty
-        case "$response" in
-            [nN]|[nN][oO])
+        printf '\nWhat would you like to do?\n\n'
+        printf '  \033[1m1\033[0m) Launch terminal UI (recommended)\n'
+        printf '  \033[1m2\033[0m) Launch web dashboard\n'
+        printf '  \033[1m3\033[0m) Nothing for now\n\n'
+        printf 'Choice [1/2/3]: '
+        read -r choice </dev/tty
+        case "$choice" in
+            2)
+                printf '\n'
+                info "Starting web dashboard..."
+                exec "$binary_path" ui
+                ;;
+            3|"")
+                printf '\n'
                 info "Commands:"
-                printf '  db-mcp ui                Open configuration dashboard\n'
+                printf '  db-mcp tui               Launch terminal UI\n'
+                printf '  db-mcp ui                Open web dashboard\n'
                 printf '  db-mcp init [NAME]       Configure connection via CLI\n'
-                printf '  db-mcp status            Show current configuration\n'
-                printf '  db-mcp list              List all connections\n'
                 printf '  db-mcp --help            Show all commands\n\n'
                 ;;
             *)
                 printf '\n'
-                info "Starting configuration dashboard..."
-                exec "$binary_path" ui
+                info "Launching terminal UI..."
+                exec "$binary_path" tui
                 ;;
         esac
     else

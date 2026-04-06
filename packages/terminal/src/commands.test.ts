@@ -27,4 +27,18 @@ describe("SLASH_COMMANDS", () => {
     expect(names).toContain("use");
     expect(names).toContain("status");
   });
+
+  it("includes onboarding commands", () => {
+    const names = SLASH_COMMANDS.map((c) => c.name);
+    expect(names).toContain("doctor");
+    expect(names).toContain("playground");
+    expect(names).toContain("init");
+  });
+
+  it("includes vault management commands", () => {
+    const names = SLASH_COMMANDS.map((c) => c.name);
+    expect(names).toContain("examples");
+    expect(names).toContain("sync");
+    expect(names).toContain("session");
+  });
 });

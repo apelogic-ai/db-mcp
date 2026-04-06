@@ -9727,11 +9727,21 @@ Install with: npm i -g @agentclientprotocol/claude-agent-acp`));
           "Do NOT delegate SQL generation. YOU are the analyst.",
           "",
           "## ALL COMMANDS",
+          "## SETTING UP A NEW CONNECTION",
+          "When the user wants to connect a database, do NOT run `db-mcp init` (it is interactive).",
+          "Instead, create the connection manually:",
+          "1. Ask the user for: connection name, database type (postgres/mysql/clickhouse/trino), and DATABASE_URL",
+          "2. mkdir -p ~/.db-mcp/connections/<name>",
+          "3. echo 'DATABASE_URL=<url>' > ~/.db-mcp/connections/<name>/.env",
+          "4. db-mcp use <name>",
+          "5. db-mcp doctor \u2014 verify the connection works",
+          "6. db-mcp discover \u2014 introspect the schema",
+          "If doctor fails, help the user fix the URL.",
+          "",
           "Connection management:",
           "  db-mcp list                          \u2014 list connections",
           "  db-mcp status                        \u2014 show active connection + config",
           "  db-mcp use <name>                    \u2014 switch connection",
-          "  db-mcp init                          \u2014 set up a new connection (interactive)",
           "  db-mcp doctor                        \u2014 preflight checks for a connection",
           "  db-mcp edit                          \u2014 edit connection credentials",
           "",
@@ -10104,14 +10114,19 @@ var SLASH_COMMANDS = [
   { name: "help", description: "show help" },
   { name: "clear", description: "clear the feed" },
   { name: "status", description: "server status" },
+  { name: "doctor", description: "run connection health checks" },
   { name: "connections", description: "list connections" },
   { name: "use", description: "switch connection" },
+  { name: "playground", description: "install sample database" },
+  { name: "init", description: "set up a new connection" },
   { name: "schema", description: "show tables" },
   { name: "rules", description: "list business rules" },
+  { name: "examples", description: "list query examples" },
   { name: "metrics", description: "list metrics" },
   { name: "gaps", description: "list knowledge gaps" },
+  { name: "sync", description: "sync vault with git" },
   { name: "agent", description: "agent status" },
-  { name: "model", description: "set agent model" },
+  { name: "session", description: "show session info" },
   { name: "quit", description: "exit" }
 ];
 
@@ -10243,17 +10258,51 @@ var logoLines = [
   d("       \u2580\u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2580\u2580")
 ];
 feed.setPrefixLines([...logoLines, ""]);
-feed.addMessage({
-  id: "welcome",
-  role: "system",
-  text: [
-    "**db-mcp** by ApeLogic",
-    "",
-    "Type a question to query your database. Type `/` for commands.",
-    "_Press Ctrl+C to exit. ESC to cancel._"
-  ].join(`
+var hasConnections = await (async () => {
+  try {
+    const resp = await fetch(`${BASE_URL}/api/connections/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(2000)
+    });
+    const data = await resp.json();
+    return (data.connections?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+})();
+if (hasConnections) {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "Type a question to query your database. Type `/` for commands.",
+      "_Press Ctrl+C to exit. ESC to cancel._"
+    ].join(`
 `)
-});
+  });
+} else {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "No connections configured yet. Get started:",
+      "",
+      "| Command | Description |",
+      "|---------|-------------|",
+      "| `/playground` | Install a sample SQLite database \u2014 query in seconds |",
+      "| `/init` | Connect your own PostgreSQL, MySQL, ClickHouse, or Trino |",
+      "",
+      "_Press Ctrl+C to exit._"
+    ].join(`
+`)
+  });
+}
 var currentAssistantId = null;
 function handleAgentEvent(event) {
   switch (event.type) {
@@ -10411,6 +10460,24 @@ async function handleCommand(raw) {
       break;
     case "/quit":
       shutdown();
+      break;
+    case "/doctor":
+      await runCli("db-mcp doctor");
+      break;
+    case "/playground":
+      feed.addMessage({ id: `pg-${Date.now()}`, role: "system", text: "_Installing playground database..._" });
+      tui.requestRender();
+      await runCli("db-mcp playground install");
+      await runCli("db-mcp use playground");
+      await refreshStatus();
+      feed.addMessage({
+        id: `pg-done-${Date.now()}`,
+        role: "system",
+        text: "Playground ready! Try asking: _How many albums does each artist have?_"
+      });
+      break;
+    case "/init":
+      await runPrompt(arg ? `I want to set up a new db-mcp connection called "${arg}". Guide me through it.` : "I want to set up a new db-mcp database connection. Ask me what database I use and help me configure it step by step.");
       break;
     case "/connections":
       await runCli("db-mcp list");
