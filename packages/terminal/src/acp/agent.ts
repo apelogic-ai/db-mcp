@@ -4,9 +4,6 @@
  * Spawns an ACP-compatible agent (e.g. claude-agent-acp), creates a session
  * with the db-mcp MCP server, and streams responses back to the feed.
  */
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawnAgent, type AgentProcess } from "../vendor/acp-bridge/index.js";
 import { createAcpSession, type AcpSession } from "../vendor/acp-bridge/index.js";
 import {
@@ -15,23 +12,7 @@ import {
   handleWaitForTerminalExit,
   handleReleaseTerminal,
 } from "./terminal.js";
-
-const __agentDir = dirname(fileURLToPath(import.meta.url));
-
-/** Load a prompt file from the prompts/ directory. */
-function loadPrompt(name: string): string {
-  // Check multiple locations: repo layout, then bundled
-  const candidates = [
-    resolve(__agentDir, "..", "..", "prompts", name),   // repo: src/acp/../../prompts/
-    resolve(__agentDir, "..", "prompts", name),          // bundle: acp/../prompts/
-  ];
-  for (const p of candidates) {
-    try {
-      return readFileSync(p, "utf8").trim();
-    } catch {}
-  }
-  return "";
-}
+import { loadPrompt } from "../prompts.js";
 
 function buildSystemPrompt(activeConnection?: string): string {
   const isFte = process.env.DB_MCP_FTE === "1";

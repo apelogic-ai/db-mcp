@@ -8949,11 +8949,6 @@ var chalk = createChalk();
 var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
 var source_default = chalk;
 
-// src/acp/agent.ts
-import { readFileSync } from "fs";
-import { resolve, dirname as dirname3 } from "path";
-import { fileURLToPath } from "url";
-
 // src/vendor/acp-bridge/stream.ts
 var parseNdjsonStream = (input, onMessage, onError) => {
   let buffer = "";
@@ -9645,11 +9640,16 @@ var spawnAgent = (command, options2) => {
 };
 // src/acp/agent.ts
 init_terminal();
-var __agentDir = dirname3(fileURLToPath(import.meta.url));
+
+// src/prompts.ts
+import { readFileSync } from "fs";
+import { resolve, dirname as dirname3 } from "path";
+import { fileURLToPath } from "url";
+var __promptsDir = dirname3(fileURLToPath(import.meta.url));
 function loadPrompt(name) {
   const candidates = [
-    resolve(__agentDir, "..", "..", "prompts", name),
-    resolve(__agentDir, "..", "prompts", name)
+    resolve(__promptsDir, "..", "prompts", name),
+    resolve(__promptsDir, "prompts", name)
   ];
   for (const p of candidates) {
     try {
@@ -9658,6 +9658,8 @@ function loadPrompt(name) {
   }
   return "";
 }
+
+// src/acp/agent.ts
 function buildSystemPrompt(activeConnection) {
   const isFte = process.env.DB_MCP_FTE === "1";
   const parts = [
@@ -10652,7 +10654,9 @@ refreshStatus().then(() => {
   tui.requestRender();
   if (shouldRunFte) {
     setTimeout(() => {
-      runPrompt("This is my first time using db-mcp. Help me get started.");
-    }, 500);
+      const ftePrompt = loadPrompt("fte-trigger.md") || "This is my first time using db-mcp. Help me get started.";
+      editor.setText(ftePrompt);
+      editor.onSubmit?.(ftePrompt);
+    }, 1000);
   }
 });

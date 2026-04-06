@@ -46,6 +46,7 @@ import { Feed } from "./feed.js";
 import { StatusBar } from "./status-bar.js";
 import { SLASH_COMMANDS } from "./commands.js";
 import { editorTheme, markdownTheme } from "./theme.js";
+import { loadPrompt } from "./prompts.js";
 
 const BASE_URL = process.env.DB_MCP_URL ?? "http://localhost:8080";
 const FORCE_FTE = process.env.DB_MCP_FTE === "1";
@@ -655,10 +656,14 @@ refreshStatus().then(() => {
   tui.start();
   tui.requestRender();
 
-  // Auto-trigger first-time experience
+  // Auto-trigger first-time experience.
+  // Use editor.onSubmit to inject the prompt as if the user typed it —
+  // this ensures the TUI render loop is fully active.
   if (shouldRunFte) {
     setTimeout(() => {
-      runPrompt("This is my first time using db-mcp. Help me get started.");
-    }, 500);
+      const ftePrompt = loadPrompt("fte-trigger.md") || "This is my first time using db-mcp. Help me get started.";
+      editor.setText(ftePrompt);
+      editor.onSubmit?.(ftePrompt);
+    }, 1000);
   }
 });
