@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.10] - 2026-04-05
+
+## Overview
+
+Vendors the `@nexus/acp-bridge` and `@nexus/types` source directly into the terminal package, eliminating the npm dependency that couldn't resolve workspace-internal references in CI.
+
+## Highlights
+
+- CI builds now succeed — no external `@nexus/*` npm dependency
+- TUI binary works out of the box with bundled agent
+
+## Bug Fixes
+
+- **Vendor acp-bridge**: Copy ~700 lines of source from nexus monorepo instead of relying on npm packages that have broken `workspace:*` internal references
+- **Import paths**: Agent imports from `vendor/acp-bridge/` with `@nexus/types` rewritten to relative paths
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/terminal/src/vendor/acp-bridge/` | Vendored acp-bridge source (5 files) |
+| `packages/terminal/src/vendor/types/` | Vendored types source (9 files) |
+| `packages/terminal/src/acp/agent.ts` | Import from vendor instead of npm |
+| `packages/terminal/package.json` | Removed `@lbelyaev/nexus-acp-bridge` dependency |
+
+## Testing
+
+- Terminal: 51 tests passing
+- Local PyInstaller binary: verified TUI launches, no resolution errors
+
+
 ## [0.9.9] - 2026-04-05
 
 ## Overview
