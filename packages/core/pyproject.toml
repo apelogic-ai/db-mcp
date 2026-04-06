@@ -21,7 +21,7 @@ dependencies = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "fastapi>=0.115.0",
-    "uvicorn>=0.34.0",
+    "uvicorn>=0.43.0",
     "dulwich>=0.22.0",
     "duckdb>=1.0.0",
 ]

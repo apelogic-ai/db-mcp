@@ -353,6 +353,7 @@ def start_ui_server(host: str = "0.0.0.0", port: int = 8080, log_file: Path | No
         reload=False,
         workers=1,
         log_config=log_config,
+        ws="websockets-sansio",
     )
 
 

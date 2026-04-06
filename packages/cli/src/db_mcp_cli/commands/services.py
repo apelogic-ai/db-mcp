@@ -169,6 +169,7 @@ def _run_unified_server(*, host: str, port: int, verbose: bool) -> None:
         reload=False,
         workers=1,
         log_config=log_config,
+        ws="websockets-sansio",
     )
 
 
@@ -376,34 +377,47 @@ def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> 
             console.print("[red]Daemon failed to start[/red]")
             raise SystemExit(1)
 
-    # Find the TS TUI entry point — check PyInstaller bundle first, then repo layout
-    tui_src = None
-    # 1. PyInstaller bundle: sys._MEIPASS / terminal / src / index.ts
+    # Find the TUI entry point — check for pre-built bundle first, then dev source
+    tui_entry = None
+    is_bundle = False
+    # 1. PyInstaller bundle: _MEIPASS/terminal/tui.js (pre-built single file)
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        candidate = Path(meipass) / "terminal" / "src" / "index.ts"
+        candidate = Path(meipass) / "terminal" / "tui.js"
         if candidate.exists():
-            tui_src = candidate
-    # 2. Repo layout: packages/terminal/src/index.ts
-    if tui_src is None:
+            tui_entry = candidate
+            is_bundle = True
+    # 2. Repo pre-built: packages/terminal/dist/tui.js
+    if tui_entry is None:
+        candidate = Path(__file__).resolve().parents[4] / "terminal" / "dist" / "tui.js"
+        if candidate.exists():
+            tui_entry = candidate
+            is_bundle = True
+    # 3. Repo dev source: packages/terminal/src/index.ts
+    if tui_entry is None:
         candidate = Path(__file__).resolve().parents[4] / "terminal" / "src" / "index.ts"
         if candidate.exists():
-            tui_src = candidate
-    if tui_src is None:
-        console.print("[red]TUI not found. Install bun and run from the repo, "
-                      "or use a binary that bundles the terminal package.[/red]")
+            tui_entry = candidate
+    if tui_entry is None:
+        console.print("[red]TUI not found. Run from the repo or use a binary build.[/red]")
         raise SystemExit(1)
 
-    # Prefer bun, fall back to npx tsx
+    # Prefer bun, fall back to node (bundles) or npx tsx (source)
     runner = shutil.which("bun")
     if runner:
-        cmd = [runner, str(tui_src)]
+        cmd = [runner, str(tui_entry)]
+    elif is_bundle:
+        node = shutil.which("node")
+        if not node:
+            console.print("[red]bun or node required to run the TUI[/red]")
+            raise SystemExit(1)
+        cmd = [node, str(tui_entry)]
     else:
-        runner = shutil.which("npx")
-        if not runner:
+        npx = shutil.which("npx")
+        if not npx:
             console.print("[red]bun or npx required to run the TUI[/red]")
             raise SystemExit(1)
-        cmd = [runner, "tsx", str(tui_src)]
+        cmd = [npx, "tsx", str(tui_entry)]
 
     env = {
         **os.environ,
@@ -413,7 +427,7 @@ def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> 
         env["DB_MCP_AGENT"] = agent
 
     try:
-        subprocess.run(cmd, env=env, cwd=str(tui_src.parent.parent))
+        subprocess.run(cmd, env=env, cwd=str(tui_entry.parent.parent))
     except KeyboardInterrupt:
         pass
     finally:

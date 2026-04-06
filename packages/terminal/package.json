@@ -9,7 +9,7 @@
     "db-mcp-tui": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && bun build --target=bun --bundle src/index.ts --outfile dist/tui.js",
     "dev": "bun src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest watch",
