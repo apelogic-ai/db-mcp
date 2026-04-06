@@ -136,26 +136,14 @@ tui.setFocus(editor);
 // Welcome
 // ---------------------------------------------------------------------------
 
-// Render logo with color directly (not through markdown)
-// Render logo directly — bypass markdown (ANSI + spaces don't survive code blocks)
-const o = chalk.hex("#E87A1E");  // ApeLogic orange (eyes only)
-const w = chalk.white;           // white (nose, mouth)
-const d = chalk.dim;             // dark outline
-const logoLines = [
-  d("       ▄▄████████▄▄"),
-  d("     ▄██▀▀      ▀▀██▄"),
-  d("    ██              ██"),
-  d("    ██  ") + o("▄██▄") + d("  ") + o("▄██▄") + d("  ██"),
-  d("    ██  ") + o("█▀▀█") + d("  ") + o("█▀▀█") + d("  ██"),
-  d("    ██  ") + o("▀██▀") + d("  ") + o("▀██▀") + d("  ██"),
-  d("    ██              ██"),
-  d("    ██   ") + w("▄██████▄") + d("   ██"),
-  d("    ██   ") + w("█ ▀▀▀▀ █") + d("   ██"),
-  d("    ██   ") + w("▀██████▀") + d("   ██"),
-  d("    ██              ██"),
-  d("     ▀██▄        ▄██▀"),
-  d("       ▀▀████████▀▀"),
-];
+// Load ANSI logo from file — raw escape sequences, bypass markdown
+const logoRaw = loadPrompt("logo.ans");
+const logoLines = logoRaw
+  ? logoRaw
+      .replace(/\[\?25[lh]/g, "")  // strip cursor hide/show sequences
+      .split("\n")
+      .filter((l) => l.length > 0)
+  : [];
 
 feed.setPrefixLines([...logoLines, ""]);
 
@@ -660,10 +648,8 @@ refreshStatus().then(() => {
   // Use editor.onSubmit to inject the prompt as if the user typed it —
   // this ensures the TUI render loop is fully active.
   if (shouldRunFte) {
-    setTimeout(() => {
-      const ftePrompt = loadPrompt("fte-trigger.md") || "This is my first time using db-mcp. Help me get started.";
-      editor.setText(ftePrompt);
-      editor.onSubmit?.(ftePrompt);
-    }, 1000);
+    // Pre-fill the editor so the user just presses Enter to start
+    const ftePrompt = loadPrompt("fte-trigger.md") || "Help me get started";
+    editor.setText(ftePrompt);
   }
 });
