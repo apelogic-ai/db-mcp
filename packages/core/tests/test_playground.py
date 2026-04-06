@@ -144,7 +144,7 @@ def test_playground_cli_commands_help():
     # Test main playground help
     result = runner.invoke(main, ["playground", "--help"])
     assert result.exit_code == 0
-    assert "Manage the playground connection" in result.output
+    assert "Sample SQLite database" in result.output
     assert "install" in result.output
     assert "status" in result.output
 

@@ -208,7 +208,7 @@ def console_cmd(port: int, no_browser: bool):
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
 @click.option("-v", "--verbose", is_flag=True, help="Show server logs in terminal")
 def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
-    """Start the UI server with BICP support.
+    """Start the local web UI server.
 
     This starts a FastAPI server that provides:
     - /bicp POST endpoint for JSON-RPC requests
@@ -284,7 +284,7 @@ def up_cmd(
     connection: str | None,
     verbose: bool,
 ) -> None:
-    """Start the local db-mcp control plane (unified: MCP + REST API + UI)."""
+    """Start the local server (web UI + API + MCP)."""
     conn_name = _configure_service_environment(
         connection,
         tool_mode_override="daemon",
@@ -328,7 +328,8 @@ def up_cmd(
 @click.option("--port", default=8080, show_default=True, type=int, help="Daemon port")
 @click.option("--agent", default=None, help="ACP agent command (default: claude-agent-acp)")
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
-def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> None:
+@click.option("--fte", is_flag=True, default=False, hidden=True)
+def tui_cmd(host: str, port: int, agent: str | None, connection: str | None, fte: bool) -> None:
     """Open the terminal UI. Auto-starts the daemon if not running."""
     import shutil
     import subprocess
@@ -426,6 +427,8 @@ def tui_cmd(host: str, port: int, agent: str | None, connection: str | None) -> 
     }
     if agent:
         env["DB_MCP_AGENT"] = agent
+    if fte:
+        env["DB_MCP_FTE"] = "1"
 
     try:
         subprocess.run(cmd, env=env, cwd=str(tui_entry.parent.parent))
@@ -472,7 +475,7 @@ def serve_ui(host: str, port: int, connection: str | None, verbose: bool) -> Non
 
 @click.group()
 def playground():
-    """Manage the playground connection with Chinook SQLite database.
+    """Sample SQLite database for trying db-mcp.
 
     The playground provides a sample SQLite database (Chinook) for
     testing and learning db-mcp features without setting up your own database.

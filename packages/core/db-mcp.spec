@@ -80,14 +80,22 @@ if static_dir.exists():
 terminal_bundle = repo_root / "packages" / "terminal" / "dist" / "tui.js"
 if terminal_bundle.exists():
     datas.append((str(terminal_bundle), "terminal"))
-# Include claude-agent-acp binary + its dependencies from node_modules
-terminal_agent_bin = repo_root / "packages" / "terminal" / "node_modules" / ".bin" / "claude-agent-acp"
-terminal_agent_pkg = repo_root / "packages" / "terminal" / "node_modules" / "@agentclientprotocol" / "claude-agent-acp"
-if terminal_agent_bin.exists():
-    datas.append((str(terminal_agent_bin), "terminal/node_modules/.bin"))
-if terminal_agent_pkg.exists():
-    datas.append((str(terminal_agent_pkg), "terminal/node_modules/@agentclientprotocol/claude-agent-acp"))
-# Include claude-agent-acp's own dependencies
+# Include TUI prompt files (loaded at runtime by the agent)
+terminal_prompts = repo_root / "packages" / "terminal" / "prompts"
+if terminal_prompts.exists():
+    datas.append((str(terminal_prompts), "terminal/prompts"))
+# Include ACP agent binaries + dependencies from node_modules
+for agent_scope, agent_name in [
+    ("@agentclientprotocol", "claude-agent-acp"),
+    ("@zed-industries", "codex-acp"),
+]:
+    bin_path = repo_root / "packages" / "terminal" / "node_modules" / ".bin" / agent_name
+    pkg_path = repo_root / "packages" / "terminal" / "node_modules" / agent_scope / agent_name
+    if bin_path.exists():
+        datas.append((str(bin_path), "terminal/node_modules/.bin"))
+    if pkg_path.exists():
+        datas.append((str(pkg_path), f"terminal/node_modules/{agent_scope}/{agent_name}"))
+# Include agent dependencies (shared by both adapters)
 for dep in ("@anthropic-ai/claude-agent-sdk", "@agentclientprotocol/sdk", "zod"):
     dep_dir = repo_root / "packages" / "terminal" / "node_modules" / dep
     if dep_dir.exists():

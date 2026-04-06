@@ -114,47 +114,32 @@ class TestConfigureAgentsInteractive:
         assert result == []
         mock_detect.assert_called_once()
 
+    # Single agent detected → Confirm.ask yes/no
     @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
     @patch(
         "db_mcp_cli.agent_config.AGENTS",
         {
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
-        },
-    )
-    @patch("rich.prompt.Prompt.ask", return_value="1")
-    def test_returns_all_agents_when_choice_is_1(self, mock_ask, mock_detect):
-        result = _configure_agents_interactive()
-        assert result == ["claude-desktop"]
-
-    @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
-    @patch(
-        "db_mcp_cli.agent_config.AGENTS",
-        {
-            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
-        },
-    )
-    @patch("rich.prompt.Prompt.ask", return_value="3")
-    def test_returns_empty_list_when_choice_is_skip(self, mock_ask, mock_detect):
-        result = _configure_agents_interactive()
-        assert result == []
-
-    @patch(
-        "db_mcp_cli.agent_config.detect_installed_agents",
-        return_value=["claude-desktop", "cursor"],
-    )
-    @patch(
-        "db_mcp_cli.agent_config.AGENTS",
-        {
-            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
-            "cursor": SimpleNamespace(name="Cursor"),
         },
     )
     @patch("rich.prompt.Confirm.ask", return_value=True)
-    @patch("rich.prompt.Prompt.ask", return_value="2")
-    def test_individual_selection_all_confirmed(self, mock_ask, mock_confirm, mock_detect):
+    def test_returns_all_agents_when_choice_is_1(self, mock_confirm, mock_detect):
         result = _configure_agents_interactive()
-        assert result == ["claude-desktop", "cursor"]
+        assert result == ["claude-desktop"]
 
+    @patch("db_mcp_cli.agent_config.detect_installed_agents", return_value=["claude-desktop"])
+    @patch(
+        "db_mcp_cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+        },
+    )
+    @patch("rich.prompt.Confirm.ask", return_value=False)
+    def test_returns_empty_list_when_choice_is_skip(self, mock_confirm, mock_detect):
+        result = _configure_agents_interactive()
+        assert result == []
+
+    # Multiple agents → Prompt.ask with "a" (all)
     @patch(
         "db_mcp_cli.agent_config.detect_installed_agents",
         return_value=["claude-desktop", "cursor"],
@@ -166,9 +151,25 @@ class TestConfigureAgentsInteractive:
             "cursor": SimpleNamespace(name="Cursor"),
         },
     )
-    @patch("rich.prompt.Confirm.ask", side_effect=[True, False])
-    @patch("rich.prompt.Prompt.ask", return_value="2")
-    def test_individual_selection_partial(self, mock_ask, mock_confirm, mock_detect):
+    @patch("rich.prompt.Prompt.ask", return_value="a")
+    def test_individual_selection_all_confirmed(self, mock_ask, mock_detect):
+        result = _configure_agents_interactive()
+        assert result == ["claude-desktop", "cursor"]
+
+    # Multiple agents → Prompt.ask with "1" (first agent)
+    @patch(
+        "db_mcp_cli.agent_config.detect_installed_agents",
+        return_value=["claude-desktop", "cursor"],
+    )
+    @patch(
+        "db_mcp_cli.agent_config.AGENTS",
+        {
+            "claude-desktop": SimpleNamespace(name="Claude Desktop"),
+            "cursor": SimpleNamespace(name="Cursor"),
+        },
+    )
+    @patch("rich.prompt.Prompt.ask", return_value="1")
+    def test_individual_selection_partial(self, mock_ask, mock_detect):
         result = _configure_agents_interactive()
         assert result == ["claude-desktop"]
 
@@ -179,9 +180,8 @@ class TestConfigureAgentsInteractive:
             "claude-desktop": SimpleNamespace(name="Claude Desktop"),
         },
     )
-    @patch("rich.prompt.Prompt.ask", return_value="1")
-    def test_preselect_installed_parameter_accepted(self, mock_ask, mock_detect):
-        # Verify the preselect_installed param doesn't cause errors
+    @patch("rich.prompt.Confirm.ask", return_value=True)
+    def test_preselect_installed_parameter_accepted(self, mock_confirm, mock_detect):
         result = _configure_agents_interactive(preselect_installed=False)
         assert isinstance(result, list)
 
@@ -194,9 +194,9 @@ class TestConfigureAgentsInteractive:
         },
     )
     @patch("db_mcp_cli.agent_config.console.print")
-    @patch("rich.prompt.Prompt.ask", return_value="3")
+    @patch("rich.prompt.Confirm.ask", return_value=False)
     def test_configure_later_displays_relaunch_hints(
-        self, mock_ask, mock_console_print, mock_detect
+        self, mock_confirm, mock_console_print, mock_detect
     ):
         result = _configure_agents_interactive()
         assert result == []
@@ -206,6 +206,7 @@ class TestConfigureAgentsInteractive:
         assert "db-mcp agents" in rendered
         assert "db-mcp ui" in rendered
 
+    # Multiple agents → Prompt.ask with "s" (skip)
     @patch(
         "db_mcp_cli.agent_config.detect_installed_agents",
         return_value=["claude-desktop", "claude-code"],
@@ -218,10 +219,9 @@ class TestConfigureAgentsInteractive:
         },
     )
     @patch("db_mcp_cli.agent_config.console.print")
-    @patch("rich.prompt.Confirm.ask", side_effect=[False, False])
-    @patch("rich.prompt.Prompt.ask", return_value="2")
+    @patch("rich.prompt.Prompt.ask", return_value="s")
     def test_select_specific_none_selected_displays_relaunch_hints(
-        self, mock_choice, mock_confirm, mock_console_print, mock_detect
+        self, mock_choice, mock_console_print, mock_detect
     ):
         result = _configure_agents_interactive()
         assert result == []

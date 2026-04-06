@@ -52,44 +52,57 @@ def _configure_agents_interactive(preselect_installed: bool = True) -> list[str]
     # Detect installed agents
     installed = detect_installed_agents()
 
-    # Show all supported agents and detection status
-    console.print("\n[bold]Supported MCP clients:[/bold]")
-    for i, (agent_id, agent) in enumerate(AGENTS.items(), 1):
-        status = "[green]detected[/green]" if agent_id in installed else "[dim]not detected[/dim]"
-        console.print(f"  [{i}] {agent.name} ({agent_id}) - {status}")
+    # Show detected agents as simple list
+    console.print("\n[bold]Detected MCP agents:[/bold]")
+    if installed:
+        for agent_id in installed:
+            agent = AGENTS[agent_id]
+            console.print(f"  [green]●[/green] {agent.name}")
+    else:
+        console.print("  [dim]none[/dim]")
+
+    not_installed = [aid for aid in AGENTS if aid not in installed]
+    if not_installed:
+        console.print("\n[dim]Not detected:[/dim]")
+        for agent_id in not_installed:
+            agent = AGENTS[agent_id]
+            console.print(f"  [dim]○ {agent.name}[/dim]")
 
     if not installed:
         console.print(
-            "\n[yellow]No supported MCP clients were auto-detected on this system.[/yellow]"
+            "\n[yellow]No MCP agents detected.[/yellow]"
         )
         _print_configure_later_hint()
         return []
 
-    # Prompt for selection
-    console.print("\n[dim]Configure db-mcp for which clients?[/dim]")
-    console.print("[1] Configure all detected clients")
-    console.print("[2] Select one or more detected clients")
-    console.print("[3] Configure later")
-
+    # Simple action prompt
     from rich.prompt import Prompt
 
-    choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
-
-    if choice == "3":
+    console.print("")
+    if len(installed) == 1:
+        agent = AGENTS[installed[0]]
+        if Confirm.ask(f"Configure {agent.name}?", default=True):
+            return installed
         _print_configure_later_hint()
         return []
-    elif choice == "1":
+
+    console.print("[bold]Configure db-mcp for:[/bold]")
+    for i, agent_id in enumerate(installed, 1):
+        console.print(f"  [{i}] {AGENTS[agent_id].name}")
+    console.print(f"  [a] All detected ({len(installed)})")
+    console.print("  [s] Skip")
+
+    valid = [str(i) for i in range(1, len(installed) + 1)] + ["a", "s"]
+    choice = Prompt.ask("Choice", choices=valid, default="a")
+
+    if choice == "s":
+        _print_configure_later_hint()
+        return []
+    elif choice == "a":
         return installed
     else:
-        # Individual selection
-        selected = []
-        for agent_id in installed:
-            agent = AGENTS[agent_id]
-            if Confirm.ask(f"Configure {agent.name}?", default=preselect_installed):
-                selected.append(agent_id)
-        if not selected:
-            _print_configure_later_hint()
-        return selected
+        idx = int(choice) - 1
+        return [installed[idx]]
 
 
 def _configure_agents(agent_ids: list[str] | None = None) -> None:

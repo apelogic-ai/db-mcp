@@ -44,10 +44,12 @@ import chalk from "chalk";
 import { Agent, type AgentEvent } from "./acp/index.js";
 import { Feed } from "./feed.js";
 import { StatusBar } from "./status-bar.js";
-import { SLASH_COMMANDS } from "./commands.js";
+import { buildSlashCommands } from "./commands.js";
 import { editorTheme, markdownTheme } from "./theme.js";
+import { loadPrompt } from "./prompts.js";
 
 const BASE_URL = process.env.DB_MCP_URL ?? "http://localhost:8080";
+const FORCE_FTE = process.env.DB_MCP_FTE === "1";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -57,7 +59,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /** Bundled ACP adapters — checked in order. */
 const BUNDLED_AGENTS = [
   "claude-agent-acp",  // @agentclientprotocol/claude-agent-acp (npm)
-  "codex-acp",         // codex-acp (cargo install codex-acp)
+  "codex-acp",         // @zed-industries/codex-acp (npm)
 ];
 
 function resolveAgentCommand(): string[] {
@@ -83,6 +85,97 @@ function resolveAgentCommand(): string[] {
 
 const AGENT_CMD = resolveAgentCommand();
 
+/** Detect which agent runtime we're using based on the resolved command. */
+function detectRuntime(cmd: string[]): "claude" | "codex" | "unknown" {
+  const joined = cmd.join(" ");
+  if (joined.includes("claude-agent-acp")) return "claude";
+  if (joined.includes("codex-acp")) return "codex";
+  return "unknown";
+}
+
+/** Pre-flight check: verify agent adapter and underlying CLI are available. */
+async function checkAgentPrerequisites(): Promise<string | null> {
+  const { execFileSync } = await import("node:child_process");
+  const { which } = await import("./preflight.js");
+
+  const runtime = detectRuntime(AGENT_CMD);
+  const agentBin = AGENT_CMD[0]!;
+
+  // 1. Check ACP adapter binary
+  const agentFound = agentBin.includes("/") ? existsSync(agentBin) : !!which(agentBin);
+  if (!agentFound) {
+    const installHint = runtime === "codex"
+      ? "npm i -g @zed-industries/codex-acp"
+      : "npm i -g @agentclientprotocol/claude-agent-acp";
+    return [
+      `**ACP adapter not found:** \`${agentBin}\``,
+      "",
+      "Install it with:",
+      "```",
+      installHint,
+      "```",
+    ].join("\n");
+  }
+
+  // 2. Check underlying CLI
+  if (runtime === "claude") {
+    if (!which("claude")) {
+      return [
+        "**Claude Code not found.**",
+        "",
+        "Install it with:",
+        "```",
+        "npm i -g @anthropic-ai/claude-code",
+        "```",
+        "Then run `claude` once to authenticate.",
+      ].join("\n");
+    }
+    // 3. Check Claude auth
+    try {
+      const out = execFileSync("claude", ["auth", "status"], {
+        timeout: 5000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      });
+      const status = JSON.parse(out);
+      if (!status.loggedIn) {
+        return [
+          "**Claude Code is not authenticated.**",
+          "",
+          "Run: `claude auth login`",
+          "Then restart the TUI.",
+        ].join("\n");
+      }
+    } catch {}
+  } else if (runtime === "codex") {
+    if (!which("codex")) {
+      return [
+        "**Codex CLI not found.**",
+        "",
+        "Install it with:",
+        "```",
+        "npm i -g @openai/codex",
+        "```",
+        "Then run `codex login` to authenticate.",
+      ].join("\n");
+    }
+    // 3. Check Codex auth
+    try {
+      const out = execFileSync("codex", ["login", "status"], {
+        timeout: 5000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (out.toLowerCase().includes("not logged in") || out.toLowerCase().includes("no api key")) {
+        return [
+          "**Codex is not authenticated.**",
+          "",
+          "Run: `codex login`",
+          "Then restart the TUI.",
+        ].join("\n");
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
@@ -100,6 +193,7 @@ const agent = new Agent({
 });
 
 // Wire slash commands into the editor's autocomplete
+const SLASH_COMMANDS = buildSlashCommands(BASE_URL);
 const slashProvider = new CombinedAutocompleteProvider(SLASH_COMMANDS);
 editor.setAutocompleteProvider(slashProvider);
 
@@ -134,39 +228,57 @@ tui.setFocus(editor);
 // Welcome
 // ---------------------------------------------------------------------------
 
-// Render logo with color directly (not through markdown)
-// Render logo directly — bypass markdown (ANSI + spaces don't survive code blocks)
-const o = chalk.hex("#E87A1E");  // ApeLogic orange (eyes only)
-const w = chalk.white;           // white (nose, mouth)
-const d = chalk.dim;             // dark outline
-const logoLines = [
-  d("       ▄▄████████▄▄"),
-  d("     ▄██▀▀      ▀▀██▄"),
-  d("    ██              ██"),
-  d("    ██  ") + o("▄██▄") + d("  ") + o("▄██▄") + d("  ██"),
-  d("    ██  ") + o("█▀▀█") + d("  ") + o("█▀▀█") + d("  ██"),
-  d("    ██  ") + o("▀██▀") + d("  ") + o("▀██▀") + d("  ██"),
-  d("    ██              ██"),
-  d("    ██   ") + w("▄██████▄") + d("   ██"),
-  d("    ██   ") + w("█ ▀▀▀▀ █") + d("   ██"),
-  d("    ██   ") + w("▀██████▀") + d("   ██"),
-  d("    ██              ██"),
-  d("     ▀██▄        ▄██▀"),
-  d("       ▀▀████████▀▀"),
-];
+// Load ANSI logo from file — raw escape sequences, bypass markdown
+const logoRaw = loadPrompt("logo.ans");
+const logoLines = logoRaw
+  ? logoRaw
+      .replace(/\[\?25[lh]/g, "")  // strip cursor hide/show sequences
+      .split("\n")
+      .filter((l) => l.length > 0)
+  : [];
 
 feed.setPrefixLines([...logoLines, ""]);
 
-feed.addMessage({
-  id: "welcome",
-  role: "system",
-  text: [
-    "**db-mcp** by ApeLogic",
-    "",
-    "Type a question to query your database. Type `/` for commands.",
-    "_Press Ctrl+C to exit. ESC to cancel._",
-  ].join("\n"),
-});
+// Detect first-run: check if any connections exist
+const hasConnections = await (async () => {
+  try {
+    const resp = await fetch(`${BASE_URL}/api/connections/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(2000),
+    });
+    const data = (await resp.json()) as { connections?: unknown[] };
+    return (data.connections?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+})();
+
+const shouldRunFte = FORCE_FTE || !hasConnections;
+
+if (shouldRunFte) {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "_Welcome! Let me help you get started..._",
+    ].join("\n"),
+  });
+} else {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "Type a question to query your data. Type `/` for commands.",
+      "_Press Ctrl+C to exit. ESC to cancel._",
+    ].join("\n"),
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Agent event handler
@@ -357,6 +469,70 @@ async function handleCommand(raw: string): Promise<void> {
       shutdown();
       break;
 
+    // Onboarding commands
+    case "/doctor":
+      await runCli("db-mcp doctor");
+      break;
+    case "/env": {
+      // Secure local secret storage — never sent to agent
+      // Usage: /env <connection> <KEY> <value>
+      const parts = arg.split(" ");
+      if (parts.length < 3) {
+        feed.addMessage({
+          id: `env-err-${Date.now()}`, role: "error",
+          text: "Usage: `/env <connection> <KEY> <value>`\nExample: `/env nova DATABASE_URL postgres://user:pass@host/db`",
+        });
+        break;
+      }
+      const [connName, key, ...valueParts] = parts;
+      const value = valueParts.join(" ");
+      try {
+        const { mkdirSync, writeFileSync, readFileSync, existsSync } = await import("node:fs");
+        const { homedir } = await import("node:os");
+        const { join } = await import("node:path");
+        const connDir = join(homedir(), ".db-mcp", "connections", connName!);
+        mkdirSync(connDir, { recursive: true });
+        const envFile = join(connDir, ".env");
+        // Read existing .env, update or append the key
+        let lines: string[] = [];
+        if (existsSync(envFile)) {
+          lines = readFileSync(envFile, "utf8").split("\n").filter(l => !l.startsWith(`${key}=`));
+        }
+        lines.push(`${key}=${value}`);
+        writeFileSync(envFile, lines.filter(Boolean).join("\n") + "\n");
+        feed.addMessage({
+          id: `env-ok-${Date.now()}`, role: "system",
+          text: `Secret \`${key}\` written to \`~/.db-mcp/connections/${connName}/.env\``,
+        });
+      } catch (err) {
+        feed.addMessage({
+          id: `env-fail-${Date.now()}`, role: "error",
+          text: `Failed to write secret: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+      break;
+    }
+    case "/playground":
+      feed.addMessage({ id: `pg-${Date.now()}`, role: "system", text: "_Installing playground database..._" });
+      tui.requestRender();
+      await runCli("db-mcp playground install");
+      await runCli("db-mcp use playground");
+      await refreshStatus();
+      feed.addMessage({
+        id: `pg-done-${Date.now()}`,
+        role: "system",
+        text: "Playground ready! Try asking: _How many albums does each artist have?_",
+      });
+      break;
+    case "/init":
+      // Route to agent as a conversational onboarding flow
+      await runPrompt(
+        arg
+          ? `I want to set up a new db-mcp connection called "${arg}". Guide me through it.`
+          : "I want to set up a new db-mcp database connection. Ask me what database I use and help me configure it step by step."
+      );
+      break;
+
     // CLI commands — run db-mcp directly
     case "/connections":
       await runCli("db-mcp list");
@@ -367,19 +543,19 @@ async function handleCommand(raw: string): Promise<void> {
       await refreshStatus();
       break;
     case "/schema":
-      await runCli("db-mcp schema");
+      await runCli(arg ? `db-mcp schema ${arg}` : "db-mcp schema show");
       break;
     case "/rules":
-      await runCli("db-mcp rules");
+      await runCli(arg ? `db-mcp rules ${arg}` : "db-mcp rules list");
       break;
     case "/examples":
-      await runCli("db-mcp examples");
+      await runCli(arg ? `db-mcp examples ${arg}` : "db-mcp examples list");
       break;
     case "/metrics":
-      await runCli("db-mcp metrics");
+      await runCli(arg ? `db-mcp metrics ${arg}` : "db-mcp metrics list");
       break;
     case "/gaps":
-      await runCli("db-mcp gaps");
+      await runCli(arg ? `db-mcp gaps ${arg}` : "db-mcp gaps list");
       break;
     case "/sync":
       await runCli("db-mcp sync");
@@ -418,7 +594,7 @@ async function runCli(command: string): Promise<void> {
   if (output) {
     // Clean up CLI output for TUI context
     output = output
-      .replace(/Restart Claude Desktop to apply changes\.?\n?/g, "")
+      .replace(/Restart (?:Claude Desktop|your MCP agent) to [\w ]+\.?\n?/g, "")
       .replace(/^[✓✗●] /gm, "")         // strip status bullets
       .replace(/'/g, "")                  // strip quotes around names
       .trim();
@@ -430,7 +606,8 @@ async function runCli(command: string): Promise<void> {
       });
     }
   }
-  if (result.exitStatus && result.exitStatus.exitCode !== 0) {
+  if (result.exitStatus && result.exitStatus.exitCode !== 0 && result.exitStatus.exitCode !== 2) {
+    // Exit code 2 = Click usage error (missing args) — the help output is already shown above
     feed.addMessage({
       id: `cli-err-${Date.now()}`,
       role: "error",
@@ -449,6 +626,18 @@ async function handlePrompt(text: string): Promise<void> {
 
   // Auto-connect agent on first prompt
   if (!agent.connected) {
+    // Preflight: check prerequisites before attempting connection
+    const problem = await checkAgentPrerequisites();
+    if (problem) {
+      feed.addMessage({
+        id: `preflight-${Date.now()}`,
+        role: "error",
+        text: problem,
+      });
+      tui.requestRender();
+      return;
+    }
+
     feed.addMessage({
       id: `connecting-${Date.now()}`,
       role: "system",
@@ -470,15 +659,7 @@ async function handlePrompt(text: string): Promise<void> {
       feed.addMessage({
         id: `agent-fail-${Date.now()}`,
         role: "error",
-        text: [
-          `Failed to connect to agent: ${msg}`,
-          "",
-          "Make sure the ACP adapter is installed:",
-          "```",
-          "npm i -g @agentclientprotocol/claude-agent-acp",
-          "```",
-          "Then set: `DB_MCP_AGENT=claude-agent-acp`",
-        ].join("\n"),
+        text: `Failed to connect to agent: ${msg}`,
       });
       tui.requestRender();
       return;
@@ -536,22 +717,30 @@ const pollInterval = setInterval(() => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+/** Reset terminal to normal state — must run even on crash. */
+function resetTerminal(): void {
+  try {
+    process.stdout.write("\x1b[=0u");   // disable Kitty keyboard protocol
+    process.stdout.write("\x1b[<u");    // pop Kitty stack
+    process.stdout.write("\x1b[>0m");   // disable modifyOtherKeys
+    process.stdout.write("\x1b[?25h");  // show cursor
+    process.stdout.write("\x1b[?2004l"); // disable bracketed paste
+  } catch {}
+}
+
 async function shutdown(): Promise<void> {
   clearInterval(pollInterval);
-  await agent.disconnect();
-  // Fully disable Kitty keyboard protocol BEFORE exiting raw mode
-  process.stdout.write("\x1b[=0u");   // set Kitty flags to 0 (disable all)
-  process.stdout.write("\x1b[<u");    // pop Kitty stack
-  process.stdout.write("\x1b[>0m");   // disable modifyOtherKeys
-  process.stdout.write("\x1b[?25h");  // show cursor
-  // Drain any pending Kitty responses before exiting raw mode
-  await terminal.drainInput(500, 100);
-  tui.stop();
-  // Final drain after raw mode is off
-  await new Promise(resolve => setTimeout(resolve, 150));
+  // Reset terminal FIRST — before anything that could hang
+  resetTerminal();
+  try { tui.stop(); } catch {}
+  try { await agent.disconnect(); } catch {}
+  await terminal.drainInput(500, 100).catch(() => {});
+  await new Promise(resolve => setTimeout(resolve, 100));
   process.exit(0);
 }
 
+// Ensure terminal is always reset, even on crash
+process.on("exit", resetTerminal);
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
 
@@ -559,4 +748,13 @@ process.on("SIGTERM", () => shutdown());
 refreshStatus().then(() => {
   tui.start();
   tui.requestRender();
+
+  // Auto-trigger first-time experience.
+  // Use editor.onSubmit to inject the prompt as if the user typed it —
+  // this ensures the TUI render loop is fully active.
+  if (shouldRunFte) {
+    // Pre-fill the editor so the user just presses Enter to start
+    const ftePrompt = loadPrompt("fte-trigger.md") || "Help me get started";
+    editor.setText(ftePrompt);
+  }
 });

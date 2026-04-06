@@ -45,7 +45,16 @@ export function handleCreateTerminal(params: {
       args,
       {
         cwd: params.cwd ?? undefined,
-        env: env ? { ...process.env, ...env } : undefined,
+        env: (() => {
+          // Strip daemon-inherited CONNECTION_NAME/CONNECTION_PATH/DATABASE_URL
+          // so child CLI processes resolve the active connection from config.yaml
+          // instead of using the daemon's startup connection.
+          const base = { ...process.env };
+          delete base.CONNECTION_NAME;
+          delete base.CONNECTION_PATH;
+          delete base.DATABASE_URL;
+          return env ? { ...base, ...env } : base;
+        })(),
         maxBuffer: params.outputByteLimit ?? 1024 * 1024,
         timeout: 60_000,
       },

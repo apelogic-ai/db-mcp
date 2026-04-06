@@ -40,7 +40,7 @@ import { execFile } from "child_process";
 function handleCreateTerminal(params) {
   const id = `term-${nextId++}`;
   const args = params.args ?? [];
-  const env2 = params.env ? Object.fromEntries(params.env.map((e) => [e.name, e.value])) : undefined;
+  const env = params.env ? Object.fromEntries(params.env.map((e) => [e.name, e.value])) : undefined;
   const state2 = {
     command: params.command,
     args,
@@ -53,7 +53,13 @@ function handleCreateTerminal(params) {
   state2.promise = new Promise((resolve) => {
     const child = execFile(params.command, args, {
       cwd: params.cwd ?? undefined,
-      env: env2 ? { ...process.env, ...env2 } : undefined,
+      env: (() => {
+        const base = { ...process.env };
+        delete base.CONNECTION_NAME;
+        delete base.CONNECTION_PATH;
+        delete base.DATABASE_URL;
+        return env ? { ...base, ...env } : base;
+      })(),
       maxBuffer: params.outputByteLimit ?? 1024 * 1024,
       timeout: 60000
     }, (error, stdout, stderr) => {
@@ -101,6 +107,25 @@ var terminals, nextId = 1;
 var init_terminal = __esm(() => {
   terminals = new Map;
 });
+
+// src/preflight.ts
+var exports_preflight = {};
+__export(exports_preflight, {
+  which: () => which
+});
+import { existsSync } from "fs";
+import { join as join4 } from "path";
+function which(name) {
+  const pathDirs = (process.env.PATH ?? "").split(":");
+  for (const dir of pathDirs) {
+    const candidate = join4(dir, name);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+var init_preflight = () => {};
 
 // src/index.ts
 import { appendFileSync as appendFileSync3 } from "fs";
@@ -8460,495 +8485,6 @@ class ProcessTerminal {
     process.stdout.write(`\x1B]0;${title}\x07`);
   }
 }
-// node_modules/chalk/source/vendor/ansi-styles/index.js
-var ANSI_BACKGROUND_OFFSET = 10;
-var wrapAnsi16 = (offset = 0) => (code) => `\x1B[${code + offset}m`;
-var wrapAnsi256 = (offset = 0) => (code) => `\x1B[${38 + offset};5;${code}m`;
-var wrapAnsi16m = (offset = 0) => (red, green, blue) => `\x1B[${38 + offset};2;${red};${green};${blue}m`;
-var styles = {
-  modifier: {
-    reset: [0, 0],
-    bold: [1, 22],
-    dim: [2, 22],
-    italic: [3, 23],
-    underline: [4, 24],
-    overline: [53, 55],
-    inverse: [7, 27],
-    hidden: [8, 28],
-    strikethrough: [9, 29]
-  },
-  color: {
-    black: [30, 39],
-    red: [31, 39],
-    green: [32, 39],
-    yellow: [33, 39],
-    blue: [34, 39],
-    magenta: [35, 39],
-    cyan: [36, 39],
-    white: [37, 39],
-    blackBright: [90, 39],
-    gray: [90, 39],
-    grey: [90, 39],
-    redBright: [91, 39],
-    greenBright: [92, 39],
-    yellowBright: [93, 39],
-    blueBright: [94, 39],
-    magentaBright: [95, 39],
-    cyanBright: [96, 39],
-    whiteBright: [97, 39]
-  },
-  bgColor: {
-    bgBlack: [40, 49],
-    bgRed: [41, 49],
-    bgGreen: [42, 49],
-    bgYellow: [43, 49],
-    bgBlue: [44, 49],
-    bgMagenta: [45, 49],
-    bgCyan: [46, 49],
-    bgWhite: [47, 49],
-    bgBlackBright: [100, 49],
-    bgGray: [100, 49],
-    bgGrey: [100, 49],
-    bgRedBright: [101, 49],
-    bgGreenBright: [102, 49],
-    bgYellowBright: [103, 49],
-    bgBlueBright: [104, 49],
-    bgMagentaBright: [105, 49],
-    bgCyanBright: [106, 49],
-    bgWhiteBright: [107, 49]
-  }
-};
-var modifierNames = Object.keys(styles.modifier);
-var foregroundColorNames = Object.keys(styles.color);
-var backgroundColorNames = Object.keys(styles.bgColor);
-var colorNames = [...foregroundColorNames, ...backgroundColorNames];
-function assembleStyles() {
-  const codes = new Map;
-  for (const [groupName, group] of Object.entries(styles)) {
-    for (const [styleName, style] of Object.entries(group)) {
-      styles[styleName] = {
-        open: `\x1B[${style[0]}m`,
-        close: `\x1B[${style[1]}m`
-      };
-      group[styleName] = styles[styleName];
-      codes.set(style[0], style[1]);
-    }
-    Object.defineProperty(styles, groupName, {
-      value: group,
-      enumerable: false
-    });
-  }
-  Object.defineProperty(styles, "codes", {
-    value: codes,
-    enumerable: false
-  });
-  styles.color.close = "\x1B[39m";
-  styles.bgColor.close = "\x1B[49m";
-  styles.color.ansi = wrapAnsi16();
-  styles.color.ansi256 = wrapAnsi256();
-  styles.color.ansi16m = wrapAnsi16m();
-  styles.bgColor.ansi = wrapAnsi16(ANSI_BACKGROUND_OFFSET);
-  styles.bgColor.ansi256 = wrapAnsi256(ANSI_BACKGROUND_OFFSET);
-  styles.bgColor.ansi16m = wrapAnsi16m(ANSI_BACKGROUND_OFFSET);
-  Object.defineProperties(styles, {
-    rgbToAnsi256: {
-      value(red, green, blue) {
-        if (red === green && green === blue) {
-          if (red < 8) {
-            return 16;
-          }
-          if (red > 248) {
-            return 231;
-          }
-          return Math.round((red - 8) / 247 * 24) + 232;
-        }
-        return 16 + 36 * Math.round(red / 255 * 5) + 6 * Math.round(green / 255 * 5) + Math.round(blue / 255 * 5);
-      },
-      enumerable: false
-    },
-    hexToRgb: {
-      value(hex) {
-        const matches = /[a-f\d]{6}|[a-f\d]{3}/i.exec(hex.toString(16));
-        if (!matches) {
-          return [0, 0, 0];
-        }
-        let [colorString] = matches;
-        if (colorString.length === 3) {
-          colorString = [...colorString].map((character) => character + character).join("");
-        }
-        const integer = Number.parseInt(colorString, 16);
-        return [
-          integer >> 16 & 255,
-          integer >> 8 & 255,
-          integer & 255
-        ];
-      },
-      enumerable: false
-    },
-    hexToAnsi256: {
-      value: (hex) => styles.rgbToAnsi256(...styles.hexToRgb(hex)),
-      enumerable: false
-    },
-    ansi256ToAnsi: {
-      value(code) {
-        if (code < 8) {
-          return 30 + code;
-        }
-        if (code < 16) {
-          return 90 + (code - 8);
-        }
-        let red;
-        let green;
-        let blue;
-        if (code >= 232) {
-          red = ((code - 232) * 10 + 8) / 255;
-          green = red;
-          blue = red;
-        } else {
-          code -= 16;
-          const remainder = code % 36;
-          red = Math.floor(code / 36) / 5;
-          green = Math.floor(remainder / 6) / 5;
-          blue = remainder % 6 / 5;
-        }
-        const value = Math.max(red, green, blue) * 2;
-        if (value === 0) {
-          return 30;
-        }
-        let result = 30 + (Math.round(blue) << 2 | Math.round(green) << 1 | Math.round(red));
-        if (value === 2) {
-          result += 60;
-        }
-        return result;
-      },
-      enumerable: false
-    },
-    rgbToAnsi: {
-      value: (red, green, blue) => styles.ansi256ToAnsi(styles.rgbToAnsi256(red, green, blue)),
-      enumerable: false
-    },
-    hexToAnsi: {
-      value: (hex) => styles.ansi256ToAnsi(styles.hexToAnsi256(hex)),
-      enumerable: false
-    }
-  });
-  return styles;
-}
-var ansiStyles = assembleStyles();
-var ansi_styles_default = ansiStyles;
-
-// node_modules/chalk/source/vendor/supports-color/index.js
-import process2 from "process";
-import os2 from "os";
-import tty from "tty";
-function hasFlag(flag, argv = globalThis.Deno ? globalThis.Deno.args : process2.argv) {
-  const prefix = flag.startsWith("-") ? "" : flag.length === 1 ? "-" : "--";
-  const position = argv.indexOf(prefix + flag);
-  const terminatorPosition = argv.indexOf("--");
-  return position !== -1 && (terminatorPosition === -1 || position < terminatorPosition);
-}
-var { env } = process2;
-var flagForceColor;
-if (hasFlag("no-color") || hasFlag("no-colors") || hasFlag("color=false") || hasFlag("color=never")) {
-  flagForceColor = 0;
-} else if (hasFlag("color") || hasFlag("colors") || hasFlag("color=true") || hasFlag("color=always")) {
-  flagForceColor = 1;
-}
-function envForceColor() {
-  if ("FORCE_COLOR" in env) {
-    if (env.FORCE_COLOR === "true") {
-      return 1;
-    }
-    if (env.FORCE_COLOR === "false") {
-      return 0;
-    }
-    return env.FORCE_COLOR.length === 0 ? 1 : Math.min(Number.parseInt(env.FORCE_COLOR, 10), 3);
-  }
-}
-function translateLevel(level) {
-  if (level === 0) {
-    return false;
-  }
-  return {
-    level,
-    hasBasic: true,
-    has256: level >= 2,
-    has16m: level >= 3
-  };
-}
-function _supportsColor(haveStream, { streamIsTTY, sniffFlags = true } = {}) {
-  const noFlagForceColor = envForceColor();
-  if (noFlagForceColor !== undefined) {
-    flagForceColor = noFlagForceColor;
-  }
-  const forceColor = sniffFlags ? flagForceColor : noFlagForceColor;
-  if (forceColor === 0) {
-    return 0;
-  }
-  if (sniffFlags) {
-    if (hasFlag("color=16m") || hasFlag("color=full") || hasFlag("color=truecolor")) {
-      return 3;
-    }
-    if (hasFlag("color=256")) {
-      return 2;
-    }
-  }
-  if ("TF_BUILD" in env && "AGENT_NAME" in env) {
-    return 1;
-  }
-  if (haveStream && !streamIsTTY && forceColor === undefined) {
-    return 0;
-  }
-  const min = forceColor || 0;
-  if (env.TERM === "dumb") {
-    return min;
-  }
-  if (process2.platform === "win32") {
-    const osRelease = os2.release().split(".");
-    if (Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586) {
-      return Number(osRelease[2]) >= 14931 ? 3 : 2;
-    }
-    return 1;
-  }
-  if ("CI" in env) {
-    if (["GITHUB_ACTIONS", "GITEA_ACTIONS", "CIRCLECI"].some((key) => (key in env))) {
-      return 3;
-    }
-    if (["TRAVIS", "APPVEYOR", "GITLAB_CI", "BUILDKITE", "DRONE"].some((sign) => (sign in env)) || env.CI_NAME === "codeship") {
-      return 1;
-    }
-    return min;
-  }
-  if ("TEAMCITY_VERSION" in env) {
-    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
-  }
-  if (env.COLORTERM === "truecolor") {
-    return 3;
-  }
-  if (env.TERM === "xterm-kitty") {
-    return 3;
-  }
-  if (env.TERM === "xterm-ghostty") {
-    return 3;
-  }
-  if (env.TERM === "wezterm") {
-    return 3;
-  }
-  if ("TERM_PROGRAM" in env) {
-    const version = Number.parseInt((env.TERM_PROGRAM_VERSION || "").split(".")[0], 10);
-    switch (env.TERM_PROGRAM) {
-      case "iTerm.app": {
-        return version >= 3 ? 3 : 2;
-      }
-      case "Apple_Terminal": {
-        return 2;
-      }
-    }
-  }
-  if (/-256(color)?$/i.test(env.TERM)) {
-    return 2;
-  }
-  if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
-    return 1;
-  }
-  if ("COLORTERM" in env) {
-    return 1;
-  }
-  return min;
-}
-function createSupportsColor(stream, options2 = {}) {
-  const level = _supportsColor(stream, {
-    streamIsTTY: stream && stream.isTTY,
-    ...options2
-  });
-  return translateLevel(level);
-}
-var supportsColor = {
-  stdout: createSupportsColor({ isTTY: tty.isatty(1) }),
-  stderr: createSupportsColor({ isTTY: tty.isatty(2) })
-};
-var supports_color_default = supportsColor;
-
-// node_modules/chalk/source/utilities.js
-function stringReplaceAll(string, substring, replacer) {
-  let index = string.indexOf(substring);
-  if (index === -1) {
-    return string;
-  }
-  const substringLength = substring.length;
-  let endIndex = 0;
-  let returnValue = "";
-  do {
-    returnValue += string.slice(endIndex, index) + substring + replacer;
-    endIndex = index + substringLength;
-    index = string.indexOf(substring, endIndex);
-  } while (index !== -1);
-  returnValue += string.slice(endIndex);
-  return returnValue;
-}
-function stringEncaseCRLFWithFirstIndex(string, prefix, postfix, index) {
-  let endIndex = 0;
-  let returnValue = "";
-  do {
-    const gotCR = string[index - 1] === "\r";
-    returnValue += string.slice(endIndex, gotCR ? index - 1 : index) + prefix + (gotCR ? `\r
-` : `
-`) + postfix;
-    endIndex = index + 1;
-    index = string.indexOf(`
-`, endIndex);
-  } while (index !== -1);
-  returnValue += string.slice(endIndex);
-  return returnValue;
-}
-
-// node_modules/chalk/source/index.js
-var { stdout: stdoutColor, stderr: stderrColor } = supports_color_default;
-var GENERATOR = Symbol("GENERATOR");
-var STYLER = Symbol("STYLER");
-var IS_EMPTY = Symbol("IS_EMPTY");
-var levelMapping = [
-  "ansi",
-  "ansi",
-  "ansi256",
-  "ansi16m"
-];
-var styles2 = Object.create(null);
-var applyOptions = (object, options2 = {}) => {
-  if (options2.level && !(Number.isInteger(options2.level) && options2.level >= 0 && options2.level <= 3)) {
-    throw new Error("The `level` option should be an integer from 0 to 3");
-  }
-  const colorLevel = stdoutColor ? stdoutColor.level : 0;
-  object.level = options2.level === undefined ? colorLevel : options2.level;
-};
-var chalkFactory = (options2) => {
-  const chalk = (...strings) => strings.join(" ");
-  applyOptions(chalk, options2);
-  Object.setPrototypeOf(chalk, createChalk.prototype);
-  return chalk;
-};
-function createChalk(options2) {
-  return chalkFactory(options2);
-}
-Object.setPrototypeOf(createChalk.prototype, Function.prototype);
-for (const [styleName, style] of Object.entries(ansi_styles_default)) {
-  styles2[styleName] = {
-    get() {
-      const builder = createBuilder(this, createStyler(style.open, style.close, this[STYLER]), this[IS_EMPTY]);
-      Object.defineProperty(this, styleName, { value: builder });
-      return builder;
-    }
-  };
-}
-styles2.visible = {
-  get() {
-    const builder = createBuilder(this, this[STYLER], true);
-    Object.defineProperty(this, "visible", { value: builder });
-    return builder;
-  }
-};
-var getModelAnsi = (model, level, type, ...arguments_) => {
-  if (model === "rgb") {
-    if (level === "ansi16m") {
-      return ansi_styles_default[type].ansi16m(...arguments_);
-    }
-    if (level === "ansi256") {
-      return ansi_styles_default[type].ansi256(ansi_styles_default.rgbToAnsi256(...arguments_));
-    }
-    return ansi_styles_default[type].ansi(ansi_styles_default.rgbToAnsi(...arguments_));
-  }
-  if (model === "hex") {
-    return getModelAnsi("rgb", level, type, ...ansi_styles_default.hexToRgb(...arguments_));
-  }
-  return ansi_styles_default[type][model](...arguments_);
-};
-var usedModels = ["rgb", "hex", "ansi256"];
-for (const model of usedModels) {
-  styles2[model] = {
-    get() {
-      const { level } = this;
-      return function(...arguments_) {
-        const styler = createStyler(getModelAnsi(model, levelMapping[level], "color", ...arguments_), ansi_styles_default.color.close, this[STYLER]);
-        return createBuilder(this, styler, this[IS_EMPTY]);
-      };
-    }
-  };
-  const bgModel = "bg" + model[0].toUpperCase() + model.slice(1);
-  styles2[bgModel] = {
-    get() {
-      const { level } = this;
-      return function(...arguments_) {
-        const styler = createStyler(getModelAnsi(model, levelMapping[level], "bgColor", ...arguments_), ansi_styles_default.bgColor.close, this[STYLER]);
-        return createBuilder(this, styler, this[IS_EMPTY]);
-      };
-    }
-  };
-}
-var proto = Object.defineProperties(() => {}, {
-  ...styles2,
-  level: {
-    enumerable: true,
-    get() {
-      return this[GENERATOR].level;
-    },
-    set(level) {
-      this[GENERATOR].level = level;
-    }
-  }
-});
-var createStyler = (open, close, parent) => {
-  let openAll;
-  let closeAll;
-  if (parent === undefined) {
-    openAll = open;
-    closeAll = close;
-  } else {
-    openAll = parent.openAll + open;
-    closeAll = close + parent.closeAll;
-  }
-  return {
-    open,
-    close,
-    openAll,
-    closeAll,
-    parent
-  };
-};
-var createBuilder = (self, _styler, _isEmpty) => {
-  const builder = (...arguments_) => applyStyle(builder, arguments_.length === 1 ? "" + arguments_[0] : arguments_.join(" "));
-  Object.setPrototypeOf(builder, proto);
-  builder[GENERATOR] = self;
-  builder[STYLER] = _styler;
-  builder[IS_EMPTY] = _isEmpty;
-  return builder;
-};
-var applyStyle = (self, string) => {
-  if (self.level <= 0 || !string) {
-    return self[IS_EMPTY] ? "" : string;
-  }
-  let styler = self[STYLER];
-  if (styler === undefined) {
-    return string;
-  }
-  const { openAll, closeAll } = styler;
-  if (string.includes("\x1B")) {
-    while (styler !== undefined) {
-      string = stringReplaceAll(string, styler.close, styler.open);
-      styler = styler.parent;
-    }
-  }
-  const lfIndex = string.indexOf(`
-`);
-  if (lfIndex !== -1) {
-    string = stringEncaseCRLFWithFirstIndex(string, closeAll, openAll, lfIndex);
-  }
-  return openAll + string + closeAll;
-};
-Object.defineProperties(createChalk.prototype, styles2);
-var chalk = createChalk();
-var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
-var source_default = chalk;
-
 // src/vendor/acp-bridge/stream.ts
 var parseNdjsonStream = (input, onMessage, onError) => {
   let buffer = "";
@@ -9641,6 +9177,44 @@ var spawnAgent = (command, options2) => {
 // src/acp/agent.ts
 init_terminal();
 
+// src/prompts.ts
+import { readFileSync } from "fs";
+import { resolve, dirname as dirname3 } from "path";
+import { fileURLToPath } from "url";
+var __promptsDir = dirname3(fileURLToPath(import.meta.url));
+function loadPrompt(name) {
+  const candidates = [
+    resolve(__promptsDir, "..", "prompts", name),
+    resolve(__promptsDir, "prompts", name)
+  ];
+  for (const p of candidates) {
+    try {
+      return readFileSync(p, "utf8").trim();
+    } catch {}
+  }
+  return "";
+}
+
+// src/acp/agent.ts
+function buildSystemPrompt(activeConnection) {
+  const isFte = process.env.DB_MCP_FTE === "1";
+  const parts = [
+    loadPrompt("system.md"),
+    isFte ? loadPrompt("fte.md") : "",
+    loadPrompt("query-workflow.md"),
+    loadPrompt("init-flow.md"),
+    loadPrompt("commands.md"),
+    loadPrompt("rules.md")
+  ].filter(Boolean);
+  if (activeConnection) {
+    parts.push(`## ACTIVE CONNECTION
+The active connection is "${activeConnection}". Run \`db-mcp use ${activeConnection}\` as your first command.`);
+  }
+  return parts.join(`
+
+`);
+}
+
 class Agent {
   config;
   process = null;
@@ -9680,7 +9254,7 @@ class Agent {
     this.process.process.stderr?.on("data", (chunk) => {
       logStream.write(chunk);
     });
-    await new Promise((resolve, reject) => {
+    await new Promise((resolve2, reject) => {
       const proc = this.process.process;
       const onError = (err) => {
         cleanup();
@@ -9690,7 +9264,7 @@ Install with: npm i -g @agentclientprotocol/claude-agent-acp`));
       };
       const onSpawn = () => {
         cleanup();
-        resolve();
+        resolve2();
       };
       const cleanup = () => {
         proc.removeListener("error", onError);
@@ -9713,66 +9287,7 @@ Install with: npm i -g @agentclientprotocol/claude-agent-acp`));
       cwd: process.cwd(),
       mcpServers: [],
       _meta: {
-        systemPrompt: [
-          "You are a database operations assistant powered by the db-mcp CLI.",
-          "You help users query data, onboard connections, troubleshoot, and manage their knowledge vault.",
-          "",
-          "## ANSWERING DATA QUESTIONS (SQL queries)",
-          "When the user asks a question about data, YOU write the SQL:",
-          "1. db-mcp rules list                   \u2014 check business rules FIRST",
-          "2. db-mcp examples search --grep '<keyword>' \u2014 find similar query patterns",
-          "3. db-mcp schema show | grep -A20 '<table>' \u2014 check columns for relevant tables",
-          "4. Write SQL yourself based on rules, examples, and schema.",
-          "5. db-mcp query run --confirmed '<SQL>' \u2014 execute your SQL",
-          "Do NOT delegate SQL generation. YOU are the analyst.",
-          "",
-          "## ALL COMMANDS",
-          "Connection management:",
-          "  db-mcp list                          \u2014 list connections",
-          "  db-mcp status                        \u2014 show active connection + config",
-          "  db-mcp use <name>                    \u2014 switch connection",
-          "  db-mcp init                          \u2014 set up a new connection (interactive)",
-          "  db-mcp doctor                        \u2014 preflight checks for a connection",
-          "  db-mcp edit                          \u2014 edit connection credentials",
-          "",
-          "Schema & discovery:",
-          "  db-mcp schema show                   \u2014 table/column descriptions from vault",
-          "  db-mcp schema show | grep -A20 '<table>' \u2014 columns for one table",
-          "  db-mcp schema tables                 \u2014 list tables in database",
-          "  db-mcp schema sample <table>         \u2014 sample rows",
-          "  db-mcp discover                      \u2014 introspect database schema",
-          "  db-mcp domain show                   \u2014 view semantic domain model",
-          "",
-          "Querying:",
-          "  db-mcp query run --confirmed '<SQL>' \u2014 execute SQL",
-          "  db-mcp query validate '<SQL>'        \u2014 validate SQL without executing",
-          "",
-          "Knowledge vault:",
-          "  db-mcp rules list                    \u2014 list business rules",
-          "  db-mcp rules add '<rule>'            \u2014 add a business rule",
-          "  db-mcp examples list                 \u2014 list query examples",
-          "  db-mcp examples search --grep '<keyword>' \u2014 search examples by intent/SQL",
-          "  db-mcp examples add                  \u2014 add a query example",
-          "  db-mcp gaps list                     \u2014 list knowledge gaps",
-          "  db-mcp gaps dismiss '<term>'         \u2014 dismiss a gap",
-          "  db-mcp metrics list                  \u2014 list business metrics",
-          "  db-mcp metrics add                   \u2014 add a metric",
-          "  db-mcp metrics discover              \u2014 discover metric candidates",
-          "",
-          "Collaboration:",
-          "  db-mcp sync                          \u2014 sync vault with git",
-          "  db-mcp pull                          \u2014 pull vault from git",
-          "  db-mcp git-init                      \u2014 enable git sync",
-          "",
-          "## RULES",
-          "- Do NOT use mcp__* tools or ToolSearch. Use the db-mcp CLI commands above.",
-          "- Do NOT run --help. Everything you need is above.",
-          "- If a command fails, check `db-mcp status` then `db-mcp use <name>`.",
-          "- When the user mentions a connection name, run `db-mcp use <name>` first.",
-          "- Be CONCISE. Present results directly. No narration or 'Let me...' preamble.",
-          ...activeConnection ? [``, `## ACTIVE CONNECTION`, `The active connection is "${activeConnection}". Run \`db-mcp use ${activeConnection}\` as your first command.`] : []
-        ].join(`
-`)
+        systemPrompt: buildSystemPrompt(activeConnection)
       }
     });
     this._sessionId = sessionResult.sessionId;
@@ -9893,6 +9408,495 @@ Install with: npm i -g @agentclientprotocol/claude-agent-acp`));
     }
   }
 }
+// node_modules/chalk/source/vendor/ansi-styles/index.js
+var ANSI_BACKGROUND_OFFSET = 10;
+var wrapAnsi16 = (offset = 0) => (code) => `\x1B[${code + offset}m`;
+var wrapAnsi256 = (offset = 0) => (code) => `\x1B[${38 + offset};5;${code}m`;
+var wrapAnsi16m = (offset = 0) => (red, green, blue) => `\x1B[${38 + offset};2;${red};${green};${blue}m`;
+var styles = {
+  modifier: {
+    reset: [0, 0],
+    bold: [1, 22],
+    dim: [2, 22],
+    italic: [3, 23],
+    underline: [4, 24],
+    overline: [53, 55],
+    inverse: [7, 27],
+    hidden: [8, 28],
+    strikethrough: [9, 29]
+  },
+  color: {
+    black: [30, 39],
+    red: [31, 39],
+    green: [32, 39],
+    yellow: [33, 39],
+    blue: [34, 39],
+    magenta: [35, 39],
+    cyan: [36, 39],
+    white: [37, 39],
+    blackBright: [90, 39],
+    gray: [90, 39],
+    grey: [90, 39],
+    redBright: [91, 39],
+    greenBright: [92, 39],
+    yellowBright: [93, 39],
+    blueBright: [94, 39],
+    magentaBright: [95, 39],
+    cyanBright: [96, 39],
+    whiteBright: [97, 39]
+  },
+  bgColor: {
+    bgBlack: [40, 49],
+    bgRed: [41, 49],
+    bgGreen: [42, 49],
+    bgYellow: [43, 49],
+    bgBlue: [44, 49],
+    bgMagenta: [45, 49],
+    bgCyan: [46, 49],
+    bgWhite: [47, 49],
+    bgBlackBright: [100, 49],
+    bgGray: [100, 49],
+    bgGrey: [100, 49],
+    bgRedBright: [101, 49],
+    bgGreenBright: [102, 49],
+    bgYellowBright: [103, 49],
+    bgBlueBright: [104, 49],
+    bgMagentaBright: [105, 49],
+    bgCyanBright: [106, 49],
+    bgWhiteBright: [107, 49]
+  }
+};
+var modifierNames = Object.keys(styles.modifier);
+var foregroundColorNames = Object.keys(styles.color);
+var backgroundColorNames = Object.keys(styles.bgColor);
+var colorNames = [...foregroundColorNames, ...backgroundColorNames];
+function assembleStyles() {
+  const codes = new Map;
+  for (const [groupName, group] of Object.entries(styles)) {
+    for (const [styleName, style] of Object.entries(group)) {
+      styles[styleName] = {
+        open: `\x1B[${style[0]}m`,
+        close: `\x1B[${style[1]}m`
+      };
+      group[styleName] = styles[styleName];
+      codes.set(style[0], style[1]);
+    }
+    Object.defineProperty(styles, groupName, {
+      value: group,
+      enumerable: false
+    });
+  }
+  Object.defineProperty(styles, "codes", {
+    value: codes,
+    enumerable: false
+  });
+  styles.color.close = "\x1B[39m";
+  styles.bgColor.close = "\x1B[49m";
+  styles.color.ansi = wrapAnsi16();
+  styles.color.ansi256 = wrapAnsi256();
+  styles.color.ansi16m = wrapAnsi16m();
+  styles.bgColor.ansi = wrapAnsi16(ANSI_BACKGROUND_OFFSET);
+  styles.bgColor.ansi256 = wrapAnsi256(ANSI_BACKGROUND_OFFSET);
+  styles.bgColor.ansi16m = wrapAnsi16m(ANSI_BACKGROUND_OFFSET);
+  Object.defineProperties(styles, {
+    rgbToAnsi256: {
+      value(red, green, blue) {
+        if (red === green && green === blue) {
+          if (red < 8) {
+            return 16;
+          }
+          if (red > 248) {
+            return 231;
+          }
+          return Math.round((red - 8) / 247 * 24) + 232;
+        }
+        return 16 + 36 * Math.round(red / 255 * 5) + 6 * Math.round(green / 255 * 5) + Math.round(blue / 255 * 5);
+      },
+      enumerable: false
+    },
+    hexToRgb: {
+      value(hex) {
+        const matches = /[a-f\d]{6}|[a-f\d]{3}/i.exec(hex.toString(16));
+        if (!matches) {
+          return [0, 0, 0];
+        }
+        let [colorString] = matches;
+        if (colorString.length === 3) {
+          colorString = [...colorString].map((character) => character + character).join("");
+        }
+        const integer = Number.parseInt(colorString, 16);
+        return [
+          integer >> 16 & 255,
+          integer >> 8 & 255,
+          integer & 255
+        ];
+      },
+      enumerable: false
+    },
+    hexToAnsi256: {
+      value: (hex) => styles.rgbToAnsi256(...styles.hexToRgb(hex)),
+      enumerable: false
+    },
+    ansi256ToAnsi: {
+      value(code) {
+        if (code < 8) {
+          return 30 + code;
+        }
+        if (code < 16) {
+          return 90 + (code - 8);
+        }
+        let red;
+        let green;
+        let blue;
+        if (code >= 232) {
+          red = ((code - 232) * 10 + 8) / 255;
+          green = red;
+          blue = red;
+        } else {
+          code -= 16;
+          const remainder = code % 36;
+          red = Math.floor(code / 36) / 5;
+          green = Math.floor(remainder / 6) / 5;
+          blue = remainder % 6 / 5;
+        }
+        const value = Math.max(red, green, blue) * 2;
+        if (value === 0) {
+          return 30;
+        }
+        let result = 30 + (Math.round(blue) << 2 | Math.round(green) << 1 | Math.round(red));
+        if (value === 2) {
+          result += 60;
+        }
+        return result;
+      },
+      enumerable: false
+    },
+    rgbToAnsi: {
+      value: (red, green, blue) => styles.ansi256ToAnsi(styles.rgbToAnsi256(red, green, blue)),
+      enumerable: false
+    },
+    hexToAnsi: {
+      value: (hex) => styles.ansi256ToAnsi(styles.hexToAnsi256(hex)),
+      enumerable: false
+    }
+  });
+  return styles;
+}
+var ansiStyles = assembleStyles();
+var ansi_styles_default = ansiStyles;
+
+// node_modules/chalk/source/vendor/supports-color/index.js
+import process2 from "process";
+import os2 from "os";
+import tty from "tty";
+function hasFlag(flag, argv = globalThis.Deno ? globalThis.Deno.args : process2.argv) {
+  const prefix = flag.startsWith("-") ? "" : flag.length === 1 ? "-" : "--";
+  const position = argv.indexOf(prefix + flag);
+  const terminatorPosition = argv.indexOf("--");
+  return position !== -1 && (terminatorPosition === -1 || position < terminatorPosition);
+}
+var { env } = process2;
+var flagForceColor;
+if (hasFlag("no-color") || hasFlag("no-colors") || hasFlag("color=false") || hasFlag("color=never")) {
+  flagForceColor = 0;
+} else if (hasFlag("color") || hasFlag("colors") || hasFlag("color=true") || hasFlag("color=always")) {
+  flagForceColor = 1;
+}
+function envForceColor() {
+  if ("FORCE_COLOR" in env) {
+    if (env.FORCE_COLOR === "true") {
+      return 1;
+    }
+    if (env.FORCE_COLOR === "false") {
+      return 0;
+    }
+    return env.FORCE_COLOR.length === 0 ? 1 : Math.min(Number.parseInt(env.FORCE_COLOR, 10), 3);
+  }
+}
+function translateLevel(level) {
+  if (level === 0) {
+    return false;
+  }
+  return {
+    level,
+    hasBasic: true,
+    has256: level >= 2,
+    has16m: level >= 3
+  };
+}
+function _supportsColor(haveStream, { streamIsTTY, sniffFlags = true } = {}) {
+  const noFlagForceColor = envForceColor();
+  if (noFlagForceColor !== undefined) {
+    flagForceColor = noFlagForceColor;
+  }
+  const forceColor = sniffFlags ? flagForceColor : noFlagForceColor;
+  if (forceColor === 0) {
+    return 0;
+  }
+  if (sniffFlags) {
+    if (hasFlag("color=16m") || hasFlag("color=full") || hasFlag("color=truecolor")) {
+      return 3;
+    }
+    if (hasFlag("color=256")) {
+      return 2;
+    }
+  }
+  if ("TF_BUILD" in env && "AGENT_NAME" in env) {
+    return 1;
+  }
+  if (haveStream && !streamIsTTY && forceColor === undefined) {
+    return 0;
+  }
+  const min = forceColor || 0;
+  if (env.TERM === "dumb") {
+    return min;
+  }
+  if (process2.platform === "win32") {
+    const osRelease = os2.release().split(".");
+    if (Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586) {
+      return Number(osRelease[2]) >= 14931 ? 3 : 2;
+    }
+    return 1;
+  }
+  if ("CI" in env) {
+    if (["GITHUB_ACTIONS", "GITEA_ACTIONS", "CIRCLECI"].some((key) => (key in env))) {
+      return 3;
+    }
+    if (["TRAVIS", "APPVEYOR", "GITLAB_CI", "BUILDKITE", "DRONE"].some((sign) => (sign in env)) || env.CI_NAME === "codeship") {
+      return 1;
+    }
+    return min;
+  }
+  if ("TEAMCITY_VERSION" in env) {
+    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
+  }
+  if (env.COLORTERM === "truecolor") {
+    return 3;
+  }
+  if (env.TERM === "xterm-kitty") {
+    return 3;
+  }
+  if (env.TERM === "xterm-ghostty") {
+    return 3;
+  }
+  if (env.TERM === "wezterm") {
+    return 3;
+  }
+  if ("TERM_PROGRAM" in env) {
+    const version = Number.parseInt((env.TERM_PROGRAM_VERSION || "").split(".")[0], 10);
+    switch (env.TERM_PROGRAM) {
+      case "iTerm.app": {
+        return version >= 3 ? 3 : 2;
+      }
+      case "Apple_Terminal": {
+        return 2;
+      }
+    }
+  }
+  if (/-256(color)?$/i.test(env.TERM)) {
+    return 2;
+  }
+  if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
+    return 1;
+  }
+  if ("COLORTERM" in env) {
+    return 1;
+  }
+  return min;
+}
+function createSupportsColor(stream2, options2 = {}) {
+  const level = _supportsColor(stream2, {
+    streamIsTTY: stream2 && stream2.isTTY,
+    ...options2
+  });
+  return translateLevel(level);
+}
+var supportsColor = {
+  stdout: createSupportsColor({ isTTY: tty.isatty(1) }),
+  stderr: createSupportsColor({ isTTY: tty.isatty(2) })
+};
+var supports_color_default = supportsColor;
+
+// node_modules/chalk/source/utilities.js
+function stringReplaceAll(string, substring, replacer) {
+  let index = string.indexOf(substring);
+  if (index === -1) {
+    return string;
+  }
+  const substringLength = substring.length;
+  let endIndex = 0;
+  let returnValue = "";
+  do {
+    returnValue += string.slice(endIndex, index) + substring + replacer;
+    endIndex = index + substringLength;
+    index = string.indexOf(substring, endIndex);
+  } while (index !== -1);
+  returnValue += string.slice(endIndex);
+  return returnValue;
+}
+function stringEncaseCRLFWithFirstIndex(string, prefix, postfix, index) {
+  let endIndex = 0;
+  let returnValue = "";
+  do {
+    const gotCR = string[index - 1] === "\r";
+    returnValue += string.slice(endIndex, gotCR ? index - 1 : index) + prefix + (gotCR ? `\r
+` : `
+`) + postfix;
+    endIndex = index + 1;
+    index = string.indexOf(`
+`, endIndex);
+  } while (index !== -1);
+  returnValue += string.slice(endIndex);
+  return returnValue;
+}
+
+// node_modules/chalk/source/index.js
+var { stdout: stdoutColor, stderr: stderrColor } = supports_color_default;
+var GENERATOR = Symbol("GENERATOR");
+var STYLER = Symbol("STYLER");
+var IS_EMPTY = Symbol("IS_EMPTY");
+var levelMapping = [
+  "ansi",
+  "ansi",
+  "ansi256",
+  "ansi16m"
+];
+var styles2 = Object.create(null);
+var applyOptions = (object, options2 = {}) => {
+  if (options2.level && !(Number.isInteger(options2.level) && options2.level >= 0 && options2.level <= 3)) {
+    throw new Error("The `level` option should be an integer from 0 to 3");
+  }
+  const colorLevel = stdoutColor ? stdoutColor.level : 0;
+  object.level = options2.level === undefined ? colorLevel : options2.level;
+};
+var chalkFactory = (options2) => {
+  const chalk = (...strings) => strings.join(" ");
+  applyOptions(chalk, options2);
+  Object.setPrototypeOf(chalk, createChalk.prototype);
+  return chalk;
+};
+function createChalk(options2) {
+  return chalkFactory(options2);
+}
+Object.setPrototypeOf(createChalk.prototype, Function.prototype);
+for (const [styleName, style] of Object.entries(ansi_styles_default)) {
+  styles2[styleName] = {
+    get() {
+      const builder = createBuilder(this, createStyler(style.open, style.close, this[STYLER]), this[IS_EMPTY]);
+      Object.defineProperty(this, styleName, { value: builder });
+      return builder;
+    }
+  };
+}
+styles2.visible = {
+  get() {
+    const builder = createBuilder(this, this[STYLER], true);
+    Object.defineProperty(this, "visible", { value: builder });
+    return builder;
+  }
+};
+var getModelAnsi = (model, level, type, ...arguments_) => {
+  if (model === "rgb") {
+    if (level === "ansi16m") {
+      return ansi_styles_default[type].ansi16m(...arguments_);
+    }
+    if (level === "ansi256") {
+      return ansi_styles_default[type].ansi256(ansi_styles_default.rgbToAnsi256(...arguments_));
+    }
+    return ansi_styles_default[type].ansi(ansi_styles_default.rgbToAnsi(...arguments_));
+  }
+  if (model === "hex") {
+    return getModelAnsi("rgb", level, type, ...ansi_styles_default.hexToRgb(...arguments_));
+  }
+  return ansi_styles_default[type][model](...arguments_);
+};
+var usedModels = ["rgb", "hex", "ansi256"];
+for (const model of usedModels) {
+  styles2[model] = {
+    get() {
+      const { level } = this;
+      return function(...arguments_) {
+        const styler = createStyler(getModelAnsi(model, levelMapping[level], "color", ...arguments_), ansi_styles_default.color.close, this[STYLER]);
+        return createBuilder(this, styler, this[IS_EMPTY]);
+      };
+    }
+  };
+  const bgModel = "bg" + model[0].toUpperCase() + model.slice(1);
+  styles2[bgModel] = {
+    get() {
+      const { level } = this;
+      return function(...arguments_) {
+        const styler = createStyler(getModelAnsi(model, levelMapping[level], "bgColor", ...arguments_), ansi_styles_default.bgColor.close, this[STYLER]);
+        return createBuilder(this, styler, this[IS_EMPTY]);
+      };
+    }
+  };
+}
+var proto = Object.defineProperties(() => {}, {
+  ...styles2,
+  level: {
+    enumerable: true,
+    get() {
+      return this[GENERATOR].level;
+    },
+    set(level) {
+      this[GENERATOR].level = level;
+    }
+  }
+});
+var createStyler = (open, close, parent) => {
+  let openAll;
+  let closeAll;
+  if (parent === undefined) {
+    openAll = open;
+    closeAll = close;
+  } else {
+    openAll = parent.openAll + open;
+    closeAll = close + parent.closeAll;
+  }
+  return {
+    open,
+    close,
+    openAll,
+    closeAll,
+    parent
+  };
+};
+var createBuilder = (self, _styler, _isEmpty) => {
+  const builder = (...arguments_) => applyStyle(builder, arguments_.length === 1 ? "" + arguments_[0] : arguments_.join(" "));
+  Object.setPrototypeOf(builder, proto);
+  builder[GENERATOR] = self;
+  builder[STYLER] = _styler;
+  builder[IS_EMPTY] = _isEmpty;
+  return builder;
+};
+var applyStyle = (self, string) => {
+  if (self.level <= 0 || !string) {
+    return self[IS_EMPTY] ? "" : string;
+  }
+  let styler = self[STYLER];
+  if (styler === undefined) {
+    return string;
+  }
+  const { openAll, closeAll } = styler;
+  if (string.includes("\x1B")) {
+    while (styler !== undefined) {
+      string = stringReplaceAll(string, styler.close, styler.open);
+      styler = styler.parent;
+    }
+  }
+  const lfIndex = string.indexOf(`
+`);
+  if (lfIndex !== -1) {
+    string = stringEncaseCRLFWithFirstIndex(string, closeAll, openAll, lfIndex);
+  }
+  return openAll + string + closeAll;
+};
+Object.defineProperties(createChalk.prototype, styles2);
+var chalk = createChalk();
+var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
+var source_default = chalk;
+
 // src/feed.ts
 function shortToolName(name) {
   return name.replace(/^mcp__db-mcp__/, "").replace(/^mcp__.*?__/, "");
@@ -10100,20 +10104,129 @@ function visibleLen(str) {
 }
 
 // src/commands.ts
-var SLASH_COMMANDS = [
-  { name: "help", description: "show help" },
-  { name: "clear", description: "clear the feed" },
-  { name: "status", description: "server status" },
-  { name: "connections", description: "list connections" },
-  { name: "use", description: "switch connection" },
-  { name: "schema", description: "show tables" },
-  { name: "rules", description: "list business rules" },
-  { name: "metrics", description: "list metrics" },
-  { name: "gaps", description: "list knowledge gaps" },
-  { name: "agent", description: "agent status" },
-  { name: "model", description: "set agent model" },
-  { name: "quit", description: "exit" }
-];
+function buildSlashCommands(baseUrl) {
+  async function fetchConnections() {
+    try {
+      const resp = await fetch(`${baseUrl}/api/connections/list`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(2000)
+      });
+      const data = await resp.json();
+      return (data.connections ?? []).map((c) => ({
+        value: c.name,
+        label: c.name,
+        description: c.isActive ? "active" : undefined
+      }));
+    } catch {
+      return [];
+    }
+  }
+  function filterByPrefix(items, prefix) {
+    if (!prefix)
+      return items;
+    const lower = prefix.toLowerCase();
+    return items.filter((i) => i.value.toLowerCase().startsWith(lower));
+  }
+  return [
+    { name: "help", description: "show help" },
+    { name: "clear", description: "clear the feed" },
+    { name: "status", description: "server status" },
+    { name: "doctor", description: "run connection health checks" },
+    {
+      name: "env",
+      description: "securely store a secret (not shared with agent)",
+      async getArgumentCompletions(prefix) {
+        if (!prefix.includes(" ")) {
+          return filterByPrefix(await fetchConnections(), prefix);
+        }
+        const parts = prefix.split(" ");
+        if (parts.length === 2) {
+          const keys = [
+            { value: "DATABASE_URL", label: "DATABASE_URL", description: "database connection string" },
+            { value: "API_KEY", label: "API_KEY", description: "API authentication key" },
+            { value: "API_TOKEN", label: "API_TOKEN", description: "API bearer token" }
+          ];
+          return filterByPrefix(keys, parts[1]);
+        }
+        return null;
+      }
+    },
+    {
+      name: "use",
+      description: "switch connection",
+      async getArgumentCompletions(prefix) {
+        return filterByPrefix(await fetchConnections(), prefix);
+      }
+    },
+    { name: "connections", description: "list connections" },
+    { name: "playground", description: "install sample database" },
+    { name: "init", description: "set up a new connection" },
+    {
+      name: "schema",
+      description: "show tables",
+      getArgumentCompletions(prefix) {
+        const subs = [
+          { value: "show", label: "show", description: "table/column descriptions" },
+          { value: "tables", label: "tables", description: "list tables" },
+          { value: "describe", label: "describe", description: "describe a table" },
+          { value: "sample", label: "sample", description: "sample rows" }
+        ];
+        return filterByPrefix(subs, prefix);
+      }
+    },
+    {
+      name: "rules",
+      description: "list business rules",
+      getArgumentCompletions(prefix) {
+        const subs = [
+          { value: "list", label: "list", description: "list all rules" },
+          { value: "add", label: "add", description: "add a rule" }
+        ];
+        return filterByPrefix(subs, prefix);
+      }
+    },
+    {
+      name: "examples",
+      description: "list query examples",
+      getArgumentCompletions(prefix) {
+        const subs = [
+          { value: "list", label: "list", description: "list all examples" },
+          { value: "search", label: "search", description: "search by keyword" }
+        ];
+        return filterByPrefix(subs, prefix);
+      }
+    },
+    {
+      name: "metrics",
+      description: "list metrics",
+      getArgumentCompletions(prefix) {
+        const subs = [
+          { value: "list", label: "list", description: "list all metrics" },
+          { value: "add", label: "add", description: "add a metric" },
+          { value: "discover", label: "discover", description: "discover candidates" }
+        ];
+        return filterByPrefix(subs, prefix);
+      }
+    },
+    {
+      name: "gaps",
+      description: "list knowledge gaps",
+      getArgumentCompletions(prefix) {
+        const subs = [
+          { value: "list", label: "list", description: "list open gaps" },
+          { value: "dismiss", label: "dismiss", description: "dismiss a gap" }
+        ];
+        return filterByPrefix(subs, prefix);
+      }
+    },
+    { name: "sync", description: "sync vault with git" },
+    { name: "agent", description: "agent status" },
+    { name: "session", description: "show session info" },
+    { name: "quit", description: "exit" }
+  ];
+}
 
 // src/theme.ts
 var selectListTheme = {
@@ -10145,9 +10258,9 @@ var markdownTheme = {
 };
 
 // src/index.ts
-import { resolve, dirname as dirname3 } from "path";
-import { fileURLToPath } from "url";
-import { existsSync } from "fs";
+import { resolve as resolve2, dirname as dirname4 } from "path";
+import { fileURLToPath as fileURLToPath2 } from "url";
+import { existsSync as existsSync2 } from "fs";
 if (process.env.DB_MCP_DEBUG) {} else {
   console.log = (...args) => {
     try {
@@ -10168,7 +10281,8 @@ process.on("uncaughtException", (err) => {
 `);
 });
 var BASE_URL = process.env.DB_MCP_URL ?? "http://localhost:8080";
-var __dirname2 = dirname3(fileURLToPath(import.meta.url));
+var FORCE_FTE = process.env.DB_MCP_FTE === "1";
+var __dirname2 = dirname4(fileURLToPath2(import.meta.url));
 var BUNDLED_AGENTS = [
   "claude-agent-acp",
   "codex-acp"
@@ -10178,13 +10292,13 @@ function resolveAgentCommand() {
     return process.env.DB_MCP_AGENT.split(" ");
   }
   const searchDirs = [
-    resolve(__dirname2, "..", "node_modules", ".bin"),
-    resolve(__dirname2, "node_modules", ".bin")
+    resolve2(__dirname2, "..", "node_modules", ".bin"),
+    resolve2(__dirname2, "node_modules", ".bin")
   ];
   for (const binDir of searchDirs) {
     for (const name of BUNDLED_AGENTS) {
-      const localBin = resolve(binDir, name);
-      if (existsSync(localBin)) {
+      const localBin = resolve2(binDir, name);
+      if (existsSync2(localBin)) {
         return [localBin];
       }
     }
@@ -10192,6 +10306,94 @@ function resolveAgentCommand() {
   return ["claude-agent-acp"];
 }
 var AGENT_CMD = resolveAgentCommand();
+function detectRuntime(cmd) {
+  const joined = cmd.join(" ");
+  if (joined.includes("claude-agent-acp"))
+    return "claude";
+  if (joined.includes("codex-acp"))
+    return "codex";
+  return "unknown";
+}
+async function checkAgentPrerequisites() {
+  const { execFileSync } = await import("child_process");
+  const { which: which2 } = await Promise.resolve().then(() => (init_preflight(), exports_preflight));
+  const runtime = detectRuntime(AGENT_CMD);
+  const agentBin = AGENT_CMD[0];
+  const agentFound = agentBin.includes("/") ? existsSync2(agentBin) : !!which2(agentBin);
+  if (!agentFound) {
+    const installHint = runtime === "codex" ? "npm i -g @zed-industries/codex-acp" : "npm i -g @agentclientprotocol/claude-agent-acp";
+    return [
+      `**ACP adapter not found:** \`${agentBin}\``,
+      "",
+      "Install it with:",
+      "```",
+      installHint,
+      "```"
+    ].join(`
+`);
+  }
+  if (runtime === "claude") {
+    if (!which2("claude")) {
+      return [
+        "**Claude Code not found.**",
+        "",
+        "Install it with:",
+        "```",
+        "npm i -g @anthropic-ai/claude-code",
+        "```",
+        "Then run `claude` once to authenticate."
+      ].join(`
+`);
+    }
+    try {
+      const out = execFileSync("claude", ["auth", "status"], {
+        timeout: 5000,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+      const status = JSON.parse(out);
+      if (!status.loggedIn) {
+        return [
+          "**Claude Code is not authenticated.**",
+          "",
+          "Run: `claude auth login`",
+          "Then restart the TUI."
+        ].join(`
+`);
+      }
+    } catch {}
+  } else if (runtime === "codex") {
+    if (!which2("codex")) {
+      return [
+        "**Codex CLI not found.**",
+        "",
+        "Install it with:",
+        "```",
+        "npm i -g @openai/codex",
+        "```",
+        "Then run `codex login` to authenticate."
+      ].join(`
+`);
+    }
+    try {
+      const out = execFileSync("codex", ["login", "status"], {
+        timeout: 5000,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      if (out.toLowerCase().includes("not logged in") || out.toLowerCase().includes("no api key")) {
+        return [
+          "**Codex is not authenticated.**",
+          "",
+          "Run: `codex login`",
+          "Then restart the TUI."
+        ].join(`
+`);
+      }
+    } catch {}
+  }
+  return null;
+}
 var terminal = new ProcessTerminal;
 var tui = new TUI(terminal, true);
 var feed = new Feed(markdownTheme);
@@ -10201,6 +10403,7 @@ var agent = new Agent({
   command: AGENT_CMD,
   mcpUrl: `${BASE_URL}/mcp`
 });
+var SLASH_COMMANDS = buildSlashCommands(BASE_URL);
 var slashProvider = new CombinedAutocompleteProvider(SLASH_COMMANDS);
 editor.setAutocompleteProvider(slashProvider);
 tui.addInputListener((data) => {
@@ -10224,36 +10427,49 @@ tui.addChild(feed);
 tui.addChild(editor);
 tui.addChild(statusBar);
 tui.setFocus(editor);
-var o = source_default.hex("#E87A1E");
-var w = source_default.white;
-var d = source_default.dim;
-var logoLines = [
-  d("       \u2584\u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584\u2584"),
-  d("     \u2584\u2588\u2588\u2580\u2580      \u2580\u2580\u2588\u2588\u2584"),
-  d("    \u2588\u2588              \u2588\u2588"),
-  d("    \u2588\u2588  ") + o("\u2584\u2588\u2588\u2584") + d("  ") + o("\u2584\u2588\u2588\u2584") + d("  \u2588\u2588"),
-  d("    \u2588\u2588  ") + o("\u2588\u2580\u2580\u2588") + d("  ") + o("\u2588\u2580\u2580\u2588") + d("  \u2588\u2588"),
-  d("    \u2588\u2588  ") + o("\u2580\u2588\u2588\u2580") + d("  ") + o("\u2580\u2588\u2588\u2580") + d("  \u2588\u2588"),
-  d("    \u2588\u2588              \u2588\u2588"),
-  d("    \u2588\u2588   ") + w("\u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2584") + d("   \u2588\u2588"),
-  d("    \u2588\u2588   ") + w("\u2588 \u2580\u2580\u2580\u2580 \u2588") + d("   \u2588\u2588"),
-  d("    \u2588\u2588   ") + w("\u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2580") + d("   \u2588\u2588"),
-  d("    \u2588\u2588              \u2588\u2588"),
-  d("     \u2580\u2588\u2588\u2584        \u2584\u2588\u2588\u2580"),
-  d("       \u2580\u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2580\u2580")
-];
+var logoRaw = loadPrompt("logo.ans");
+var logoLines = logoRaw ? logoRaw.replace(/\[\?25[lh]/g, "").split(`
+`).filter((l) => l.length > 0) : [];
 feed.setPrefixLines([...logoLines, ""]);
-feed.addMessage({
-  id: "welcome",
-  role: "system",
-  text: [
-    "**db-mcp** by ApeLogic",
-    "",
-    "Type a question to query your database. Type `/` for commands.",
-    "_Press Ctrl+C to exit. ESC to cancel._"
-  ].join(`
+var hasConnections = await (async () => {
+  try {
+    const resp = await fetch(`${BASE_URL}/api/connections/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(2000)
+    });
+    const data = await resp.json();
+    return (data.connections?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+})();
+var shouldRunFte = FORCE_FTE || !hasConnections;
+if (shouldRunFte) {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "_Welcome! Let me help you get started..._"
+    ].join(`
 `)
-});
+  });
+} else {
+  feed.addMessage({
+    id: "welcome",
+    role: "system",
+    text: [
+      "**db-mcp** by ApeLogic",
+      "",
+      "Type a question to query your data. Type `/` for commands.",
+      "_Press Ctrl+C to exit. ESC to cancel._"
+    ].join(`
+`)
+  });
+}
 var currentAssistantId = null;
 function handleAgentEvent(event) {
   switch (event.type) {
@@ -10412,6 +10628,66 @@ async function handleCommand(raw) {
     case "/quit":
       shutdown();
       break;
+    case "/doctor":
+      await runCli("db-mcp doctor");
+      break;
+    case "/env": {
+      const parts = arg.split(" ");
+      if (parts.length < 3) {
+        feed.addMessage({
+          id: `env-err-${Date.now()}`,
+          role: "error",
+          text: "Usage: `/env <connection> <KEY> <value>`\nExample: `/env nova DATABASE_URL postgres://user:pass@host/db`"
+        });
+        break;
+      }
+      const [connName, key, ...valueParts] = parts;
+      const value = valueParts.join(" ");
+      try {
+        const { mkdirSync: mkdirSync2, writeFileSync: writeFileSync2, readFileSync: readFileSync2, existsSync: existsSync3 } = await import("fs");
+        const { homedir: homedir3 } = await import("os");
+        const { join: join5 } = await import("path");
+        const connDir = join5(homedir3(), ".db-mcp", "connections", connName);
+        mkdirSync2(connDir, { recursive: true });
+        const envFile = join5(connDir, ".env");
+        let lines = [];
+        if (existsSync3(envFile)) {
+          lines = readFileSync2(envFile, "utf8").split(`
+`).filter((l) => !l.startsWith(`${key}=`));
+        }
+        lines.push(`${key}=${value}`);
+        writeFileSync2(envFile, lines.filter(Boolean).join(`
+`) + `
+`);
+        feed.addMessage({
+          id: `env-ok-${Date.now()}`,
+          role: "system",
+          text: `Secret \`${key}\` written to \`~/.db-mcp/connections/${connName}/.env\``
+        });
+      } catch (err) {
+        feed.addMessage({
+          id: `env-fail-${Date.now()}`,
+          role: "error",
+          text: `Failed to write secret: ${err instanceof Error ? err.message : String(err)}`
+        });
+      }
+      break;
+    }
+    case "/playground":
+      feed.addMessage({ id: `pg-${Date.now()}`, role: "system", text: "_Installing playground database..._" });
+      tui.requestRender();
+      await runCli("db-mcp playground install");
+      await runCli("db-mcp use playground");
+      await refreshStatus();
+      feed.addMessage({
+        id: `pg-done-${Date.now()}`,
+        role: "system",
+        text: "Playground ready! Try asking: _How many albums does each artist have?_"
+      });
+      break;
+    case "/init":
+      await runPrompt(arg ? `I want to set up a new db-mcp connection called "${arg}". Guide me through it.` : "I want to set up a new db-mcp database connection. Ask me what database I use and help me configure it step by step.");
+      break;
     case "/connections":
       await runCli("db-mcp list");
       break;
@@ -10424,19 +10700,19 @@ async function handleCommand(raw) {
       await refreshStatus();
       break;
     case "/schema":
-      await runCli("db-mcp schema");
+      await runCli(arg ? `db-mcp schema ${arg}` : "db-mcp schema show");
       break;
     case "/rules":
-      await runCli("db-mcp rules");
+      await runCli(arg ? `db-mcp rules ${arg}` : "db-mcp rules list");
       break;
     case "/examples":
-      await runCli("db-mcp examples");
+      await runCli(arg ? `db-mcp examples ${arg}` : "db-mcp examples list");
       break;
     case "/metrics":
-      await runCli("db-mcp metrics");
+      await runCli(arg ? `db-mcp metrics ${arg}` : "db-mcp metrics list");
       break;
     case "/gaps":
-      await runCli("db-mcp gaps");
+      await runCli(arg ? `db-mcp gaps ${arg}` : "db-mcp gaps list");
       break;
     case "/sync":
       await runCli("db-mcp sync");
@@ -10467,7 +10743,7 @@ async function runCli(command) {
   handleReleaseTerminal2({ terminalId });
   let output = result.output.trim();
   if (output) {
-    output = output.replace(/Restart Claude Desktop to apply changes\.?\n?/g, "").replace(/^[\u2713\u2717\u25CF] /gm, "").replace(/'/g, "").trim();
+    output = output.replace(/Restart (?:Claude Desktop|your MCP agent) to [\w ]+\.?\n?/g, "").replace(/^[\u2713\u2717\u25CF] /gm, "").replace(/'/g, "").trim();
     if (output) {
       feed.addMessage({
         id: `cli-${Date.now()}`,
@@ -10476,7 +10752,7 @@ async function runCli(command) {
       });
     }
   }
-  if (result.exitStatus && result.exitStatus.exitCode !== 0) {
+  if (result.exitStatus && result.exitStatus.exitCode !== 0 && result.exitStatus.exitCode !== 2) {
     feed.addMessage({
       id: `cli-err-${Date.now()}`,
       role: "error",
@@ -10492,6 +10768,16 @@ async function handlePrompt(text) {
     text
   });
   if (!agent.connected) {
+    const problem = await checkAgentPrerequisites();
+    if (problem) {
+      feed.addMessage({
+        id: `preflight-${Date.now()}`,
+        role: "error",
+        text: problem
+      });
+      tui.requestRender();
+      return;
+    }
     feed.addMessage({
       id: `connecting-${Date.now()}`,
       role: "system",
@@ -10512,16 +10798,7 @@ async function handlePrompt(text) {
       feed.addMessage({
         id: `agent-fail-${Date.now()}`,
         role: "error",
-        text: [
-          `Failed to connect to agent: ${msg}`,
-          "",
-          "Make sure the ACP adapter is installed:",
-          "```",
-          "npm i -g @agentclientprotocol/claude-agent-acp",
-          "```",
-          "Then set: `DB_MCP_AGENT=claude-agent-acp`"
-        ].join(`
-`)
+        text: `Failed to connect to agent: ${msg}`
       });
       tui.requestRender();
       return;
@@ -10561,21 +10838,36 @@ async function refreshStatus() {
 var pollInterval = setInterval(() => {
   refreshStatus().then(() => tui.requestRender());
 }, 3000);
+function resetTerminal() {
+  try {
+    process.stdout.write("\x1B[=0u");
+    process.stdout.write("\x1B[<u");
+    process.stdout.write("\x1B[>0m");
+    process.stdout.write("\x1B[?25h");
+    process.stdout.write("\x1B[?2004l");
+  } catch {}
+}
 async function shutdown() {
   clearInterval(pollInterval);
-  await agent.disconnect();
-  process.stdout.write("\x1B[=0u");
-  process.stdout.write("\x1B[<u");
-  process.stdout.write("\x1B[>0m");
-  process.stdout.write("\x1B[?25h");
-  await terminal.drainInput(500, 100);
-  tui.stop();
-  await new Promise((resolve2) => setTimeout(resolve2, 150));
+  resetTerminal();
+  try {
+    tui.stop();
+  } catch {}
+  try {
+    await agent.disconnect();
+  } catch {}
+  await terminal.drainInput(500, 100).catch(() => {});
+  await new Promise((resolve3) => setTimeout(resolve3, 100));
   process.exit(0);
 }
+process.on("exit", resetTerminal);
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
 refreshStatus().then(() => {
   tui.start();
   tui.requestRender();
+  if (shouldRunFte) {
+    const ftePrompt = loadPrompt("fte-trigger.md") || "Help me get started";
+    editor.setText(ftePrompt);
+  }
 });

@@ -6,6 +6,7 @@ from db_mcp_cli.commands.connection_cmd import (
     all,
     doctor,
     edit,
+    env_cmd,
     list_cmd,
     remove,
     rename,
@@ -29,3 +30,4 @@ def register_commands(main_group: click.Group) -> None:
     main_group.add_command(remove)
     main_group.add_command(all)
     main_group.add_command(doctor)
+    main_group.add_command(env_cmd)

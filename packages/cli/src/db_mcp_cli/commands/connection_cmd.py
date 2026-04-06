@@ -34,6 +34,7 @@ from db_mcp_cli.connection import (
 )
 from db_mcp_cli.git_ops import is_git_repo
 from db_mcp_cli.utils import (
+    CONFIG_DIR,
     CONFIG_FILE,
     console,
     load_claude_desktop_config,
@@ -323,7 +324,7 @@ def use(name: str):
 
     set_active_connection(name)
     console.print(f"[green]✓ Switched to connection '{name}'[/green]")
-    console.print("[dim]Restart Claude Desktop to apply changes.[/dim]")
+    console.print("[dim]Restart your MCP agent to apply changes.[/dim]")
 
 
 @click.command()
@@ -370,7 +371,7 @@ def edit(name: str | None):
     try:
         subprocess.run([editor, str(env_path)], check=True)
         console.print("[green]✓ Credentials updated.[/green]")
-        console.print("[dim]Restart Claude Desktop to apply changes.[/dim]")
+        console.print("[dim]Restart your MCP agent to apply changes.[/dim]")
     except FileNotFoundError:
         console.print(f"[red]Editor '{editor}' not found.[/red]")
         console.print("[dim]Set EDITOR environment variable or edit manually:[/dim]")
@@ -417,7 +418,7 @@ def rename(old_name: str, new_name: str):
         set_active_connection(new_name)
         console.print(f"[dim]Active connection updated to '{new_name}'.[/dim]")
 
-    console.print("[dim]Restart Claude Desktop to apply changes.[/dim]")
+    console.print("[dim]Restart your MCP agent to apply changes.[/dim]")
 
 
 @click.command()
@@ -713,3 +714,32 @@ def doctor(connection: str | None, as_json: bool, test_sql: str):
 
     if overall_status != "pass":
         sys.exit(1)
+
+
+@click.command("env")
+@click.argument("name")
+@click.argument("key")
+@click.argument("value")
+def env_cmd(name: str, key: str, value: str) -> None:
+    """Set an environment variable for a connection.
+
+    Writes KEY=VALUE to the connection's .env file. Overwrites the key if it
+    already exists; other keys are preserved.
+
+    Examples:
+        db-mcp env mydb DATABASE_URL postgres://user:pass@host/db
+        db-mcp env myapi API_KEY sk-abc123
+    """
+    conn_dir = CONFIG_DIR / "connections" / name
+    conn_dir.mkdir(parents=True, exist_ok=True)
+    env_file = conn_dir / ".env"
+
+    lines: list[str] = []
+    if env_file.exists():
+        lines = [
+            line for line in env_file.read_text().splitlines()
+            if not line.startswith(f"{key}=")
+        ]
+    lines.append(f"{key}={value}")
+    env_file.write_text("\n".join(lines) + "\n")
+    console.print(f"[dim]Secret [bold]{key}[/bold] written to [bold]{env_file}[/bold][/dim]")
