@@ -29,7 +29,7 @@ from db_mcp_cli.utils import _get_cli_version
 HELP_SECTIONS = [
     ("General", [
         ("", [
-            "tui", "ui", "up", "status", "config",
+            "tui", "up", "status", "config",
             "agents", "playground",
         ]),
     ]),
@@ -53,7 +53,7 @@ HELP_SECTIONS = [
 # Commands not listed above are hidden from --help
 HIDDEN_COMMANDS = {
     "start", "serve", "runtime", "console", "traces",
-    "all", "api", "connector", "insider", "migrate",
+    "all", "api", "connector", "insider", "migrate", "ui",
 }
 
 

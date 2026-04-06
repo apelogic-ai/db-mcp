@@ -284,7 +284,7 @@ def up_cmd(
     connection: str | None,
     verbose: bool,
 ) -> None:
-    """Start the local daemon (MCP + REST API + UI)."""
+    """Start the local server (web UI + API + MCP)."""
     conn_name = _configure_service_environment(
         connection,
         tool_mode_override="daemon",
