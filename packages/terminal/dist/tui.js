@@ -53,7 +53,13 @@ function handleCreateTerminal(params) {
   state2.promise = new Promise((resolve) => {
     const child = execFile(params.command, args, {
       cwd: params.cwd ?? undefined,
-      env: env ? { ...process.env, ...env } : undefined,
+      env: (() => {
+        const base = { ...process.env };
+        delete base.CONNECTION_NAME;
+        delete base.CONNECTION_PATH;
+        delete base.DATABASE_URL;
+        return env ? { ...base, ...env } : base;
+      })(),
       maxBuffer: params.outputByteLimit ?? 1024 * 1024,
       timeout: 60000
     }, (error, stdout, stderr) => {
