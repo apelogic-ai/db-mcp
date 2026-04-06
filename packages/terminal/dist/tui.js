@@ -8949,7 +8949,7 @@ var chalk = createChalk();
 var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
 var source_default = chalk;
 
-// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/stream.ts
+// src/vendor/acp-bridge/stream.ts
 var parseNdjsonStream = (input, onMessage, onError) => {
   let buffer = "";
   input.on("data", (chunk) => {
@@ -8968,11 +8968,11 @@ var parseNdjsonStream = (input, onMessage, onError) => {
     }
   });
 };
-// ../../../nexus/packages/types/dist/memory.js
+// src/vendor/types/memory.ts
 var MESSAGE_ROLES = new Set(["user", "assistant", "tool", "system"]);
 var MEMORY_ITEM_KINDS = new Set(["fact", "summary"]);
 
-// ../../../nexus/packages/types/dist/sessionLifecycle.js
+// src/vendor/types/sessionLifecycle.ts
 var OWNER_RESUMABLE_PARKED_REASONS = [
   "owner_disconnected",
   "runtime_timeout",
@@ -9028,12 +9028,12 @@ var SESSION_LIFECYCLE_EVENT_TYPES = new Set([
   "SESSION_CLOSED"
 ]);
 
-// ../../../nexus/packages/types/dist/sessionInterruption.js
+// src/vendor/types/sessionInterruption.ts
 var SESSION_INTERRUPTION_KINDS = new Set([
   "approval_pending"
 ]);
 
-// ../../../nexus/packages/types/dist/protocol.js
+// src/vendor/types/protocol.ts
 var CLIENT_MESSAGE_TYPES = new Set([
   "prompt",
   "approval_response",
@@ -9119,7 +9119,7 @@ var PROMPT_SOURCES = new Set([
   "hook",
   "api"
 ]);
-// ../../../nexus/packages/types/dist/acp.js
+// src/vendor/types/acp.ts
 var isJsonRpcRequest = (value) => {
   if (typeof value !== "object" || value === null)
     return false;
@@ -9138,7 +9138,7 @@ var isJsonRpcNotification = (value) => {
   const obj = value;
   return obj.jsonrpc === "2.0" && typeof obj.method === "string" && !("id" in obj);
 };
-// ../../../nexus/packages/types/dist/state.js
+// src/vendor/types/state.ts
 var SESSION_STATUSES = new Set(["active", "idle"]);
 var OWNER_IDENTITY_STATUSES = new Set(["active", "revoked"]);
 var PRINCIPAL_BINDING_STATUSES = new Set(["pending", "verified", "revoked"]);
@@ -9160,11 +9160,11 @@ var EXECUTION_STATES = new Set([
 ]);
 var CHANNEL_STREAMING_MODES = new Set(["off", "edit"]);
 var CHANNEL_STEERING_MODES = new Set(["off", "on"]);
-// ../../../nexus/packages/types/dist/policy.js
+// src/vendor/types/policy.ts
 var POLICY_ACTIONS = new Set(["allow", "deny", "ask"]);
 var PRINCIPAL_TYPES2 = new Set(["user", "service_account"]);
 var PROMPT_SOURCES2 = new Set(["interactive", "schedule", "hook", "api"]);
-// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/rpc.ts
+// src/vendor/acp-bridge/rpc.ts
 var createRpcClient = (input, output, options2) => {
   const timeout = options2?.timeout ?? 30000;
   let nextId = 1;
@@ -9340,7 +9340,7 @@ var createRpcClient = (input, output, options2) => {
   };
   return { sendRequest, sendNotification, sendResponse, sendErrorResponse, onNotification, onRequest, destroy };
 };
-// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/session.ts
+// src/vendor/acp-bridge/session.ts
 import { Buffer as Buffer2 } from "buffer";
 var extractText = (content) => {
   if (!content)
@@ -9605,7 +9605,7 @@ var createAcpSession = (rpc, acpSessionId, gatewaySessionId, options2) => {
     onEvent
   };
 };
-// node_modules/@lbelyaev/nexus/packages/acp-bridge/src/manager.ts
+// src/vendor/acp-bridge/manager.ts
 import { spawn as spawn2 } from "child_process";
 var spawnAgent = (command, options2) => {
   const [cmd, ...args] = command;
