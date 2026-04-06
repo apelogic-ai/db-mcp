@@ -208,7 +208,7 @@ def console_cmd(port: int, no_browser: bool):
 @click.option("-c", "--connection", default=None, help="Connection name (default: active)")
 @click.option("-v", "--verbose", is_flag=True, help="Show server logs in terminal")
 def ui_cmd(host: str, port: int, connection: str | None, verbose: bool):
-    """Start the UI server with BICP support.
+    """Start the local web UI server.
 
     This starts a FastAPI server that provides:
     - /bicp POST endpoint for JSON-RPC requests
