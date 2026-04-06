@@ -44,7 +44,7 @@ import chalk from "chalk";
 import { Agent, type AgentEvent } from "./acp/index.js";
 import { Feed } from "./feed.js";
 import { StatusBar } from "./status-bar.js";
-import { SLASH_COMMANDS } from "./commands.js";
+import { buildSlashCommands } from "./commands.js";
 import { editorTheme, markdownTheme } from "./theme.js";
 import { loadPrompt } from "./prompts.js";
 
@@ -193,6 +193,7 @@ const agent = new Agent({
 });
 
 // Wire slash commands into the editor's autocomplete
+const SLASH_COMMANDS = buildSlashCommands(BASE_URL);
 const slashProvider = new CombinedAutocompleteProvider(SLASH_COMMANDS);
 editor.setAutocompleteProvider(slashProvider);
 
