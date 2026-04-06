@@ -451,19 +451,19 @@ async function handleCommand(raw: string): Promise<void> {
       await refreshStatus();
       break;
     case "/schema":
-      await runCli("db-mcp schema");
+      await runCli(arg ? `db-mcp schema ${arg}` : "db-mcp schema show");
       break;
     case "/rules":
-      await runCli("db-mcp rules");
+      await runCli(arg ? `db-mcp rules ${arg}` : "db-mcp rules list");
       break;
     case "/examples":
-      await runCli("db-mcp examples");
+      await runCli(arg ? `db-mcp examples ${arg}` : "db-mcp examples list");
       break;
     case "/metrics":
-      await runCli("db-mcp metrics");
+      await runCli(arg ? `db-mcp metrics ${arg}` : "db-mcp metrics list");
       break;
     case "/gaps":
-      await runCli("db-mcp gaps");
+      await runCli(arg ? `db-mcp gaps ${arg}` : "db-mcp gaps list");
       break;
     case "/sync":
       await runCli("db-mcp sync");
@@ -514,7 +514,8 @@ async function runCli(command: string): Promise<void> {
       });
     }
   }
-  if (result.exitStatus && result.exitStatus.exitCode !== 0) {
+  if (result.exitStatus && result.exitStatus.exitCode !== 0 && result.exitStatus.exitCode !== 2) {
+    // Exit code 2 = Click usage error (missing args) — the help output is already shown above
     feed.addMessage({
       id: `cli-err-${Date.now()}`,
       role: "error",
