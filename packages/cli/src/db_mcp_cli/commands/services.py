@@ -284,7 +284,7 @@ def up_cmd(
     connection: str | None,
     verbose: bool,
 ) -> None:
-    """Start the local db-mcp control plane (unified: MCP + REST API + UI)."""
+    """Start the local daemon (MCP + REST API + UI)."""
     conn_name = _configure_service_environment(
         connection,
         tool_mode_override="daemon",
@@ -475,7 +475,7 @@ def serve_ui(host: str, port: int, connection: str | None, verbose: bool) -> Non
 
 @click.group()
 def playground():
-    """Manage the playground connection with Chinook SQLite database.
+    """Sample SQLite database for trying db-mcp.
 
     The playground provides a sample SQLite database (Chinook) for
     testing and learning db-mcp features without setting up your own database.

@@ -19,7 +19,7 @@ from db_mcp_cli.utils import console
     help="Built-in connector template id for greenfield API connections (for example: jira).",
 )
 def init(name: str, source: str | None, template_name: str | None):
-    """Interactive setup wizard - configure database and Claude Desktop.
+    """Configure a new database connection.
 
     NAME is the connection name (default: "default").
 

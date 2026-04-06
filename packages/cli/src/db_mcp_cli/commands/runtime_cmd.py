@@ -52,7 +52,7 @@ def runtime_group(
     mode: str,
     runtime_interface: str | None,
 ) -> None:
-    """Run db-mcp as either the MCP runtime entrypoint or the low-level runtime CLI."""
+    """Low-level runtime interface (MCP stdio or daemon)."""
     if ctx.invoked_subcommand is not None:
         return
 

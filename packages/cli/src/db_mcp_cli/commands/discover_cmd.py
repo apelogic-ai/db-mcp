@@ -39,7 +39,7 @@ from db_mcp_cli.utils import console
     help="Output format",
 )
 def discover(url, output, conn_name, schemas, timeout_s, fmt):
-    """Discover database schema (catalogs, schemas, tables, columns).
+    """Introspect database schema structure.
 
     Connects to a database and discovers its full schema structure.
     Outputs the result as YAML or JSON.
