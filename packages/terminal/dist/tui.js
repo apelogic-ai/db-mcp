@@ -10177,11 +10177,16 @@ function resolveAgentCommand() {
   if (process.env.DB_MCP_AGENT) {
     return process.env.DB_MCP_AGENT.split(" ");
   }
-  const binDir = resolve(__dirname2, "..", "node_modules", ".bin");
-  for (const name of BUNDLED_AGENTS) {
-    const localBin = resolve(binDir, name);
-    if (existsSync(localBin)) {
-      return [localBin];
+  const searchDirs = [
+    resolve(__dirname2, "..", "node_modules", ".bin"),
+    resolve(__dirname2, "node_modules", ".bin")
+  ];
+  for (const binDir of searchDirs) {
+    for (const name of BUNDLED_AGENTS) {
+      const localBin = resolve(binDir, name);
+      if (existsSync(localBin)) {
+        return [localBin];
+      }
     }
   }
   return ["claude-agent-acp"];

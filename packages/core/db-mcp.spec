@@ -80,6 +80,18 @@ if static_dir.exists():
 terminal_bundle = repo_root / "packages" / "terminal" / "dist" / "tui.js"
 if terminal_bundle.exists():
     datas.append((str(terminal_bundle), "terminal"))
+# Include claude-agent-acp binary + its dependencies from node_modules
+terminal_agent_bin = repo_root / "packages" / "terminal" / "node_modules" / ".bin" / "claude-agent-acp"
+terminal_agent_pkg = repo_root / "packages" / "terminal" / "node_modules" / "@agentclientprotocol" / "claude-agent-acp"
+if terminal_agent_bin.exists():
+    datas.append((str(terminal_agent_bin), "terminal/node_modules/.bin"))
+if terminal_agent_pkg.exists():
+    datas.append((str(terminal_agent_pkg), "terminal/node_modules/@agentclientprotocol/claude-agent-acp"))
+# Include claude-agent-acp's own dependencies
+for dep in ("@anthropic-ai/claude-agent-sdk", "@agentclientprotocol/sdk", "zod"):
+    dep_dir = repo_root / "packages" / "terminal" / "node_modules" / dep
+    if dep_dir.exists():
+        datas.append((str(dep_dir), f"terminal/node_modules/{dep}"))
 
 a = Analysis(
     [str(repo_root / "packages" / "cli" / "src" / "db_mcp_cli" / "__main__.py")],

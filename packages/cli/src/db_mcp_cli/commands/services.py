@@ -131,6 +131,7 @@ def _run_http_mcp_service(*, host: str, port: int, path: str) -> None:
     server_main()
 
 
+
 def _run_unified_server(*, host: str, port: int, verbose: bool) -> None:
     """Run the unified server (MCP + REST API + UI) on a single port."""
     _patch_fakeredis_for_frozen()

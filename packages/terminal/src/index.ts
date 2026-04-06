@@ -64,12 +64,17 @@ function resolveAgentCommand(): string[] {
   if (process.env.DB_MCP_AGENT) {
     return process.env.DB_MCP_AGENT.split(" ");
   }
-  // Look for bundled binary in node_modules/.bin/
-  const binDir = resolve(__dirname, "..", "node_modules", ".bin");
-  for (const name of BUNDLED_AGENTS) {
-    const localBin = resolve(binDir, name);
-    if (existsSync(localBin)) {
-      return [localBin];
+  // Check multiple locations for the agent binary
+  const searchDirs = [
+    resolve(__dirname, "..", "node_modules", ".bin"),   // repo: packages/terminal/node_modules/.bin/
+    resolve(__dirname, "node_modules", ".bin"),          // bundle: terminal/node_modules/.bin/
+  ];
+  for (const binDir of searchDirs) {
+    for (const name of BUNDLED_AGENTS) {
+      const localBin = resolve(binDir, name);
+      if (existsSync(localBin)) {
+        return [localBin];
+      }
     }
   }
   // Fall back to PATH lookup
