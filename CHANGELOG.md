@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.11] - 2026-04-06
+
+## Overview
+
+Adds first-time user onboarding to the TUI, Codex CLI support alongside Claude Code, and significant CLI UX improvements including grouped help, second-tier autocomplete, and secure secret storage.
+
+## Highlights
+
+- First-time experience (FTE) with `/playground`, `/init`, `/doctor` slash commands
+- Codex CLI support — both `claude-agent-acp` and `codex-acp` bundled
+- Secure `/env` command for storing credentials without exposing them to the agent
+- Grouped CLI `--help` with sections and quick start examples
+- Second-tier autocomplete for `/use`, `/schema`, `/env`, etc.
+- True-color ANSI logo
+- Aggressive terminal reset on exit — no more Kitty protocol leaks
+
+## New Features
+
+- **TUI onboarding**: `/playground` installs sample DB, `/init` guides connection setup via agent, `/doctor` runs health checks
+- **`/env` command**: secure secret storage in TUI and CLI (`db-mcp env`)
+- **Codex support**: `@zed-industries/codex-acp` bundled, runtime-aware preflight checks
+- **Preflight checks**: verify ACP adapter, CLI binary, and auth before connecting
+- **Second-tier autocomplete**: `/use` shows connections, `/schema` shows subcommands
+- **Grouped CLI help**: General / Connection sections with subsections
+- **Externalized prompts**: system prompt split into 6 markdown files under `prompts/`
+- **Feature parity principle** added to CLAUDE.md
+
+## Bug Fixes
+
+- **Daemon env leak**: child processes no longer inherit `CONNECTION_NAME` from daemon startup
+- **Terminal reset**: `process.on("exit")` ensures Kitty protocol is always cleaned up
+- **Slash command defaults**: `/metrics` → `db-mcp metrics list` (no more exit code 2)
+- **Agent-neutral messages**: "Restart your MCP agent" instead of "Restart Claude Desktop"
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/terminal/prompts/` | 7 prompt files (system, query, init, commands, rules, FTE, logo) |
+| `packages/terminal/src/commands.ts` | Dynamic slash commands with `getArgumentCompletions` |
+| `packages/terminal/src/preflight.ts` | Agent prerequisite checks |
+| `packages/terminal/src/prompts.ts` | Shared prompt loader |
+| `packages/terminal/src/acp/terminal.ts` | Strip daemon env vars from child processes |
+| `packages/terminal/src/index.ts` | FTE flow, `/env`, `/doctor`, `/playground`, terminal reset |
+| `packages/cli/src/db_mcp_cli/main.py` | Sectioned help with `SectionedGroup` |
+| `packages/cli/src/db_mcp_cli/agent_config.py` | Simplified agents menu |
+| `packages/cli/src/db_mcp_cli/commands/connection_cmd.py` | `db-mcp env` command |
+| `scripts/install.sh` | 3-option post-install menu (TUI / web UI / skip) |
+
+## Testing
+
+- Terminal: 61 tests passing
+- CLI: 45 tests passing
+- Core: 1157 tests passing
+- Lint: clean
+- Local PyInstaller binary: verified
+
+
 ## [0.9.10] - 2026-04-05
 
 ## Overview
