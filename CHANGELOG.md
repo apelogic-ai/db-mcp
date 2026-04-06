@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.6] - 2026-04-05
+
+## Overview
+
+Fixes two issues with v0.9.4/v0.9.5: the TUI crashing when run from the installed binary (bun segfault), and websockets deprecation warnings on daemon startup.
+
+## Highlights
+
+- `db-mcp tui` works correctly from the installed binary
+- No more websockets deprecation warnings on startup
+
+## Bug Fixes
+
+- **TUI binary packaging**: Pre-build terminal to a single JS bundle (`bun build --bundle`) instead of bundling raw TS source + node_modules which caused bun segfault in PyInstaller's temp directory
+- **TUI path resolution**: Check PyInstaller bundle → repo dist/ → dev source, with fallback to node for bundles when bun is unavailable
+- **Deprecation warnings**: Use `websockets-sansio` protocol in uvicorn instead of the legacy websockets implementation; bump uvicorn to >=0.43.0
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/terminal/package.json` | Build script produces dist/tui.js bundle |
+| `packages/terminal/dist/tui.js` | Pre-built single-file TUI bundle (360KB) |
+| `packages/core/db-mcp.spec` | Bundle dist/tui.js instead of raw source |
+| `packages/cli/src/db_mcp_cli/commands/services.py` | TUI path resolution + ws=websockets-sansio |
+| `packages/core/src/db_mcp/ui_server.py` | ws=websockets-sansio |
+| `packages/core/pyproject.toml` | uvicorn>=0.43.0 |
+
+## Testing
+
+- Core: 1157 tests passing
+- CLI: 45 tests passing
+- Terminal: 51 tests passing
+- Lint: clean
+- Local PyInstaller binary: verified TUI launches without crash or warnings
+
+
 ## [0.9.5] - 2026-04-05
 
 ## Overview
