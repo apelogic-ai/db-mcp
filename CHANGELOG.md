@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.8] - 2026-04-05
+
+## Overview
+
+Fixes the CI release workflow that was missing `bun install` in `packages/terminal/`, causing the `claude-agent-acp` binary to be absent from the distributed binary.
+
+## Highlights
+
+- `db-mcp tui` now correctly finds the ACP agent in the distributed binary
+
+## Bug Fixes
+
+- **CI workflow**: Add `bun install` + `bun build` step for `packages/terminal/` before PyInstaller runs, ensuring `node_modules/.bin/claude-agent-acp` and `dist/tui.js` are present for bundling
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `.github/workflows/release.yml` | Add terminal deps install + TUI bundle build step |
+
+## Testing
+
+- Core: 1157 tests passing
+- CLI: 45 tests passing
+- Terminal: 51 tests passing
+- Lint: clean
+
+
 ## [0.9.7] - 2026-04-05
 
 ## Overview

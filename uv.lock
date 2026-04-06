@@ -615,7 +615,7 @@ wheels = [
 
 [[package]]
 name = "db-mcp"
-version = "0.9.7"
+version = "0.9.8"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "clickhouse-sqlalchemy" },
