@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.9] - 2026-04-05
+
+## Overview
+
+Fixes CI build failure caused by `@nexus/acp-bridge` being a local workspace symlink that doesn't exist in CI. Now uses the published `@lbelyaev/nexus` npm package.
+
+## Highlights
+
+- CI build can now resolve all terminal dependencies
+
+## Bug Fixes
+
+- **npm dependency**: Replace local `@nexus/acp-bridge` workspace symlink with published `@lbelyaev/nexus` package from npm
+- **CI workflow**: `bun install` in `packages/terminal/` now succeeds in CI
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `packages/terminal/package.json` | Add `@lbelyaev/nexus` dependency |
+| `packages/terminal/bun.lock` | Updated lockfile |
+| `packages/terminal/src/acp/agent.ts` | Import from `@lbelyaev/nexus/packages/acp-bridge/src` |
+
+## Testing
+
+- Terminal: 51 tests passing
+- Local PyInstaller binary: verified TUI launches successfully
+
+
 ## [0.9.8] - 2026-04-05
 
 ## Overview
