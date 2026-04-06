@@ -85,6 +85,64 @@ function resolveAgentCommand(): string[] {
 
 const AGENT_CMD = resolveAgentCommand();
 
+/** Pre-flight check: verify agent adapter and Claude Code are available. */
+async function checkAgentPrerequisites(): Promise<string | null> {
+  const { execFileSync } = await import("node:child_process");
+  const { which } = await import("./preflight.js");
+
+  // 1. Check claude-agent-acp (or whatever AGENT_CMD resolves to)
+  const agentBin = AGENT_CMD[0]!;
+  if (!agentBin.includes("/") && !which(agentBin)) {
+    return [
+      `**ACP adapter not found:** \`${agentBin}\``,
+      "",
+      "The TUI needs an ACP adapter to connect to an AI agent.",
+      "Install it with:",
+      "```",
+      "npm i -g @agentclientprotocol/claude-agent-acp",
+      "```",
+    ].join("\n");
+  }
+
+  // 2. Check claude CLI
+  if (!which("claude")) {
+    return [
+      "**Claude Code not found.**",
+      "",
+      "The TUI uses Claude Code as its AI agent. Install it:",
+      "```",
+      "npm i -g @anthropic-ai/claude-code",
+      "```",
+      "Then run `claude` once to authenticate.",
+    ].join("\n");
+  }
+
+  // 3. Check authentication
+  try {
+    const out = execFileSync("claude", ["auth", "status"], {
+      timeout: 5000,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const status = JSON.parse(out);
+    if (!status.loggedIn) {
+      return [
+        "**Claude Code is not authenticated.**",
+        "",
+        "Run this in your terminal to log in:",
+        "```",
+        "claude auth login",
+        "```",
+        "Then restart the TUI.",
+      ].join("\n");
+    }
+  } catch {
+    // auth status failed — could be old version, ignore
+  }
+
+  return null;  // all good
+}
+
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
@@ -534,6 +592,18 @@ async function handlePrompt(text: string): Promise<void> {
 
   // Auto-connect agent on first prompt
   if (!agent.connected) {
+    // Preflight: check prerequisites before attempting connection
+    const problem = await checkAgentPrerequisites();
+    if (problem) {
+      feed.addMessage({
+        id: `preflight-${Date.now()}`,
+        role: "error",
+        text: problem,
+      });
+      tui.requestRender();
+      return;
+    }
+
     feed.addMessage({
       id: `connecting-${Date.now()}`,
       role: "system",
@@ -555,15 +625,7 @@ async function handlePrompt(text: string): Promise<void> {
       feed.addMessage({
         id: `agent-fail-${Date.now()}`,
         role: "error",
-        text: [
-          `Failed to connect to agent: ${msg}`,
-          "",
-          "Make sure the ACP adapter is installed:",
-          "```",
-          "npm i -g @agentclientprotocol/claude-agent-acp",
-          "```",
-          "Then set: `DB_MCP_AGENT=claude-agent-acp`",
-        ].join("\n"),
+        text: `Failed to connect to agent: ${msg}`,
       });
       tui.requestRender();
       return;

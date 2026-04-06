@@ -102,6 +102,25 @@ var init_terminal = __esm(() => {
   terminals = new Map;
 });
 
+// src/preflight.ts
+var exports_preflight = {};
+__export(exports_preflight, {
+  which: () => which
+});
+import { existsSync } from "fs";
+import { join as join4 } from "path";
+function which(name) {
+  const pathDirs = (process.env.PATH ?? "").split(":");
+  for (const dir of pathDirs) {
+    const candidate = join4(dir, name);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+var init_preflight = () => {};
+
 // src/index.ts
 import { appendFileSync as appendFileSync3 } from "fs";
 
@@ -10132,7 +10151,7 @@ var markdownTheme = {
 // src/index.ts
 import { resolve as resolve2, dirname as dirname4 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import { existsSync } from "fs";
+import { existsSync as existsSync2 } from "fs";
 if (process.env.DB_MCP_DEBUG) {} else {
   console.log = (...args) => {
     try {
@@ -10170,7 +10189,7 @@ function resolveAgentCommand() {
   for (const binDir of searchDirs) {
     for (const name of BUNDLED_AGENTS) {
       const localBin = resolve2(binDir, name);
-      if (existsSync(localBin)) {
+      if (existsSync2(localBin)) {
         return [localBin];
       }
     }
@@ -10178,6 +10197,56 @@ function resolveAgentCommand() {
   return ["claude-agent-acp"];
 }
 var AGENT_CMD = resolveAgentCommand();
+async function checkAgentPrerequisites() {
+  const { execFileSync } = await import("child_process");
+  const { which: which2 } = await Promise.resolve().then(() => (init_preflight(), exports_preflight));
+  const agentBin = AGENT_CMD[0];
+  if (!agentBin.includes("/") && !which2(agentBin)) {
+    return [
+      `**ACP adapter not found:** \`${agentBin}\``,
+      "",
+      "The TUI needs an ACP adapter to connect to an AI agent.",
+      "Install it with:",
+      "```",
+      "npm i -g @agentclientprotocol/claude-agent-acp",
+      "```"
+    ].join(`
+`);
+  }
+  if (!which2("claude")) {
+    return [
+      "**Claude Code not found.**",
+      "",
+      "The TUI uses Claude Code as its AI agent. Install it:",
+      "```",
+      "npm i -g @anthropic-ai/claude-code",
+      "```",
+      "Then run `claude` once to authenticate."
+    ].join(`
+`);
+  }
+  try {
+    const out = execFileSync("claude", ["auth", "status"], {
+      timeout: 5000,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const status = JSON.parse(out);
+    if (!status.loggedIn) {
+      return [
+        "**Claude Code is not authenticated.**",
+        "",
+        "Run this in your terminal to log in:",
+        "```",
+        "claude auth login",
+        "```",
+        "Then restart the TUI."
+      ].join(`
+`);
+    }
+  } catch {}
+  return null;
+}
 var terminal = new ProcessTerminal;
 var tui = new TUI(terminal, true);
 var feed = new Feed(markdownTheme);
@@ -10427,14 +10496,14 @@ async function handleCommand(raw) {
       const [connName, key, ...valueParts] = parts;
       const value = valueParts.join(" ");
       try {
-        const { mkdirSync: mkdirSync2, writeFileSync: writeFileSync2, readFileSync: readFileSync2, existsSync: existsSync2 } = await import("fs");
+        const { mkdirSync: mkdirSync2, writeFileSync: writeFileSync2, readFileSync: readFileSync2, existsSync: existsSync3 } = await import("fs");
         const { homedir: homedir3 } = await import("os");
-        const { join: join4 } = await import("path");
-        const connDir = join4(homedir3(), ".db-mcp", "connections", connName);
+        const { join: join5 } = await import("path");
+        const connDir = join5(homedir3(), ".db-mcp", "connections", connName);
         mkdirSync2(connDir, { recursive: true });
-        const envFile = join4(connDir, ".env");
+        const envFile = join5(connDir, ".env");
         let lines = [];
-        if (existsSync2(envFile)) {
+        if (existsSync3(envFile)) {
           lines = readFileSync2(envFile, "utf8").split(`
 `).filter((l) => !l.startsWith(`${key}=`));
         }
@@ -10551,6 +10620,16 @@ async function handlePrompt(text) {
     text
   });
   if (!agent.connected) {
+    const problem = await checkAgentPrerequisites();
+    if (problem) {
+      feed.addMessage({
+        id: `preflight-${Date.now()}`,
+        role: "error",
+        text: problem
+      });
+      tui.requestRender();
+      return;
+    }
     feed.addMessage({
       id: `connecting-${Date.now()}`,
       role: "system",
@@ -10571,16 +10650,7 @@ async function handlePrompt(text) {
       feed.addMessage({
         id: `agent-fail-${Date.now()}`,
         role: "error",
-        text: [
-          `Failed to connect to agent: ${msg}`,
-          "",
-          "Make sure the ACP adapter is installed:",
-          "```",
-          "npm i -g @agentclientprotocol/claude-agent-acp",
-          "```",
-          "Then set: `DB_MCP_AGENT=claude-agent-acp`"
-        ].join(`
-`)
+        text: `Failed to connect to agent: ${msg}`
       });
       tui.requestRender();
       return;
