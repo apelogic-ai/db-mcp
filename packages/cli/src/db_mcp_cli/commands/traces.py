@@ -59,7 +59,7 @@ def traces_on():
         message = "[green]✓ Traces explicitly enabled[/green]"
     console.print(message)
     console.print(f"[dim]User ID: {user_id}[/dim]")
-    console.print("[dim]Restart Claude Desktop to start capturing traces.[/dim]")
+    console.print("[dim]Restart your MCP agent to start capturing traces.[/dim]")
 
 
 @traces.command("off")
@@ -78,7 +78,7 @@ def traces_off():
     save_config(config)
 
     console.print("[green]✓ Traces disabled[/green]")
-    console.print("[dim]Restart Claude Desktop to stop capturing traces.[/dim]")
+    console.print("[dim]Restart your MCP agent to stop capturing traces.[/dim]")
 
 
 @traces.command("status")

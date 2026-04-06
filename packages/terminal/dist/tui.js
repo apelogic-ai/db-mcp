@@ -10633,7 +10633,7 @@ async function runCli(command) {
   handleReleaseTerminal2({ terminalId });
   let output = result.output.trim();
   if (output) {
-    output = output.replace(/Restart Claude Desktop to apply changes\.?\n?/g, "").replace(/^[\u2713\u2717\u25CF] /gm, "").replace(/'/g, "").trim();
+    output = output.replace(/Restart (?:Claude Desktop|your MCP agent) to [\w ]+\.?\n?/g, "").replace(/^[\u2713\u2717\u25CF] /gm, "").replace(/'/g, "").trim();
     if (output) {
       feed.addMessage({
         id: `cli-${Date.now()}`,

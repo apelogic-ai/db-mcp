@@ -191,7 +191,7 @@ def migrate(verbose: bool):
         console.print(f"  [yellow]Could not configure: {e}[/yellow]")
 
     console.print("\n[green]✓ Migration complete[/green]")
-    console.print("\n[dim]Restart Claude Desktop to apply changes.[/dim]")
+    console.print("\n[dim]Restart your MCP agent to apply changes.[/dim]")
 
 
 def register_commands(main_group: click.Group) -> None:

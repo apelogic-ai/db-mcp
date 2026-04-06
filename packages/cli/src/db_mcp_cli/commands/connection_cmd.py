@@ -324,7 +324,7 @@ def use(name: str):
 
     set_active_connection(name)
     console.print(f"[green]✓ Switched to connection '{name}'[/green]")
-    console.print("[dim]Restart Claude Desktop to apply changes.[/dim]")
+    console.print("[dim]Restart your MCP agent to apply changes.[/dim]")
 
 
 @click.command()
@@ -371,7 +371,7 @@ def edit(name: str | None):
     try:
         subprocess.run([editor, str(env_path)], check=True)
         console.print("[green]✓ Credentials updated.[/green]")
-        console.print("[dim]Restart Claude Desktop to apply changes.[/dim]")
+        console.print("[dim]Restart your MCP agent to apply changes.[/dim]")
     except FileNotFoundError:
         console.print(f"[red]Editor '{editor}' not found.[/red]")
         console.print("[dim]Set EDITOR environment variable or edit manually:[/dim]")
@@ -418,7 +418,7 @@ def rename(old_name: str, new_name: str):
         set_active_connection(new_name)
         console.print(f"[dim]Active connection updated to '{new_name}'.[/dim]")
 
-    console.print("[dim]Restart Claude Desktop to apply changes.[/dim]")
+    console.print("[dim]Restart your MCP agent to apply changes.[/dim]")
 
 
 @click.command()

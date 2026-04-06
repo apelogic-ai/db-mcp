@@ -151,7 +151,7 @@ def config():
     try:
         subprocess.run([editor, str(CONFIG_FILE)], check=True)
         console.print("[green]✓ Config saved.[/green]")
-        console.print("[dim]Restart Claude Desktop to apply changes.[/dim]")
+        console.print("[dim]Restart your MCP agent to apply changes.[/dim]")
     except FileNotFoundError:
         console.print(f"[red]Editor '{editor}' not found.[/red]")
         console.print("[dim]Set EDITOR environment variable or edit manually:[/dim]")

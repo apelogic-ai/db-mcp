@@ -593,7 +593,7 @@ async function runCli(command: string): Promise<void> {
   if (output) {
     // Clean up CLI output for TUI context
     output = output
-      .replace(/Restart Claude Desktop to apply changes\.?\n?/g, "")
+      .replace(/Restart (?:Claude Desktop|your MCP agent) to [\w ]+\.?\n?/g, "")
       .replace(/^[✓✗●] /gm, "")         // strip status bullets
       .replace(/'/g, "")                  // strip quotes around names
       .trim();
