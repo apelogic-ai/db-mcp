@@ -10686,7 +10686,7 @@ async function handleCommand(raw) {
       });
       break;
     case "/init":
-      await runPrompt(arg ? `I want to set up a new db-mcp connection called "${arg}". Guide me through it.` : "I want to set up a new db-mcp database connection. Ask me what database I use and help me configure it step by step.");
+      await runPrompt(arg ? `I want to set up a new db-mcp connection called "${arg}". Guide me through it.` : "I want to set up a new db-mcp data source connection. Ask me what type of data source I want to connect (database, API, or file) and guide me through the setup step by step.");
       break;
     case "/connections":
       await runCli("db-mcp list");
