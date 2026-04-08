@@ -411,55 +411,120 @@ removing knowledge can cascade into incorrect agent behavior.
 
 ## 6. Knowledge Architecture for the Agentic Enterprise
 
-### Hierarchical knowledge with inheritance
+### Workspaces: the organizational unit of knowledge
 
-Enterprise knowledge naturally organizes hierarchically:
+Enterprise knowledge organizes around **workspaces** — team- or
+domain-scoped collections of related data connections that share
+knowledge. A marketing team's workspace contains their Postgres
+analytics database, Google Ads API, and Salesforce connection — all
+sharing the same business rules, metric definitions, and domain model.
+
+The hierarchy has four levels:
 
 ```
-Organization-wide defaults
-├── Team/Domain group defaults
-│   ├── Connection-specific knowledge
-│   └── Connection-specific knowledge
-└── Team/Domain group defaults
-    └── Connection-specific knowledge
+Personal (me/)
+  └── individual knowledge from daily work (sigint)
+
+Global (global/)
+  └── organization-wide: "revenue means net revenue"
+
+Workspace (workspaces/{name}/)
+  └── team-scoped: "attribution window is 30 days"
+      └── Connection (connections/{name}/)
+            └── database-specific: schema, connection credentials
 ```
 
-Business rules like "never expose PII" apply organization-wide. Rules
-like "fiscal year starts April 1" apply to a finance domain group.
-Table descriptions are connection-specific but may inherit shared
-dimensions from their group.
+**Inheritance:** when an agent queries rules for a connection, it sees
+the union of personal + global + workspace + connection knowledge.
+Connection overrides workspace, workspace overrides global, global
+overrides personal. Rules and examples merge additively. Credentials
+and operational state never inherit.
 
-**Inheritance chain:** connection overrides group, group overrides
-organization. Most specific wins. Rules and descriptions merge
-(additive); credentials and operational state never inherit.
+**Collaboration:** each workspace is a git repository. Team members
+clone it, add their own credentials (gitignored), and immediately have
+all shared knowledge. The global directory can also be git-synced for
+organization-wide standards. This makes knowledge distribution a
+`git clone`, not a configuration wizard.
 
-### Knowledge types
+### Dual-format knowledge
 
-| Type | What it encodes | Volatility | Inheritance |
+Not all knowledge serves the same consumer. The architecture recognizes
+two formats:
+
+**Linked markdown** for knowledge consumed by humans and agents as
+prose — business rules, patterns, decisions, glossary entries. Each
+entry is one file with `[[wiki-style links]]` to related entries.
+These links are navigable by both humans (in tools like Obsidian) and
+agents (by reading files and following references).
+
+**Structured YAML** for knowledge consumed by systems as data — schema
+descriptions, metric SQL expressions, domain model entities, connector
+configurations. These are parsed deterministically by query engines and
+compilers, not interpreted by agents.
+
+| Knowledge type | Format | Consumer | Navigable? |
 |---|---|---|---|
-| Schema descriptions | What tables/columns mean | Medium — changes with schema | Group + connection |
-| Business rules | Constraints and filters for correct queries | Low — changes with policy | Org + group + connection |
-| Metric definitions | How KPIs are calculated | Low — changes with strategy | Org + group |
-| Query examples | Approved query patterns | Medium — changes with schema and rules | Connection |
-| Domain model | Entity relationships and concepts | Low | Group + connection |
-| Knowledge gaps | Unmapped business terms | High — created and resolved frequently | Connection |
-| Operational signals | Quality, freshness, health | High — continuous stream | Connection |
+| Business rules | Markdown | Agent follows as instructions | Yes — `[[links]]` to schema, metrics |
+| Patterns, decisions | Markdown | Agent follows as context | Yes — `[[links]]` to related entries |
+| Glossary terms | Markdown | Agent and human reference | Yes — `[[links]]` to rules, connections |
+| Metric definitions | Markdown + YAML frontmatter | Body: agent/human; frontmatter: query engine | Yes |
+| Schema descriptions | YAML | Query engine, schema introspection | Via generated index |
+| Domain model | YAML | Query engine, relationship resolution | Via generated index |
+| Connector config | YAML | Connection management | No |
+
+For structured YAML that also needs to be navigable, the architecture
+generates **read-only markdown views** — per-table pages with column
+descriptions, cross-referenced with `[[links]]` to rules and metrics
+that reference them. These views are derived artifacts, regenerated on
+any vault change, and never edited directly. The YAML remains the
+source of truth for systems; the markdown view is the human/agent
+interface to the same data.
 
 ### The knowledge graph topology
 
-While the configuration hierarchy is tree-structured (org → group →
-connection), the knowledge itself forms a graph:
+The workspace hierarchy provides the **tree structure** for
+organization and inheritance. The `[[wiki links]]` within entries
+provide the **graph structure** for navigation and discovery. Both
+coexist:
 
-- A **metric** references **columns** across multiple **tables**
-- A **business rule** constrains queries on specific **tables** in
-  specific **connections**
-- A **dimension** is shared across **connections** within a **group**
-- A **gap** in one connection may be resolved by a **rule** from another
+- The tree determines **where knowledge lives** and **who inherits it**
+  (global → workspace → connection)
+- The graph determines **how knowledge connects** — a rule links to the
+  schema columns it filters, the metrics that depend on it, the glossary
+  term it implements, and the signal that produced it
 
-This graph topology — knowledge as a network, not a hierarchy — is what
-enables cross-domain reasoning. An agent querying one database can
-leverage knowledge from another because the semantic relationships are
-explicit and traversable.
+A metric in `workspaces/marketing/connections/analytics-db/metrics/dau.md`
+links to:
+- `[[rules/active-users-filter]]` — a workspace-level rule
+- `[[global/glossary/active-user]]` — the org-wide definition
+- `[[schema/users#last_active]]` — a connection-specific column
+
+In a graph visualization tool (Obsidian, or any tool that parses wiki
+links), the full topology is visible: org glossary → workspace rule →
+connection schema → connection metric. The inheritance from the tree
+becomes visible as links in the graph.
+
+### Agent navigation
+
+Agents navigate the knowledge graph by reading files and following
+links — no graph database, no special tooling required:
+
+```
+Agent needs to query active users on analytics-db:
+  → reads connections/analytics-db/index.md
+  → follows [[rules/active-users-filter]]
+  → reads: "WHERE is_test = false"
+  → follows [[schema/users#is_test]]
+  → reads: column type, constraints
+  → follows [[global/glossary/active-user]]
+  → reads: org-wide definition and edge cases
+  → generates query with correct filters
+```
+
+This is the same traversal a human performs in Obsidian's graph view —
+clicking through linked pages. The knowledge layer is simultaneously a
+human-navigable wiki and an agent-navigable knowledge base, without
+maintaining two separate systems.
 
 ---
 
@@ -821,22 +886,44 @@ agents read the knowledge" problem — they already know how to read
 their own skill format. The signal-to-knowledge pipeline's output for
 these knowledge types is a draft skill file, not a custom YAML entry.
 
-### Pattern 1: Knowledge vault with semantic layer
+### Pattern 1: Dual-format vault with linked navigation
 
-A structured file-based knowledge store, version-controlled, with typed
-schemas for each knowledge type. The vault is the authoritative source
-for agent behavior — agents consult it before every action and write back
-to it after.
+The knowledge vault stores two kinds of content in their natural format:
+
+**Linked markdown** for prose knowledge (rules, decisions, patterns,
+glossary). One file per entry, with `[[wiki-style links]]` between
+related entries. Navigable by humans (Obsidian) and agents (file reads).
+
+**Structured YAML** for system-consumed data (schema descriptions,
+metric SQL, domain model). Parsed deterministically by query engines.
+Not edited as prose.
+
+For YAML content that also needs to be navigable, **generated markdown
+views** provide the bridge — per-table pages with cross-references to
+rules and metrics. Generated views are read-only artifacts, regenerated
+on vault changes, and carry a `generated: true` frontmatter marker.
 
 ```
-vault/
-├── schema/descriptions.yaml      # what tables and columns mean
-├── instructions/business_rules.yaml  # query constraints
-├── metrics/catalog.yaml          # KPI definitions and bindings
-├── training/examples/            # approved query patterns
-├── domain/model.yaml             # entity relationships
-└── state/signals.jsonl           # operational signal stream
+workspace/connections/analytics-db/
+├── schema/descriptions.yaml      # YAML — source of truth for systems
+├── rules/
+│   └── active-users-filter.md    # markdown — [[links]] to schema, metrics
+├── metrics/
+│   └── dau.md                    # markdown + YAML frontmatter (both consumers)
+├── examples/
+│   └── monthly-revenue.md        # markdown + YAML frontmatter
+├── vault-view/                   # generated — read-only, regenerated
+│   └── schema/
+│       ├── users.md              # generated from descriptions.yaml, linked
+│       └── orders.md
+└── index.md                      # generated — entry point with full link map
 ```
+
+The principle: **if a system parses it deterministically, keep it YAML.
+If an agent or human reads it as instructions, make it markdown.** When
+both consumers need the same data, use YAML frontmatter in markdown
+(compiled by systems, read by agents) or generated views (YAML source,
+markdown rendering).
 
 ### Pattern 2: Signal ingestion API
 
