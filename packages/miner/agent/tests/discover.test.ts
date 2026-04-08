@@ -64,6 +64,26 @@ describe("discoverTraceSources", () => {
     expect(projects).toEqual(["project-a", "project-b"]);
   });
 
+  it("discovers Cursor SQLite databases", () => {
+    const root = makeTmpDir();
+    const globalDir = join(root, "Cursor", "User", "globalStorage");
+    mkdirSync(globalDir, { recursive: true });
+    writeFileSync(join(globalDir, "state.vscdb"), "");
+
+    const wsDir = join(root, "Cursor", "User", "workspaceStorage", "abc123");
+    mkdirSync(wsDir, { recursive: true });
+    writeFileSync(join(wsDir, "state.vscdb"), "");
+
+    const sources = discoverTraceSources({
+      cursorDir: join(root, "Cursor"),
+    });
+
+    expect(sources).toHaveLength(2);
+    expect(sources[0].agent).toBe("cursor");
+    expect(sources[0].project).toBe("global");
+    expect(sources[1].project).toBe("workspace:abc123");
+  });
+
   it("ignores non-jsonl files", () => {
     const root = makeTmpDir();
     const projectDir = join(root, ".claude", "projects", "test-proj");

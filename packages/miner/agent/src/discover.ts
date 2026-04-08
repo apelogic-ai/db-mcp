@@ -32,6 +32,9 @@ export function discoverTraceSources(options: DiscoverOptions): TraceSource[] {
   if (options.codexDir) {
     sources.push(...discoverCodex(options.codexDir));
   }
+  if (options.cursorDir) {
+    sources.push(...discoverCursor(options.cursorDir));
+  }
 
   return sources;
 }
@@ -76,6 +79,37 @@ function discoverCodex(codexDir: string): TraceSource[] {
       files,
     },
   ];
+}
+
+function discoverCursor(cursorDir: string): TraceSource[] {
+  const sources: TraceSource[] = [];
+
+  // Global state.vscdb
+  const globalDb = join(cursorDir, "User", "globalStorage", "state.vscdb");
+  if (existsSync(globalDb)) {
+    sources.push({
+      agent: "cursor",
+      project: "global",
+      files: [globalDb],
+    });
+  }
+
+  // Per-workspace state.vscdb files
+  const wsDir = join(cursorDir, "User", "workspaceStorage");
+  if (existsSync(wsDir)) {
+    for (const entry of readdirSync(wsDir)) {
+      const wsDb = join(wsDir, entry, "state.vscdb");
+      if (existsSync(wsDb)) {
+        sources.push({
+          agent: "cursor",
+          project: `workspace:${entry}`,
+          files: [wsDb],
+        });
+      }
+    }
+  }
+
+  return sources;
 }
 
 function collectJsonlRecursive(dir: string): string[] {
