@@ -29,20 +29,165 @@ natural language input.
 - Tests: 51 Vitest tests across 4 files
 - Vendored ACP bridge: [[packages/terminal/src/vendor/acp-bridge/]]
 
-### Stale (describe reality inaccurately)
-- Design doc: [[docs/tui-design.md]] — references Python/Textual, not TypeScript
-- Implementation plan: [[docs/tui-implementation.md]] — references Python paths,
-  Textual widgets, `packages/cli/src/db_mcp_cli/tui/` (deleted)
+### Stale
+- [[docs/tui-design.md]] — references Python/Textual, not TypeScript
+- [[docs/tui-implementation.md]] — references deleted Python paths
 
 ### Deleted
-- Python TUI: `packages/cli/src/db_mcp_cli/tui/` — 11 source files, 8 test files
-  removed in commit d2e68ea (2026-04-05)
+- `packages/cli/src/db_mcp_cli/tui/` — 11 source + 8 test files (d2e68ea)
 
 ## Depends on
 
-- [[blocks/daemon]] — unified HTTP server (MCP + REST + UI on port 8080)
+- [[blocks/daemon]] — unified HTTP server (MCP + REST + UI on :8080)
 - [[blocks/acp-integration]] — agent subprocess for NL queries
-- [[blocks/rest-api]] — `/api/executions`, `/api/gaps`, `/api/connections/use`
+- [[blocks/rest-api]] — event polling, confirm gate, connection switching
+
+## Timeline
+
+```
+2026-04-03                              04-04         04-05              04-06         04-08
+    │                                     │             │                  │             │
+    ▼                                     ▼             ▼                  ▼             ▼
+    ○ ─── idea ─── planned ─── active ────┐             │                  │             │
+    │     │        │           (Python)   │             │                  │             │
+    │  design   impl plan    29 min       │             │                  │             │
+    │  doc      4 phases     build        │             │                  │             │
+    │                                     │             │                  │             │
+    │              DECISION: pivot to TS ─┘             │                  │             │
+    │              "faster iteration,                   │                  │             │
+    │               better async,                      │                  │             │
+    │               stricter types"                    │                  │             │
+    │                                     │             │                  │             │
+    │                          ○ ─── active ─────────────────────────────────── active ──►
+    │                               (TypeScript)       │                  │
+    │                                     │          all phases        onboarding
+    │                                     │          complete +        /doctor
+    │                                     │          Python deleted    /playground
+    │                                     │          PR #83            /init
+    │                                     │                           PR #84
+    │                                     │
+    │              DECISION: single port ─┘
+    │              "one process, one URL
+    │               instead of MCP:7421 + UI:8080"
+    │
+    │              DECISION: polling, not WebSocket
+    │              "simpler, stateless client"
+    │
+    │              DECISION: ACP as subprocess
+    │              "agent connects to /mcp independently,
+    │               TUI just renders what happens"
+```
+
+## Transitions
+
+Each entry is a state change. Decisions are the WHY behind transitions.
+
+### T1. Concept (2026-04-03 15:19)
+```
+○ → idea
+```
+- **By:** Leonid + Claude
+- **Evidence:** [[docs/tui-design.md]] created
+- **What:** Terminal companion for Claude Code. Event feed with `●`/`⎿`
+  styling, command input, ACP insider agent.
+- **Decision:** use Textual (Python) framework. Rationale: Rich already
+  a dependency, feed maps to RichLog widget.
+
+### T2. Plan (2026-04-03 ~16:00)
+```
+idea → planned
+```
+- **By:** Leonid + Claude
+- **Evidence:** [[docs/tui-implementation.md]] created
+- **What:** 4-phase plan. Phase 0: event contract. Phase 1: HTTP transport.
+  Phase 2: read-only feed. Phase 3: commands + confirm. Phase 4: ACP + gaps.
+- **Decision:** single-port daemon — mount MCP at `/mcp` on the same port
+  as REST API, instead of separate ports. Rationale: one process, one URL.
+- **Decision:** pure polling (1.5s interval) over REST API, no WebSocket.
+  Rationale: simpler, stateless. Can upgrade later if latency matters.
+
+### T3. First implementation (2026-04-03 20:31 → 21:00)
+```
+planned → active (Python)
+```
+- **By:** Leonid + Claude
+- **Evidence:** commits c7aeea5 → d5c71bf (29 minutes)
+- **What:** All 4 phases built in Python/Textual. 11 source files,
+  8 test files, 33 tests. Feed, commands, confirm gate, gap handling,
+  ACP integration — everything in one evening session.
+- **Decision:** ACP agent as subprocess, not embedded. Agent connects
+  to `/mcp` independently; TUI doesn't proxy. Rationale: clean separation,
+  simpler lifecycle.
+
+### T4. Styling polish (2026-04-03 21:40 → 21:56)
+```
+active → active (polish)
+```
+- **By:** Leonid + Claude
+- **Evidence:** 9 commits in 16 minutes
+- **What:** CommandInput widget refinement — borders, padding, height,
+  visibility, invisible border tricks.
+
+### T5. Pivot to TypeScript (2026-04-04 12:56)
+```
+active (Python) → superseded
+○ → active (TypeScript)
+```
+- **By:** Leonid
+- **Evidence:** commit 3b747f8
+- **What:** Complete rewrite in TypeScript using `@mariozechner/pi-tui`.
+  The Python TUI was 14 hours old.
+- **Decision: PIVOT.** Python/Textual → TypeScript/pi-tui.
+  - Faster iteration cycle (bun hot reload vs Python restart)
+  - Better async model for ACP communication
+  - pi-tui's markdown rendering cleaner than Textual's RichLog
+  - TypeScript strict typing caught integration bugs earlier
+  - The 29-minute Python build proved the design; the rewrite proved
+    a better stack for maintaining it.
+
+### T6. All phases complete (2026-04-05 15:52)
+```
+active → active (feature-complete)
+```
+- **By:** Leonid + Claude
+- **Evidence:** PR #83, commit 90c331d
+- **What:** All 4 phases re-implemented in TypeScript. 51 Vitest tests.
+  Python TUI deleted (d2e68ea): 11 source files, 8 test files, `textual`
+  dependency removed.
+
+### T7. Rapid evolution (2026-04-04 → 2026-04-06)
+```
+active → active (hardening)
+```
+- **Evidence:** 75 commits to packages/terminal/
+- **What:**
+  - ACP agent lifecycle management
+  - Codex-ACP support + runtime-aware preflight checks
+  - Terminal reset on exit (Kitty protocol handling)
+  - Binary packaging for PyInstaller distribution
+  - Second-tier slash command autocomplete
+
+### T8. Onboarding (2026-04-06 15:28)
+```
+active → active (expanded scope)
+```
+- **By:** Leonid + Claude
+- **Evidence:** PR #84, commit 56da082
+- **What:** TUI becomes the primary onboarding surface:
+  - `/doctor` — preflight health checks
+  - `/playground` — install sample database
+  - `/init` — first-time connection setup wizard
+  - First-run detection triggers onboarding flow
+
+### T9. Docs drift detected (2026-04-08)
+```
+active → active (stale docs)
+```
+- **Detected by:** manual review
+- **What:** tui-design.md and tui-implementation.md still describe
+  Python/Textual. Code is TypeScript. Docs need update or archival
+  marker. This is a staleness signal — the block is active but its
+  design artifacts have drifted.
 
 ## Commands
 
@@ -62,83 +207,3 @@ natural language input.
 | `/init` | First-time connection setup |
 | `/clear` | Clear feed |
 | `/quit` | Exit |
-
-## Key decisions
-
-### Single-port daemon (2026-04-03)
-Originally planned two ports (MCP :7421, UI :8080). Built as single port
-with FastMCP ASGI mounted at `/mcp`. Simpler — one process, one URL.
-
-### Python → TypeScript pivot (2026-04-04)
-Python/Textual TUI was built in 29 minutes (Phases 2-4, 2026-04-03
-20:31→21:00). Pivoted to TypeScript the next day. Reasons: faster
-iteration, better async model, pi-tui cleaner than Textual's RichLog,
-TypeScript strict typing caught bugs earlier.
-
-### Pure polling client (2026-04-03)
-TUI polls REST API every 1.5s. No WebSocket, no server push. Simpler,
-stateless. If latency becomes an issue, SSE or WebSocket is a future
-option.
-
-### ACP as subprocess, not embedded (2026-04-04)
-Agent is a child process communicating over stdio (ACP protocol).
-Agent connects to `/mcp` endpoint independently. TUI doesn't proxy
-agent traffic — it just renders what happens.
-
-## History
-
-- **2026-04-03** ○ → idea
-  By: Leonid + Claude. Evidence: [[docs/tui-design.md]] created.
-  Concept: Textual (Python) terminal companion for Claude Code.
-  Event feed with `●`/`⎿` styling, command input, ACP insider agent.
-
-- **2026-04-03** idea → planned
-  By: Leonid + Claude. Evidence: [[docs/tui-implementation.md]] created.
-  4-phase plan: Phase 0 event contract, Phase 1 HTTP transport,
-  Phase 2 read-only feed, Phase 3 commands, Phase 4 ACP + gaps.
-
-- **2026-04-03** planned → active (Python, short-lived)
-  By: Leonid + Claude. Evidence: commits c7aeea5→d5c71bf (29 minutes).
-  All 4 phases built in Python/Textual in one evening.
-  11 source files, 8 test files, 33 tests.
-
-- **2026-04-03** active → active (styling iteration)
-  By: Leonid + Claude. Evidence: 9 commits (21:40→21:56).
-  CommandInput widget styling: borders, padding, visibility.
-
-- **2026-04-04** active (Python) → superseded (Python), ○ → active (TypeScript)
-  By: Leonid. Evidence: commit 3b747f8.
-  **PIVOT:** Complete rewrite in TypeScript using pi-tui.
-  Reason: faster iteration, better async, stricter types.
-  The Python TUI was 14 hours old when it was replaced.
-
-- **2026-04-05** active → active (TypeScript, all phases complete)
-  By: Leonid + Claude. Evidence: PR #83, commit 90c331d.
-  All 4 phases re-implemented in TypeScript.
-  Python TUI deleted: commit d2e68ea (11 source files, 8 test files removed).
-
-- **2026-04-04 → 2026-04-06** active (rapid evolution)
-  75 commits to packages/terminal/. Key additions:
-  - ACP agent lifecycle management
-  - Codex-ACP support + runtime detection
-  - Terminal reset (Kitty protocol handling)
-  - Binary packaging for PyInstaller
-
-- **2026-04-06** active (onboarding features)
-  By: Leonid + Claude. Evidence: PR #84, commit 56da082.
-  Added: `/doctor` preflight checks, `/playground` sample DB,
-  `/init` first-time setup wizard, first-run detection.
-
-- **2026-04-08** active (docs stale)
-  Detected: tui-design.md and tui-implementation.md still reference
-  Python/Textual. Code is TypeScript. Design docs need update or
-  archival marker.
-
-## Evolution chain
-
-```
-docs/tui-design.md (2026-04-03, idea)
-  → Python/Textual TUI (2026-04-03, 29 min lifespan)
-    → TypeScript/pi-tui TUI (2026-04-04, current)
-      → + onboarding features (2026-04-06)
-```
