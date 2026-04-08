@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHttpShipper } from "../src/http-shipper";
 import type { ShippedBatch } from "../src/shipper";
+import { generateKeypair, loadKeypair, verifyPayload, getPublicKeyFingerprint } from "../src/identity";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 let server: Server | null = null;
 let received: { body: string; headers: Record<string, string> }[] = [];
@@ -129,5 +133,57 @@ describe("createHttpShipper", () => {
     expect(parsed.project).toBe("workspace:abc123");
     expect(parsed.shippedAt).toBe("2026-04-08T16:30:00Z");
     expect(parsed.entries).toHaveLength(2);
+  });
+
+  it("signs batches when keypair is provided", async () => {
+    const keyDir = mkdtempSync(join(tmpdir(), "miner-sign-"));
+    generateKeypair(keyDir);
+    const keypair = loadKeypair(keyDir)!;
+
+    const ship = createHttpShipper({
+      endpoint: `http://localhost:${port}/api/ingest`,
+      keypair,
+    });
+
+    const batch: ShippedBatch = {
+      developer: "alice",
+      machine: "m",
+      agent: "claude_code",
+      project: "p",
+      sourceFile: "/tmp/f",
+      shippedAt: "2026-04-08T17:00:00Z",
+      entries: ['{"signed":true}'],
+    };
+
+    await ship(batch);
+
+    // Check signature header is present
+    const sig = received[0].headers["x-miner-signature"];
+    const fp = received[0].headers["x-miner-key-fingerprint"];
+    expect(sig).toBeTruthy();
+    expect(fp).toBe(getPublicKeyFingerprint(keypair.publicKeyPem));
+
+    // Verify the signature matches the body
+    const valid = verifyPayload(received[0].body, sig, keypair.publicKeyPem);
+    expect(valid).toBe(true);
+  });
+
+  it("does not include signature headers without keypair", async () => {
+    const ship = createHttpShipper({
+      endpoint: `http://localhost:${port}/api/ingest`,
+    });
+
+    await ship({
+      developer: "bob",
+      machine: "m",
+      agent: "codex",
+      project: "p",
+      sourceFile: "/tmp/f",
+      shippedAt: "2026-04-08T17:00:00Z",
+      entries: ["{}"],
+    });
+
+    expect(received[0].headers["x-miner-signature"]).toBeUndefined();
+    expect(received[0].headers["x-miner-key-fingerprint"]).toBeUndefined();
   });
 });

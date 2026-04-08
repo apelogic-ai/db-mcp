@@ -3,10 +3,13 @@
  */
 
 import type { ShippedBatch } from "./shipper";
+import type { Keypair } from "./identity";
+import { signPayload, getPublicKeyFingerprint } from "./identity";
 
 export interface HttpShipperConfig {
   endpoint: string;
   apiKey?: string;
+  keypair?: Keypair;
   timeoutMs?: number;
 }
 
@@ -19,11 +22,18 @@ export function createHttpShipper(
   const timeout = config.timeoutMs ?? 30_000;
 
   return async (batch: ShippedBatch): Promise<void> => {
+    const body = JSON.stringify(batch);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
     if (config.apiKey) {
       headers["Authorization"] = `Bearer ${config.apiKey}`;
+    }
+    if (config.keypair) {
+      headers["X-Miner-Signature"] = signPayload(body, config.keypair);
+      headers["X-Miner-Key-Fingerprint"] = getPublicKeyFingerprint(
+        config.keypair.publicKeyPem,
+      );
     }
 
     const controller = new AbortController();
@@ -33,7 +43,7 @@ export function createHttpShipper(
       const response = await fetch(config.endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify(batch),
+        body,
         signal: controller.signal,
       });
 
