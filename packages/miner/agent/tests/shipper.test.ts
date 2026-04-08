@@ -17,6 +17,8 @@ describe("Shipper", () => {
     stateDir = makeTmpDir();
     shipped = [];
     config = {
+      developer: "test-user",
+      machine: "test-machine",
       stateDir,
       ship: async (batch) => {
         shipped.push(batch);
@@ -69,12 +71,25 @@ describe("Shipper", () => {
       '{"content":"key: AKIAIOSFODNN7EXAMPLE"}\n'
     );
 
-    const shipper = new Shipper({ ...config, redactSecrets: true });
+    const shipper = new Shipper({ ...config, redactSecrets: true } as ShipperConfig);
     shipper.processFile(traceFile, "claude_code", "test-project");
 
     expect(shipped).toHaveLength(1);
     expect(shipped[0].entries[0]).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(shipped[0].entries[0]).toContain("[REDACTED:aws_access_key]");
+  });
+
+  it("includes developer and machine attribution", () => {
+    const traceDir = makeTmpDir();
+    const traceFile = join(traceDir, "session.jsonl");
+    writeFileSync(traceFile, '{"line":1}\n');
+
+    const shipper = new Shipper(config);
+    shipper.processFile(traceFile, "claude_code", "test-project");
+
+    expect(shipped[0].developer).toBe("test-user");
+    expect(shipped[0].machine).toBe("test-machine");
+    expect(shipped[0].shippedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("includes metadata in batch", () => {

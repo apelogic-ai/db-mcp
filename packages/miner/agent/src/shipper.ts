@@ -13,18 +13,24 @@ import {
   writeFileSync,
   statSync,
 } from "node:fs";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { hostname } from "node:os";
 import { redactSecrets } from "./security/scanner";
 
 export interface ShippedBatch {
+  developer: string;
+  machine: string;
   agent: string;
   project: string;
   sourceFile: string;
+  shippedAt: string;
   entries: string[];
 }
 
 export interface ShipperConfig {
+  developer: string;   // user identity (email, username, or opaque ID)
+  machine?: string;    // machine identifier (hostname or hash)
   stateDir: string;
   redactSecrets?: boolean;
   ship: (batch: ShippedBatch) => Promise<void>;
@@ -109,9 +115,12 @@ export class Shipper {
 
     // Ship
     const batch: ShippedBatch = {
+      developer: this.config.developer,
+      machine: this.config.machine ?? hostname(),
       agent,
       project,
       sourceFile: filePath,
+      shippedAt: new Date().toISOString(),
       entries: validEntries,
     };
 
