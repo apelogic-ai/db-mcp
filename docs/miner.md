@@ -1,8 +1,8 @@
 # Miner: Knowledge Extraction from Agent Traces
 
 **Codename:** miner
-**Status:** Design
-**Date:** 2026-04-08
+**Status:** PoC implemented (agent + ingestor), design for centralized pipelines
+**Date:** 2026-04-08 (design), 2026-04-08 (implementation)
 
 ---
 
@@ -505,6 +505,147 @@ by the centralized curator rather than individual developers.
 
 ---
 
+## Implementation status
+
+What has been built as of 2026-04-08:
+
+### packages/miner/agent/ — 98 tests, all passing
+
+| Module | Status | What it does |
+|---|---|---|
+| `discover.ts` | Done | Find trace dirs for Claude Code, Codex, Cursor |
+| `parsers/claude.ts` | Done | Claude Code JSONL → NormalizedEntry |
+| `parsers/codex.ts` | Done | Codex JSONL → NormalizedEntry (tool name mapping, task summaries) |
+| `parsers/cursor.ts` | Done | Cursor SQLite (.vscdb) → NormalizedEntry (composerData + bubbleId tables) |
+| `security/scanner.ts` | Done | 11 regex patterns, scan + redact (99% true positive, 5% false positive) |
+| `shipper.ts` | Done | Cursor-based idempotent shipping, deterministic batchId, retry on failure |
+| `http-shipper.ts` | Done | POST to ingestor with optional Ed25519 signing |
+| `identity.ts` | Done | Ed25519 keypair generation, sign, verify, fingerprint |
+| `config.ts` | Done | YAML config loading with defaults + merge |
+| `daemon.ts` | Done | Async poll loop (discover → process → ship) |
+| `cli.ts` | Done | `scan` (one-shot), `status`, `--dry-run`, `--endpoint`, `--api-key` |
+| smoke tests | Done | Validated against real Claude Code + Codex traces on a live machine |
+
+### packages/miner/ingestor/ — 18 tests, all passing
+
+| Module | Status | What it does |
+|---|---|---|
+| `server.ts` | Done | HTTP server, dual auth (API key + Ed25519), batch validation |
+| `store.ts` | Done | Lakehouse raw zone storage (JSONL + metadata), batchId dedup |
+| `main.ts` | Done | CLI entry point (`--port`, `--data-dir`) |
+| E2E tests | Done | Agent → HTTP → ingestor → lakehouse, verified with real data |
+
+### Hand-tested end-to-end
+
+```
+11 Claude Code sources, 120 trace files
+→ agent scans, redacts secrets, generates Ed25519 signatures
+→ ships 120 batches via HTTP to local ingestor
+→ 2,239 entries stored in lakehouse raw zone
+→ developer auto-resolved from git config (lbeliaev@gmail.com)
+```
+
+### Learnings from implementation
+
+**Idempotency required both sides.** The initial design had fire-and-forget
+shipping — cursor advanced before confirming delivery. Fixed: `processFile()`
+is now async, awaits the ship callback, and only advances cursor on success.
+Ingestor deduplicates by deterministic `batchId` (SHA-256 of file + offset + size).
+
+**Ed25519 needs `sign()/verify()`, not `createSign()/createVerify()`.** Node's
+crypto module handles Ed25519 differently from RSA/ECDSA. The initial implementation
+used the wrong API and failed with "Unsupported crypto operation."
+
+**Cursor uses SQLite, not JSONL.** Discovered during implementation — Cursor stores
+conversations in `.vscdb` files (SQLite key-value tables), not flat JSONL.
+Required `better-sqlite3` dependency and a different parsing approach
+(SQL queries over `cursorDiskKV` table, key patterns like `composerData:*`
+and `bubbleId:*`).
+
+**Vitest runs in Node, not Bun.** Several tests failed because they used
+`Bun.serve()` or `Bun.file()`. All Bun-specific APIs were replaced with
+Node equivalents (`http.createServer`, `fs.readFileSync`) for test compatibility.
+
+**Parse rates are ~50%.** Claude Code: 56% of JSONL lines parse into
+NormalizedEntry; Codex: 48%. The rest are system/meta entries (token_count,
+context_compacted, session_meta) that don't map to user-visible actions.
+These could be parsed in a future pass for the analytics pipeline.
+
+### What's NOT built yet
+
+| Component | Status | Needed for |
+|---|---|---|
+| **Parquet transformation** | Not built | Analytics pipeline (Path 2) — see next section |
+| **Normalization at ingest** | Not built | Cross-agent queries over unified schema |
+| **Knowledge mining pipeline** | Not built | Path 1 — cross-correlated extraction |
+| **Analytics dashboards** | Not built | Path 2 — usage, cost, adoption metrics |
+| **Security scanning pipeline** | Not built | Path 3 — centralized secret detection |
+| **DX diagnostics pipeline** | Not built | Path 4 — friction reports |
+| **Cursor SQLite shipping** | Not built | Agent skips `.vscdb` files for now |
+| **Config file integration** | Partial | CLI reads flags, not `~/.miner/config.yaml` |
+| **Daemon watch mode** | Not built | Continuous mode (`miner-agent watch`) |
+
+---
+
+## Storage: JSONL → Parquet
+
+The raw zone uses JSONL (what the agent ships). This is fine for ingestion
+and debugging but inadequate for the analytics pipeline.
+
+**Why Parquet for the normalized zone:**
+
+| Concern | JSONL | Parquet |
+|---|---|---|
+| Storage | 1x (raw text) | 5-10x smaller (columnar + compression) |
+| Query performance | Full scan every file | Read only needed columns |
+| Schema | None — each line can differ | Typed, enforced at write |
+| Ecosystem | Universal but slow to query | Native to every lakehouse tool |
+| Append | Trivial | Write new files (no in-place append) |
+| Human readable | Yes | No (binary) |
+
+**Architecture:**
+
+```
+Raw zone (JSONL, as-shipped):
+  raw/claude_code/*.jsonl
+  raw/codex/*.jsonl
+  raw/cursor/*.jsonl
+         │
+    periodic batch job
+    (read JSONL → parse → normalize → write parquet)
+         │
+         ▼
+Normalized zone (Parquet, columnar):
+  normalized/
+    sessions.parquet          — one row per session
+    tool_calls.parquet        — one row per tool invocation
+    messages.parquet          — one row per user/assistant message
+    cost_events.parquet       — token usage + dollar cost
+    secret_detections.parquet — credential exposure events
+    skill_events.parquet      — skill install/invoke/retire
+```
+
+**Implementation:** DuckDB reads JSONL natively and writes Parquet:
+
+```sql
+COPY (
+  SELECT
+    json_extract_string(line, '$.timestamp') as timestamp,
+    json_extract_string(line, '$.agent') as agent,
+    json_extract_string(line, '$.toolName') as tool_name,
+    json_extract_string(line, '$.developer') as developer
+  FROM read_json_auto('raw/claude_code/*.jsonl',
+    columns={line: 'VARCHAR'}, format='newline_delimited')
+) TO 'normalized/tool_calls.parquet' (FORMAT PARQUET, PARTITION_BY (agent));
+```
+
+This is a natural next step for the ingestor: a periodic job that reads
+the raw zone, normalizes through the existing parsers, and writes Parquet
+files partitioned by date and agent. All four pipelines (knowledge,
+analytics, security, DX) then query the normalized Parquet zone.
+
+---
+
 ## Centralized architecture: Lakehouse
 
 The local miner (Phases 1–4) handles individual developer workflows.
@@ -587,13 +728,16 @@ Developer machines (opt-in)
 │    ┌───────────────────────────────────────────────────────────────┐
 │    │  Lakehouse (S3, append-only, immutable)                      │
 │    │                                                              │
-│    │  Raw zone:                                                   │
-│    │    traces_claude/ traces_codex/ github_events/               │
-│    │    vendor_anthropic/ vendor_openai/ ci_events/               │
-│    │    jira_events/ mcp_server_logs/ skill_events/               │
-│    │    vault_changes/ incident_events/ survey_responses/         │
-│    │                                                              │
-│    │  Normalized zone:                                            │
+│    │  Raw zone (JSONL, as-shipped):                                │
+│    │    traces_claude/ traces_codex/ traces_cursor/               │
+│    │    github_events/ vendor_anthropic/ vendor_openai/           │
+│    │    ci_events/ jira_events/ mcp_server_logs/                  │
+│    │    skill_events/ vault_changes/ incident_events/             │
+│    │                    │                                         │
+│    │              periodic batch job                              │
+│    │              (JSONL → parse → normalize → Parquet)           │
+│    │                    │                                         │
+│    │  Normalized zone (Parquet, columnar, partitioned by date):   │
 │    │    sessions/         — agent sessions (cross-agent schema)   │
 │    │    tool_calls/       — every tool invocation (normalized)    │
 │    │    commits/          — git commits with AI-attribution flag  │
