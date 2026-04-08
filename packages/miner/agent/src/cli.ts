@@ -14,6 +14,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { discoverTraceSources, type TraceSource } from "./discover";
 import { Shipper, type ShippedBatch } from "./shipper";
+import { createHttpShipper } from "./http-shipper";
+import { generateKeypair, loadKeypair } from "./identity";
 
 const DEFAULT_STATE_DIR = join(homedir(), ".miner");
 const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude");
@@ -36,9 +38,11 @@ interface ScanOpts {
   redactSecrets: boolean;
   dryRun: boolean;
   developer?: string;
+  endpoint?: string;
+  apiKey?: string;
 }
 
-function scanAction(opts: ScanOpts): void {
+async function scanAction(opts: ScanOpts): Promise<void> {
   const sources = discoverTraceSources({
     claudeCodeDir: opts.claudeDir,
     codexDir: opts.codexDir,
@@ -85,38 +89,67 @@ function scanAction(opts: ScanOpts): void {
     return;
   }
 
-  // Process each source through the shipper
+  // Ensure keypair exists
+  generateKeypair(opts.stateDir);
+  const keypair = loadKeypair(opts.stateDir) ?? undefined;
+
+  // Set up shipping — HTTP if endpoint configured, local logging otherwise
   const shipped: ShippedBatch[] = [];
+  const shipFn = opts.endpoint
+    ? createHttpShipper({
+        endpoint: opts.endpoint,
+        apiKey: opts.apiKey,
+        keypair,
+      })
+    : async (batch: ShippedBatch) => { shipped.push(batch); };
+
   const shipper = new Shipper({
     developer: opts.developer,
     stateDir: opts.stateDir,
     redactSecrets: opts.redactSecrets,
-    ship: async (batch) => {
-      shipped.push(batch);
-    },
+    ship: shipFn,
   });
 
   console.log(`\nDeveloper: ${shipper.developer}`);
-  console.log(`Machine: ${shipper.machine}\n`);
+  console.log(`Machine: ${shipper.machine}`);
+  if (opts.endpoint) {
+    console.log(`Endpoint: ${opts.endpoint}`);
+  }
+  if (keypair) {
+    console.log(`Signing: Ed25519 keypair loaded`);
+  }
+  console.log();
+
+  let batchCount = 0;
+  let entryCount = 0;
+  let failCount = 0;
 
   for (const source of sources) {
     for (const file of source.files) {
       if (file.endsWith(".vscdb")) {
-        // Cursor: parse SQLite, convert to JSONL lines, then ship
-        // (For now, skip — Cursor shipping needs a different path)
         console.log(`  [skip] ${source.agent}/${source.project}: SQLite shipping not yet wired`);
         continue;
       }
-      shipper.processFile(file, source.agent, source.project);
+      const ok = await shipper.processFile(file, source.agent, source.project);
+      if (ok) {
+        batchCount++;
+      }
     }
   }
 
-  const totalEntries = shipped.reduce((sum, b) => sum + b.entries.length, 0);
-  console.log(`Scanned: ${shipped.length} batch(es), ${totalEntries} new entries`);
-  if (shipped.length > 0) {
-    console.log("Batches shipped (to local callback — no ingestor configured):");
-    for (const b of shipped) {
-      console.log(`  ${b.agent}/${b.project}: ${b.entries.length} entries`);
+  if (opts.endpoint) {
+    console.log(`Shipped: ${batchCount} batch(es) to ${opts.endpoint}`);
+    if (failCount > 0) {
+      console.log(`  ${failCount} batch(es) failed — will retry on next scan`);
+    }
+  } else {
+    const totalEntries = shipped.reduce((sum, b) => sum + b.entries.length, 0);
+    console.log(`Scanned: ${shipped.length} batch(es), ${totalEntries} new entries`);
+    if (shipped.length > 0) {
+      console.log("Batches (no endpoint configured — local only):");
+      for (const b of shipped) {
+        console.log(`  ${b.agent}/${b.project}: ${b.entries.length} entries`);
+      }
     }
   }
 }
@@ -177,6 +210,8 @@ program
   .option("--no-redact-secrets", "Disable secret redaction")
   .option("--dry-run", "Discover and count without shipping", false)
   .option("--developer <id>", "Developer identity override")
+  .option("--endpoint <url>", "Ingestor endpoint URL (e.g. http://localhost:19900/api/ingest)")
+  .option("--api-key <key>", "API key for ingestor auth")
   .action(scanAction);
 
 program
