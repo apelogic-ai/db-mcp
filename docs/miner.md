@@ -508,63 +508,180 @@ by the centralized curator rather than individual developers.
 ## Centralized architecture: Lakehouse
 
 The local miner (Phases 1–4) handles individual developer workflows.
-For organizational knowledge, a centralized architecture adds
-cross-correlation, analytics, security scanning, and DX diagnostics.
+For organizational AI observability, a centralized lakehouse ingests
+data from all sources — not just agent traces — to provide a 360-degree
+view of AI's impact on the engineering organization.
 
-### Trace collection
+### Data sources
 
-Developers opt in to ship traces to a central lakehouse. Traces are
-preprocessed locally before shipping:
+**Tier 1 — Agent traces and local signals (already designed above)**
 
-| Preprocessing level | What's stripped | Recommendation |
+| Source | What it provides | Collection |
+|---|---|---|
+| Agent traces (local) | Reasoning chains, tool calls, outcomes | Local agent (Component 1) |
+| Skill/config changes | What capabilities are available and used | File watch (local agent) |
+
+**Tier 2 — Code and collaboration platforms**
+
+| Source | What it provides | Collection |
+|---|---|---|
+| GitHub / GitLab | Commits, PRs, reviews, CI status, branch activity | Webhook or API polling |
+| GitHub Copilot metrics | Acceptance rate, suggestions/day, languages, active users | Copilot Business API |
+| CI/CD (GitHub Actions, Jenkins) | Build times, failure rates, deploy frequency, test results | Webhook or API |
+| Jira / Linear | Tickets completed, cycle time, story points | API polling |
+| Code review platforms | Review time, comments, approval rates on AI-generated PRs | GitHub API (PR metadata) |
+
+**Tier 3 — LLM vendor APIs (Teams/Enterprise plans)**
+
+| Source | What it provides | Collection |
+|---|---|---|
+| Anthropic Admin API | Per-user token usage, cost by model, rate limit consumption | API polling |
+| OpenAI Admin API | Usage by user/key, cost per model, batch status | API polling |
+| Cursor Business | Seats, per-user usage, feature breakdown (tab vs composer vs chat) | Admin API |
+| IDE telemetry (VS Code, JetBrains) | Extensions installed, features used, editor time | Extension/plugin |
+
+**Tier 4 — Internal tools and operational data**
+
+| Source | What it provides | Collection |
+|---|---|---|
+| MCP server logs | Which MCP tools called, by whom, error rates | Server-side logging |
+| Knowledge vault changes | Rules added, metrics defined, examples approved | Git history of vault |
+| Incident management (PagerDuty) | Incidents caused by AI-generated code, MTTR | Webhook |
+| Slack / Teams (scoped channels) | AI tool mentions, help requests, knowledge sharing | Bot or API |
+| Developer surveys / NPS | Subjective satisfaction, pain points | Periodic survey |
+
+### Trace preprocessing
+
+Traces are preprocessed locally before shipping:
+
+| Level | What's stripped | Recommendation |
 |---|---|---|
 | **Raw** | Nothing | Maximum value, maximum risk |
-| **Redact secrets** | Regex-strip secrets → `[REDACTED]` | **Recommended.** Safe, preserves behavioral data |
+| **Redact secrets** | Regex-strip secrets → `[REDACTED]` | **Recommended** |
 | **Strip file contents** | Remove tool_result payloads | Loses code context |
-| **Metadata only** | Keep only tool names, timestamps, success/fail | Minimal risk, minimal value |
+| **Metadata only** | Keep only tool names, timestamps, success/fail | Minimal value |
 
-**Recommended:** redact secrets locally (the security scanner runs
-BEFORE shipping to catch and alert), then ship everything else. Full
-behavioral data for all processing paths, no credential exposure in
-the central store.
+**Recommended:** redact secrets locally (security scanner runs BEFORE
+shipping), then ship everything else.
+
+### Lakehouse architecture
 
 ```
 Developer machines (opt-in)
-├── Claude Code traces ──┐
-├── Codex traces ────────┤── local secret scan + redaction
-├── Cursor traces ───────┤
-└── skill/config changes ┘
-         │
-         ▼
-    Ingest API / collector
-         │
-         ▼
-    ┌─────────────────────────────┐
-    │  Lakehouse                  │
-    │  (append-only, immutable)   │
-    │                             │
-    │  Raw zone:                  │
-    │    traces_claude/           │
-    │    traces_codex/            │
-    │    skill_events/            │
-    │                             │
-    │  Processed zone:            │
-    │    normalized_tool_calls/   │
-    │    normalized_sessions/     │
-    │    secret_detections/       │
-    │    error_patterns/          │
-    │                             │
-    │  Curated zone:              │
-    │    knowledge_artifacts/     │
-    │    security_findings/       │
-    │    dx_diagnostics/          │
-    └─────────────────────────────┘
-         │
-         ├──► Path 1: Knowledge miner ──► corp vault
-         ├──► Path 2: Analytics engine ──► dashboards
-         ├──► Path 3: Security scanner ──► alerts
-         └──► Path 4: DX diagnostics  ──► DevEx team
+├── Agent traces ────────┐
+├── Skill/config changes ┘── local secret scan + redaction
+│                                │
+│   Code & collaboration         │    LLM vendors        Internal tools
+│   ├── GitHub webhooks          │    ├── Anthropic API   ├── MCP server logs
+│   ├── CI/CD events             │    ├── OpenAI API      ├── Vault git history
+│   ├── Jira/Linear API          │    ├── Cursor admin    ├── Incident webhooks
+│   └── Copilot metrics          │    └── IDE telemetry   └── Surveys
+│            │                   │           │                    │
+│            ▼                   ▼           ▼                    ▼
+│         ┌──────────────────────────────────────────────────────────┐
+│         │  Ingestor API                                           │
+│         │  (authenticate, normalize, deduplicate, store)          │
+│         └──────────────────────┬───────────────────────────────────┘
+│                                │
+│                                ▼
+│    ┌───────────────────────────────────────────────────────────────┐
+│    │  Lakehouse (S3, append-only, immutable)                      │
+│    │                                                              │
+│    │  Raw zone:                                                   │
+│    │    traces_claude/ traces_codex/ github_events/               │
+│    │    vendor_anthropic/ vendor_openai/ ci_events/               │
+│    │    jira_events/ mcp_server_logs/ skill_events/               │
+│    │    vault_changes/ incident_events/ survey_responses/         │
+│    │                                                              │
+│    │  Normalized zone:                                            │
+│    │    sessions/         — agent sessions (cross-agent schema)   │
+│    │    tool_calls/       — every tool invocation (normalized)    │
+│    │    commits/          — git commits with AI-attribution flag  │
+│    │    pull_requests/    — PRs with AI-contribution metadata     │
+│    │    cost_events/      — token usage + $ per session/user      │
+│    │    tickets/          — Jira/Linear with AI-assist flag       │
+│    │    ci_runs/          — builds linked to commits              │
+│    │    secret_detections/— credential exposure events            │
+│    │    skill_events/     — install, invoke, promote, retire      │
+│    │    knowledge_events/ — vault writes, approvals, dismissals   │
+│    │                                                              │
+│    │  Curated zone:                                               │
+│    │    knowledge_artifacts/   analytics_aggregates/              │
+│    │    security_findings/     dx_diagnostics/                    │
+│    └───────────────────────────┬───────────────────────────────────┘
+│                                │
+│         ┌──────────┬───────────┼───────────┬──────────┐
+│         ▼          ▼           ▼           ▼          ▼
+│    Knowledge    Analytics   Security      DX      AI Leader
+│    miner        engine      scanner    diagnostics  360° view
+│       │            │           │           │
+│       ▼            ▼           ▼           ▼
+│    Corp vault   Dashboards  Alerts     DevEx reports
+│    (git)        (Grafana)   (Slack)    (weekly)
 ```
+
+### Enrichment joins
+
+The real value is cross-referencing data sources:
+
+| Join | What it reveals |
+|---|---|
+| Agent trace × Git commit (by timestamp + project) | "This commit was produced by an AI agent" |
+| Vendor cost × Git output (by user + time) | Cost per PR, cost per feature, cost per bug fix |
+| Agent trace × Jira ticket (by branch + time) | Ticket closed with AI assistance — velocity impact |
+| Agent retries × CI failures (by project) | "Agent struggled because tests are flaky" (infra, not AI) |
+| Skill usage × Developer role/tenure | Seniors use different skills than juniors |
+| MCP tool calls × Query results | Which db-mcp queries produce value vs. waste tokens |
+| Secret exposure × Developer × Project | Which workflows lack secrets management |
+| PR review time × AI-authored flag | Are AI-generated PRs reviewed faster or slower? |
+| Copilot acceptance rate × Agent trace volume | Do active agent users also accept more Copilot suggestions? |
+| Incident × AI-authored commit (by deploy) | Did AI-generated code cause production incidents? |
+| New hire session patterns × tenure | Onboarding friction visible from trace length/retries |
+
+### Questions the 360° view answers
+
+| Question | Data sources needed |
+|---|---|
+| "How much are we spending on AI?" | Vendor APIs (cost) + seat licenses |
+| "Is it worth it?" | Vendor cost + Jira velocity + CI build times (before/after) |
+| "Who's using AI and who isn't?" | Vendor APIs (per-user) + traces (sessions/dev) |
+| "What are they using it for?" | Traces (tool calls, task types) |
+| "Is AI-generated code good?" | GitHub (PR reviews, revert rate) + CI (test pass rate) |
+| "Are we exposed?" | Secret scanner + traces (data access patterns) |
+| "What knowledge are we building?" | Vault changes + knowledge miner output |
+| "Where is AI struggling?" | Traces (retries, errors) + DX diagnostics |
+| "What should we invest in next?" | Skill usage + gap signals + DX friction |
+| "Did AI code break production?" | Incidents × AI-authored commits × deploys |
+| "Are we compliant?" | Security scanner + audit trail |
+
+### What's missing (known gaps)
+
+**1. Cost attribution.** Vendor APIs give total cost per user. But
+attributing cost to a specific project, feature, or Jira ticket
+requires joining vendor usage with git/Jira data by timestamp and
+user. If the org uses one API key per team, attribution is easy. If
+one key for everyone, trace-level data (which includes session →
+project mapping) is the only way.
+
+**2. Production quality signal.** All the data above measures the
+development process. Missing: did the AI-generated code work in
+production? Requires linking: commit → deploy → production metrics
+(error rates, latency, incidents). The incident management source
+partially covers this, but proactive quality metrics (error rate per
+AI-authored vs human-authored code) require deeper production
+observability integration.
+
+**3. Pre-AI baseline.** "AI saves time" requires knowing how long
+things took before. If the org adopts AI tools and the lakehouse
+simultaneously, there is no baseline. Recommendation: start collecting
+git, Jira, and CI data NOW, even before agent-specific sources, to
+establish pre-AI velocity and quality metrics.
+
+**4. The human side.** Developer satisfaction, cognitive load, skill
+atrophy ("are developers losing the ability to code without AI?"),
+trust calibration ("do developers over-trust AI output?"). Surveys
+are the only source. They are noisy but irreplaceable — no amount of
+trace data tells you whether people are happy or growing.
 
 ### Path 1: Knowledge mining (centralized)
 
