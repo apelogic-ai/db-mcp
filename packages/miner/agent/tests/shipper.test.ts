@@ -17,7 +17,7 @@ describe("Shipper", () => {
     stateDir = makeTmpDir();
     shipped = [];
     config = {
-      developer: "test-user",
+      developer: "test-user@example.com",
       machine: "test-machine",
       stateDir,
       ship: async (batch) => {
@@ -79,7 +79,7 @@ describe("Shipper", () => {
     expect(shipped[0].entries[0]).toContain("[REDACTED:aws_access_key]");
   });
 
-  it("includes developer and machine attribution", () => {
+  it("includes explicit developer and machine attribution", () => {
     const traceDir = makeTmpDir();
     const traceFile = join(traceDir, "session.jsonl");
     writeFileSync(traceFile, '{"line":1}\n');
@@ -87,9 +87,30 @@ describe("Shipper", () => {
     const shipper = new Shipper(config);
     shipper.processFile(traceFile, "claude_code", "test-project");
 
-    expect(shipped[0].developer).toBe("test-user");
+    expect(shipped[0].developer).toBe("test-user@example.com");
     expect(shipped[0].machine).toBe("test-machine");
     expect(shipped[0].shippedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("resolves developer from git config when not explicitly set", () => {
+    const shipper = new Shipper({
+      stateDir,
+      ship: async () => {},
+    });
+
+    // Should resolve to git config user.email (this machine has git configured)
+    expect(shipper.developer).toBeTruthy();
+    expect(shipper.developer).not.toBe("unknown");
+  });
+
+  it("resolves machine from hostname when not explicitly set", () => {
+    const shipper = new Shipper({
+      stateDir,
+      ship: async () => {},
+    });
+
+    expect(shipper.machine).toBeTruthy();
+    expect(shipper.machine.length).toBeGreaterThan(0);
   });
 
   it("includes metadata in batch", () => {

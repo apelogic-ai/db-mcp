@@ -16,6 +16,7 @@ import {
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { hostname } from "node:os";
+import { execSync } from "node:child_process";
 import { redactSecrets } from "./security/scanner";
 
 export interface ShippedBatch {
@@ -29,8 +30,8 @@ export interface ShippedBatch {
 }
 
 export interface ShipperConfig {
-  developer: string;   // user identity (email, username, or opaque ID)
-  machine?: string;    // machine identifier (hostname or hash)
+  developer?: string;  // explicit override; defaults to git config user.email
+  machine?: string;    // machine identifier; defaults to os.hostname()
   stateDir: string;
   redactSecrets?: boolean;
   ship: (batch: ShippedBatch) => Promise<void>;
@@ -42,13 +43,43 @@ function fileHash(path: string): string {
   return createHash("sha256").update(path).digest("hex").slice(0, 16);
 }
 
+/**
+ * Resolve developer identity. Priority:
+ * 1. Explicit config value
+ * 2. git config user.email
+ * 3. git config user.name
+ * 4. OS username
+ */
+function resolveDeveloper(explicit?: string): string {
+  if (explicit) return explicit;
+  try {
+    const email = execSync("git config --global user.email", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (email) return email;
+  } catch { /* no git or no config */ }
+  try {
+    const name = execSync("git config --global user.name", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (name) return name;
+  } catch { /* no git or no config */ }
+  return process.env.USER ?? process.env.USERNAME ?? "unknown";
+}
+
 export class Shipper {
   private config: ShipperConfig;
   private cursors: CursorMap;
   private cursorFile: string;
+  readonly developer: string;
+  readonly machine: string;
 
   constructor(config: ShipperConfig) {
     this.config = config;
+    this.developer = resolveDeveloper(config.developer);
+    this.machine = config.machine ?? hostname();
     this.cursorFile = join(config.stateDir, "shipper-cursors.json");
     this.cursors = this.loadCursors();
   }
@@ -115,8 +146,8 @@ export class Shipper {
 
     // Ship
     const batch: ShippedBatch = {
-      developer: this.config.developer,
-      machine: this.config.machine ?? hostname(),
+      developer: this.developer,
+      machine: this.machine,
       agent,
       project,
       sourceFile: filePath,
