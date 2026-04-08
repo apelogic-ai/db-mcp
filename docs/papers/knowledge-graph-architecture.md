@@ -55,37 +55,190 @@ it provides:
 
 ---
 
-## Node structure
+## The Block: unit of knowledge
 
-Every node in the graph follows a common envelope:
+A **block** is a concept, component, feature, or decision that has
+identity across time. It is the primary node type in the knowledge
+graph. A block is not a file — it is the *thing* that files describe.
+"TUI" is a block whether it was planned in Python or built in
+TypeScript. The block persists; its state, content, and artifacts
+change.
+
+### Block types
+
+| Type | What it represents | Example |
+|---|---|---|
+| `component` | A system or module | TUI, CLI, gateway, sigint |
+| `feature` | A specific capability | UNION validation, JSON-RPC auth |
+| `design` | An architectural concept | Knowledge pipeline, dual-format vault |
+| `decision` | A choice with rationale | "Vendor ACP bridge instead of npm" |
+| `convention` | A recurring practice | "One file per rule, YAML for schema" |
+| `rule` | A constraint to follow | "Exclude test accounts from DAU" |
+| `metric` | A measured quantity | DAU, revenue, churn |
+
+### Block structure
+
+Every block is a markdown file with YAML frontmatter:
+
+```markdown
+---
+id: tui
+type: component
+title: Terminal UI
+status: active
+created: 2026-03-01
+supersedes: null
+superseded_by: null
+---
+
+# Terminal UI
+
+Real-time event feed for db-mcp, styled after Claude Code's output.
+
+## Artifacts
+- Design: [[docs/tui-design.md]]
+- Code: [[packages/terminal/src/index.ts]]
+
+## Depends on
+- [[block/acp-integration]]
+- [[block/daemon]]
+
+## History
+
+- **2026-03-01** ○ → idea
+  [[docs/tui-design.md]] created. Concept: Textual (Python) feed.
+
+- **2026-03-15** idea → planned
+  [[docs/tui-implementation.md]] written. 4 phases.
+
+- **2026-04-01** planned → active
+  PR #83. Built in TypeScript, not Python.
+
+- **2026-04-06** active (drift detected)
+  sigint: tui-implementation.md references Python paths.
+```
+
+The **frontmatter** is structured data (queryable, filterable). The
+**body** is linked prose (navigable by humans and agents). The
+**history** section is the temporal record — an ordered list of state
+transitions with evidence.
+
+### State machine
+
+Every block follows a finite state machine:
+
+```
+          propose
+    ○ ──────────► idea
+                   │
+            plan   │  dismiss
+           ┌───────┤──────────► dismissed
+           ▼       │
+         planned   │
+           │       │
+    implement      │
+           │       │
+           ▼       │
+        active ────┤
+           │       │  supersede
+      drift/stale  │──────────► superseded
+           │       │                │
+           ▼       │         archive│
+         stale     │                ▼
+           │       │            archived
+    revive │       │
+           └───────┘
+```
+
+| State | Meaning |
+|---|---|
+| `idea` | Discussed or proposed, no formal plan |
+| `planned` | Has a design doc or explicit plan |
+| `active` | Implemented and in use |
+| `stale` | Implemented but docs have drifted, or not validated recently |
+| `superseded` | Replaced by another block |
+| `dismissed` | Considered and explicitly rejected |
+| `archived` | Retired, kept for historical reference |
+
+### Transitions
+
+Each state change is a **transition** — the atomic unit of temporal
+knowledge. A transition records:
+
+```
+- **{date}** {from_state} → {to_state}
+  By: {actor}. Evidence: [[{artifact}]]
+  Note: {optional context}
+```
+
+Transitions are **immutable** and **append-only**. You never edit a
+past transition — you add a new one. This gives every block a complete,
+auditable history that answers: "How did this concept evolve? Who
+decided what, when, and based on what evidence?"
+
+Transitions can be:
+- **Explicit** — a human or agent changes state deliberately
+  ("I'm implementing this now")
+- **Detected** — sigint or a scheduler notices a drift
+  ("docs reference code paths that no longer exist")
+- **Inferred** — the agent reads git history and reconstructs
+  what happened ("PR #83 created packages/terminal/, implementing
+  the TUI block")
+
+### Graph edges from blocks
+
+Blocks link to other blocks and to artifacts:
+
+| Link type | Meaning | Example |
+|---|---|---|
+| `[[block/X]]` in Depends on | This block requires X | TUI depends on ACP integration |
+| `[[block/X]]` in superseded_by | X replaced this block | Python TUI → TypeScript TUI |
+| `[[docs/X]]` in Artifacts | Design document for this block | tui-design.md |
+| `[[packages/X]]` in Artifacts | Implementation code | packages/terminal/ |
+| `[[signals/X]]` in History | Signal that triggered a transition | sigint detected drift |
+
+These links form the graph. The block's state machine provides the
+temporal dimension. Together: a navigable, time-aware knowledge graph
+where you can ask "what is the current state of X?" AND "how did X
+get here?"
+
+---
+
+## Supporting node types
+
+Beyond blocks, the graph contains supporting nodes for signals,
+curation events, and execution records:
+
+### Node envelope
+
+All nodes share a common structure:
 
 ```
 KnowledgeNode:
   hash: bytes32                        # SHA-256 of canonical(type + content + links)
-  type: rule | metric | description | example | signal | curation | execution
-  content: structured + freeform       # typed payload + optional markdown description
+  type: block | signal | curation | execution
+  content: structured + freeform       # typed payload + markdown
 
   # Graph edges
-  parents: [hash]                      # previous versions of this node (version chain)
+  parents: [hash]                      # previous versions (version chain)
   links:                               # typed edges to other nodes
     derived_from: [hash]               # source signals
-    corroborated_by: [hash]            # execution outcomes that confirm this
+    corroborated_by: [hash]            # execution outcomes
     approved_by: hash                  # curation event
-    supersedes: hash                   # node this replaces
-    conflicts_with: [hash]            # known contradictions
-    depends_on: [hash]                # prerequisite knowledge
-    scoped_to: [hash]                  # connection/group nodes
+    supersedes: hash                   # what this replaces
+    conflicts_with: [hash]             # known contradictions
+    depends_on: [hash]                 # prerequisite knowledge
+    scoped_to: [hash]                  # connection/group scoping
 
-  # Metadata (not part of hash — mutable operational state)
-  state: proposed | active | stale | retired
+  # Metadata (mutable, not part of hash)
+  state: <FSM state>
   created_at: timestamp
-  resolved_by: identity               # who/what can read this node
+  resolved_by: identity
 ```
 
-The **hash covers type, content, and links** — but not mutable metadata
-(state, timestamps). This means the identity of a knowledge entry is
-determined by what it says and what it's connected to, not by when it
-was created or what state it's in.
+For block nodes, the `state` field follows the FSM defined above.
+For signal nodes, state is `pending | processed | expired`.
+For curation nodes, state is the decision: `approved | dismissed`.
 
 ---
 
@@ -749,29 +902,85 @@ the bridge between them.
 
 ---
 
-## Knowledge lifecycle in the graph
+## The temporal dimension
+
+Most knowledge systems capture a snapshot — what knowledge looks like
+now. They have no concept of time, history, or causality. This is a
+fundamental limitation: a business rule without provenance is an
+assertion. A rule with its full history — when it was proposed, what
+signal triggered it, who approved it, what executions corroborated it,
+when it drifted — is evidence.
+
+### Time in the graph
+
+The block's FSM and its transition history provide the temporal
+dimension. Instead of asking "what do we know?" (snapshot), you can
+ask:
+
+- **"How did this rule come to exist?"** — follow the History section
+  backward through transitions to the originating signal
+- **"When did our understanding change?"** — look for transitions
+  where a block's state changed from active to stale, or where it
+  was superseded
+- **"What was our knowledge at time T?"** — filter transitions to
+  those before T, reconstruct the state each block was in
+- **"What caused this change?"** — each transition links to evidence
+  (a signal, a commit, a curation decision)
+
+### Evolution chains
+
+Some concepts evolve through multiple blocks over time:
 
 ```
-Signal node created (extraction)
-    ↓ derived_from link
-Proposed knowledge node (interpretation + disambiguation)
-    ↓ approved_by link
-Curation node (human-in-the-loop)
-    ↓ state: proposed → active
-Active knowledge node (in use by agents)
-    ↓ corroborated_by links (execution signals)
-Validated knowledge (growing evidence chain)
-    ↓ no recent corroboration
-Stale knowledge (staleness detection)
-    ↓ new signal contradicts
-Conflict detected → new curation required
-    ↓
-Either: new version (parents link) or retirement
+vault format:
+  YAML vault (2026-02, active → superseded)
+    → linked markdown (2026-04-06, idea → planned)
+      → dual-format vault (2026-04-08, idea, current)
+
+TUI stack:
+  Python/Textual TUI (2026-03-01, planned → dismissed)
+    → TypeScript TUI (2026-04-01, active, current)
 ```
 
-Every transition is a node or a link. The graph IS the lifecycle.
-There is no separate state machine — the state is the shape of the
-subgraph around each knowledge entry.
+Each arrow is a `superseded_by` link between blocks. The chain
+shows how organizational thinking evolved — not just what the
+current answer is, but the path that led there. This is the
+institutional memory that traditionally exists only in people's heads.
+
+### Staleness as a temporal property
+
+A block becomes stale not when someone marks it, but when temporal
+evidence accumulates:
+
+- **Doc drift:** the block's artifact links point to docs that
+  reference code paths that have moved or been deleted
+- **Validation gap:** no corroborating execution signals within
+  the block's expected validation interval
+- **Dependency drift:** a block this one depends on has been
+  superseded, but this block hasn't been updated
+- **Contradiction:** a new signal conflicts with this block's
+  content
+
+Staleness detection is a graph traversal + temporal check: for each
+active block, verify that its evidence chain is recent and its
+dependencies are still active. This is what the scheduler's "lint"
+job does — the temporal equivalent of a health check.
+
+### Recovering knowledge from history
+
+When an organization needs to understand past decisions — why a
+metric was defined a certain way, why an approach was abandoned —
+the temporal graph provides the answer without archaeology. Instead
+of reading through git blame and Slack archives, the agent reads the
+block's history section and follows the evidence links.
+
+This is particularly valuable for:
+- **Onboarding:** new team members see not just current knowledge
+  but how it got there and why alternatives were rejected
+- **Incident review:** when something breaks, trace back through
+  the knowledge that informed the decision
+- **Audit:** demonstrate that a rule was proposed, reviewed, and
+  approved through a documented process
 
 ---
 

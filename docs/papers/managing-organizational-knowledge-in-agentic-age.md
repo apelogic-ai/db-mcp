@@ -809,7 +809,121 @@ with a structured workflow.
 
 ---
 
-## 10. Related Work: The LLM Wiki Pattern
+## 10. The Temporal Dimension
+
+Most knowledge management systems — from wikis to RAG pipelines to
+knowledge graphs — capture a **snapshot**: what knowledge looks like
+now. They have no structural concept of time, history, or causality.
+A business rule exists or it doesn't. There is no record of when it
+was proposed, what prompted it, who approved it, whether it was ever
+validated, or what it superseded.
+
+This is a fundamental limitation. Knowledge without temporal context
+is an assertion. Knowledge with its full history is evidence.
+
+### The Block: knowledge with identity across time
+
+The key primitive is the **block** — a concept, component, feature,
+or decision that has identity that persists even as its state,
+description, and implementation change. "TUI" is a block whether it
+was planned in Python or built in TypeScript. "Active users exclude
+test accounts" is a block whether it was a Slack comment, a proposed
+rule, or an approved production filter.
+
+Blocks are not files. They are the *things* that files, code, and
+conversations describe. A block may have multiple artifacts (a design
+doc, an implementation, a set of tests) that come and go, but the
+block persists as the conceptual anchor.
+
+### Lifecycle as a state machine
+
+Every block follows a finite state machine:
+
+```
+○ → idea → planned → active → stale → archived
+                 │              │
+              dismiss        supersede
+                 ↓              ↓
+            dismissed      superseded → archived
+```
+
+| State | Meaning |
+|---|---|
+| `idea` | Discussed or proposed, no formal plan |
+| `planned` | Has a design doc or explicit plan |
+| `active` | Implemented and in use |
+| `stale` | Implemented but drifted from reality |
+| `superseded` | Replaced by a newer block |
+| `dismissed` | Considered and explicitly rejected |
+| `archived` | Retired, kept for historical reference |
+
+The FSM provides a shared vocabulary for knowledge state. Instead of
+ambiguous markers ("TODO", "draft", "WIP", "deprecated"), every piece
+of knowledge has a precise lifecycle position.
+
+### Transitions: the temporal record
+
+Each state change is a **transition** — an immutable, append-only
+record:
+
+```
+- **{date}** {from_state} → {to_state}
+  By: {actor}. Evidence: {link to artifact or signal}
+  Note: {context}
+```
+
+Transitions answer temporal questions:
+
+- **"How did this rule come to exist?"** — follow transitions backward
+  to the originating signal
+- **"When did our understanding change?"** — find transitions where
+  blocks moved from active to stale or superseded
+- **"What was our knowledge at time T?"** — filter to transitions
+  before T, reconstruct each block's state
+- **"What caused this change?"** — each transition links to evidence
+
+Transitions can be **explicit** (a human changes state), **detected**
+(a staleness check notices drift), or **inferred** (an agent
+reconstructs history from git commits and document timestamps).
+
+### Evolution chains
+
+Concepts evolve through multiple blocks over time. The `superseded_by`
+relationship forms chains:
+
+```
+YAML vault → linked markdown → dual-format vault
+Python/Textual TUI → TypeScript TUI
+Manual onboarding → continuous learning via sigint
+```
+
+Each link preserves the rationale: why the old approach was abandoned
+and what the new one does differently. This is institutional memory
+that traditionally exists only in people's heads. The evolution chain
+makes it navigable — a new team member can read the chain and
+understand not just the current answer but the path that led there
+and the alternatives that were considered and rejected.
+
+### Staleness as emergent, not declared
+
+A block becomes stale not when someone marks it, but when temporal
+evidence accumulates:
+
+- **Doc drift:** artifacts reference code paths that have moved
+- **Validation gap:** no corroborating signals within the expected
+  interval
+- **Dependency drift:** a dependency has been superseded, but this
+  block hasn't been updated
+- **Contradiction:** a new signal conflicts with this block's content
+
+Staleness detection is a temporal graph traversal: for each active
+block, verify that its evidence chain is recent and its dependencies
+are still active. This is what scheduled "lint" operations do — the
+temporal equivalent of a knowledge health check.
+
+---
+
+## 11. Related Work: The LLM Wiki Pattern
 
 Karpathy (2025) describes a pattern for building personal knowledge
 bases using LLMs that shares significant conceptual overlap with the
@@ -873,7 +987,7 @@ architecture.
 
 ---
 
-## 11. Implementation Patterns
+## 12. Implementation Patterns
 
 ### Pattern 0: Knowledge as agent skills
 
@@ -968,7 +1082,7 @@ independent signals from production execution").
 
 ---
 
-## 12. Open Questions
+## 13. Open Questions
 
 **1. Cold start.** A new knowledge vault is empty, and the signal pipeline
 depends on existing knowledge for interpretation context. The cold start
@@ -1021,7 +1135,7 @@ as knowledge accumulates). None of these are standardized.
 
 ---
 
-## 13. Conclusion
+## 14. Conclusion
 
 The agentic enterprise does not just automate existing processes — it
 changes the aggregation function for organizational capability.
