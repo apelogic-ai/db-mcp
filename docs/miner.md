@@ -371,6 +371,145 @@ rules and decisions to the org repo.
 
 ---
 
+## Centralized architecture: Lakehouse
+
+The local miner (Phases 1–4) handles individual developer workflows.
+For organizational knowledge, a centralized architecture adds
+cross-correlation, analytics, security scanning, and DX diagnostics.
+
+### Trace collection
+
+Developers opt in to ship traces to a central lakehouse. Traces are
+preprocessed locally before shipping:
+
+| Preprocessing level | What's stripped | Recommendation |
+|---|---|---|
+| **Raw** | Nothing | Maximum value, maximum risk |
+| **Redact secrets** | Regex-strip secrets → `[REDACTED]` | **Recommended.** Safe, preserves behavioral data |
+| **Strip file contents** | Remove tool_result payloads | Loses code context |
+| **Metadata only** | Keep only tool names, timestamps, success/fail | Minimal risk, minimal value |
+
+**Recommended:** redact secrets locally (the security scanner runs
+BEFORE shipping to catch and alert), then ship everything else. Full
+behavioral data for all processing paths, no credential exposure in
+the central store.
+
+```
+Developer machines (opt-in)
+├── Claude Code traces ──┐
+├── Codex traces ────────┤── local secret scan + redaction
+├── Cursor traces ───────┤
+└── skill/config changes ┘
+         │
+         ▼
+    Ingest API / collector
+         │
+         ▼
+    ┌─────────────────────────────┐
+    │  Lakehouse                  │
+    │  (append-only, immutable)   │
+    │                             │
+    │  Raw zone:                  │
+    │    traces_claude/           │
+    │    traces_codex/            │
+    │    skill_events/            │
+    │                             │
+    │  Processed zone:            │
+    │    normalized_tool_calls/   │
+    │    normalized_sessions/     │
+    │    secret_detections/       │
+    │    error_patterns/          │
+    │                             │
+    │  Curated zone:              │
+    │    knowledge_artifacts/     │
+    │    security_findings/       │
+    │    dx_diagnostics/          │
+    └─────────────────────────────┘
+         │
+         ├──► Path 1: Knowledge miner ──► corp vault
+         ├──► Path 2: Analytics engine ──► dashboards
+         ├──► Path 3: Security scanner ──► alerts
+         └──► Path 4: DX diagnostics  ──► DevEx team
+```
+
+### Path 1: Knowledge mining (centralized)
+
+Same extractors as the local miner, but cross-correlated across
+developers. The killer feature: patterns invisible to any individual.
+
+| Input | Cross-correlation | Output |
+|---|---|---|
+| Retry patterns from 5 devs | "Everyone hits EMFILE in the monorepo" | Org-wide rule: platform fix needed |
+| User corrections from 3 devs | "3 people corrected the same agent mistake" | Shared rule/convention |
+| Task summaries mentioning same topic | "Every new hire stumbles on fiscal year" | Onboarding skill |
+| Gaps across teams | "No one knows what 'active user' means" | Glossary priority |
+
+Output: proposed org-level artifacts → curator reviews → corp vault → all agents.
+
+### Path 2: Analytics
+
+Operational dashboards and reporting from trace data.
+
+| Metric | What it tells you | Consumer |
+|---|---|---|
+| Tool call distribution per agent | How agents are being used | Eng management |
+| Tokens per task type | Cost efficiency across teams | Finance |
+| Error rate by agent × project | Which agent works best where | Platform team |
+| Time-to-completion per task | Productivity trends | Eng management |
+| Agent adoption by team/person | Who's using what, who isn't | CTO / DevEx |
+| MCP tool usage frequency | Which integrations deliver value | Platform team |
+| Sessions per developer per day | Engagement / adoption curves | DevEx |
+| Skill install vs. usage rate | What's actually useful vs. shelfware | Platform team |
+
+Output: dashboards, weekly reports, OKR tracking.
+
+### Path 3: Security & compliance
+
+Continuous scanning for credential exposure, policy violations, and
+audit-relevant events.
+
+| Signal | Detection method | Action |
+|---|---|---|
+| Secrets in prompts or outputs | Regex patterns (pre-ship + central) | Alert + rotate |
+| Secrets persisted in context compaction | Scan compacted entries | Alert (secrets survive compression) |
+| Prod DB accessed via agent | Tool call to prod connection string | Audit log entry |
+| Unapproved MCP server appears | New server in traces not in allowlist | Flag for review |
+| Large data read → paste to external | Behavioral pattern detection | Exfiltration alert |
+| Agent used on unauthorized project | Session from excluded project path | Policy violation alert |
+
+Output: security alerts, compliance reports, audit trail.
+
+**Key finding from scanning this machine's traces:** 44 high-severity
+credential exposures across 2 months — 3 unique AWS key pairs,
+7 database connection strings with passwords, 4 GitHub tokens. All in
+plaintext JSONL on disk, all previously sent to LLM API endpoints.
+Secrets also survived context compaction (persisted in compressed
+session summaries). See "Observed data" section below for full details.
+
+### Path 4: Developer experience diagnostics
+
+Trace patterns reveal where the developer experience is broken — not
+what developers did, but what was hard.
+
+| Signal | What it means | Action |
+|---|---|---|
+| Multiple devs ask agents about same topic | Documentation gap | Write the doc |
+| 5 devs fought the same config this week | Broken DX | Fix the config/tooling |
+| Average 3 retries before test passes | Flaky tests | Fix test infrastructure |
+| Agent always reads file Y before doing Z | Implicit dependency | Make it explicit |
+| New hires' sessions 3x longer for task X | Onboarding gap | Add a skill or guide |
+| Same error appears across projects | Shared infrastructure issue | Platform fix |
+
+Output: DX diagnostics for DevEx team, tech leads, onboarding program.
+
+The EMFILE example from the observed data illustrates this path:
+trace analysis revealed a monorepo file-watcher issue that wasted
+multiple developers' time across weeks. This is invisible without
+cross-correlation — each developer experienced it as "my dev server
+is flaky," not "our platform has a file descriptor problem."
+
+---
+
 ## Observed data: what's extractable right now
 
 From this machine's actual traces (Mar–Apr 2026):
@@ -405,6 +544,30 @@ Tool call mix: exec_command 74%, apply_patch 12%, write_stdin 11%
 | Codex | 3 global | playwright (via MCP) | pdf (unknown), playwright-interactive (unknown) |
 | Codex | AGENTS.md | Active (36 references) | — |
 | Codex | default.rules (76KB) | Active (permission log) | — |
+
+### Secret exposure (scanned 236K JSONL lines, 30 seconds)
+
+| Type | Occurrences | Unique | Severity |
+|---|---|---|---|
+| AWS Access Keys (AKIA...) | 5 | 3 | **HIGH** |
+| AWS Secret Key | 2 | 1 | **HIGH** |
+| Database URLs with passwords | 33 | 7 | **HIGH** |
+| GitHub Tokens (ghp_/ghs_) | 4 | 4 | **HIGH** |
+| Generic API Keys | 89 | 2 | MEDIUM |
+| UUID API Keys | 97 | 4 | MEDIUM |
+| OpenAI key pattern (sk-...) | 58 | 58 | LOW (likely false positives in reasoning tokens) |
+| Base64 long secrets | 171 | 96 | LOW (blockchain program keys) |
+
+**Where secrets appeared:**
+- `function_call_output` (most common) — agent read .env or config files
+- `user` messages — developer pasted credentials into prompts
+- `reasoning` — LLM reasoned about secrets it saw (GitHub tokens)
+- `compacted` — secrets **survived context compaction** and persisted
+  in compressed session summaries for the rest of the session
+
+**Actionable:** 44 high-severity findings (AWS + DB + GitHub) across
+2 months of casual development use. In a 20-person org, this scales to
+~400+ credential exposures per month without a secrets hygiene scanner.
 
 ---
 
