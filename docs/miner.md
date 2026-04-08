@@ -273,17 +273,28 @@ sigint:
     conventions: true
     task_summaries: true              # Codex task_complete messages
 
-  # Privacy controls
+  # Privacy controls (local)
   privacy:
     capture_file_contents: false      # never store actual code from traces
-    strip_secrets: true               # remove anything matching secret patterns
+    strip_secrets: true               # redact secrets before shipping
     exclude_projects: []              # project paths to skip entirely
 
-  # Corp sync
+  # Centralized shipping
+  ship:
+    enabled: false
+    endpoint: null                    # https://miner.acme.com/api/ingest
+    api_key_env: MINER_API_KEY        # auth for ingest endpoint
+    schedule: hourly                  # hourly | daily | realtime
+    redact_secrets: true              # deterministic regex redaction pre-ship
+    # Secret patterns: AWS keys, DB URLs, GitHub tokens, etc.
+    # ~99% true positive coverage, ~5% false positive rate
+    # See "Observed data" section for validation
+
+  # Local knowledge sync (git-based, for approved artifacts only)
   sync:
     enabled: false
     remote: null                      # git@github.com:acme/knowledge.git
-    schedule: daily                   # daily | hourly | manual
+    schedule: daily
     branch: main
 ```
 
@@ -294,80 +305,203 @@ sigint:
 Miner reads local agent traces. This is sensitive data — it contains
 prompts, code, reasoning, and potentially secrets.
 
+### Two modes
+
+**Local-only mode** (default): traces are read locally, knowledge
+artifacts are extracted and stored locally, human reviews before
+anything enters the vault. No data leaves the machine.
+
+**Centralized mode** (opt-in): traces are scanned for secrets, redacted,
+and shipped to an org-hosted lakehouse for cross-correlation, analytics,
+security scanning, and DX diagnostics. Raw traces with secrets redacted
+leave the machine; the four lakehouse pipelines process them centrally.
+
 ### Principles
 
 1. **Explicit opt-in per agent.** Each agent source must be individually
    enabled. Nothing is watched by default.
-2. **Extract patterns, not content.** The output is knowledge artifacts
-   (rules, decisions, patterns), not trace replays. Raw code and file
-   contents are never stored in the signal store.
-3. **Secret stripping.** Anything matching common secret patterns
-   (API keys, tokens, passwords) is stripped before storage.
+2. **Secret redaction before shipping.** Deterministic regex scanning
+   catches secrets (AWS keys, DB passwords, GitHub tokens, etc.) and
+   replaces them with `[REDACTED]` before any data leaves the machine.
+   Coverage: ~99% of real secrets, ~5% false positive rate (validated
+   against 236K lines of real traces — see Observed data section).
+3. **Three layers of filtering:** (a) regex patterns for structural
+   matches, (b) entry-type filtering to exclude reasoning tokens,
+   (c) project/path exclusions for repos with legitimate key material.
 4. **Project exclusion.** Specific project paths can be excluded entirely
    (e.g., client projects under NDA).
-5. **Local-first.** Traces are read locally, artifacts are stored locally.
-   Corp sync is optional and pushes only approved artifacts, not raw traces.
-6. **User controls the gate.** Every artifact goes through human review
-   before entering the vault. No auto-apply from traces.
+5. **Local knowledge curation stays local.** The human-in-the-loop
+   review and personal knowledge vault are never shipped centrally.
+   Only redacted traces go to the lakehouse; only approved artifacts
+   go to the corp knowledge vault (via git sync).
+6. **Secret detection is a feature, not a bug.** Finding secrets in
+   traces is a security signal — it means secrets management tooling
+   has a gap. The miner reports these findings to the security team
+   (via the Security pipeline) so the tooling gets fixed.
 
 ### What miner NEVER does
 
 - Read traces from agents the user hasn't opted in
-- Store raw code from trace tool results
-- Transmit raw traces to any remote system
+- Ship unredacted secrets to the centralized lakehouse
 - Auto-apply knowledge without human review
 - Access trace files from other users on shared machines
 
 ---
 
-## Implementation phases
+## Build plan
 
-### Phase 1 — Claude Code trace parser + deterministic extractors
+Five components, clean separation.
 
-Parse Claude Code JSONL. Extract retries, corrections, and gaps.
-Output to existing signal store. Review via `sigint review`.
+```
+1. Local agent ──► 2. Ingestor API ──► S3 (lakehouse)
+   (scan, redact,     (receive,            │
+    ship)              normalize,           ├──► 3. Knowledge miner → corp vault
+                       store)               ├──► 4. Analytics → dashboards
+                                            ├──► 5. Security → alerts
+                                            └──► 6. DX diagnostics → DevEx
+```
+
+### Component 1 — Local agent (daemon/CLI)
+
+Runs on each developer's machine. Scans agent trace directories,
+redacts secrets, ships to the centralized ingestor idempotently.
+Also runs local knowledge extraction for the personal vault.
+
+**Subphases:**
+
+**1a. Trace parsers**
+- Claude Code JSONL parser (`~/.claude/projects/*/`)
+- Codex JSONL parser (`~/.codex/sessions/YYYY/MM/DD/`)
+- Extensible to Cursor, OpenCode
+
+**1b. Secret scanner + redactor**
+- Three-layer deterministic filtering:
+  (a) regex patterns (AWS `AKIA...`, `postgres://...`, `ghp_...`, etc.)
+  (b) entry-type filtering (exclude reasoning tokens to reduce false positives)
+  (c) project/path exclusions (skip repos with legitimate key material)
+- Replaces matches with `[REDACTED:pattern_name]`
+- Reports detections locally before redacting (security signal)
+- Validated: ~99% true positive, ~5% false positive on 236K real lines
+
+**1c. Shipper**
+- Idempotent: tracks cursor (last shipped position per trace file)
+- Ships redacted JSONL to ingestor API endpoint
+- Retries on failure, does not re-ship already-sent entries
+- Configurable schedule: realtime, hourly, daily
+
+**1d. Local knowledge extraction** (existing sigint functionality)
+- Deterministic extractors: retries, corrections, gaps, conventions
+- Agentic interpretation (optional, via ACP)
+- Skill monitoring: install/usage tracking, staleness detection
+- Human-in-the-loop review (`sigint review`)
+- Local vault writes
 
 **Files:**
 - `packages/sigint/src/sources/traces.ts` — trace directory watcher
 - `packages/sigint/src/parsers/claude.ts` — Claude Code JSONL parser
-- `packages/sigint/src/extractors/trace.ts` — retry, correction, gap patterns
-
-**Gate:** `sigint watch ~/dev/ --traces` detects a user correction
-from a real Claude Code session and proposes it as a rule.
-
-### Phase 2 — Codex parser + task summaries
-
-Add Codex JSONL parsing. Extract `task_complete` summaries as ready-made
-knowledge artifacts.
-
-**Files:**
 - `packages/sigint/src/parsers/codex.ts` — Codex JSONL parser
-
-**Gate:** `sigint review` shows a Codex task completion summary
-("The package split is still carrying too many shims...") as a
-proposed architectural insight.
-
-### Phase 3 — Skill monitoring
-
-Watch skill directories, track usage from traces, detect stale skills,
-suggest org promotion for heavily-used skills.
-
-**Files:**
+- `packages/sigint/src/security/scanner.ts` — secret detection + redaction
+- `packages/sigint/src/shipper.ts` — idempotent ingestor client
 - `packages/sigint/src/sources/skills.ts` — skill directory watcher
-- `packages/sigint/src/extractors/skill_usage.ts` — correlate with traces
+- `packages/sigint/src/extractors/trace.ts` — retry, correction, gap patterns
+- `packages/sigint/src/extractors/skill_usage.ts` — skill usage correlation
 
-**Gate:** `sigint status` shows "playwright-cli: installed, never used
-(30d)" and "release: used 2x, candidate for org promotion."
+**Gate:** `sigint watch ~/dev/ --traces --ship` scans Claude Code
+traces, redacts 3 AWS keys, ships redacted JSONL to the ingestor.
 
-### Phase 4 — Corp sync
+### Component 2 — Ingestor API
 
-Daily git push of approved artifacts to a corporate knowledge repository.
+Receives trace data from local agents, normalizes across agent formats,
+stores to S3 (lakehouse). Stateless HTTP service.
 
-**Files:**
-- `packages/sigint/src/sync.ts` — git push of approved artifacts
+**Responsibilities:**
+- Authentication (API key per developer/team)
+- Schema normalization: Claude Code + Codex + Cursor → unified schema
+- Deduplication (idempotency keys from local agent)
+- Storage: raw zone (per-agent format) + normalized zone (unified schema)
+- Metadata: developer ID, project, agent type, timestamp range
 
-**Gate:** `sigint sync --remote git@corp/vault.git` pushes approved
-rules and decisions to the org repo.
+**Normalized schema:**
+
+```
+NormalizedEntry:
+  id: string                    # hash of content for dedup
+  timestamp: ISO8601
+  agent: claude_code | codex | cursor | opencode
+  developer: string             # anonymizable
+  project: string               # repo or workspace name
+  entry_type: message | tool_call | tool_result | reasoning | task_summary
+  role: user | assistant | system | tool
+  tool_name: string | null      # normalized (Bash, exec_command → "shell")
+  tool_input_summary: string | null  # structured, no raw code
+  tool_success: boolean | null
+  content_preview: string | null # first 200 chars, secrets redacted
+  token_usage: { input, output, cache_read } | null
+  session_id: string
+  turn_id: string | null
+```
+
+**Files:** separate service (not in sigint package)
+
+**Gate:** ingestor receives traces from 2 developers, normalizes
+Claude Code + Codex into the same schema, queryable in the lakehouse.
+
+### Components 3–6 — Processing pipelines
+
+All four pipelines read from the normalized zone in the lakehouse.
+They run independently — different schedules, different consumers.
+
+**Component 3 — Knowledge miner (centralized)**
+
+Same extractors as local, but cross-correlated across developers.
+Proposes org-level artifacts. Curator reviews and promotes to corp vault.
+
+- Schedule: daily or on-demand
+- Output: proposed artifacts → curator → corp knowledge vault (git)
+- Key value: "5 developers hit the same EMFILE bug" (invisible locally)
+
+**Component 4 — Analytics engine**
+
+SQL queries + dashboards over the normalized trace data.
+
+- Schedule: continuous / hourly refresh
+- Output: dashboards (Grafana, Metabase, or similar)
+- Key metrics: tool usage, token costs, error rates, adoption curves,
+  sessions per developer, MCP tool value, skill usage rates
+
+**Component 5 — Security scanner (centralized)**
+
+Runs secret patterns over incoming data (defense in depth — the local
+agent redacts, but the central scanner catches anything missed).
+Also detects behavioral policy violations.
+
+- Schedule: on ingest (streaming) or hourly batch
+- Output: alerts (Slack, PagerDuty, email)
+- Key signals: secrets that survived local redaction, prod DB access,
+  unapproved MCP servers, unusual data access patterns
+
+**Component 6 — DX diagnostics**
+
+Aggregates friction signals across developers to identify systemic
+tooling and documentation gaps.
+
+- Schedule: weekly batch
+- Output: report for DevEx team / tech leads
+- Key signals: repeated questions about same topic (doc gap),
+  same config fought by multiple devs (broken DX), new hire session
+  length anomalies (onboarding gap), flaky test retries (infra issue)
+
+### Corp knowledge sync
+
+Orthogonal to the pipelines — approved artifacts from the knowledge
+miner (Component 3) are pushed to a corporate knowledge vault via git.
+
+```bash
+sigint sync --remote git@github.com:acme/knowledge.git
+```
+
+This is the same git-based sync from the local agent, but triggered
+by the centralized curator rather than individual developers.
 
 ---
 
