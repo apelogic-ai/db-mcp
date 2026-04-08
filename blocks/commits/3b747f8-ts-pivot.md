@@ -25,7 +25,7 @@ The Python TUI was 14 hours old.
   the rewrite moved it to a better stack for long-term maintenance
 
 ## Blocks affected
-- [[blocks/tui#T5. Pivot to TypeScript (2026-04-04)|tui → T5: active (Python) → superseded; ○ → active (TypeScript)]]
+- [[tui#T5. Pivot to TypeScript (2026-04-04)|tui → T5: active (Python) → superseded; ○ → active (TypeScript)]]
 
 ## Key files created
 - `packages/terminal/src/index.ts` — main TUI app

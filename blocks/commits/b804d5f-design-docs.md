@@ -16,7 +16,7 @@ pr: null
 Created TUI design documents.
 
 ## Blocks affected
-- [[blocks/tui#T1. Concept (2026-04-03 15:19)|tui → T1: ○ → idea]]
+- [[tui#T1. Concept (2026-04-03 15:19)|tui → T1: ○ → idea]]
 
 ## Key files
 - [[docs/tui-design.md]] (created) — user-facing design

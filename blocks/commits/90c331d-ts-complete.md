@@ -17,7 +17,7 @@ pr: 83
 All 4 phases complete in TypeScript. Squash merge of the TS TUI branch.
 
 ## Blocks affected
-- [[blocks/tui#T6. All phases complete (2026-04-05 15:52)|tui → T6: active → feature-complete]]
+- [[tui#T6. All phases complete (2026-04-05 15:52)|tui → T6: active → feature-complete]]
 
 ## What shipped
 - Phase 1: unified daemon (MCP + REST on single port)

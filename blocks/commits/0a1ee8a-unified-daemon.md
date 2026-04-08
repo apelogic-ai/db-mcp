@@ -21,8 +21,8 @@ Mount MCP at `/mcp` on the same port as REST API (8080) instead of
 separate ports (MCP :7421, UI :8080). One process, one URL.
 
 ## Blocks affected
-- [[blocks/tui#T2. Plan (2026-04-03 ~16:00)|tui → T2: idea → planned]]
-- [[blocks/daemon]] (created)
+- [[tui#T2. Plan (2026-04-03 ~16:00)|tui → T2: idea → planned]]
+- [[daemon]] (created)
 
 ## Key files
 - `packages/mcp-server/src/db_mcp_server/server.py` — `create_mcp_server()` factory

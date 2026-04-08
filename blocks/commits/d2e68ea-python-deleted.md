@@ -29,7 +29,7 @@ deletes the Python TUI and finalizes the TypeScript version.
 - Improved agent system prompt
 
 ## Blocks affected
-- [[blocks/tui#T6. All phases complete (2026-04-05 15:52)|tui → T6 (cleanup)]]
+- [[tui#T6. All phases complete (2026-04-05 15:52)|tui → T6 (cleanup)]]
 
 ## Note
 The 2,210 deleted lines are the Python TUI's entire codebase — a

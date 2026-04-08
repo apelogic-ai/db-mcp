@@ -16,7 +16,7 @@ pr: null
 Knowledge gap handling + connection management. 15 minutes after Phase 3.
 
 ## Blocks affected
-- [[blocks/tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3 (continued)]]
+- [[tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3 (continued)]]
 
 ## Commands added
 - `/add-rule [TEXT]`, `/dismiss`, `/use NAME`

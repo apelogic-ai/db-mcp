@@ -13,12 +13,22 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "tui.md",
+                "file": "commits/b804d5f-design-docs.md",
                 "mode": "source",
-                "source": false
+                "source": false,
+                "backlinks": true,
+                "backlinkOpts": {
+                  "collapseAll": false,
+                  "extraContext": false,
+                  "sortOrder": "alphabetical",
+                  "showSearch": false,
+                  "searchQuery": "",
+                  "backlinkCollapsed": false,
+                  "unlinkedCollapsed": true
+                }
               },
               "icon": "lucide-file",
-              "title": "tui"
+              "title": "b804d5f-design-docs"
             }
           }
         ]
@@ -94,7 +104,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "tui.md",
+                "file": "commits/b804d5f-design-docs.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +114,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for tui"
+              "title": "Backlinks for b804d5f-design-docs"
             }
           },
           {
@@ -113,12 +123,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "tui.md",
+                "file": "commits/b804d5f-design-docs.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from tui"
+              "title": "Outgoing links from b804d5f-design-docs"
             }
           },
           {
@@ -156,13 +166,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "tui.md",
+                "file": "commits/b804d5f-design-docs.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of tui"
+              "title": "Outline of b804d5f-design-docs"
             }
           }
         ]
@@ -185,14 +195,17 @@
   },
   "active": "2de3845bc01b668d",
   "lastOpenFiles": [
-    "commits/56da082-onboarding.md",
+    "tui.md",
+    "blocks/commits/d2e68ea-python-deleted.md",
     "commits/d2e68ea-python-deleted.md",
+    "blocks/commits",
+    "blocks",
+    "commits/56da082-onboarding.md",
     "commits/90c331d-ts-complete.md",
     "docs/tui-implementation.md",
     "commits/3b747f8-ts-pivot.md",
     "docs/tui-design.md",
     "commits/0a1ee8a-unified-daemon.md",
-    "tui.md",
     "commits/d5c71bf-python-phase4b.md",
     "commits/7d46670-python-phase4a.md",
     "commits/493e6dc-python-phase3.md",

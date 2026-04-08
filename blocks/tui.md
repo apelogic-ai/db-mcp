@@ -81,14 +81,14 @@ natural language input.
 ## Transitions
 
 Each entry is a state change. Decisions are the WHY behind transitions.
-Commit links point to detailed notes in [[blocks/commits/]].
+Commit links point to detailed notes in [[commits/]].
 
 ### T1. Concept (2026-04-03 15:19)
 ```
 ○ → idea
 ```
 - **By:** Leonid + Claude
-- **Commit:** [[blocks/commits/b804d5f-design-docs]]
+- **Commit:** [[commits/b804d5f-design-docs]]
 - **What:** Terminal companion for Claude Code. Event feed with `●`/`⎿`
   styling, command input, ACP insider agent.
 - **Decision:** use Textual (Python) framework. Rationale: Rich already
@@ -99,7 +99,7 @@ Commit links point to detailed notes in [[blocks/commits/]].
 idea → planned
 ```
 - **By:** Leonid + Claude
-- **Commit:** [[blocks/commits/0a1ee8a-unified-daemon]]
+- **Commit:** [[commits/0a1ee8a-unified-daemon]]
 - **What:** 4-phase plan. Phase 0: event contract. Phase 1: HTTP transport.
   Phase 2: read-only feed. Phase 3: commands + confirm. Phase 4: ACP + gaps.
 - **Decision:** single-port daemon — mount MCP at `/mcp` on the same port
@@ -112,10 +112,10 @@ idea → planned
 planned → active (Python)
 ```
 - **By:** Leonid + Claude
-- **Commits:** [[blocks/commits/c7aeea5-python-phase2|Phase 2]] →
-  [[blocks/commits/493e6dc-python-phase3|Phase 3]] →
-  [[blocks/commits/7d46670-python-phase4a|Phase 4a]] →
-  [[blocks/commits/d5c71bf-python-phase4b|Phase 4b]] (29 minutes)
+- **Commits:** [[commits/c7aeea5-python-phase2|Phase 2]] →
+  [[commits/493e6dc-python-phase3|Phase 3]] →
+  [[commits/7d46670-python-phase4a|Phase 4a]] →
+  [[commits/d5c71bf-python-phase4b|Phase 4b]] (29 minutes)
 - **What:** All 4 phases built in Python/Textual. 11 source files,
   8 test files, 33 tests. Feed, commands, confirm gate, gap handling,
   ACP integration — everything in one evening session.
@@ -138,7 +138,7 @@ active (Python) → superseded
 ○ → active (TypeScript)
 ```
 - **By:** Leonid
-- **Commit:** [[blocks/commits/3b747f8-ts-pivot]]
+- **Commit:** [[commits/3b747f8-ts-pivot]]
 - **What:** Complete rewrite in TypeScript using `@mariozechner/pi-tui`.
   The Python TUI was 14 hours old.
 - **Decision: PIVOT.** Python/Textual → TypeScript/pi-tui.
@@ -154,8 +154,8 @@ active (Python) → superseded
 active → active (feature-complete)
 ```
 - **By:** Leonid + Claude
-- **Commits:** [[blocks/commits/90c331d-ts-complete|PR #83]] +
-  [[blocks/commits/d2e68ea-python-deleted|Python deletion]]
+- **Commits:** [[commits/90c331d-ts-complete|PR #83]] +
+  [[commits/d2e68ea-python-deleted|Python deletion]]
 - **What:** All 4 phases re-implemented in TypeScript. 51 Vitest tests.
   Python TUI deleted: 11 source files, 8 test files, 2,210 lines removed.
 
@@ -176,7 +176,7 @@ active → active (hardening)
 active → active (expanded scope)
 ```
 - **By:** Leonid + Claude
-- **Commit:** [[blocks/commits/56da082-onboarding|PR #84]]
+- **Commit:** [[commits/56da082-onboarding|PR #84]]
 - **What:** TUI becomes the primary onboarding surface:
   - `/doctor` — preflight health checks
   - `/playground` — install sample database

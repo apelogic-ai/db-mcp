@@ -16,7 +16,7 @@ pr: null
 First working TUI. Python/Textual, read-only feed + status bar.
 
 ## Blocks affected
-- [[blocks/tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3: planned → active (Python)]]
+- [[tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3: planned → active (Python)]]
 
 ## Key files created
 - `packages/cli/src/db_mcp_cli/tui/app.py` — DBMcpTUI(App)
@@ -27,5 +27,5 @@ First working TUI. Python/Textual, read-only feed + status bar.
 
 ## Note
 This is the first of 4 commits in a 29-minute burst (20:31→21:00)
-that built the entire Python TUI. See also [[blocks/commits/493e6dc-python-phase3|Phase 3]],
-[[blocks/commits/7d46670-python-phase4a|Phase 4a]], [[blocks/commits/d5c71bf-python-phase4b|Phase 4b]].
+that built the entire Python TUI. See also [[commits/493e6dc-python-phase3|Phase 3]],
+[[commits/7d46670-python-phase4a|Phase 4a]], [[commits/d5c71bf-python-phase4b|Phase 4b]].

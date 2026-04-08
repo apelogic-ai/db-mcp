@@ -21,11 +21,11 @@ Agent as subprocess, not embedded. Agent connects to `/mcp` endpoint
 independently. TUI doesn't proxy — it renders what happens.
 
 ## Blocks affected
-- [[blocks/tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3 (final)]]
+- [[tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3 (final)]]
 
 ## Key files created
 - `packages/cli/src/db_mcp_cli/tui/acp_client.py` — ACP session manager
 
 ## Note
 Python TUI is now feature-complete. 11 source files, 33 tests.
-It will be superseded 14 hours later in [[blocks/commits/3b747f8-ts-pivot|the TypeScript pivot]].
+It will be superseded 14 hours later in [[commits/3b747f8-ts-pivot|the TypeScript pivot]].

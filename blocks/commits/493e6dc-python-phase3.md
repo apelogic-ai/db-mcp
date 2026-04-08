@@ -16,7 +16,7 @@ pr: null
 Added interactive commands. 7 minutes after Phase 2.
 
 ## Blocks affected
-- [[blocks/tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3 (continued)]]
+- [[tui#T3. First implementation (2026-04-03 20:31 → 21:00)|tui → T3 (continued)]]
 
 ## Key files created
 - `packages/cli/src/db_mcp_cli/tui/widgets/input.py` — CommandInput
