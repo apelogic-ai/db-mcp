@@ -39,7 +39,7 @@ export class Daemon {
   /**
    * Run one poll cycle: discover sources, process new entries.
    */
-  pollOnce(): void {
+  async pollOnce(): Promise<void> {
     const sources = discoverTraceSources({
       claudeCodeDir: this.config.claudeDir,
       codexDir: this.config.codexDir,
@@ -51,10 +51,9 @@ export class Daemon {
     for (const source of sources) {
       for (const file of source.files) {
         if (file.endsWith(".vscdb")) {
-          // Cursor SQLite — skip for now (needs different shipping path)
           continue;
         }
-        this.shipper.processFile(file, source.agent, source.project);
+        await this.shipper.processFile(file, source.agent, source.project);
       }
     }
   }
@@ -69,11 +68,11 @@ export class Daemon {
     this.progress(`Poll interval: ${this.config.pollIntervalMs}ms`);
 
     // Initial poll
-    this.pollOnce();
+    await this.pollOnce();
 
     // Continuous polling
-    setInterval(() => {
-      this.pollOnce();
+    setInterval(async () => {
+      await this.pollOnce();
     }, this.config.pollIntervalMs);
 
     // Keep alive

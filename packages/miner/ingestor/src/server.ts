@@ -107,7 +107,16 @@ export function createIngestor(config: IngestorConfig): Promise<Server> {
         return;
       }
 
+      const batchId = typeof batch.batchId === "string" ? batch.batchId : undefined;
+
+      // Dedup: if we've already received this batchId, return 200 (idempotent)
+      if (batchId && store.isDuplicate(batchId)) {
+        json(res, 200, { status: "ok", duplicate: true, entryCount: 0 });
+        return;
+      }
+
       const result = store.saveBatch({
+        batchId,
         developer: String(batch.developer ?? "unknown"),
         machine: String(batch.machine ?? "unknown"),
         agent: String(batch.agent ?? "unknown"),

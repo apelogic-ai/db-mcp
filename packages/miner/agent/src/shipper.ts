@@ -20,6 +20,7 @@ import { execSync } from "node:child_process";
 import { redactSecrets } from "./security/scanner";
 
 export interface ShippedBatch {
+  batchId: string;      // deterministic: hash(filePath + cursor + entryCount)
   developer: string;
   machine: string;
   agent: string;
@@ -102,16 +103,17 @@ export class Shipper {
 
   /**
    * Process a trace file — read new lines since last cursor, redact
-   * secrets if configured, and ship the batch.
+   * secrets if configured, ship the batch, and advance cursor only
+   * on successful shipment.
    */
-  processFile(filePath: string, agent: string, project: string): void {
-    if (!existsSync(filePath)) return;
+  async processFile(filePath: string, agent: string, project: string): Promise<boolean> {
+    if (!existsSync(filePath)) return false;
 
     const key = fileHash(filePath);
     const cursor = this.cursors[key] ?? 0;
     const stat = statSync(filePath);
 
-    if (stat.size <= cursor) return; // nothing new
+    if (stat.size <= cursor) return false; // nothing new
 
     // Read from cursor to end
     const content = readFileSync(filePath, "utf-8");
@@ -121,7 +123,7 @@ export class Shipper {
     if (lines.length === 0) {
       this.cursors[key] = stat.size;
       this.saveCursors();
-      return;
+      return false;
     }
 
     // Validate JSON + optionally redact
@@ -141,11 +143,17 @@ export class Shipper {
     if (validEntries.length === 0) {
       this.cursors[key] = stat.size;
       this.saveCursors();
-      return;
+      return false;
     }
 
-    // Ship
+    // Deterministic batch ID for ingestor-side dedup
+    const batchId = createHash("sha256")
+      .update(`${filePath}:${cursor}:${stat.size}:${validEntries.length}`)
+      .digest("hex")
+      .slice(0, 16);
+
     const batch: ShippedBatch = {
+      batchId,
       developer: this.developer,
       machine: this.machine,
       agent,
@@ -155,13 +163,15 @@ export class Shipper {
       entries: validEntries,
     };
 
-    // Note: processFile is sync for simplicity. The ship callback
-    // is async but we fire-and-forget here. A production shipper
-    // would await and retry on failure.
-    this.config.ship(batch);
-
-    // Update cursor
-    this.cursors[key] = stat.size;
-    this.saveCursors();
+    // Ship — only advance cursor on success
+    try {
+      await this.config.ship(batch);
+      this.cursors[key] = stat.size;
+      this.saveCursors();
+      return true;
+    } catch {
+      // Ship failed — cursor NOT advanced, will retry on next poll
+      return false;
+    }
   }
 }

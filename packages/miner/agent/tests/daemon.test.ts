@@ -42,39 +42,39 @@ describe("Daemon", () => {
     };
   }
 
-  it("processes traces on pollOnce()", () => {
+  it("processes traces on pollOnce()", async () => {
     setupFakeClaudeTrace(claudeDir, [
       JSON.stringify({ type: "user", timestamp: "2026-04-08T10:00:00Z", message: { content: [{ type: "text", text: "hi" }] } }),
     ]);
 
     const daemon = new Daemon(makeConfig());
-    daemon.pollOnce();
+    await daemon.pollOnce();
 
     expect(shipped).toHaveLength(1);
     expect(shipped[0].agent).toBe("claude_code");
     expect(shipped[0].developer).toBe("test@example.com");
   });
 
-  it("deduplicates across polls", () => {
+  it("deduplicates across polls", async () => {
     setupFakeClaudeTrace(claudeDir, [
       JSON.stringify({ type: "user", timestamp: "2026-04-08T10:00:00Z", message: { content: [{ type: "text", text: "hi" }] } }),
     ]);
 
     const daemon = new Daemon(makeConfig());
-    daemon.pollOnce();
+    await daemon.pollOnce();
     const firstCount = shipped.length;
 
-    daemon.pollOnce();
+    await daemon.pollOnce();
     expect(shipped.length).toBe(firstCount); // no new data
   });
 
-  it("picks up new entries on subsequent polls", () => {
+  it("picks up new entries on subsequent polls", async () => {
     const file = setupFakeClaudeTrace(claudeDir, [
       JSON.stringify({ type: "user", timestamp: "2026-04-08T10:00:00Z", message: { content: [{ type: "text", text: "first" }] } }),
     ]);
 
     const daemon = new Daemon(makeConfig());
-    daemon.pollOnce();
+    await daemon.pollOnce();
     const firstEntries = shipped.reduce((s, b) => s + b.entries.length, 0);
 
     // Append new entry
@@ -82,25 +82,25 @@ describe("Daemon", () => {
       JSON.stringify({ type: "user", timestamp: "2026-04-08T10:01:00Z", message: { content: [{ type: "text", text: "second" }] } }) + "\n",
     );
 
-    daemon.pollOnce();
+    await daemon.pollOnce();
     const totalEntries = shipped.reduce((s, b) => s + b.entries.length, 0);
     expect(totalEntries).toBeGreaterThan(firstEntries);
   });
 
-  it("redacts secrets by default", () => {
+  it("redacts secrets by default", async () => {
     setupFakeClaudeTrace(claudeDir, [
       JSON.stringify({ type: "user", timestamp: "2026-04-08T10:00:00Z", message: { content: [{ type: "text", text: "key: AKIAIOSFODNN7EXAMPLE" }] } }),
     ]);
 
     const daemon = new Daemon(makeConfig());
-    daemon.pollOnce();
+    await daemon.pollOnce();
 
     const allContent = shipped.flatMap((b) => b.entries).join("");
     expect(allContent).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(allContent).toContain("[REDACTED:");
   });
 
-  it("emits progress events", () => {
+  it("emits progress events", async () => {
     setupFakeClaudeTrace(claudeDir, [
       JSON.stringify({ type: "user", timestamp: "2026-04-08T10:00:00Z", message: { content: [{ type: "text", text: "hi" }] } }),
     ]);
@@ -109,7 +109,7 @@ describe("Daemon", () => {
     const daemon = new Daemon(makeConfig({
       onProgress: (msg) => progress.push(msg),
     }));
-    daemon.pollOnce();
+    await daemon.pollOnce();
 
     expect(progress.length).toBeGreaterThan(0);
     expect(progress.some((p) => p.includes("source"))).toBe(true);

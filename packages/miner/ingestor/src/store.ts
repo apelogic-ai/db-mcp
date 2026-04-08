@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from 
 import { join } from "node:path";
 
 export interface StoredBatch {
+  batchId?: string;     // deterministic ID from agent — used for dedup
   developer: string;
   machine: string;
   agent: string;
@@ -26,6 +27,7 @@ export interface StoredBatch {
 export interface SaveResult {
   entryCount: number;
   filePath: string;
+  duplicate?: boolean;
 }
 
 export interface BatchMeta {
@@ -45,12 +47,46 @@ function sanitize(s: string): string {
 
 export class Store {
   private dataDir: string;
+  private seenBatchIds: Set<string>;
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
+    this.seenBatchIds = this.loadSeenBatchIds();
+  }
+
+  private loadSeenBatchIds(): Set<string> {
+    const dedupFile = join(this.dataDir, "dedup.json");
+    if (existsSync(dedupFile)) {
+      try {
+        const ids = JSON.parse(readFileSync(dedupFile, "utf-8")) as string[];
+        return new Set(ids);
+      } catch { /* start fresh */ }
+    }
+    return new Set();
+  }
+
+  private saveSeenBatchIds(): void {
+    mkdirSync(this.dataDir, { recursive: true });
+    const dedupFile = join(this.dataDir, "dedup.json");
+    // Keep last 10K IDs to bound memory
+    const ids = [...this.seenBatchIds].slice(-10_000);
+    writeFileSync(dedupFile, JSON.stringify(ids));
+  }
+
+  /**
+   * Check if a batch was already received (by batchId).
+   */
+  isDuplicate(batchId: string | undefined): boolean {
+    if (!batchId) return false;
+    return this.seenBatchIds.has(batchId);
   }
 
   saveBatch(batch: StoredBatch): SaveResult {
+    // Dedup by batchId
+    if (batch.batchId && this.seenBatchIds.has(batch.batchId)) {
+      return { entryCount: 0, filePath: "", duplicate: true };
+    }
+
     const agentDir = join(this.dataDir, "raw", batch.agent);
     mkdirSync(agentDir, { recursive: true });
 
@@ -77,6 +113,12 @@ export class Store {
       join(agentDir, `${baseName}.meta.json`),
       JSON.stringify(meta, null, 2),
     );
+
+    // Track batchId for dedup
+    if (batch.batchId) {
+      this.seenBatchIds.add(batch.batchId);
+      this.saveSeenBatchIds();
+    }
 
     return {
       entryCount: batch.entries.length,
