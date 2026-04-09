@@ -8,6 +8,21 @@ function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "miner-store-"));
 }
 
+/** Recursively find all files matching a pattern. */
+function findFiles(dir: string, suffix: string): string[] {
+  const results: string[] = [];
+  if (!existsSync(dir)) return results;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...findFiles(full, suffix));
+    } else if (entry.name.endsWith(suffix)) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
 describe("Store", () => {
   let dataDir: string;
   let store: Store;
@@ -18,6 +33,7 @@ describe("Store", () => {
   });
 
   const makeBatch = (overrides?: Partial<StoredBatch>): StoredBatch => ({
+    batchId: "test_batch_001",
     developer: "alice@acme.com",
     machine: "alice-mac",
     agent: "claude_code",
@@ -29,67 +45,117 @@ describe("Store", () => {
     ...overrides,
   });
 
-  it("stores a batch as a JSONL file in the raw zone", () => {
+  it("stores a batch in Hive-partitioned directory", () => {
     store.saveBatch(makeBatch());
-    const rawDir = join(dataDir, "raw", "claude_code");
-    expect(existsSync(rawDir)).toBe(true);
-    const files = readdirSync(rawDir);
-    const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
+    const jsonlFiles = findFiles(dataDir, ".jsonl");
     expect(jsonlFiles).toHaveLength(1);
-    expect(jsonlFiles[0]).toMatch(/\.jsonl$/);
+    // Verify Hive partitioning path
+    expect(jsonlFiles[0]).toContain("year=2026");
+    expect(jsonlFiles[0]).toContain("month=04");
+    expect(jsonlFiles[0]).toContain("day=08");
+    expect(jsonlFiles[0]).toContain("agent=claude_code");
+  });
+
+  it("uses batchId as filename", () => {
+    store.saveBatch(makeBatch({ batchId: "abc123def456" }));
+    const jsonlFiles = findFiles(dataDir, ".jsonl");
+    expect(jsonlFiles[0]).toContain("abc123def456.jsonl");
   });
 
   it("stores entries as individual JSONL lines", () => {
     store.saveBatch(makeBatch({ entries: ['{"a":1}', '{"a":2}', '{"a":3}'] }));
-    const rawDir = join(dataDir, "raw", "claude_code");
-    const file = readdirSync(rawDir)[0];
-    const content = readFileSync(join(rawDir, file), "utf-8");
+    const jsonlFiles = findFiles(dataDir, ".jsonl");
+    const content = readFileSync(jsonlFiles[0], "utf-8");
     const lines = content.trim().split("\n");
     expect(lines).toHaveLength(3);
   });
 
-  it("includes metadata in filename", () => {
-    store.saveBatch(makeBatch({ developer: "bob", agent: "codex" }));
-    const rawDir = join(dataDir, "raw", "codex");
-    const file = readdirSync(rawDir)[0];
-    expect(file).toContain("bob");
-    expect(file).toContain("codex");
-  });
+  it("partitions by agent type", () => {
+    store.saveBatch(makeBatch({ batchId: "b1", agent: "claude_code" }));
+    store.saveBatch(makeBatch({ batchId: "b2", agent: "codex" }));
+    store.saveBatch(makeBatch({ batchId: "b3", agent: "cursor" }));
 
-  it("organizes by agent type", () => {
-    store.saveBatch(makeBatch({ agent: "claude_code" }));
-    store.saveBatch(makeBatch({ agent: "codex" }));
-    store.saveBatch(makeBatch({ agent: "cursor" }));
-
-    expect(existsSync(join(dataDir, "raw", "claude_code"))).toBe(true);
-    expect(existsSync(join(dataDir, "raw", "codex"))).toBe(true);
-    expect(existsSync(join(dataDir, "raw", "cursor"))).toBe(true);
+    const all = findFiles(dataDir, ".jsonl");
+    expect(all).toHaveLength(3);
+    expect(all.some((f) => f.includes("agent=claude_code"))).toBe(true);
+    expect(all.some((f) => f.includes("agent=codex"))).toBe(true);
+    expect(all.some((f) => f.includes("agent=cursor"))).toBe(true);
   });
 
   it("saves batch metadata alongside entries", () => {
     store.saveBatch(makeBatch());
-    const rawDir = join(dataDir, "raw", "claude_code");
-    const files = readdirSync(rawDir);
-    const metaFile = files.find((f) => f.endsWith(".meta.json"));
-    expect(metaFile).toBeDefined();
+    const metaFiles = findFiles(dataDir, ".meta.json");
+    expect(metaFiles).toHaveLength(1);
 
-    const meta = JSON.parse(readFileSync(join(rawDir, metaFile!), "utf-8"));
+    const meta = JSON.parse(readFileSync(metaFiles[0], "utf-8"));
     expect(meta.developer).toBe("alice@acme.com");
     expect(meta.machine).toBe("alice-mac");
     expect(meta.entryCount).toBe(2);
+    expect(meta.batchId).toBe("test_batch_001");
   });
 
   it("returns batch stats", () => {
     const stats = store.saveBatch(makeBatch({ entries: ['{"x":1}', '{"x":2}'] }));
     expect(stats.entryCount).toBe(2);
     expect(stats.filePath).toBeTruthy();
+    expect(stats.filePath).toContain(".jsonl");
   });
 
-  it("listBatches returns stored batch metadata", () => {
-    store.saveBatch(makeBatch({ agent: "claude_code", developer: "alice" }));
-    store.saveBatch(makeBatch({ agent: "codex", developer: "bob" }));
+  it("deduplicates by batchId", () => {
+    store.saveBatch(makeBatch({ batchId: "dedup_test" }));
+    const result = store.saveBatch(makeBatch({ batchId: "dedup_test" }));
+    expect(result.duplicate).toBe(true);
+    expect(result.entryCount).toBe(0);
+
+    // Only one file written
+    const jsonlFiles = findFiles(dataDir, ".jsonl");
+    expect(jsonlFiles).toHaveLength(1);
+  });
+
+  it("dedup persists across store instances", () => {
+    store.saveBatch(makeBatch({ batchId: "persist_test" }));
+
+    const store2 = new Store(dataDir);
+    expect(store2.isDuplicate("persist_test")).toBe(true);
+  });
+
+  it("dedup log is append-only", () => {
+    store.saveBatch(makeBatch({ batchId: "id_1" }));
+    store.saveBatch(makeBatch({ batchId: "id_2" }));
+    store.saveBatch(makeBatch({ batchId: "id_3" }));
+
+    const logContent = readFileSync(join(dataDir, "dedup.log"), "utf-8");
+    const lines = logContent.trim().split("\n");
+    expect(lines).toEqual(["id_1", "id_2", "id_3"]);
+  });
+
+  it("listBatches walks partitioned directories", () => {
+    store.saveBatch(makeBatch({ batchId: "b1", agent: "claude_code" }));
+    store.saveBatch(makeBatch({ batchId: "b2", agent: "codex", shippedAt: "2026-04-09T10:00:00Z" }));
 
     const batches = store.listBatches();
     expect(batches).toHaveLength(2);
+  });
+
+  it("generates batchId when not provided", () => {
+    store.saveBatch(makeBatch({ batchId: undefined }));
+    const jsonlFiles = findFiles(dataDir, ".jsonl");
+    expect(jsonlFiles).toHaveLength(1);
+    // Filename should be a hex hash, not "undefined"
+    expect(jsonlFiles[0]).not.toContain("undefined");
+  });
+
+  it("files are immutable — same batchId never overwrites", () => {
+    store.saveBatch(makeBatch({ batchId: "immutable_test", entries: ['{"v":1}'] }));
+
+    // Attempt to save different content with same batchId
+    const result = store.saveBatch(makeBatch({ batchId: "immutable_test", entries: ['{"v":2}'] }));
+    expect(result.duplicate).toBe(true);
+
+    // Original content preserved
+    const jsonlFiles = findFiles(dataDir, ".jsonl");
+    const content = readFileSync(jsonlFiles[0], "utf-8");
+    expect(content).toContain('"v":1');
+    expect(content).not.toContain('"v":2');
   });
 });

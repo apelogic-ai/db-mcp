@@ -1,7 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+/** Recursively find files matching a suffix. */
+function findFiles(dir: string, suffix: string): string[] {
+  const results: string[] = [];
+  if (!existsSync(dir)) return results;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) results.push(...findFiles(full, suffix));
+    else if (entry.name.endsWith(suffix)) results.push(full);
+  }
+  return results;
+}
 import { createIngestor, type IngestorConfig } from "../src/server";
 import type { Server } from "node:http";
 
@@ -183,14 +195,15 @@ describe("Ingestor server", () => {
 
     await post("/api/ingest", batch, { Authorization: "Bearer key_test_valid" });
 
-    const rawDir = join(dataDir, "raw", "claude_code");
-    const files = readdirSync(rawDir).filter((f) => f.endsWith(".jsonl"));
-    expect(files.length).toBeGreaterThanOrEqual(1);
+    const jsonlFiles = findFiles(join(dataDir, "raw"), ".jsonl");
+    expect(jsonlFiles.length).toBeGreaterThanOrEqual(1);
 
-    // Verify content
-    const latest = files[files.length - 1];
-    const content = readFileSync(join(rawDir, latest), "utf-8");
-    expect(content).toContain('"stored":true');
+    // Find the file containing our test data
+    const storedFile = jsonlFiles.find((f) =>
+      readFileSync(f, "utf-8").includes('"stored":true')
+    );
+    expect(storedFile).toBeDefined();
+    expect(storedFile!).toContain("agent=claude_code");
   });
 
   it("returns health check on GET /health", async () => {

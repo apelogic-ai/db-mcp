@@ -6,9 +6,20 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+function findFiles(dir: string, suffix: string): string[] {
+  const results: string[] = [];
+  if (!existsSync(dir)) return results;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) results.push(...findFiles(full, suffix));
+    else if (entry.name.endsWith(suffix)) results.push(full);
+  }
+  return results;
+}
 import type { Server } from "node:http";
 
 // Agent modules
@@ -89,17 +100,17 @@ describe("E2E: agent → ingestor → lakehouse", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // Verify data landed in the lakehouse
-    const rawDir = join(lakehouseDir, "raw", "claude_code");
-    const jsonlFiles = readdirSync(rawDir).filter((f) => f.endsWith(".jsonl"));
+    const jsonlFiles = findFiles(join(lakehouseDir, "raw"), ".jsonl");
     expect(jsonlFiles.length).toBeGreaterThanOrEqual(1);
 
-    const content = readFileSync(join(rawDir, jsonlFiles[0]), "utf-8");
+    const content = readFileSync(jsonlFiles[0], "utf-8");
     expect(content).toContain("E2E test message");
     expect(content).toContain("echo hello");
+    expect(jsonlFiles[0]).toContain("agent=claude_code");
 
     // Verify metadata
-    const metaFiles = readdirSync(rawDir).filter((f) => f.endsWith(".meta.json"));
-    const meta = JSON.parse(readFileSync(join(rawDir, metaFiles[0]), "utf-8"));
+    const metaFiles = findFiles(join(lakehouseDir, "raw"), ".meta.json");
+    const meta = JSON.parse(readFileSync(metaFiles[0], "utf-8"));
     expect(meta.developer).toBe("e2e-developer@acme.com");
     expect(meta.machine).toBe("e2e-machine");
     expect(meta.agent).toBe("claude_code");
@@ -137,11 +148,10 @@ describe("E2E: agent → ingestor → lakehouse", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // Verify in lakehouse
-    const rawDir = join(lakehouseDir, "raw", "codex");
-    const metaFiles = readdirSync(rawDir).filter((f) => f.endsWith(".meta.json"));
+    const metaFiles = findFiles(join(lakehouseDir, "raw"), ".meta.json").filter((f) => f.includes("agent=codex"));
     expect(metaFiles.length).toBeGreaterThanOrEqual(1);
 
-    const meta = JSON.parse(readFileSync(join(rawDir, metaFiles[0]), "utf-8"));
+    const meta = JSON.parse(readFileSync(metaFiles[0], "utf-8"));
     expect(meta.developer).toBe("signer@acme.com");
   });
 
@@ -172,9 +182,8 @@ describe("E2E: agent → ingestor → lakehouse", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // Verify the secret was redacted in the lakehouse
-    const rawDir = join(lakehouseDir, "raw", "claude_code");
-    const jsonlFiles = readdirSync(rawDir).filter((f) => f.endsWith(".jsonl"));
-    const allContent = jsonlFiles.map((f) => readFileSync(join(rawDir, f), "utf-8")).join("\n");
+    const jsonlFiles = findFiles(join(lakehouseDir, "raw"), ".jsonl");
+    const allContent = jsonlFiles.map((f) => readFileSync(f, "utf-8")).join("\n");
 
     expect(allContent).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(allContent).toContain("[REDACTED:aws_access_key]");
