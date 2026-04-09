@@ -348,6 +348,144 @@ leave the machine; the four lakehouse pipelines process them centrally.
 
 ---
 
+## Authentication
+
+### Current implementation
+
+Two auth methods, either sufficient for accepting a batch:
+
+| Method | Header | What it proves | Limitation |
+|---|---|---|---|
+| **API key** | `Authorization: Bearer key_xyz` | Caller has the key | Shared secret, no user identity |
+| **Ed25519 signature** | `X-Miner-Signature` + `X-Miner-Key-Fingerprint` | This machine signed this exact payload | Machine identity only, no SSO |
+
+Both are implemented and tested. Sufficient for development and small
+teams. Not sufficient for enterprise.
+
+### Enterprise requirements
+
+| Requirement | Why | Current gap |
+|---|---|---|
+| SSO integration | Developers have Okta/Azure AD/Google identities | No IdP integration |
+| No static secrets on disk | API keys in config files get leaked | API key is a static string |
+| Immediate revocation | Offboarded developer loses access | API key valid until manually rotated |
+| Audit trail tied to IdP | Compliance needs verified user identity | API key doesn't identify a person |
+| Team/org scoping | Partition access by team membership | No team claims in auth |
+| Machine attestation | Verify agent runs on managed device | Ed25519 covers this (already built) |
+
+### Target architecture: OAuth 2.0 device flow + Ed25519
+
+Two complementary layers:
+
+**Layer 1 — OAuth 2.0 (user identity)**
+
+The miner agent authenticates the developer via the org's IdP using
+the OAuth 2.0 device authorization flow (RFC 8628). On first run,
+`miner-agent auth login` opens a browser for SSO login. The agent
+receives a short-lived JWT access token and a refresh token.
+
+The JWT contains claims:
+- `sub`: user identifier
+- `email`: developer email
+- `org`: organization ID
+- `teams`: team memberships (for partition routing)
+
+The ingestor validates the JWT signature against the IdP's JWKS
+endpoint (`/.well-known/jwks.json`) — stateless, no per-request
+IdP call.
+
+**Layer 2 — Ed25519 (machine identity)**
+
+The local keypair (already implemented) signs each batch body. This
+proves the batch came from a specific installation and wasn't tampered
+with in transit. The ingestor verifies both: valid JWT (user is
+authorized) AND valid signature (batch integrity).
+
+```
+First run:
+  miner-agent auth login
+    → opens browser → SSO login (Okta / Azure AD / Google)
+    → receives OAuth tokens → ~/.miner/auth.json (short-lived)
+    → generates Ed25519 keypair → ~/.miner/miner.key (permanent)
+
+Each batch shipped:
+  POST /api/ingest
+    Authorization: Bearer eyJhbG...    ← JWT from IdP
+    X-Miner-Signature: base64...       ← Ed25519 over body
+    X-Miner-Key-Fingerprint: a1b2...   ← machine identity
+    Body: { batchId, developer, entries, ... }
+
+Ingestor verifies:
+  1. JWT valid? → check signature against IdP JWKS, check expiry
+  2. User authorized? → check org claim, team membership
+  3. Body intact? → verify Ed25519 signature against registered key
+  4. All pass → store in developer's partition
+```
+
+**Token lifecycle:**
+- Access token: 1 hour TTL, auto-refreshed by the agent
+- Refresh token: 30 days, rotated on use
+- Ed25519 keypair: permanent per installation, registered on first auth
+- Revocation: IdP deprovisioning → refresh token invalid → agent
+  can't renew → next ship fails → developer re-authenticates
+
+**Device registration:**
+On `miner-agent auth login`, the Ed25519 public key is registered with
+the ingestor via an API call authenticated by the fresh OAuth token:
+
+```
+POST /api/devices/register
+  Authorization: Bearer <jwt>
+  Body: { publicKey: "-----BEGIN PUBLIC KEY-----...", fingerprint: "a1b2..." }
+```
+
+The ingestor stores: `{ fingerprint, publicKeyPem, developer, registeredAt }`.
+Admin can revoke a device by deleting its registration.
+
+### Ingestor auth flow (target)
+
+```typescript
+// 1. Check JWT
+const jwt = await verifyJWT(authHeader, jwksCache);
+if (!jwt) return 401;
+if (jwt.claims.org !== config.orgId) return 403;
+
+// 2. Check machine signature (optional — degrades gracefully)
+const sigHeader = headers["x-miner-signature"];
+const fpHeader = headers["x-miner-key-fingerprint"];
+if (sigHeader && fpHeader) {
+  const pubKey = await deviceRegistry.getKey(fpHeader);
+  if (!pubKey) return 401;  // unknown device
+  if (!verifySignature(body, sigHeader, pubKey)) return 403;  // tampered
+}
+
+// 3. Extract developer from JWT claims (authoritative)
+const developer = jwt.claims.email;
+
+// 4. Store
+store.saveBatch({ ...batch, developer });
+```
+
+The developer identity comes from the JWT (verified by the IdP), not
+from the batch body (self-reported by the agent). This prevents
+impersonation.
+
+### Implementation phases
+
+| Phase | What | Depends on |
+|---|---|---|
+| **Current** | API key + Ed25519 | Done |
+| **Phase 1** | OAuth device flow in agent (`miner-agent auth login`) | IdP configuration |
+| **Phase 2** | JWKS validation in ingestor (stateless JWT verification) | Phase 1 |
+| **Phase 3** | Team/org claims for partition routing and access control | Phase 2 |
+| **Phase 4** | Device registration API (`/api/devices/register`) | Phase 2 |
+| **Phase 5** | Admin UI for device management (list, revoke) | Phase 4 |
+
+Phase 1-2 are the critical path for enterprise deployment. Phases 3-5
+add governance and management capabilities.
+
+---
+
 ## Build plan
 
 Five components, clean separation.
