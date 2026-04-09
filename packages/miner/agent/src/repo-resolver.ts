@@ -3,10 +3,11 @@
  *
  * Claude Code: project directory name is a mangled local path
  * Codex: session_meta entry contains cwd
- * Cursor: workspace hash → resolve from VS Code state (not yet implemented)
+ * Cursor: workspace hash → workspace.json in workspaceStorage dir
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { execSync } from "node:child_process";
 
 export interface RepoInfo {
@@ -137,4 +138,36 @@ export function extractCwdFromCodexSession(lines: string[]): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Resolve a Cursor workspace hash to a local path.
+ *
+ * Cursor stores a workspace.json file in each workspace storage directory:
+ *   {cursorDir}/User/workspaceStorage/{hash}/workspace.json
+ *   → { "folder": "file:///Users/lbelyaev/dev/my-project" }
+ */
+export function resolveCursorWorkspacePath(
+  cursorDir: string,
+  workspaceHash: string,
+): string | null {
+  const wsJsonPath = join(
+    cursorDir, "User", "workspaceStorage", workspaceHash, "workspace.json",
+  );
+
+  if (!existsSync(wsJsonPath)) return null;
+
+  try {
+    const content = JSON.parse(readFileSync(wsJsonPath, "utf-8")) as Record<string, unknown>;
+    const folder = content.folder as string | undefined;
+    if (!folder) return null;
+
+    // Strip file:// URI prefix
+    if (folder.startsWith("file://")) {
+      return folder.slice(7);
+    }
+    return folder;
+  } catch {
+    return null;
+  }
 }
