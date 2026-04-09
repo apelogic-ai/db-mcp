@@ -526,12 +526,12 @@ What has been built as of 2026-04-08:
 | `cli.ts` | Done | `scan` (one-shot), `status`, `--dry-run`, `--endpoint`, `--api-key` |
 | smoke tests | Done | Validated against real Claude Code + Codex traces on a live machine |
 
-### packages/miner/ingestor/ — 18 tests, all passing
+### packages/miner/ingestor/ — 23 tests, all passing
 
 | Module | Status | What it does |
 |---|---|---|
-| `server.ts` | Done | HTTP server, dual auth (API key + Ed25519), batch validation |
-| `store.ts` | Done | Lakehouse raw zone storage (JSONL + metadata), batchId dedup |
+| `server.ts` | Done | HTTP server, dual auth (API key + Ed25519), batchId dedup at API level |
+| `store.ts` | Done | Hive-partitioned raw zone (year/month/day/agent/dev), immutable files, append-only dedup log |
 | `main.ts` | Done | CLI entry point (`--port`, `--data-dir`) |
 | E2E tests | Done | Agent → HTTP → ingestor → lakehouse, verified with real data |
 
@@ -571,6 +571,20 @@ NormalizedEntry; Codex: 48%. The rest are system/meta entries (token_count,
 context_compacted, session_meta) that don't map to user-visible actions.
 These could be parsed in a future pass for the analytics pipeline.
 
+**Flat storage doesn't scale.** The initial store wrote all batches for an
+agent into one directory. At 20 devs × 50 batches/day × 30 days = 30K files
+in a flat directory. Fixed: Hive-style partitioning (year/month/day/agent/dev)
+with hashed developer ID for privacy and per-developer S3 isolation.
+
+**Cross-boundary sessions need two-phase handling.** A session starting
+March 31 and ending April 1 ships as one batch. Partitioning by shippedAt
+keeps the write atomic. The Parquet normalization job (downstream) extracts
+per-entry timestamps for accurate time-range queries.
+
+**Dedup file must be append-only.** The initial `dedup.json` was rewritten
+on every batch (read → parse → add → serialize → write). Under concurrent
+writes this corrupts. Fixed: `dedup.log` is append-only (one batchId per line).
+
 ### What's NOT built yet
 
 | Component | Status | Needed for |
@@ -603,20 +617,57 @@ and debugging but inadequate for the analytics pipeline.
 | Append | Trivial | Write new files (no in-place append) |
 | Human readable | Yes | No (binary) |
 
-**Architecture:**
+**Raw zone layout (implemented):**
+
+Hive-style partitioning with developer isolation:
 
 ```
-Raw zone (JSONL, as-shipped):
-  raw/claude_code/*.jsonl
-  raw/codex/*.jsonl
-  raw/cursor/*.jsonl
+raw/
+  year=2026/
+    month=04/
+      day=08/
+        agent=claude_code/
+          dev=a1b2c3d4/           ← SHA-256 prefix of developer email
+            {batchId}.jsonl       ← immutable, write-once
+            {batchId}.meta.json   ← batch metadata
+          dev=f9e8d7c6/
+            {batchId}.jsonl
+        agent=codex/
+          dev=a1b2c3d4/
+            {batchId}.jsonl
+```
+
+**Design decisions:**
+
+- **Developer as partition key** — enables per-developer S3 IAM policies,
+  GDPR deletion (`rm -rf dev=HASH/`), and write isolation.
+- **Hashed developer ID** (`dev=a1b2c3d4`) — privacy by default; the
+  ingestor holds the mapping from hash to email, not the storage layer.
+- **batchId as filename** — deterministic (SHA-256 of file + offset + size),
+  no collision risk from concurrent writes, enables idempotent retries.
+- **All files immutable** — write-once, never updated. Dedup log is
+  append-only (one batchId per line, not a rewritten JSON file).
+- **Partitioned by shippedAt** — the date the batch was shipped, not the
+  dates of individual entries within it. This keeps batch writes atomic.
+
+**Cross-boundary sessions:**
+
+A session spanning midnight (or month/year boundary) ships as one batch
+partitioned by `shippedAt`. The entries inside may span multiple days.
+This is correct for storage (atomic writes, no splitting). The normalized
+Parquet zone (below) extracts per-entry `timestamp` as a column, so
+analytical queries filter on entry time, not partition date.
+
+**Normalized zone (Parquet, not yet built):**
+
+```
+raw/ (JSONL, partitioned by ship date)
          │
     periodic batch job
-    (read JSONL → parse → normalize → write parquet)
+    (read JSONL → parse with existing agent parsers → write Parquet)
          │
          ▼
-Normalized zone (Parquet, columnar):
-  normalized/
+normalized/ (Parquet, columnar, partitioned by entry date)
     sessions.parquet          — one row per session
     tool_calls.parquet        — one row per tool invocation
     messages.parquet          — one row per user/assistant message
@@ -625,24 +676,29 @@ Normalized zone (Parquet, columnar):
     skill_events.parquet      — skill install/invoke/retire
 ```
 
-**Implementation:** DuckDB reads JSONL natively and writes Parquet:
+**Implementation path:** DuckDB reads the Hive-partitioned JSONL natively:
 
 ```sql
 COPY (
   SELECT
-    json_extract_string(line, '$.timestamp') as timestamp,
+    json_extract_string(line, '$.timestamp') as entry_timestamp,
     json_extract_string(line, '$.agent') as agent,
     json_extract_string(line, '$.toolName') as tool_name,
     json_extract_string(line, '$.developer') as developer
-  FROM read_json_auto('raw/claude_code/*.jsonl',
-    columns={line: 'VARCHAR'}, format='newline_delimited')
-) TO 'normalized/tool_calls.parquet' (FORMAT PARQUET, PARTITION_BY (agent));
+  FROM read_json_auto('raw/**/*.jsonl',
+    columns={line: 'VARCHAR'}, format='newline_delimited',
+    hive_partitioning=true)
+) TO 'normalized/tool_calls.parquet'
+  (FORMAT PARQUET, PARTITION_BY (agent, year, month));
 ```
 
-This is a natural next step for the ingestor: a periodic job that reads
-the raw zone, normalizes through the existing parsers, and writes Parquet
-files partitioned by date and agent. All four pipelines (knowledge,
-analytics, security, DX) then query the normalized Parquet zone.
+DuckDB's `hive_partitioning=true` reads the `year=`, `month=`, `day=`,
+`agent=`, `dev=` directory structure as virtual columns. The Parquet
+output re-partitions by entry timestamp (from the JSONL content) rather
+than ship date (from the directory structure).
+
+All four pipelines (knowledge, analytics, security, DX) query the
+normalized Parquet zone. They never read raw JSONL directly.
 
 ---
 
@@ -728,16 +784,19 @@ Developer machines (opt-in)
 │    ┌───────────────────────────────────────────────────────────────┐
 │    │  Lakehouse (S3, append-only, immutable)                      │
 │    │                                                              │
-│    │  Raw zone (JSONL, as-shipped):                                │
-│    │    traces_claude/ traces_codex/ traces_cursor/               │
-│    │    github_events/ vendor_anthropic/ vendor_openai/           │
-│    │    ci_events/ jira_events/ mcp_server_logs/                  │
-│    │    skill_events/ vault_changes/ incident_events/             │
+│    │  Raw zone (JSONL, Hive-partitioned, immutable):               │
+│    │    raw/year=YYYY/month=MM/day=DD/agent=X/dev=HASH/           │
+│    │      {batchId}.jsonl + {batchId}.meta.json                   │
+│    │                                                              │
+│    │  Non-trace sources (same partitioning):                      │
+│    │    raw/.../source=github/  raw/.../source=vendor_anthropic/  │
+│    │    raw/.../source=ci/     raw/.../source=jira/               │
 │    │                    │                                         │
-│    │              periodic batch job                              │
+│    │              periodic batch job (DuckDB)                     │
 │    │              (JSONL → parse → normalize → Parquet)           │
+│    │              reads hive_partitioning=true                    │
 │    │                    │                                         │
-│    │  Normalized zone (Parquet, columnar, partitioned by date):   │
+│    │  Normalized zone (Parquet, columnar, by entry timestamp):    │
 │    │    sessions/         — agent sessions (cross-agent schema)   │
 │    │    tool_calls/       — every tool invocation (normalized)    │
 │    │    commits/          — git commits with AI-attribution flag  │
