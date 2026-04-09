@@ -55,53 +55,80 @@ export interface BatchMeta {
 
 export class Store {
   private dataDir: string;
-  private seenBatchIds: Set<string>;
-  private dedupLogPath: string;
+  /** Per-developer dedup caches, loaded lazily. */
+  private dedupByDev: Map<string, Set<string>> = new Map();
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
-    this.dedupLogPath = join(dataDir, "dedup.log");
-    this.seenBatchIds = this.loadSeenBatchIds();
   }
 
   /**
-   * Load seen batch IDs from the append-only dedup log.
-   * One batchId per line — no JSON parsing, no rewrite.
+   * Hash developer identity for partition key.
    */
-  private loadSeenBatchIds(): Set<string> {
-    if (!existsSync(this.dedupLogPath)) return new Set();
-    try {
-      const content = readFileSync(this.dedupLogPath, "utf-8");
-      const ids = content.split("\n").filter((l) => l.trim());
-      return new Set(ids);
-    } catch {
-      return new Set();
+  private devHash(developer: string): string {
+    return createHash("sha256").update(developer).digest("hex").slice(0, 12);
+  }
+
+  /**
+   * Get (or lazily load) the dedup set for a developer.
+   * Each developer's dedup.log lives in their partition root.
+   */
+  private getDedupSet(devKey: string): Set<string> {
+    if (this.dedupByDev.has(devKey)) {
+      return this.dedupByDev.get(devKey)!;
+    }
+
+    // Scan all date partitions for this developer's dedup logs
+    const ids = new Set<string>();
+    const rawDir = join(this.dataDir, "raw");
+    if (existsSync(rawDir)) {
+      this.walkDedupLogs(rawDir, devKey, ids);
+    }
+    this.dedupByDev.set(devKey, ids);
+    return ids;
+  }
+
+  private walkDedupLogs(dir: string, devKey: string, ids: Set<string>): void {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        this.walkDedupLogs(join(dir, entry.name), devKey, ids);
+      } else if (entry.name === "dedup.log" && dir.includes(`dev=${devKey}`)) {
+        try {
+          const content = readFileSync(join(dir, entry.name), "utf-8");
+          for (const line of content.split("\n")) {
+            if (line.trim()) ids.add(line.trim());
+          }
+        } catch { /* skip */ }
+      }
     }
   }
 
   /**
-   * Append a batchId to the dedup log (append-only, no rewrite).
+   * Record a batchId in the developer's partition dedup log.
    */
-  private recordBatchId(batchId: string): void {
-    mkdirSync(this.dataDir, { recursive: true });
-    appendFileSync(this.dedupLogPath, batchId + "\n");
-    this.seenBatchIds.add(batchId);
+  private recordBatchId(batchId: string, partitionDir: string, devKey: string): void {
+    appendFileSync(join(partitionDir, "dedup.log"), batchId + "\n");
+    this.getDedupSet(devKey).add(batchId);
   }
 
-  isDuplicate(batchId: string | undefined): boolean {
+  isDuplicate(batchId: string | undefined, developer?: string): boolean {
     if (!batchId) return false;
-    return this.seenBatchIds.has(batchId);
+    if (!developer) return false;
+    const devKey = this.devHash(developer);
+    return this.getDedupSet(devKey).has(batchId);
   }
 
   saveBatch(batch: StoredBatch): SaveResult {
+    const devKey = this.devHash(batch.developer);
+
     // Generate batchId if not provided
     const batchId = batch.batchId ?? createHash("sha256")
       .update(`${batch.developer}:${batch.shippedAt}:${batch.entries.length}:${Date.now()}`)
       .digest("hex")
       .slice(0, 16);
 
-    // Dedup
-    if (this.seenBatchIds.has(batchId)) {
+    // Per-developer dedup
+    if (this.getDedupSet(devKey).has(batchId)) {
       return { entryCount: 0, filePath: "", duplicate: true };
     }
 
@@ -110,12 +137,6 @@ export class Store {
     const year = date.getUTCFullYear();
     const month = String(date.getUTCMonth() + 1).padStart(2, "0");
     const day = String(date.getUTCDate()).padStart(2, "0");
-
-    // Developer partition key — hash for privacy, or raw for internal use
-    const devKey = createHash("sha256")
-      .update(batch.developer)
-      .digest("hex")
-      .slice(0, 12);
 
     // Hive-style partitioned path: date + agent + developer
     const partitionDir = join(
@@ -148,8 +169,8 @@ export class Store {
       JSON.stringify(meta, null, 2),
     );
 
-    // Append-only dedup record
-    this.recordBatchId(batchId);
+    // Per-developer append-only dedup record
+    this.recordBatchId(batchId, partitionDir, devKey);
 
     return {
       entryCount: batch.entries.length,

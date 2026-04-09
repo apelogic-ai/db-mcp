@@ -113,20 +113,32 @@ describe("Store", () => {
   });
 
   it("dedup persists across store instances", () => {
-    store.saveBatch(makeBatch({ batchId: "persist_test" }));
+    store.saveBatch(makeBatch({ batchId: "persist_test", developer: "alice@acme.com" }));
 
     const store2 = new Store(dataDir);
-    expect(store2.isDuplicate("persist_test")).toBe(true);
+    expect(store2.isDuplicate("persist_test", "alice@acme.com")).toBe(true);
   });
 
-  it("dedup log is append-only", () => {
+  it("dedup is per-developer — same batchId from different devs is not a duplicate", () => {
+    store.saveBatch(makeBatch({ batchId: "shared_id", developer: "alice@acme.com" }));
+    // Bob sends the same batchId — not a duplicate (different developer)
+    const result = store.saveBatch(makeBatch({ batchId: "shared_id", developer: "bob@acme.com" }));
+    expect(result.duplicate).toBeUndefined();
+    expect(result.entryCount).toBe(2);
+  });
+
+  it("dedup log lives in developer's partition", () => {
     store.saveBatch(makeBatch({ batchId: "id_1" }));
     store.saveBatch(makeBatch({ batchId: "id_2" }));
-    store.saveBatch(makeBatch({ batchId: "id_3" }));
 
-    const logContent = readFileSync(join(dataDir, "dedup.log"), "utf-8");
-    const lines = logContent.trim().split("\n");
-    expect(lines).toEqual(["id_1", "id_2", "id_3"]);
+    // Find the dedup.log — should be inside the dev= partition
+    const dedupLogs = findFiles(dataDir, "dedup.log");
+    expect(dedupLogs).toHaveLength(1);
+    expect(dedupLogs[0]).toContain("dev=");
+
+    const content = readFileSync(dedupLogs[0], "utf-8");
+    const lines = content.trim().split("\n");
+    expect(lines).toEqual(["id_1", "id_2"]);
   });
 
   it("listBatches walks partitioned directories", () => {
