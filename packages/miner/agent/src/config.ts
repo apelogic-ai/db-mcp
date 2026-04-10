@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import YAML from "yaml";
+import type { DisclosureLevel } from "./types";
 
 export interface MinerConfig {
   sources: {
@@ -15,6 +16,8 @@ export interface MinerConfig {
     endpoint: string | null;
     redactSecrets: boolean;
     schedule: "realtime" | "hourly" | "daily";
+    disclosure: DisclosureLevel;
+    anonymize: boolean;
   };
   privacy: {
     excludeProjects: string[];
@@ -34,6 +37,8 @@ export const DEFAULT_CONFIG: MinerConfig = {
     endpoint: null,
     redactSecrets: true,
     schedule: "hourly",
+    disclosure: "basic" as DisclosureLevel,
+    anonymize: false,
   },
   privacy: {
     excludeProjects: [],
@@ -82,6 +87,11 @@ export function loadConfig(configPath: string): MinerConfig {
         : DEFAULT_CONFIG.ship.redactSecrets,
       schedule: (rawShip.schedule as MinerConfig["ship"]["schedule"]) ??
         DEFAULT_CONFIG.ship.schedule,
+      disclosure: (rawShip.disclosure as DisclosureLevel) ??
+        DEFAULT_CONFIG.ship.disclosure,
+      anonymize: rawShip.anonymize !== undefined
+        ? Boolean(rawShip.anonymize)
+        : DEFAULT_CONFIG.ship.anonymize,
     },
     privacy: {
       excludeProjects: Array.isArray(rawPrivacy.excludeProjects)
