@@ -12,10 +12,16 @@
 import { Command } from "commander";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { discoverTraceSources, type TraceSource } from "./discover";
 import { Shipper, type ShippedBatch } from "./shipper";
 import { createHttpShipper } from "./http-shipper";
-import { generateKeypair, loadKeypair } from "./identity";
+import { generateKeypair, loadKeypair, getPublicKeyFingerprint } from "./identity";
+import { generateConfig, writeConfig, type InitAnswers } from "./init";
+import { installService, uninstallService, getServicePaths } from "./service";
+import { Daemon, type DaemonConfig } from "./daemon";
+import { createInterface } from "node:readline";
 
 const DEFAULT_STATE_DIR = join(homedir(), ".miner");
 const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude");
@@ -191,6 +197,183 @@ function statusAction(opts: StatusOpts): void {
   }
 }
 
+// --- Init wizard ---
+
+async function initAction(): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q: string): Promise<string> =>
+    new Promise((resolve) => rl.question(q, resolve));
+
+  console.log("Miner — AI agent trace collection\n");
+
+  // Detect agents
+  console.log("Detecting agents...");
+  const agents = {
+    claude_code: existsSync(join(homedir(), ".claude")),
+    codex: existsSync(join(homedir(), ".codex")),
+    cursor: existsSync(join(homedir(), "Library", "Application Support", "Cursor")) ||
+      existsSync(join(homedir(), ".config", "Cursor")),
+  };
+  console.log(`  ${agents.claude_code ? "✓" : "○"} Claude Code`);
+  console.log(`  ${agents.codex ? "✓" : "○"} Codex`);
+  console.log(`  ${agents.cursor ? "✓" : "○"} Cursor`);
+
+  // Developer identity
+  let developer: string;
+  try {
+    developer = execSync("git config --global user.email", {
+      encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    developer = "";
+  }
+  if (developer) {
+    const confirm = await ask(`\nDeveloper: ${developer} (from git config). Use this? [Y/n] `);
+    if (confirm.trim().toLowerCase() === "n") {
+      developer = await ask("Developer email or ID: ");
+    }
+  } else {
+    developer = await ask("\nDeveloper email or ID: ");
+  }
+
+  // Scope
+  const orgsInput = await ask("\nCorporate GitHub orgs (comma-separated, or Enter to skip): ");
+  const includeOrgs = orgsInput.trim()
+    ? orgsInput.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+
+  // Endpoint
+  const endpointInput = await ask("\nIngestor endpoint URL (or Enter for local-only): ");
+  const endpoint = endpointInput.trim() || null;
+
+  let apiKey: string | null = null;
+  if (endpoint) {
+    const keyInput = await ask("API key (or Enter for Ed25519 signing): ");
+    apiKey = keyInput.trim() || null;
+  }
+
+  // Daemon
+  const daemonInput = await ask("\nStart miner on login? [Y/n] ");
+  const enableDaemon = daemonInput.trim().toLowerCase() !== "n";
+
+  rl.close();
+
+  // Generate keypair
+  console.log("\nGenerating Ed25519 keypair...");
+  generateKeypair(DEFAULT_STATE_DIR);
+  const kp = loadKeypair(DEFAULT_STATE_DIR);
+  if (kp) {
+    const fp = getPublicKeyFingerprint(kp.publicKeyPem);
+    console.log(`  ✓ Keypair: ~/.miner/miner.key`);
+    console.log(`  ✓ Fingerprint: ${fp.slice(0, 16)}...`);
+  }
+
+  // Write config
+  const answers: InitAnswers = {
+    developer,
+    agents,
+    includeOrgs,
+    endpoint,
+    apiKey,
+    enableDaemon,
+  };
+  const configYaml = generateConfig(answers);
+  writeConfig(DEFAULT_STATE_DIR, configYaml, true);
+  console.log(`\n✓ Config written to ~/.miner/config.yaml`);
+
+  // Install daemon
+  if (enableDaemon) {
+    const binaryPath = process.argv[0] ?? join(homedir(), ".local", "bin", "miner");
+    const result = installService({
+      binaryPath,
+      homeDir: homedir(),
+      logPath: join(DEFAULT_STATE_DIR, "miner.log"),
+    });
+    console.log(result.success ? `✓ ${result.message}` : `! ${result.message}`);
+  }
+
+  console.log("\nDone! Commands:");
+  console.log("  miner scan      — run a one-shot scan now");
+  console.log("  miner status    — check what's being monitored");
+  if (enableDaemon) {
+    console.log("  miner start     — start the background daemon now");
+  }
+}
+
+// --- Daemon foreground ---
+
+async function daemonAction(opts: { stateDir: string }): Promise<void> {
+  const { loadConfig } = await import("./config");
+  const config = loadConfig(join(opts.stateDir, "config.yaml"));
+
+  console.log("Miner daemon starting...");
+  console.log(`  Developer: ${config.developer ?? "(auto)"}`);
+  console.log(`  Poll interval: ${config.pollIntervalMs / 1000}s`);
+  if (config.ship.endpoint) {
+    console.log(`  Endpoint: ${config.ship.endpoint}`);
+  }
+  console.log();
+
+  generateKeypair(opts.stateDir);
+  const keypair = loadKeypair(opts.stateDir) ?? undefined;
+
+  const shipFn = config.ship.endpoint
+    ? createHttpShipper({
+        endpoint: config.ship.endpoint,
+        keypair,
+      })
+    : async () => {};
+
+  const daemon = new Daemon({
+    claudeDir: DEFAULT_CLAUDE_DIR,
+    codexDir: DEFAULT_CODEX_DIR,
+    cursorDir: DEFAULT_CURSOR_DIR,
+    stateDir: opts.stateDir,
+    pollIntervalMs: config.pollIntervalMs,
+    redactSecrets: config.ship.redactSecrets,
+    developer: config.developer ?? undefined,
+    onShip: shipFn,
+    onProgress: (msg) => {
+      const ts = new Date().toISOString().slice(11, 19);
+      console.log(`[${ts}] ${msg}`);
+    },
+  });
+
+  await daemon.run();
+}
+
+// --- Start/Stop service ---
+
+function startAction(): void {
+  const binaryPath = process.execPath;
+  const result = installService({
+    binaryPath,
+    homeDir: homedir(),
+    logPath: join(DEFAULT_STATE_DIR, "miner.log"),
+  });
+  console.log(result.success ? `✓ ${result.message}` : `! ${result.message}`);
+}
+
+function stopAction(): void {
+  const result = uninstallService(homedir());
+  console.log(result.success ? `✓ ${result.message}` : `! ${result.message}`);
+}
+
+// --- Logs ---
+
+function logsAction(opts: { stateDir: string; lines: string }): void {
+  const logPath = join(opts.stateDir, "miner.log");
+  if (!existsSync(logPath)) {
+    console.log("No logs yet. Run 'miner start' or 'miner daemon' first.");
+    return;
+  }
+  const content = readFileSync(logPath, "utf-8");
+  const lines = content.split("\n");
+  const n = parseInt(opts.lines) || 50;
+  const tail = lines.slice(-n).join("\n");
+  console.log(tail);
+}
+
 // --- CLI wiring ---
 
 const program = new Command();
@@ -222,5 +405,33 @@ program
   .option("--cursor-dir <path>", "Cursor directory", DEFAULT_CURSOR_DIR)
   .option("--state-dir <path>", "State directory", DEFAULT_STATE_DIR)
   .action(statusAction);
+
+program
+  .command("init")
+  .description("Interactive setup wizard — detect agents, configure scope, generate keypair")
+  .action(initAction);
+
+program
+  .command("daemon")
+  .description("Run the daemon in foreground (for service managers)")
+  .option("--state-dir <path>", "State directory", DEFAULT_STATE_DIR)
+  .action(daemonAction);
+
+program
+  .command("start")
+  .description("Install and start background service (launchd/systemd)")
+  .action(startAction);
+
+program
+  .command("stop")
+  .description("Stop and uninstall background service")
+  .action(stopAction);
+
+program
+  .command("logs")
+  .description("Tail recent daemon logs")
+  .option("--state-dir <path>", "State directory", DEFAULT_STATE_DIR)
+  .option("-n, --lines <n>", "Number of lines", "50")
+  .action(logsAction);
 
 program.parse();
