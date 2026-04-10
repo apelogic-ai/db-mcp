@@ -3,7 +3,7 @@
  * Scans known directories for Claude Code, Codex, and other agents.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 
 export type AgentType = "claude_code" | "codex" | "cursor";
@@ -39,6 +39,21 @@ export function discoverTraceSources(options: DiscoverOptions): TraceSource[] {
   return sources;
 }
 
+/** Paths that indicate temp/ephemeral project dirs (not real repos). */
+const SKIP_PATTERNS = [
+  /^-private-var-folders-/,    // macOS PyInstaller temp dirs
+  /^-var-folders-/,            // macOS temp dirs
+  /^-tmp-/,                    // /tmp paths
+  /^-private-tmp-/,            // macOS /private/tmp
+  /^-temp-/,                   // Windows-style temp
+  /MEIPASS/,                   // PyInstaller bundle marker
+  /MEI[A-Za-z0-9]{6}/,        // PyInstaller temp dir hash
+];
+
+function isEphemeralProject(name: string): boolean {
+  return SKIP_PATTERNS.some((p) => p.test(name));
+}
+
 function discoverClaudeCode(claudeDir: string): TraceSource[] {
   const projectsDir = join(claudeDir, "projects");
   if (!existsSync(projectsDir)) return [];
@@ -46,6 +61,8 @@ function discoverClaudeCode(claudeDir: string): TraceSource[] {
   const sources: TraceSource[] = [];
 
   for (const entry of readdirSync(projectsDir)) {
+    if (isEphemeralProject(entry)) continue;
+
     const projectPath = join(projectsDir, entry);
     if (!statSync(projectPath).isDirectory()) continue;
 
@@ -71,14 +88,40 @@ function discoverCodex(codexDir: string): TraceSource[] {
   const files = collectJsonlRecursive(sessionsDir);
   if (files.length === 0) return [];
 
-  // Group as a single source (Codex organizes by date, not project)
-  return [
-    {
+  // Group by project cwd extracted from session_meta.
+  // Each Codex session file starts with a session_meta entry containing cwd.
+  const byProject = new Map<string, string[]>();
+
+  for (const file of files) {
+    let project = "unknown";
+    try {
+      const buf = Buffer.alloc(32768);
+      const fd = require("node:fs").openSync(file, "r");
+      const bytesRead = require("node:fs").readSync(fd, buf, 0, 32768, 0);
+      require("node:fs").closeSync(fd);
+      const firstLine = buf.toString("utf-8", 0, bytesRead).split("\n")[0];
+      const entry = JSON.parse(firstLine);
+      if (entry.type === "session_meta" && entry.payload?.cwd) {
+        const cwd = entry.payload.cwd as string;
+        // Extract repo name from path: /Users/x/dev/my-project → my-project
+        project = cwd.split("/").pop() || cwd;
+      }
+    } catch { /* fall back to "unknown" */ }
+
+    const existing = byProject.get(project) ?? [];
+    existing.push(file);
+    byProject.set(project, existing);
+  }
+
+  const sources: TraceSource[] = [];
+  for (const [project, projectFiles] of byProject) {
+    sources.push({
       agent: "codex",
-      project: "all",
-      files,
-    },
-  ];
+      project,
+      files: projectFiles,
+    });
+  }
+  return sources;
 }
 
 function discoverCursor(cursorDir: string): TraceSource[] {
