@@ -273,11 +273,21 @@ sigint:
     conventions: true
     task_summaries: true              # Codex task_complete messages
 
+  # Project scope — only ship traces from corporate projects
+  scope:
+    include_orgs:                     # whitelist: GitHub orgs whose repos are shipped
+      - apelogic-ai                   # only repos under these orgs are processed
+      - boost-sports
+    include_paths:                    # fallback for non-git projects
+      - ~/work/*
+    exclude_orgs:                     # blocklist: always skip (overrides includes)
+      - personal-username
+    # Default: nothing is shipped unless it matches include_orgs or include_paths
+
   # Privacy controls (local)
   privacy:
     capture_file_contents: false      # never store actual code from traces
     strip_secrets: true               # redact secrets before shipping
-    exclude_projects: []              # project paths to skip entirely
 
   # Centralized shipping
   ship:
@@ -286,9 +296,6 @@ sigint:
     api_key_env: MINER_API_KEY        # auth for ingest endpoint
     schedule: hourly                  # hourly | daily | realtime
     redact_secrets: true              # deterministic regex redaction pre-ship
-    # Secret patterns: AWS keys, DB URLs, GitHub tokens, etc.
-    # ~99% true positive coverage, ~5% false positive rate
-    # See "Observed data" section for validation
 
   # Local knowledge sync (git-based, for approved artifacts only)
   sync:
@@ -339,9 +346,68 @@ leave the machine; the four lakehouse pipelines process them centrally.
    has a gap. The miner reports these findings to the security team
    (via the Security pipeline) so the tooling gets fixed.
 
+### Project scope: corporate vs personal
+
+Developers typically use the same machine and same agents for both
+corporate and personal projects. Agent traces from both contexts are
+interleaved in the same directories — Claude Code organizes by project
+path, Codex organizes by date (mixing all projects).
+
+**The miner only ships traces from corporate projects.** Personal
+projects are excluded by default. The scope is determined by matching
+the project's git remote against configured org patterns.
+
+Traces contain no reliable auth/subscription context (Claude Code traces
+don't record whether the session used a personal API key or corporate
+Bedrock). The git remote URL is the only reliable signal:
+
+| Signal | Available in | Reliability |
+|---|---|---|
+| Git remote org (`github.com/corp-org/*`) | All agents (via repo-resolver) | High |
+| Working directory path (`~/work/*`) | All agents (cwd in traces) | Medium (convention-dependent) |
+| Auth method (API key vs OAuth) | Not in trace JSONL | Not available |
+| Model provider (Bedrock, Vertex) | Not in trace JSONL | Not available |
+
+**Configuration:**
+
+```yaml
+# ~/.miner/config.yaml
+scope:
+  # Whitelist: only ship traces from repos owned by these GitHub orgs.
+  # Traces from any other org (or no git remote) are silently skipped.
+  include_orgs:
+    - apelogic-ai
+    - boost-sports
+
+  # Optional: additional path-based includes for non-git projects
+  include_paths:
+    - ~/work/*
+
+  # Optional: explicit blocklist (overrides includes)
+  exclude_orgs:
+    - personal-username
+
+  # Default behavior for unmatched projects: skip (safe)
+  # Only projects matching include_orgs or include_paths are shipped.
+```
+
+**How it works:**
+
+1. Agent resolves the project's git remote (repo-resolver.ts)
+2. Extracts the org name from the remote URL
+3. Checks against `include_orgs` — if no match, batch is skipped
+4. If the project has no git remote, checks `include_paths` as fallback
+5. `exclude_orgs` overrides everything (safety net)
+
+**Default: nothing is shipped.** The user must explicitly configure
+`include_orgs` for any traces to leave the machine. This is the safe
+default — personal projects are never accidentally shipped to the
+corporate lakehouse.
+
 ### What miner NEVER does
 
 - Read traces from agents the user hasn't opted in
+- Ship traces from projects outside the configured scope
 - Ship unredacted secrets to the centralized lakehouse
 - Auto-apply knowledge without human review
 - Access trace files from other users on shared machines
