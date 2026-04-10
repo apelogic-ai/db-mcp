@@ -46,15 +46,17 @@ export class Daemon {
       cursorDir: this.config.cursorDir,
     });
 
-    this.progress(`Discovered ${sources.length} source(s)`);
-
+    let shipped = 0;
     for (const source of sources) {
       for (const file of source.files) {
-        if (file.endsWith(".vscdb")) {
-          continue;
-        }
-        await this.shipper.processFile(file, source.agent, source.project);
+        if (file.endsWith(".vscdb")) continue;
+        const ok = await this.shipper.processFile(file, source.agent, source.project);
+        if (ok) shipped++;
       }
+    }
+
+    if (shipped > 0) {
+      this.progress(`Shipped ${shipped} batch(es) from ${sources.length} source(s)`);
     }
   }
 
