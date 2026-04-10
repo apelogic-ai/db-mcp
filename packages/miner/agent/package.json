@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "compile": "bun build --compile src/cli.ts --outfile dist/miner",
     "dev": "bun src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest watch",
