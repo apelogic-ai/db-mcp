@@ -61,6 +61,152 @@ approved artifacts to a corporate knowledge vault via git.
 - `payload.type: reasoning` — chain-of-thought
 - `payload.type: task_complete` — session summary with `last_agent_message`
 
+### Field taxonomy and sensitivity classification
+
+Every field in agent traces is classified into one of four sensitivity
+levels. The classification determines what gets shipped to the
+centralized lakehouse and what stays on the developer's machine.
+
+**SAFE (metadata) — ship freely.** No content, no PII risk.
+
+| Field | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| Timestamp | `timestamp` | `timestamp` | `composerData.createdAt` |
+| Entry type | `type` | `type` + `payload.type` | `bubble.type` (1/2) |
+| Session ID | from filename | `payload.id` | `composerData.composerId` |
+| Model | `message.model` | `payload.model` | `usageData` keys |
+| Role | `message.role` | `payload.role` | `bubble.type` |
+| Input tokens | `message.usage.input_tokens` | `payload.info.last_token_usage.input_tokens` | `bubble.tokenCount.inputTokens` |
+| Output tokens | `message.usage.output_tokens` | `payload.info...output_tokens` | `bubble.tokenCount.outputTokens` |
+| Cache tokens | `message.usage.cache_read_input_tokens` | `payload.info...cached_input_tokens` | — |
+| Reasoning tokens | — | `payload.info...reasoning_output_tokens` | — |
+| Agent version | `version` | `payload.cli_version` | — |
+| Client | `entrypoint` | `payload.source` | — |
+| Provider | — | `payload.model_provider` | — |
+| Rate limits | — | `payload.rate_limits.*` | — |
+| Task status | — | `payload.status` | `composerData.status` |
+| Working dir | `cwd` | `payload.cwd` | `workspace.json` |
+| Git branch | `gitBranch` | `payload.git.branch` | — |
+| Git repo URL | — | `payload.git.repository_url` | — |
+| Git commit | — | `payload.git.commit_hash` | — |
+| Cost | — | — | `usageData.*.costInCents` |
+| Agentic flag | — | — | `composerData.isAgentic` |
+| Message graph | `uuid`, `parentUuid` | — | — |
+| Stop reason | `message.stop_reason` | — | — |
+
+**MODERATE (behavioral) — ship with care.** Contains tool names, file
+paths, and commands — useful for analytics but may reveal project
+structure.
+
+| Field | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| Tool name | `content[].name` | `payload.name` | `toolFormerData[].toolName` |
+| Tool call ID | `content[].id` | `payload.call_id` | — |
+| File path | `content[].input.file_path` | in `payload.arguments` | `toolFormerData[].filePath` |
+| Command | `content[].input.command` | in `payload.arguments` | `toolFormerData[].command` |
+| Task summary | — | `payload.last_agent_message` | — |
+| Token usage/turn | — | `payload.info.last_token_usage.*` | — |
+| Git metadata | — | `payload.git.*` | — |
+
+**SENSITIVE (content) — contains prompts and reasoning.** Full user
+questions, assistant responses, thinking traces, system instructions.
+
+| Field | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| User prompt | `content[].text` (role=user) | `payload.message` | `bubble.text` (type=1) |
+| Assistant text | `content[].text` (role=asst) | `content[].text` (agent_message) | `bubble.text` (type=2) |
+| Thinking | `content[].thinking` | — | — |
+| Reasoning | — | `payload.type=reasoning` | — |
+| System prompt | — | `payload.base_instructions.text` | — |
+| User instructions | — | `payload.user_instructions` | — |
+| Dev instructions | — | `payload.developer_instructions` | — |
+| Encrypted content | — | `payload.encrypted_content` | — |
+
+**HIGH RISK (data) — contains query results, file contents, PII.**
+If someone queried "top 10 salaries" via MCP, the actual salary data
+is in these fields.
+
+| Field | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| Tool result | `content[].content` (tool_result) | `payload.output` | — |
+| Stdout | `toolUseResult.stdout` | in `payload.output` | — |
+| File content | `toolUseResult.file.content` | — | — |
+| File diffs | — | `payload.input` (apply_patch) | `codeBlockDiff` |
+| Query data rows | in `.structuredContent.data` | in `payload.output` | — |
+
+**Key differences between agents:**
+- Codex has reasoning tokens, rate limits, git repo/commit, system
+  prompts, encrypted content — richer metadata than Claude Code
+- Claude Code has thinking blocks, message graph (uuid/parentUuid),
+  cache tokens — richer reasoning traces
+- Cursor has per-session cost in cents and agentic flag — richer
+  cost tracking
+- Codex encrypts some content (`payload.encrypted_content`) — unclear
+  what triggers this; may already redact sensitive fields
+
+### Disclosure levels
+
+A progressive slider in the config controls how much trace data is
+shipped. The developer (or their org's IT policy) chooses the level.
+
+```yaml
+# ~/.miner/config.yaml
+ship:
+  disclosure: basic         # basic | moderate | sensitive
+  anonymize: false          # strip developer identity from batches
+```
+
+| Level | What's shipped | What's stripped | Good for |
+|---|---|---|---|
+| **basic** (default) | SAFE fields only: timestamps, model, tokens, tool names, counts | Everything else | Orgs that want cost + adoption analytics with zero content risk |
+| **moderate** | SAFE + MODERATE: adds commands, file paths, git metadata, task summaries | SENSITIVE + HIGH RISK | Orgs that want DX diagnostics + behavioral analytics |
+| **sensitive** | SAFE + MODERATE + SENSITIVE: adds prompts, responses, reasoning | HIGH RISK only | Orgs that want knowledge mining from conversations |
+| *(HIGH RISK never ships)* | — | Always stripped | Security scanner runs locally, emits findings only |
+
+**What each pipeline gets at each level:**
+
+| Pipeline | basic | moderate | sensitive |
+|---|---|---|---|
+| **Analytics** (cost, adoption, tool usage) | ✅ Full | ✅ Full | ✅ Full |
+| **DX diagnostics** (friction, retries, errors) | Partial (counts only) | ✅ Full | ✅ Full |
+| **Knowledge mining** (rules, patterns, decisions) | ❌ | Partial (summaries) | ✅ Full |
+| **Security** (secrets, policy violations) | ❌ (runs locally) | ❌ (runs locally) | ❌ (runs locally) |
+
+**Anonymous mode:** When `anonymize: true`, the shipped batch replaces
+the developer identity with a one-way hash:
+
+```
+developer: "lbeliaev@gmail.com"  →  developer: "anon:a1b2c3d4"
+machine: "MacBook-Pro.local"     →  machine: "anon:f9e8d7c6"
+```
+
+The hash is deterministic (same person = same hash across batches) so
+cross-correlation still works ("anon:a1b2c3d4 hit EMFILE 5 times this
+week") without revealing who. The org can maintain a separate mapping
+for de-anonymization if needed for incident response.
+
+**Combining anonymize + disclosure:**
+
+| Config | Use case |
+|---|---|
+| `disclosure: basic, anonymize: true` | Maximum privacy: anonymous metadata only |
+| `disclosure: basic, anonymize: false` | Named cost tracking, no content |
+| `disclosure: moderate, anonymize: false` | Full behavioral analytics with attribution |
+| `disclosure: sensitive, anonymize: false` | Full knowledge mining (enterprise, with consent) |
+
+### Existing tools
+
+**`0xSero/ai-data-extraction`** (605 stars, Python) already parses
+traces from 8 agents (Claude Code, Codex, Cursor, Windsurf, Trae,
+Continue, Gemini CLI, OpenCode) into a unified JSONL format. It does
+NOT classify fields by sensitivity or redact data. Our miner adds:
+classification, redaction, shipping, idempotency, signing, and the
+four processing pipelines.
+
+Consider using `ai-data-extraction` as a reference for parser edge
+cases or as an alternative parser backend for agents we don't yet
+support (Windsurf, Trae, Continue, Gemini CLI, OpenCode).
+
 ---
 
 ## Extractable knowledge patterns
