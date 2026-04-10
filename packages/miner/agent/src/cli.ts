@@ -357,7 +357,7 @@ async function daemonAction(opts: { stateDir: string }): Promise<void> {
     developer: config.developer ?? undefined,
     onShip: shipFn,
     onProgress: (msg) => {
-      const ts = new Date().toISOString().slice(11, 19);
+      const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
       console.log(`[${ts}] ${msg}`);
     },
   });
