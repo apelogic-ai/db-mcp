@@ -23,6 +23,29 @@ import { installService, uninstallService, getServicePaths } from "./service";
 import { Daemon, type DaemonConfig } from "./daemon";
 import { createInterface } from "node:readline";
 
+/**
+ * Resolve the path to the miner binary.
+ * When compiled: process.execPath is the binary itself.
+ * When dev (bun src/cli.ts): fall back to ~/.local/bin/miner.
+ */
+function resolveBinaryPath(): string {
+  const ep = process.execPath;
+  // Compiled binary: execPath IS the miner binary (not bun/node)
+  if (ep && !ep.includes("bun") && !ep.includes("node")) {
+    return ep;
+  }
+  // Dev mode: check common install locations
+  const candidates = [
+    join(homedir(), ".local", "bin", "miner"),
+    "/usr/local/bin/miner",
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  // Last resort: assume it'll be installed later
+  return join(homedir(), ".local", "bin", "miner");
+}
+
 const DEFAULT_STATE_DIR = join(homedir(), ".miner");
 const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude");
 const DEFAULT_CODEX_DIR = join(homedir(), ".codex");
@@ -283,7 +306,7 @@ async function initAction(): Promise<void> {
 
   // Install daemon
   if (enableDaemon) {
-    const binaryPath = process.argv[0] ?? join(homedir(), ".local", "bin", "miner");
+    const binaryPath = resolveBinaryPath();
     const result = installService({
       binaryPath,
       homeDir: homedir(),
@@ -345,7 +368,7 @@ async function daemonAction(opts: { stateDir: string }): Promise<void> {
 // --- Start/Stop service ---
 
 function startAction(): void {
-  const binaryPath = process.execPath;
+  const binaryPath = resolveBinaryPath();
   const result = installService({
     binaryPath,
     homeDir: homedir(),
@@ -372,6 +395,76 @@ function logsAction(opts: { stateDir: string; lines: string }): void {
   const n = parseInt(opts.lines) || 50;
   const tail = lines.slice(-n).join("\n");
   console.log(tail);
+}
+
+// --- Update ---
+
+async function updateAction(): Promise<void> {
+  const currentPath = resolveBinaryPath();
+  const os = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const target = `${os}-${arch}`;
+
+  console.log(`Current binary: ${currentPath}`);
+  console.log(`Platform: ${target}`);
+  console.log();
+
+  // Fetch latest version from GitHub
+  console.log("Checking for updates...");
+  const repo = "apelogic-ai/db-mcp";
+  let latestTag: string;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases`);
+    const releases = (await res.json()) as Array<{ tag_name: string }>;
+    const minerRelease = releases.find((r) => r.tag_name.startsWith("miner-v"));
+    if (!minerRelease) {
+      console.log("No miner releases found. You may be running a dev build.");
+      return;
+    }
+    latestTag = minerRelease.tag_name;
+  } catch (err) {
+    console.error("Failed to check for updates:", err instanceof Error ? err.message : err);
+    return;
+  }
+
+  const latestVersion = latestTag.replace("miner-v", "");
+  console.log(`Latest version: ${latestVersion}`);
+
+  // Download
+  const url = `https://github.com/${repo}/releases/download/${latestTag}/miner-${target}`;
+  console.log(`Downloading miner-${target}...`);
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error(`Download failed: ${res.status} ${res.statusText}`);
+      return;
+    }
+    const data = await res.arrayBuffer();
+
+    // Write to temp file, then rename (atomic replace)
+    const tmpPath = currentPath + ".tmp";
+    const { writeFileSync, renameSync, chmodSync } = require("node:fs");
+    writeFileSync(tmpPath, Buffer.from(data));
+    chmodSync(tmpPath, 0o755);
+    renameSync(tmpPath, currentPath);
+
+    console.log(`✓ Updated to ${latestVersion}`);
+    console.log(`  Binary: ${currentPath}`);
+
+    // Restart daemon if running
+    const paths = getServicePaths(process.platform, homedir());
+    if (paths.plistPath && existsSync(paths.plistPath)) {
+      console.log("  Restarting daemon...");
+      try {
+        execSync(`launchctl unload ${paths.plistPath}`, { stdio: "pipe" });
+        execSync(`launchctl load ${paths.plistPath}`, { stdio: "pipe" });
+        console.log("  ✓ Daemon restarted");
+      } catch { /* manual restart needed */ }
+    }
+  } catch (err) {
+    console.error("Update failed:", err instanceof Error ? err.message : err);
+  }
 }
 
 // --- CLI wiring ---
@@ -433,5 +526,10 @@ program
   .option("--state-dir <path>", "State directory", DEFAULT_STATE_DIR)
   .option("-n, --lines <n>", "Number of lines", "50")
   .action(logsAction);
+
+program
+  .command("update")
+  .description("Update miner to the latest version")
+  .action(updateAction);
 
 program.parse();
