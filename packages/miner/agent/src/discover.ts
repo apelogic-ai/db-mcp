@@ -91,15 +91,15 @@ function discoverCodex(codexDir: string): TraceSource[] {
   // Group by project cwd extracted from session_meta.
   // Each Codex session file starts with a session_meta entry containing cwd.
   const byProject = new Map<string, string[]>();
+  let buf: Buffer | null = Buffer.alloc(32768);
 
   for (const file of files) {
     let project = "unknown";
     try {
-      const buf = Buffer.alloc(32768);
       const fd = require("node:fs").openSync(file, "r");
-      const bytesRead = require("node:fs").readSync(fd, buf, 0, 32768, 0);
+      const bytesRead = require("node:fs").readSync(fd, buf!, 0, 32768, 0);
       require("node:fs").closeSync(fd);
-      const firstLine = buf.toString("utf-8", 0, bytesRead).split("\n")[0];
+      const firstLine = buf!.toString("utf-8", 0, bytesRead).split("\n")[0];
       const entry = JSON.parse(firstLine);
       if (entry.type === "session_meta" && entry.payload?.cwd) {
         const cwd = entry.payload.cwd as string;
@@ -112,6 +112,8 @@ function discoverCodex(codexDir: string): TraceSource[] {
     existing.push(file);
     byProject.set(project, existing);
   }
+
+  buf = null; // release 32KB buffer
 
   const sources: TraceSource[] = [];
   for (const [project, projectFiles] of byProject) {
