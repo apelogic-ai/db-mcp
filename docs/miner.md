@@ -1229,6 +1229,223 @@ Tool call mix: exec_command 74%, apply_patch 12%, write_stdin 11%
 
 ---
 
+## Packaging and distribution
+
+Miner is a **standalone product**, not a db-mcp plugin. It has its own
+binary, its own install flow, and its own identity. A developer who
+doesn't use db-mcp should still be able to install miner for trace
+collection and AI observability.
+
+### Binary
+
+Single self-contained executable compiled with `bun build --compile`:
+
+```bash
+bun build --compile src/cli.ts --outfile miner
+# Produces: miner (single binary, ~50-80MB, Bun runtime embedded)
+```
+
+Cross-platform targets (GitHub Actions build matrix):
+- `miner-darwin-arm64` (macOS Apple Silicon)
+- `miner-darwin-x64` (macOS Intel)
+- `miner-linux-x64` (Linux)
+- `miner-win-x64.exe` (Windows)
+
+### Install
+
+One-line install script (same pattern as bun, deno, claude):
+
+```bash
+curl -fsSL https://miner.dev/install.sh | bash
+```
+
+The install script:
+1. Detects platform + architecture
+2. Downloads the correct binary from GitHub Releases
+3. Places it in `~/.local/bin/miner` (or `/usr/local/bin/` with sudo)
+4. Adds to PATH if needed
+5. Prints: `Run "miner init" to configure`
+
+### `miner init` — interactive setup wizard
+
+First-run configuration. Detects what's on the machine, asks questions,
+writes config.
+
+```
+$ miner init
+
+Miner — AI agent trace collection
+
+Detecting agents...
+  ✓ Claude Code (found at ~/.claude/)
+  ✓ Codex (found at ~/.codex/)
+  ○ Cursor (not found)
+
+Developer identity:
+  Git: lbelyaev@gmail.com (from git config)
+  Use this as your developer ID? [Y/n] y
+
+Which agents should miner monitor?
+  [x] Claude Code
+  [x] Codex
+  [ ] Cursor (not installed)
+
+Corporate project scope:
+  Which GitHub organizations are corporate? (comma-separated)
+  > apelogic-ai, boost-sports
+
+  Traces from repos outside these orgs will NOT be shipped.
+
+Ingestor endpoint:
+  Ship traces to a centralized server? [y/N] y
+  Endpoint URL: https://miner.acme.com/api/ingest
+  API key (or press Enter to use Ed25519 signing): key_prod_abc123
+
+Generating Ed25519 keypair...
+  ✓ Private key: ~/.miner/miner.key
+  ✓ Public key: ~/.miner/miner.pub
+  ✓ Fingerprint: a1b2c3d4e5f6...
+
+Install db-mcp skills to your agents?
+  [x] Claude Code — install /db-mcp-query, /db-mcp-connections, /db-mcp-onboard
+  [x] Codex — install /db-mcp-query, /db-mcp-connections, /db-mcp-onboard
+  [ ] Cursor (not installed)
+
+Enable background daemon?
+  Start miner on login? [Y/n] y
+
+Writing config to ~/.miner/config.yaml...
+Installing skills...
+  ✓ Claude Code: 3 skills installed
+  ✓ Codex: 3 skills installed
+Registering launch agent...
+  ✓ ~/Library/LaunchAgents/com.miner.agent.plist
+
+Done! Miner is configured and will start on next login.
+
+  miner scan      — run a one-shot scan now
+  miner status    — check what's being monitored
+  miner start     — start the background daemon now
+  miner stop      — stop the daemon
+  miner logs      — view recent activity
+```
+
+### `miner start` — background daemon
+
+Installs a platform-native service that runs on login:
+
+| Platform | Service manager | Config file |
+|---|---|---|
+| macOS | launchd | `~/Library/LaunchAgents/com.miner.agent.plist` |
+| Linux | systemd (user) | `~/.config/systemd/user/miner.service` |
+| Windows | Task Scheduler | `miner-agent` scheduled task |
+
+The service runs `miner daemon` which:
+- Polls for new trace entries (configurable interval, default 5 min)
+- Redacts secrets
+- Ships to the ingestor endpoint
+- Logs activity to `~/.miner/miner.log`
+
+**Launchd plist (macOS):**
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.miner.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USERNAME/.local/bin/miner</string>
+    <string>daemon</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/USERNAME/.miner/miner.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USERNAME/.miner/miner.log</string>
+</dict>
+</plist>
+```
+
+**Systemd unit (Linux):**
+
+```ini
+[Unit]
+Description=Miner Agent — AI trace collection
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/miner daemon
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=default.target
+```
+
+### CLI commands (complete)
+
+```
+miner init              — interactive setup wizard
+miner scan              — one-shot scan + ship
+miner scan --dry-run    — discover and count without shipping
+miner daemon            — foreground daemon (for service managers)
+miner start             — install and start background service
+miner stop              — stop background service
+miner status            — show agent sources, shipper state, daemon health
+miner logs              — tail recent activity log
+miner auth login        — OAuth device flow (enterprise)
+miner auth status       — show auth state
+miner skills install    — detect agents, install db-mcp skills
+miner skills list       — show installed skills across agents
+miner config            — open config in $EDITOR
+miner config show       — print current config
+miner uninstall         — remove daemon, config, skills (keeps traces)
+```
+
+### Update mechanism
+
+The binary checks for updates on `miner daemon` startup (once per day):
+
+```
+GET https://miner.dev/api/latest-version
+→ { "version": "0.2.0", "url": "https://...", "checksum": "sha256:..." }
+```
+
+If a newer version is available, the daemon logs a notice:
+```
+[info] Miner v0.2.0 available (current: v0.1.0). Run "miner update" to upgrade.
+```
+
+`miner update` downloads the new binary, verifies the checksum, and
+replaces itself. The daemon restarts automatically via the service
+manager.
+
+### Enterprise deployment
+
+For organizations that manage developer machines centrally:
+
+**MDM distribution:** The binary + a pre-built `config.yaml` are
+deployed via MDM (Jamf, Intune, etc.). The config includes:
+- `include_orgs` (corporate GitHub orgs)
+- `ship.endpoint` (corporate ingestor URL)
+- `ship.api_key_env` (or OAuth is pre-configured)
+
+The developer runs `miner init` which detects the pre-existing config
+and only asks for agent-specific setup (which agents to monitor).
+
+**IT-managed config:** The config file can be read-only (managed by IT).
+The developer can add personal overrides in `~/.miner/config.local.yaml`
+(only for non-shipping settings like poll interval).
+
+---
+
 ## Relationship to other plans
 
 | Document | Relationship |
