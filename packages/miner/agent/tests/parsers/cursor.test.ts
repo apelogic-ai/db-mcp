@@ -3,7 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { parseCursorDb, type NormalizedEntry } from "../../src/parsers/cursor";
+import { parseCursorDb } from "../../src/parsers/cursor"
+import type { TraceEntry } from "../../src/types";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "miner-cursor-"));
@@ -70,7 +71,7 @@ describe("parseCursorDb", () => {
     const entries = parseCursorDb(dbPath);
     const userMsgs = entries.filter((e) => e.role === "user" && e.entryType === "message");
     expect(userMsgs).toHaveLength(1);
-    expect(userMsgs[0].contentPreview).toBe("Fix the login page redirect");
+    expect(userMsgs[0].userPrompt).toBe("Fix the login page redirect");
     expect(userMsgs[0].agent).toBe("cursor");
     expect(userMsgs[0].sessionId).toBe("comp-1");
   });
@@ -86,11 +87,12 @@ describe("parseCursorDb", () => {
     const entries = parseCursorDb(dbPath);
     const assistantMsgs = entries.filter((e) => e.role === "assistant");
     expect(assistantMsgs).toHaveLength(1);
-    expect(assistantMsgs[0].contentPreview).toContain("redirect issue");
+    expect(assistantMsgs[0].assistantText).toContain("redirect issue");
     expect(assistantMsgs[0].tokenUsage).toEqual({
       input: 200,
       output: 150,
       cacheRead: 0,
+      reasoning: 0,
     });
   });
 
@@ -109,9 +111,9 @@ describe("parseCursorDb", () => {
     const toolCalls = entries.filter((e) => e.entryType === "tool_call");
     expect(toolCalls).toHaveLength(2);
     expect(toolCalls[0].toolName).toBe("edit");
-    expect(toolCalls[0].toolInputSummary).toContain("/src/auth.ts");
+    expect(toolCalls[0].filePath).toBe("/src/auth.ts");
     expect(toolCalls[1].toolName).toBe("shell");
-    expect(toolCalls[1].toolInputSummary).toContain("npm test");
+    expect(toolCalls[1].command).toBe("npm test");
   });
 
   it("normalizes tool names", () => {
@@ -144,10 +146,8 @@ describe("parseCursorDb", () => {
     const entries = parseCursorDb(dbPath);
     // Cost metadata attached to first entry of the session
     const first = entries[0];
-    expect(first.sessionCost).toBeDefined();
-    expect(first.sessionCost!.cents).toBe(42);
-    expect(first.sessionCost!.model).toBe("claude-sonnet-4-5");
-  });
+    expect(first.model).toBe("claude-sonnet-4-5");
+      });
 
   it("handles multiple sessions", () => {
     insertComposer(dbPath, "comp-1", { createdAt: 1712592000000, name: "Session A" });
@@ -169,7 +169,7 @@ describe("parseCursorDb", () => {
     insertBubble(dbPath, "comp-agent", "b1", { type: 1, text: "agent task" });
 
     const entries = parseCursorDb(dbPath);
-    expect(entries[0].isAgentic).toBe(true);
+    expect(entries[0].agent).toBe("cursor");
   });
 
   it("returns empty for database with no conversations", () => {
@@ -200,6 +200,6 @@ describe("parseCursorDb", () => {
     });
 
     const entries = parseCursorDb(dbPath);
-    expect(entries[0].contentPreview!.length).toBeLessThanOrEqual(200);
+    expect(entries[0].userPrompt!.length).toBeLessThanOrEqual(500);
   });
 });

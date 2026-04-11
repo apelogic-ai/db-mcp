@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseCodexEntry, type NormalizedEntry } from "../../src/parsers/codex";
+import { parseCodexEntry } from "../../src/parsers/codex"
+import type { TraceEntry } from "../../src/types";
 
 describe("parseCodexEntry", () => {
   const sessionId = "codex-session-1";
@@ -19,7 +20,7 @@ describe("parseCodexEntry", () => {
     expect(entry).not.toBeNull();
     expect(entry!.entryType).toBe("tool_call");
     expect(entry!.toolName).toBe("shell");
-    expect(entry!.toolInputSummary).toContain("ls -la");
+    expect(entry!.command).toContain("ls -la");
     expect(entry!.agent).toBe("codex");
   });
 
@@ -67,7 +68,7 @@ describe("parseCodexEntry", () => {
     const entry = parseCodexEntry(raw, sessionId);
     expect(entry).not.toBeNull();
     expect(entry!.entryType).toBe("tool_result");
-    expect(entry!.contentPreview).toContain("total 42");
+    expect(entry!.toolResultContent).toContain("total 42");
   });
 
   it("parses a task_complete as task_summary", () => {
@@ -83,7 +84,7 @@ describe("parseCodexEntry", () => {
     const entry = parseCodexEntry(raw, sessionId);
     expect(entry).not.toBeNull();
     expect(entry!.entryType).toBe("task_summary");
-    expect(entry!.contentPreview).toContain("CORS");
+    expect(entry!.taskSummary).toContain("CORS");
   });
 
   it("parses a user message", () => {
@@ -100,7 +101,7 @@ describe("parseCodexEntry", () => {
     expect(entry).not.toBeNull();
     expect(entry!.entryType).toBe("message");
     expect(entry!.role).toBe("user");
-    expect(entry!.contentPreview).toBe("Fix the login page");
+    expect(entry!.userPrompt).toBe("Fix the login page");
   });
 
   it("parses an agent_message", () => {
@@ -130,7 +131,7 @@ describe("parseCodexEntry", () => {
     const entry = parseCodexEntry(raw, sessionId);
     expect(entry).not.toBeNull();
     expect(entry!.entryType).toBe("reasoning");
-    expect(entry!.contentPreview).toContain("CORS");
+    expect(entry!.reasoning).toContain("CORS");
   });
 
   it("returns null for token_count entries", () => {

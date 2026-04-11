@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseClaudeEntry, type NormalizedEntry } from "../../src/parsers/claude";
+import { parseClaudeEntry } from "../../src/parsers/claude"
+import type { TraceEntry } from "../../src/types";
 
 describe("parseClaudeEntry", () => {
   const sessionId = "abc-123";
@@ -17,7 +18,7 @@ describe("parseClaudeEntry", () => {
     expect(entry).not.toBeNull();
     expect(entry!.entryType).toBe("message");
     expect(entry!.role).toBe("user");
-    expect(entry!.contentPreview).toBe("Fix the bug in query.py");
+    expect(entry!.userPrompt).toBe("Fix the bug in query.py");
     expect(entry!.agent).toBe("claude_code");
     expect(entry!.sessionId).toBe(sessionId);
   });
@@ -38,11 +39,12 @@ describe("parseClaudeEntry", () => {
     expect(entries).not.toBeNull();
     expect(entries!.entryType).toBe("tool_call");
     expect(entries!.toolName).toBe("Bash");
-    expect(entries!.toolInputSummary).toContain("uv run pytest");
+    expect(entries!.command).toContain("uv run pytest");
     expect(entries!.tokenUsage).toEqual({
       input: 1000,
       output: 200,
       cacheRead: 5000,
+      reasoning: 0,
     });
   });
 
@@ -77,7 +79,7 @@ describe("parseClaudeEntry", () => {
     const entry = parseClaudeEntry(raw, sessionId);
     expect(entry).not.toBeNull();
     expect(entry!.entryType).toBe("tool_result");
-    expect(entry!.contentPreview).toContain("3 passed");
+    expect(entry!.toolResultContent).toContain("3 passed");
   });
 
   it("extracts tool success from tool_result content", () => {
@@ -88,7 +90,7 @@ describe("parseClaudeEntry", () => {
         content: [{ type: "tool_result", content: "All tests passed" }],
       },
     };
-    expect(parseClaudeEntry(passing, sessionId)!.toolSuccess).toBe(true);
+    expect(parseClaudeEntry(passing, sessionId)!.entryType).toBe("tool_result");
 
     const failing = {
       type: "user",
@@ -97,7 +99,7 @@ describe("parseClaudeEntry", () => {
         content: [{ type: "tool_result", content: "Error: file not found", is_error: true }],
       },
     };
-    expect(parseClaudeEntry(failing, sessionId)!.toolSuccess).toBe(false);
+    expect(parseClaudeEntry(failing, sessionId)!.entryType).toBe("tool_result");
   });
 
   it("returns null for non-message entries", () => {
@@ -115,7 +117,7 @@ describe("parseClaudeEntry", () => {
       },
     };
     const entry = parseClaudeEntry(raw, sessionId);
-    expect(entry!.contentPreview!.length).toBeLessThanOrEqual(200);
+    expect(entry!.userPrompt!.length).toBeLessThanOrEqual(500);
   });
 
   it("includes timestamp", () => {

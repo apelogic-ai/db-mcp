@@ -1,30 +1,10 @@
 /**
  * Cursor IDE SQLite parser.
- * Reads state.vscdb files and normalizes conversations into the unified schema.
- *
- * Cursor stores data in SQLite with a key-value schema:
- * - cursorDiskKV: composerData:<uuid> (sessions), bubbleId:<composerId>:<bubbleId> (messages)
- * - Bubble type 1 = user, type 2 = assistant
- * - Tool calls in toolFormerData array on assistant bubbles
+ * Reads state.vscdb files and normalizes into the unified TraceEntry schema.
  */
 
 import Database from "better-sqlite3";
-
-export interface NormalizedEntry {
-  id: string;
-  timestamp: string;
-  agent: "cursor";
-  sessionId: string;
-  entryType: "message" | "tool_call" | "tool_result";
-  role: "user" | "assistant" | "tool";
-  toolName: string | null;
-  toolInputSummary: string | null;
-  toolSuccess: boolean | null;
-  contentPreview: string | null;
-  tokenUsage: { input: number; output: number; cacheRead: number } | null;
-  isAgentic: boolean;
-  sessionCost?: { cents: number; model: string };
-}
+import type { TraceEntry } from "../types";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) : s;
@@ -46,17 +26,25 @@ function normalizeToolName(raw: string): string {
   return TOOL_NAME_MAP[raw] ?? raw;
 }
 
+const EMPTY_TRACE: Omit<TraceEntry, "id" | "timestamp" | "agent" | "sessionId" | "entryType" | "role" | "developer" | "machine" | "project"> = {
+  model: null, tokenUsage: null, toolName: null, toolCallId: null,
+  filePath: null, command: null, taskSummary: null,
+  gitRepo: null, gitBranch: null, gitCommit: null,
+  userPrompt: null, assistantText: null, thinking: null, reasoning: null, systemPrompt: null,
+  toolResultContent: null, fileContent: null, stdout: null, queryData: null,
+};
+
 interface ComposerData {
   composerId: string;
   createdAt?: number;
   name?: string;
   isAgentic?: boolean;
-  usageData?: Record<string, { costInCents?: number; amount?: number }>;
+  usageData?: Record<string, { costInCents?: number }>;
 }
 
 interface BubbleData {
   bubbleId: string;
-  type: number; // 1=user, 2=assistant
+  type: number;
   text?: string;
   rawText?: string;
   tokenCount?: { inputTokens?: number; outputTokens?: number };
@@ -70,138 +58,106 @@ interface BubbleData {
 }
 
 /**
- * Parse a Cursor state.vscdb file into normalized entries.
+ * Parse a Cursor state.vscdb file into TraceEntry array.
  */
-export function parseCursorDb(dbPath: string): NormalizedEntry[] {
+export function parseCursorDb(
+  dbPath: string,
+  meta?: { developer?: string; machine?: string },
+): TraceEntry[] {
   const db = new Database(dbPath, { readonly: true });
-  const entries: NormalizedEntry[] = [];
+  const entries: TraceEntry[] = [];
 
-  // Check if cursorDiskKV table exists
   const tableCheck = db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cursorDiskKV'")
     .get();
-  if (!tableCheck) {
-    db.close();
-    return [];
-  }
+  if (!tableCheck) { db.close(); return []; }
 
-  // Load all composer sessions
   const composerRows = db
     .prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'")
     .all() as { key: string; value: string }[];
 
   for (const row of composerRows) {
     let composer: ComposerData;
-    try {
-      composer = JSON.parse(row.value) as ComposerData;
-    } catch {
-      continue;
-    }
+    try { composer = JSON.parse(row.value); } catch { continue; }
 
     const sessionId = composer.composerId;
-    const isAgentic = composer.isAgentic ?? false;
-    const timestamp = composer.createdAt
-      ? new Date(composer.createdAt).toISOString()
-      : "";
+    const timestamp = composer.createdAt ? new Date(composer.createdAt).toISOString() : "";
 
-    // Extract cost from usageData
-    let sessionCost: { cents: number; model: string } | undefined;
+    // Extract model + cost from usageData
+    let model: string | null = null;
     if (composer.usageData) {
-      for (const [model, usage] of Object.entries(composer.usageData)) {
-        if (usage.costInCents) {
-          sessionCost = { cents: usage.costInCents, model };
-          break;
-        }
-      }
+      const firstModel = Object.keys(composer.usageData)[0];
+      if (firstModel) model = firstModel;
     }
 
-    // Load bubbles for this session
+    const base = {
+      ...EMPTY_TRACE,
+      timestamp,
+      agent: "cursor" as const,
+      sessionId,
+      model,
+      developer: meta?.developer ?? "",
+      machine: meta?.machine ?? "",
+      project: "",
+    };
+
     const bubbleRows = db
       .prepare("SELECT key, value FROM cursorDiskKV WHERE key LIKE ?")
       .all(`bubbleId:${sessionId}:%`) as { key: string; value: string }[];
 
-    let isFirstEntry = true;
-
     for (const bubbleRow of bubbleRows) {
       let bubble: BubbleData;
-      try {
-        bubble = JSON.parse(bubbleRow.value) as BubbleData;
-      } catch {
+      try { bubble = JSON.parse(bubbleRow.value); } catch { continue; }
+
+      const text = bubble.text ?? bubble.rawText ?? "";
+      const tokenUsage = bubble.tokenCount?.inputTokens != null
+        ? { input: bubble.tokenCount.inputTokens ?? 0, output: bubble.tokenCount.outputTokens ?? 0, cacheRead: 0, reasoning: 0 }
+        : null;
+
+      // Tool calls
+      if (bubble.toolFormerData && bubble.toolFormerData.length > 0) {
+        for (const tool of bubble.toolFormerData) {
+          entries.push({
+            ...base,
+            id: `cur:${sessionId.slice(0, 8)}:${bubble.bubbleId}:${tool.toolName ?? "?"}`,
+            entryType: "tool_call",
+            role: "assistant",
+            toolName: normalizeToolName(tool.toolName ?? "unknown"),
+            filePath: tool.filePath ?? null,
+            command: tool.command ?? null,
+            tokenUsage,
+          });
+        }
         continue;
       }
 
-      const text = bubble.text ?? bubble.rawText ?? "";
-      const tokenUsage =
-        bubble.tokenCount?.inputTokens !== undefined
-          ? {
-              input: bubble.tokenCount.inputTokens ?? 0,
-              output: bubble.tokenCount.outputTokens ?? 0,
-              cacheRead: 0,
-            }
-          : null;
-
-      // Tool calls from toolFormerData
-      if (bubble.toolFormerData && bubble.toolFormerData.length > 0) {
-        for (const tool of bubble.toolFormerData) {
-          const rawName = tool.toolName ?? "unknown";
-          const inputSummary =
-            tool.filePath ?? tool.command ?? tool.query ?? null;
-
-          const entry: NormalizedEntry = {
-            id: `cur:${sessionId.slice(0, 8)}:${bubble.bubbleId}:tool:${rawName}`,
-            timestamp,
-            agent: "cursor",
-            sessionId,
-            entryType: "tool_call",
-            role: "assistant",
-            toolName: normalizeToolName(rawName),
-            toolInputSummary: inputSummary
-              ? truncate(inputSummary, 200)
-              : null,
-            toolSuccess:
-              tool.status === "completed"
-                ? true
-                : tool.status === "failed"
-                  ? false
-                  : null,
-            contentPreview: null,
-            tokenUsage,
-            isAgentic,
-          };
-          if (isFirstEntry && sessionCost) {
-            entry.sessionCost = sessionCost;
-            isFirstEntry = false;
-          }
-          entries.push(entry);
-        }
-        continue; // tool-only bubble, skip the text message
-      }
-
-      // Regular message
       if (!text) continue;
 
-      const entry: NormalizedEntry = {
-        id: `cur:${sessionId.slice(0, 8)}:${bubble.bubbleId}`,
-        timestamp,
-        agent: "cursor",
-        sessionId,
-        entryType: "message",
-        role: bubble.type === 1 ? "user" : "assistant",
-        toolName: null,
-        toolInputSummary: null,
-        toolSuccess: null,
-        contentPreview: truncate(text, 200),
-        tokenUsage,
-        isAgentic,
-      };
-      if (isFirstEntry && sessionCost) {
-        entry.sessionCost = sessionCost;
-        isFirstEntry = false;
+      if (bubble.type === 1) {
+        entries.push({
+          ...base,
+          id: `cur:${sessionId.slice(0, 8)}:${bubble.bubbleId}`,
+          entryType: "message",
+          role: "user",
+          userPrompt: truncate(text, 500),
+          tokenUsage,
+        });
+      } else {
+        entries.push({
+          ...base,
+          id: `cur:${sessionId.slice(0, 8)}:${bubble.bubbleId}`,
+          entryType: "message",
+          role: "assistant",
+          assistantText: truncate(text, 500),
+          tokenUsage,
+        });
       }
-      entries.push(entry);
     }
   }
 
   db.close();
   return entries;
 }
+
+// Re-export for backward compat
+export type NormalizedEntry = TraceEntry;
