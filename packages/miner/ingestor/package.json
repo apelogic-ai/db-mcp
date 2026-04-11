@@ -1,0 +1,24 @@
+{
+  "name": "@miner/ingestor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "miner-ingestor": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "bun src/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "^1.3.11",
+    "@types/node": "^22",
+    "typescript": "^5.7",
+    "vitest": "^3"
+  }
+}

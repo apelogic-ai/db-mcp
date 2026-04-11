@@ -1,0 +1,87 @@
+name: Miner CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/miner/**"
+      - "packages/skills/**"
+      - ".github/workflows/miner-ci.yml"
+  pull_request:
+    paths:
+      - "packages/miner/**"
+      - "packages/skills/**"
+      - ".github/workflows/miner-ci.yml"
+
+jobs:
+  agent-tests:
+    name: Miner Agent (tests + typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/miner/agent
+        run: bun install
+
+      - name: Typecheck
+        working-directory: packages/miner/agent
+        run: bun run typecheck
+
+      - name: Test
+        working-directory: packages/miner/agent
+        run: bun run test
+
+  ingestor-tests:
+    name: Miner Ingestor (tests + typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/miner/ingestor
+        run: bun install
+
+      - name: Typecheck
+        working-directory: packages/miner/ingestor
+        run: bun run typecheck
+
+      - name: Test
+        working-directory: packages/miner/ingestor
+        run: bun run test
+
+  skills-tests:
+    name: Skills (tests + typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/skills
+        run: bun install
+
+      - name: Typecheck
+        working-directory: packages/skills
+        run: bun run typecheck
+
+      - name: Test
+        working-directory: packages/skills
+        run: bun run test

@@ -1,0 +1,136 @@
+name: Miner Release
+
+on:
+  push:
+    tags:
+      - "miner-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 0.1.0)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+            bun_target: bun-darwin-arm64
+          - os: macos-13
+            target: darwin-x64
+            bun_target: bun-darwin-x64
+          - os: ubuntu-latest
+            target: linux-x64
+            bun_target: bun-linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: packages/miner/agent
+        run: bun install
+
+      - name: Run tests
+        working-directory: packages/miner/agent
+        run: bun run test
+
+      - name: Compile binary
+        working-directory: packages/miner/agent
+        run: |
+          bun build --compile --target=${{ matrix.bun_target }} \
+            src/cli.ts --outfile miner-${{ matrix.target }}
+
+      - name: Verify binary runs
+        working-directory: packages/miner/agent
+        run: |
+          chmod +x miner-${{ matrix.target }}
+          ./miner-${{ matrix.target }} --version
+
+      - name: Generate checksum
+        working-directory: packages/miner/agent
+        run: |
+          sha256sum miner-${{ matrix.target }} > miner-${{ matrix.target }}.sha256 \
+            || shasum -a 256 miner-${{ matrix.target }} > miner-${{ matrix.target }}.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miner-${{ matrix.target }}
+          path: |
+            packages/miner/agent/miner-${{ matrix.target }}
+            packages/miner/agent/miner-${{ matrix.target }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/miner-v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: miner-v${{ steps.version.outputs.version }}
+          name: Miner v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/miner-darwin-arm64/miner-darwin-arm64
+            artifacts/miner-darwin-arm64/miner-darwin-arm64.sha256
+            artifacts/miner-darwin-x64/miner-darwin-x64
+            artifacts/miner-darwin-x64/miner-darwin-x64.sha256
+            artifacts/miner-linux-x64/miner-linux-x64
+            artifacts/miner-linux-x64/miner-linux-x64.sha256
+          body: |
+            ## Miner v${{ steps.version.outputs.version }}
+
+            AI agent trace collection daemon.
+
+            ### Install
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/apelogic-ai/db-mcp/main/packages/miner/install.sh | bash
+            ```
+
+            Or download manually:
+            - **macOS (Apple Silicon):** `miner-darwin-arm64`
+            - **macOS (Intel):** `miner-darwin-x64`
+            - **Linux (x64):** `miner-linux-x64`
+
+            ### Quick start
+
+            ```bash
+            miner init      # interactive setup
+            miner start     # enable background daemon
+            ```
