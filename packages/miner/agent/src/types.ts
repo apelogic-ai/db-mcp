@@ -172,6 +172,96 @@ export interface CursorRawBubble {
 }
 
 // ---------------------------------------------------------------------------
+// Per-field policy — boolean map mirroring TraceEntry fields
+// ---------------------------------------------------------------------------
+
+/** Per-field inclusion policy. true = ship, false = strip. */
+export interface FieldPolicy {
+  // SAFE (always shipped — not configurable, listed for completeness)
+  // id, timestamp, agent, sessionId, entryType, role, developer, machine, project
+
+  // SAFE (configurable)
+  model: boolean;
+  tokenUsage: boolean;
+
+  // MODERATE
+  toolName: boolean;
+  toolCallId: boolean;
+  filePath: boolean;
+  command: boolean;
+  taskSummary: boolean;
+  gitRepo: boolean;
+  gitBranch: boolean;
+  gitCommit: boolean;
+
+  // SENSITIVE
+  userPrompt: boolean;
+  assistantText: boolean;
+  thinking: boolean;
+  reasoning: boolean;
+  systemPrompt: boolean;
+
+  // HIGH RISK — always false, cannot be overridden
+  toolResultContent: boolean;
+  fileContent: boolean;
+  stdout: boolean;
+  queryData: boolean;
+}
+
+/** Default field policies for each disclosure tier. */
+export const DEFAULT_FIELD_POLICIES: Record<DisclosureLevel, FieldPolicy> = {
+  basic: {
+    model: true, tokenUsage: true,
+    toolName: true, toolCallId: false, filePath: false, command: false,
+    taskSummary: false, gitRepo: false, gitBranch: false, gitCommit: false,
+    userPrompt: false, assistantText: false, thinking: false, reasoning: false, systemPrompt: false,
+    toolResultContent: false, fileContent: false, stdout: false, queryData: false,
+  },
+  moderate: {
+    model: true, tokenUsage: true,
+    toolName: true, toolCallId: true, filePath: true, command: true,
+    taskSummary: true, gitRepo: true, gitBranch: true, gitCommit: true,
+    userPrompt: false, assistantText: false, thinking: false, reasoning: false, systemPrompt: false,
+    toolResultContent: false, fileContent: false, stdout: false, queryData: false,
+  },
+  sensitive: {
+    model: true, tokenUsage: true,
+    toolName: true, toolCallId: true, filePath: true, command: true,
+    taskSummary: true, gitRepo: true, gitBranch: true, gitCommit: true,
+    userPrompt: true, assistantText: true, thinking: true, reasoning: true, systemPrompt: true,
+    toolResultContent: false, fileContent: false, stdout: false, queryData: false,
+  },
+};
+
+const HIGH_RISK_KEYS: (keyof FieldPolicy)[] = [
+  "toolResultContent", "fileContent", "stdout", "queryData",
+];
+
+/**
+ * Apply a per-field policy. HIGH_RISK fields are always stripped
+ * regardless of what the policy says.
+ */
+export function applyFieldPolicy(
+  entry: TraceEntry,
+  policy: FieldPolicy,
+): TraceEntry {
+  const result = { ...entry };
+
+  for (const [key, include] of Object.entries(policy)) {
+    // HIGH_RISK override — always strip
+    if (HIGH_RISK_KEYS.includes(key as keyof FieldPolicy)) {
+      (result as Record<string, unknown>)[key] = null;
+      continue;
+    }
+    if (!include) {
+      (result as Record<string, unknown>)[key] = null;
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Disclosure filter — strips fields based on configured level
 // ---------------------------------------------------------------------------
 
