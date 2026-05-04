@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.13] - 2026-05-04
+
+### Fixed
+
+- `db-mcp update` no longer fails with `SSL: CERTIFICATE_VERIFY_FAILED` inside the PyInstaller binary. All HTTPS calls in `install_cmd` now use an `SSLContext` built from `certifi.where()`. The underlying error is also surfaced in the CLI output on failure instead of being swallowed.
+
 ## [0.9.12] - 2026-05-04
 
 ### Added
