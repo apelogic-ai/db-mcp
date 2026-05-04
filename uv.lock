@@ -700,6 +700,7 @@ name = "db-mcp-cli"
 version = "0.1.0"
 source = { editable = "packages/cli" }
 dependencies = [
+    { name = "certifi" },
     { name = "click" },
     { name = "db-mcp" },
     { name = "db-mcp-data" },
@@ -718,6 +719,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2024.2.2" },
     { name = "click", specifier = ">=8.0.0" },
     { name = "db-mcp", editable = "packages/core" },
     { name = "db-mcp-data", editable = "packages/data" },

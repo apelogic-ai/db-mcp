@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -171,7 +172,7 @@ def test_uninstall_purge_when_binary_missing(fake_install):
 
 def test_update_check_already_latest(fake_install):
     with patch.object(install_cmd, "_get_cli_version", return_value="0.9.11"), \
-         patch.object(install_cmd, "_fetch_latest_version", return_value="0.9.11"):
+         patch.object(install_cmd, "_fetch_latest_version", return_value=("0.9.11", None)):
         runner = CliRunner()
         result = runner.invoke(main, ["update", "--check"])
     assert result.exit_code == 0
@@ -180,7 +181,7 @@ def test_update_check_already_latest(fake_install):
 
 def test_update_check_available(fake_install):
     with patch.object(install_cmd, "_get_cli_version", return_value="0.9.10"), \
-         patch.object(install_cmd, "_fetch_latest_version", return_value="0.9.11"):
+         patch.object(install_cmd, "_fetch_latest_version", return_value=("0.9.11", None)):
         runner = CliRunner()
         result = runner.invoke(main, ["update", "--check"])
     assert result.exit_code == 0
@@ -190,7 +191,7 @@ def test_update_check_available(fake_install):
 
 def test_update_install_calls_install_binary(fake_install):
     with patch.object(install_cmd, "_get_cli_version", return_value="0.9.10"), \
-         patch.object(install_cmd, "_fetch_latest_version", return_value="0.9.11"), \
+         patch.object(install_cmd, "_fetch_latest_version", return_value=("0.9.11", None)), \
          patch.object(install_cmd, "_install_binary") as mock_install:
         mock_install.return_value = fake_install["binary"]
         runner = CliRunner()
@@ -203,7 +204,7 @@ def test_update_install_calls_install_binary(fake_install):
 
 def test_update_aborts_when_user_declines(fake_install):
     with patch.object(install_cmd, "_get_cli_version", return_value="0.9.10"), \
-         patch.object(install_cmd, "_fetch_latest_version", return_value="0.9.11"), \
+         patch.object(install_cmd, "_fetch_latest_version", return_value=("0.9.11", None)), \
          patch.object(install_cmd, "_install_binary") as mock_install:
         runner = CliRunner()
         result = runner.invoke(main, ["update"], input="n\n")
@@ -234,11 +235,14 @@ def test_update_explicit_version_strips_v_prefix(fake_install):
 
 
 def test_update_fails_when_github_unreachable(fake_install):
-    with patch.object(install_cmd, "_fetch_latest_version", return_value=None):
+    error = "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]>"
+    with patch.object(install_cmd, "_fetch_latest_version", return_value=(None, error)):
         runner = CliRunner()
         result = runner.invoke(main, ["update"])
     assert result.exit_code != 0
     assert "Could not contact GitHub" in result.output
+    # The underlying error must be surfaced so users can diagnose SSL/network issues.
+    assert "CERTIFICATE_VERIFY_FAILED" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +292,9 @@ def test_fetch_latest_version_handles_network_error(monkeypatch):
         raise urllib.error.URLError("offline")
 
     monkeypatch.setattr(install_cmd.urllib.request, "urlopen", boom)
-    assert install_cmd._fetch_latest_version() is None
+    version, error = install_cmd._fetch_latest_version()
+    assert version is None
+    assert "offline" in error
 
 
 def test_fetch_latest_version_parses_tag(monkeypatch):
@@ -302,7 +308,7 @@ def test_fetch_latest_version_parses_tag(monkeypatch):
         def read(self):
             return b'{"tag_name": "v1.2.3"}'
 
-    def fake_open(req, timeout=5.0):
+    def fake_open(req, timeout=5.0, context=None):
         return FakeResp()
 
     # urllib.request.json.load reads from the response object; emulate it.
@@ -310,4 +316,76 @@ def test_fetch_latest_version_parses_tag(monkeypatch):
 
     monkeypatch.setattr(install_cmd.urllib.request, "urlopen", fake_open)
     monkeypatch.setattr(install_cmd.json, "load", lambda f: _json.loads(f.read()))
-    assert install_cmd._fetch_latest_version() == "1.2.3"
+    version, error = install_cmd._fetch_latest_version()
+    assert version == "1.2.3"
+    assert error is None
+
+
+def test_ssl_context_uses_certifi_bundle():
+    """The SSL context must be configured from certifi's CA bundle so frozen
+    PyInstaller binaries can verify HTTPS endpoints."""
+    import certifi
+    import ssl
+
+    ctx = install_cmd._ssl_context()
+    assert isinstance(ctx, ssl.SSLContext)
+    # Verification must be on (default), and the context should have loaded
+    # at least the certifi bundle's CAs.
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    # Ensure the helper actually points at certifi (sanity-check the path exists).
+    assert os.path.isfile(certifi.where())
+
+
+def test_fetch_latest_version_passes_ssl_context(monkeypatch):
+    """Regression test for v0.9.12 — without certifi, urlopen raised
+    SSL: CERTIFICATE_VERIFY_FAILED inside the PyInstaller bundle."""
+    captured = {}
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"tag_name": "v9.9.9"}'
+
+    def fake_open(req, timeout=5.0, context=None):
+        captured["context"] = context
+        return FakeResp()
+
+    import json as _json
+    import ssl
+
+    monkeypatch.setattr(install_cmd.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(install_cmd.json, "load", lambda f: _json.loads(f.read()))
+    install_cmd._fetch_latest_version()
+    assert isinstance(captured["context"], ssl.SSLContext)
+
+
+def test_download_to_passes_ssl_context(monkeypatch, tmp_path):
+    """Same regression — _download_to must also pass an SSLContext."""
+    captured = {}
+
+    class FakeResp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, n=-1):
+            return b""
+
+    def fake_open(url, timeout=60.0, context=None):
+        captured["context"] = context
+        return FakeResp()
+
+    import ssl
+
+    monkeypatch.setattr(install_cmd.urllib.request, "urlopen", fake_open)
+    install_cmd._download_to("https://example.test/x", tmp_path / "out.bin")
+    assert isinstance(captured["context"], ssl.SSLContext)
