@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Add entries here during development._
 
+## [0.9.12] - 2026-05-04
+
+### Added
+
+- `db-mcp update` — check GitHub for the latest release and install in place. Supports `--check`, `--version X.Y.Z`, and `-y`.
+- `db-mcp uninstall` — remove the installed binary; `--purge` wipes `~/.db-mcp` behind a second confirmation.
+
+### Fixed
+
+- `db-mcp ui` no longer returns `{"detail":"Not Found"}` for every dashboard page when the PyInstaller bundle's static dir check fails at app construction time. Replaced the silent-fail guard with `StaticFiles(check_dir=False)` and added a diagnostic log line.
+
 ## [0.9.11] - 2026-04-06
 
 ## Overview
