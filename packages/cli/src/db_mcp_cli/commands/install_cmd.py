@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import shutil
+import ssl
 import stat
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import certifi
 import click
 from rich.panel import Panel
 from rich.prompt import Confirm
@@ -26,6 +28,17 @@ from db_mcp_cli.utils import (
 REPO = "apelogic-ai/db-mcp"
 DEFAULT_INSTALL_DIR = Path.home() / ".local" / "bin"
 CACHE_DIR = CONFIG_DIR / "cache"
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Build an SSLContext using certifi's bundled CA store.
+
+    Frozen PyInstaller binaries can't reach the system trust store, so
+    `urlopen("https://...")` fails verification. Pointing OpenSSL at the
+    certifi bundle (which ships with the Python wheel and is included in
+    the PyInstaller bundle automatically) avoids that.
+    """
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 def _detect_platform() -> str:
@@ -76,30 +89,31 @@ def _resolve_binary_path() -> Path:
     return DEFAULT_INSTALL_DIR / "db-mcp"
 
 
-def _fetch_latest_version(timeout: float = 5.0) -> str | None:
-    """Query GitHub for the latest release tag. Returns version string without 'v' prefix.
+def _fetch_latest_version(timeout: float = 5.0) -> tuple[str | None, str | None]:
+    """Query GitHub for the latest release tag.
 
-    Returns None on network/parse errors.
+    Returns ``(version, error)`` where ``version`` is the tag without the 'v'
+    prefix on success, or ``None`` with a human-readable ``error`` on failure.
     """
     url = f"https://api.github.com/repos/{REPO}/releases/latest"
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
             data = json.load(resp)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
+        return None, str(e)
 
     tag = data.get("tag_name") or ""
     if tag.startswith("v"):
         tag = tag[1:]
-    return tag or None
+    return (tag or None), None
 
 
 def _download_to(url: str, dest: Path, timeout: float = 60.0) -> None:
     """Download a URL to dest. Raises ClickException on failure."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(url, timeout=timeout, context=_ssl_context()) as resp:
             if resp.status != 200:
                 raise click.ClickException(
                     f"Download failed: HTTP {resp.status} for {url}"
@@ -278,10 +292,10 @@ def update_cmd(check: bool, version_override: str | None, yes: bool) -> None:
         console.print(f"Target version: [green]{target}[/green]  (current: {current})")
     else:
         console.print("Checking for the latest release...")
-        target = _fetch_latest_version()
+        target, fetch_error = _fetch_latest_version()
         if target is None:
             raise click.ClickException(
-                "Could not contact GitHub to determine the latest version."
+                f"Could not contact GitHub to determine the latest version: {fetch_error}"
             )
         console.print(f"Latest:  [green]{target}[/green]")
         console.print(f"Current: [cyan]{current}[/cyan]")
