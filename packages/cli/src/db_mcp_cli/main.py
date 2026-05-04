@@ -16,6 +16,7 @@ from db_mcp_cli.commands.examples_cmd import register_commands as register_examp
 from db_mcp_cli.commands.gaps_cmd import register_commands as register_gaps
 from db_mcp_cli.commands.git_cmds import register_commands as register_git
 from db_mcp_cli.commands.insider import register_commands as register_insider
+from db_mcp_cli.commands.install_cmd import register_commands as register_install
 from db_mcp_cli.commands.metrics_cmd import register_commands as register_metrics
 from db_mcp_cli.commands.query_cmd import register_commands as register_query
 from db_mcp_cli.commands.rules_cmd import register_commands as register_rules
@@ -31,6 +32,9 @@ HELP_SECTIONS = [
         ("", [
             "tui", "ui", "status", "config",
             "agents", "playground",
+        ]),
+        ("Install", [
+            "update", "uninstall",
         ]),
     ]),
     ("Connection", [
@@ -119,6 +123,7 @@ register_schema(main)
 register_gaps(main)
 register_domain(main)
 register_query(main)
+register_install(main)
 
 
 if __name__ == "__main__":

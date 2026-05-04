@@ -284,9 +284,22 @@ def create_app(mount_mcp: bool = False) -> FastAPI:
         del name
         return _serve_exported_page("connection/knowledge")
 
-    # Mount static files if directory exists
-    if STATIC_DIR.exists():
-        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+    # Mount static files. Use check_dir=False so mount registers even if the
+    # bundle hasn't finished extracting at construction time; StaticFiles will
+    # 404 individual files if the dir is genuinely missing at request time.
+    static_exists = STATIC_DIR.exists()
+    logger.info(
+        "Mounting static files: STATIC_DIR=%s exists=%s frozen=%s _MEIPASS=%s",
+        STATIC_DIR,
+        static_exists,
+        getattr(__import__("sys"), "frozen", False),
+        getattr(__import__("sys"), "_MEIPASS", None),
+    )
+    app.mount(
+        "/",
+        StaticFiles(directory=str(STATIC_DIR), html=True, check_dir=False),
+        name="static",
+    )
 
     return app
 
